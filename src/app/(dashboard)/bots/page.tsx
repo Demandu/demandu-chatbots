@@ -3,6 +3,7 @@ import { Topbar } from "@/components/Topbar";
 import { createClient } from "@/lib/supabase/server";
 import { createBot, deleteBot, importBot } from "./actions";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
+import { BotCardName } from "@/components/BotCardName";
 import { Upload } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -105,22 +106,22 @@ export default async function BotsPage() {
           <div className="grid max-w-5xl grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
             {bots.map((b) => (
               <div key={b.id} className="card group relative p-5 transition hover:border-pink">
-                <Link href={`/bots/${b.id}`} className="block">
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-surface-raised px-2.5 py-1 text-xs font-semibold text-muted">
-                      <ChannelIcon channel={b.channel ?? "webchat"} className="h-3.5 w-3.5" />
-                      {CHANNEL_LABEL[b.channel ?? "webchat"] ?? "Web"}
-                    </span>
-                    <span
-                      className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
-                        b.status === "published" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"
-                      }`}
-                    >
-                      {b.status === "published" ? "Publicado" : "Borrador"}
-                    </span>
-                  </div>
-                  <h3 className="font-display text-lg font-semibold text-white">{b.name}</h3>
-                  <p className="mt-1 text-sm text-muted-2">Abrir en el Constructor →</p>
+                <div className="mb-3 flex items-center justify-between pr-6">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-surface-raised px-2.5 py-1 text-xs font-semibold text-muted">
+                    <ChannelIcon channel={b.channel ?? "webchat"} className="h-3.5 w-3.5" />
+                    {CHANNEL_LABEL[b.channel ?? "webchat"] ?? "Web"}
+                  </span>
+                  <span
+                    className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+                      b.status === "published" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"
+                    }`}
+                  >
+                    {b.status === "published" ? "Publicado" : "Borrador"}
+                  </span>
+                </div>
+                <BotCardName botId={b.id} initialName={b.name} />
+                <Link href={`/bots/${b.id}`} className="mt-1 block text-sm text-muted-2 transition hover:text-white">
+                  Abrir en el Constructor →
                 </Link>
                 <form action={deleteBot} className="absolute right-4 top-4 opacity-0 transition group-hover:opacity-100">
                   <input type="hidden" name="id" value={b.id} />
