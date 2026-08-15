@@ -5,14 +5,26 @@ import {
   NODE_META, ACTION_META, ACTION_ORDER,
   type DemanduNode, type DemanduNodeData, type NodeType, type NodeActionType,
 } from "@/lib/flow/types";
+import type { Catalogs } from "@/lib/catalogs";
 
 interface Props {
   node: DemanduNode | null;
   onChange: (patch: Partial<DemanduNodeData>) => void;
+  catalogs?: Catalogs;
 }
 
+/** Qué catálogo alimenta el selector de cada tipo de acción. */
+const ACTION_SOURCE: Partial<Record<NodeActionType, keyof Catalogs>> = {
+  add_tag: "tags",
+  remove_tag: "tags",
+  assign_agent: "members",
+  assign_group: "groups",
+  notify_team: "teams",
+  set_status: "states",
+};
+
 /** Panel de configuración del nodo seleccionado. */
-export function Inspector({ node, onChange }: Props) {
+export function Inspector({ node, onChange, catalogs }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => setMenuOpen(false), [node?.id]);
 
@@ -166,12 +178,38 @@ export function Inspector({ node, onChange }: Props) {
             <span className="grid h-7 w-7 flex-none place-items-center rounded-lg bg-pink/10 text-sm">{am.icon}</span>
             <div className="min-w-0 flex-1">
               <div className="text-[11px] font-bold text-white">{am.label}</div>
-              <input
-                className="w-full border-b border-dashed border-surface-border bg-transparent py-0.5 text-xs text-white focus:border-pink focus:outline-none"
-                value={a.value ?? ""}
-                placeholder={am.placeholder}
-                onChange={(e) => updateAction(i, e.target.value)}
-              />
+              {ACTION_SOURCE[a.type] ? (
+                (() => {
+                  const list = (catalogs?.[ACTION_SOURCE[a.type]!] ?? []) as any[];
+                  return (
+                    <select
+                      className="w-full border-b border-dashed border-surface-border bg-transparent py-0.5 text-xs text-white focus:border-pink focus:outline-none"
+                      value={a.value ?? ""}
+                      onChange={(e) => updateAction(i, e.target.value)}
+                    >
+                      {list.length === 0 ? (
+                        <option value="" className="bg-surface-card text-muted">— crea uno en Configuración —</option>
+                      ) : (
+                        <>
+                          <option value="" className="bg-surface-card">Selecciona…</option>
+                          {list.map((item) => (
+                            <option key={item.id} value={item.id} className="bg-surface-card">
+                              {item.name}
+                            </option>
+                          ))}
+                        </>
+                      )}
+                    </select>
+                  );
+                })()
+              ) : (
+                <input
+                  className="w-full border-b border-dashed border-surface-border bg-transparent py-0.5 text-xs text-white focus:border-pink focus:outline-none"
+                  value={a.value ?? ""}
+                  placeholder={am.placeholder}
+                  onChange={(e) => updateAction(i, e.target.value)}
+                />
+              )}
             </div>
             <button className="flex-none text-muted-2 hover:text-danger" onClick={() => removeAction(i)} title="Quitar">✕</button>
           </div>

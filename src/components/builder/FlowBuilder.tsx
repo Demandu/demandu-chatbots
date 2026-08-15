@@ -21,6 +21,7 @@ import { DemanduNodeCard } from "./DemanduNodeCard";
 import { Palette } from "./Palette";
 import { Inspector } from "./Inspector";
 import { Webchat } from "@/components/Webchat";
+import { useCatalogs } from "@/lib/catalogs";
 import {
   NODE_META, type Flow, type DemanduNodeData, type NodeType,
 } from "@/lib/flow/types";
@@ -46,6 +47,7 @@ function BuilderInner({ flow }: { flow: Flow }) {
   const [showPreview, setShowPreview] = useState(false);
   const wrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
+  const { catalogs } = useCatalogs();
 
   const selected = useMemo(
     () => (nodes.find((n) => n.id === selectedId) as unknown as (typeof flow.nodes)[number]) ?? null,
@@ -141,7 +143,7 @@ function BuilderInner({ flow }: { flow: Flow }) {
         )}
       </div>
 
-      <Inspector node={selected} onChange={patchSelected} />
+      <Inspector node={selected} onChange={patchSelected} catalogs={catalogs} />
     </div>
   );
 }
