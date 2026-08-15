@@ -11,15 +11,18 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
 
   return (
     <div
-      className={`w-[230px] rounded-2xl border bg-surface-card shadow-card transition ${
+      className={`w-[230px] overflow-hidden rounded-2xl border bg-surface-card shadow-card transition ${
         selected ? "border-pink shadow-glow" : "border-surface-border hover:border-violet"
       }`}
     >
+      {/* Barra de acento por tipo */}
+      <div style={{ height: 4, background: meta.color }} />
+
       {type !== "start" && (
         <Handle type="target" position={Position.Left} className="!border-muted" />
       )}
 
-      <div className="flex items-center gap-2.5 border-b border-surface-border px-3.5 py-3">
+      <div className="flex items-center gap-2.5 border-b border-surface-border px-3.5 py-2.5">
         <span
           className="grid h-6 w-6 flex-none place-items-center rounded-lg text-sm"
           style={{ background: meta.bg, color: meta.color }}
@@ -27,6 +30,12 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
           {meta.icon}
         </span>
         <span className="font-display text-[13px] font-bold text-white">{d.label}</span>
+        <span
+          className="ml-auto rounded-md px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide"
+          style={{ background: meta.bg, color: meta.color }}
+        >
+          {meta.label}
+        </span>
       </div>
 
       <div className="px-3.5 py-3 text-[12.5px] leading-snug text-muted">
@@ -36,14 +45,13 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
       {type === "buttons" && d.buttons && (
         <div className="flex flex-col gap-1.5 px-3.5 pb-3.5">
           {d.buttons.map((b) => (
-            <div key={b.id} className="relative rounded-lg border border-surface-border bg-surface-raised px-2.5 py-1.5 text-center text-xs text-white">
+            <div
+              key={b.id}
+              className="relative flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-2.5 py-1.5 text-xs text-white"
+            >
+              <span className="h-1.5 w-1.5 flex-none rounded-full bg-violet" />
               {b.label}
-              <Handle
-                id={b.id}
-                type="source"
-                position={Position.Right}
-                style={{ top: "50%" }}
-              />
+              <Handle id={b.id} type="source" position={Position.Right} style={{ top: "50%" }} />
             </div>
           ))}
         </div>

@@ -7,6 +7,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  MarkerType,
   addEdge,
   useNodesState,
   useEdgesState,
@@ -21,7 +22,7 @@ import { Palette } from "./Palette";
 import { Inspector } from "./Inspector";
 import { Webchat } from "@/components/Webchat";
 import {
-  NODE_META, PALETTE_ORDER, type Flow, type DemanduNodeData, type NodeType,
+  NODE_META, type Flow, type DemanduNodeData, type NodeType,
 } from "@/lib/flow/types";
 
 /** Registra el mismo componente para todos los tipos de nodo. */
@@ -29,9 +30,18 @@ const nodeTypes: NodeTypes = Object.fromEntries(
   (Object.keys(NODE_META) as NodeType[]).map((t) => [t, DemanduNodeCard])
 ) as NodeTypes;
 
+/** Estilo de arista de marca: gradiente violeta, flecha y flujo animado. */
+const EDGE_STYLE = {
+  animated: true,
+  markerEnd: { type: MarkerType.ArrowClosed, color: "#6E42FF", width: 18, height: 18 },
+  style: { stroke: "#6E42FF", strokeWidth: 2.5 },
+};
+
 function BuilderInner({ flow }: { flow: Flow }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(flow.nodes as unknown as Node[]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(flow.edges as unknown as Edge[]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
+    (flow.edges as unknown as Edge[]).map((e) => ({ ...e, ...EDGE_STYLE }))
+  );
   const [selectedId, setSelectedId] = useState<string | null>("welcome");
   const [showPreview, setShowPreview] = useState(false);
   const wrapper = useRef<HTMLDivElement>(null);
@@ -43,7 +53,7 @@ function BuilderInner({ flow }: { flow: Flow }) {
   );
 
   const onConnect = useCallback(
-    (c: Connection) => setEdges((eds) => addEdge({ ...c, id: `e-${Date.now()}` }, eds)),
+    (c: Connection) => setEdges((eds) => addEdge({ ...c, id: `e-${Date.now()}`, ...EDGE_STYLE }, eds)),
     [setEdges]
   );
 
@@ -85,12 +95,17 @@ function BuilderInner({ flow }: { flow: Flow }) {
       <Palette />
 
       <div ref={wrapper} className="relative flex-1">
-        {/* Toolbar */}
-        <div className="absolute left-4 top-4 z-10 flex gap-2">
-          <button onClick={() => setShowPreview((s) => !s)} className="btn-primary !px-3 !py-2 text-xs">
+        {/* Toolbar (pill) */}
+        <div className="absolute left-4 top-4 z-10 flex gap-1 rounded-2xl border border-surface-border bg-surface/70 p-1.5 backdrop-blur">
+          <button
+            onClick={() => setShowPreview((s) => !s)}
+            className="rounded-xl bg-demandu-gradient px-3 py-2 font-display text-xs font-semibold text-white"
+          >
             ▶ Probar flujo
           </button>
-          <button className="btn-ghost !px-3 !py-2 text-xs">⟳ Publicar</button>
+          <button className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white">
+            ⟳ Publicar
+          </button>
         </div>
 
         <ReactFlow
@@ -106,16 +121,7 @@ function BuilderInner({ flow }: { flow: Flow }) {
           nodeTypes={nodeTypes}
           fitView
           proOptions={{ hideAttribution: true }}
-          defaultEdgeOptions={{ style: { stroke: "#6E42FF", strokeWidth: 2 } }}
         >
-          <svg style={{ position: "absolute", width: 0, height: 0 }}>
-            <defs>
-              <linearGradient id="demandu-edge" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0" stopColor="#F64A97" />
-                <stop offset="1" stopColor="#6E42FF" />
-              </linearGradient>
-            </defs>
-          </svg>
           <Background color="#ffffff14" gap={26} />
           <Controls />
           <MiniMap
