@@ -16,6 +16,7 @@ import {
   type Edge,
   type Connection,
   type NodeTypes,
+  type Viewport,
 } from "@xyflow/react";
 import { DemanduNodeCard } from "./DemanduNodeCard";
 import { Palette } from "./Palette";
@@ -39,7 +40,15 @@ const EDGE_STYLE = {
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
-function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) {
+function BuilderInner({
+  flow,
+  flowId,
+  initialViewport,
+}: {
+  flow: Flow;
+  flowId?: string | null;
+  initialViewport?: Viewport | null;
+}) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(flow.nodes as unknown as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     (flow.edges as unknown as Edge[]).map((e) => ({ ...e, ...EDGE_STYLE }))
@@ -49,6 +58,11 @@ function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) 
   const [save, setSave] = useState<SaveState>("saved");
   const { screenToFlowPosition } = useReactFlow();
   const { catalogs } = useCatalogs();
+
+  // Refs con el estado más reciente (para el guardado diferido)
+  const nodesRef = useRef(nodes); nodesRef.current = nodes;
+  const edgesRef = useRef(edges); edgesRef.current = edges;
+  const viewportRef = useRef<Viewport | null>(initialViewport ?? null);
 
   const selected = useMemo(
     () => (nodes.find((n) => n.id === selectedId) as unknown as (typeof flow.nodes)[number]) ?? null,
@@ -93,27 +107,32 @@ function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) 
     [flow, nodes, edges]
   );
 
-  // ── Autoguardado (debounce) por cada cambio en el grafo ──────────────────────
-  const skipFirst = useRef(true);
+  // ── Autoguardado (debounce) — persiste nodos, aristas y la vista ─────────────
   const timer = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => {
-    if (skipFirst.current) { skipFirst.current = false; return; }
+  const scheduleSave = useCallback(() => {
     if (!flowId) return;
     setSave("saving");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
       const graph = {
-        nodes: nodes.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
-        edges: edges.map((e) => ({
+        nodes: nodesRef.current.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
+        edges: edgesRef.current.map((e) => ({
           id: e.id, source: e.source, target: e.target,
           sourceHandle: e.sourceHandle ?? null, label: (e as any).label ?? null,
         })),
+        viewport: viewportRef.current ?? undefined,
       };
       const { error } = await createClient().from("flows").update({ graph }).eq("id", flowId);
       setSave(error ? "error" : "saved");
     }, 700);
+  }, [flowId]);
+
+  const skipFirst = useRef(true);
+  useEffect(() => {
+    if (skipFirst.current) { skipFirst.current = false; return; }
+    scheduleSave();
     return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [nodes, edges, flowId]);
+  }, [nodes, edges, scheduleSave]);
 
   const status =
     save === "saving"
@@ -121,6 +140,10 @@ function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) 
       : save === "error"
       ? { dot: "bg-danger", text: "Error al guardar" }
       : { dot: "bg-success", text: "Guardado automáticamente" };
+
+  const viewportProps = initialViewport
+    ? { defaultViewport: initialViewport }
+    : { fitView: true };
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -151,9 +174,10 @@ function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) 
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
           onNodeClick={(_, n) => setSelectedId(n.id)}
           onPaneClick={() => setSelectedId(null)}
+          onMoveEnd={(_, vp) => { viewportRef.current = vp; scheduleSave(); }}
           nodeTypes={nodeTypes}
-          fitView
           proOptions={{ hideAttribution: true }}
+          {...viewportProps}
         >
           <Background color="#c4c9d8" gap={26} />
           <Controls />
@@ -178,10 +202,18 @@ function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) 
   );
 }
 
-export function FlowBuilder({ flow, flowId }: { flow: Flow; flowId?: string | null }) {
+export function FlowBuilder({
+  flow,
+  flowId,
+  initialViewport,
+}: {
+  flow: Flow;
+  flowId?: string | null;
+  initialViewport?: Viewport | null;
+}) {
   return (
     <ReactFlowProvider>
-      <BuilderInner flow={flow} flowId={flowId} />
+      <BuilderInner flow={flow} flowId={flowId} initialViewport={initialViewport} />
     </ReactFlowProvider>
   );
 }

@@ -38,7 +38,11 @@ export default async function BotBuilderPage({ params }: { params: { id: string 
           </span>
         }
       />
-      <FlowBuilder flow={flow} flowId={(flowRow?.id as string) ?? null} />
+      <FlowBuilder
+        flow={flow}
+        flowId={(flowRow?.id as string) ?? null}
+        initialViewport={(graph.viewport as any) ?? null}
+      />
     </>
   );
 }
