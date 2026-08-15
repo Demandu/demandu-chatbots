@@ -42,7 +42,7 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
         {text.length > 90 ? text.slice(0, 90) + "…" : text || meta.description}
       </div>
 
-      {type === "buttons" && d.buttons && (
+      {(type === "buttons" || type === "api") && d.buttons && (
         <div className="flex flex-col gap-1.5 px-3.5 pb-3.5">
           {d.buttons.map((b) => (
             <div
@@ -67,7 +67,7 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
         </div>
       )}
 
-      {type !== "buttons" && type !== "end" && (
+      {type !== "buttons" && type !== "api" && type !== "end" && (
         <Handle type="source" position={Position.Right} />
       )}
     </div>

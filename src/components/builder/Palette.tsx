@@ -7,7 +7,8 @@ const CATEGORIES: { name: string; items: NodeType[] }[] = [
   { name: "Mensajes", items: ["message", "media", "question", "buttons"] },
   { name: "Lógica", items: ["condition", "delay", "redirect"] },
   { name: "Inteligencia", items: ["ai"] },
-  { name: "Acciones", items: ["action", "calendar", "tags", "human", "assign"] },
+  { name: "Acciones", items: ["action", "api", "calendar", "tags", "human", "assign"] },
+  { name: "Comercio & WhatsApp", items: ["catalog", "payment", "whatsapp_flow", "template"] },
   { name: "Cierre", items: ["end"] },
 ];
 

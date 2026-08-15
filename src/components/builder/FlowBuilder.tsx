@@ -82,10 +82,26 @@ function BuilderInner({
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const meta = NODE_META[type];
       const id = `${type}-${Date.now()}`;
-      const data: DemanduNodeData =
-        type === "buttons"
-          ? { label: meta.label, text: "Elige una opción:", buttons: [{ id: `b1-${Date.now()}`, label: "Opción 1" }] }
-          : { label: meta.label, text: meta.description };
+      const now = Date.now();
+      let data: DemanduNodeData;
+      if (type === "buttons") {
+        data = { label: meta.label, text: "Elige una opción:", buttons: [{ id: `b1-${now}`, label: "Opción 1" }] };
+      } else if (type === "api") {
+        data = {
+          label: meta.label,
+          text: "Llama una API y ramifica por respuesta",
+          apiMethod: "GET",
+          buttons: [
+            { id: `ok-${now}`, label: "✅ Éxito (2xx)" },
+            { id: `err-${now}`, label: "⚠️ Error (4xx/5xx)" },
+            { id: `other-${now}`, label: "Otros" },
+          ],
+        };
+      } else if (type === "payment") {
+        data = { label: meta.label, text: "Cobro con pasarela", currency: "MXN", gateway: "stripe" };
+      } else {
+        data = { label: meta.label, text: meta.description };
+      }
       setNodes((nds) => nds.concat({ id, type, position, data } as unknown as Node));
       setSelectedId(id);
     },

@@ -18,6 +18,11 @@ export type NodeType =
   | "human"
   | "assign"
   | "redirect"
+  | "api"
+  | "whatsapp_flow"
+  | "payment"
+  | "catalog"
+  | "template"
   | "end";
 
 export interface FlowButton {
@@ -106,6 +111,32 @@ export interface DemanduNodeData {
   waitForAssignment?: boolean;
   /** solo para type = "redirect" */
   targetBotId?: string;
+  /** solo para type = "api" (las ramas por respuesta reutilizan `buttons`) */
+  apiUrl?: string;
+  apiMethod?: "GET" | "POST" | "PUT" | "DELETE";
+  apiHeaders?: string;
+  apiBody?: string;
+  /** solo para type = "whatsapp_flow" */
+  waFlowId?: string;
+  waFlowCta?: string;
+  waFlowScreen?: string;
+  waFlowVersion?: string;
+  waHeader?: string;
+  waBody?: string;
+  waFooter?: string;
+  /** solo para type = "payment" */
+  gateway?: string;
+  amount?: string;
+  currency?: string;
+  successBotId?: string;
+  failureBotId?: string;
+  whatsappPayment?: boolean;
+  /** solo para type = "catalog" */
+  catalogId?: string;
+  products?: string;
+  /** solo para type = "template" */
+  templateName?: string;
+  templateLang?: string;
   /** solo para type = "message" */
   media?: "none" | "image" | "video" | "file";
   typingDelay?: number;
@@ -157,11 +188,17 @@ export const NODE_META: Record<
   human: { label: "Agente humano", description: "Transferir a tu equipo", icon: "🧑‍💼", color: "#FF5A5F", bg: "rgba(255,90,95,.15)" },
   assign: { label: "Asignar chat", description: "Reparte a agente / equipo", icon: "🎧", color: "#FF6FB0", bg: "rgba(255,111,176,.15)" },
   redirect: { label: "Redirigir", description: "Va a otro flujo / bot", icon: "🔀", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
+  api: { label: "Acción API", description: "Llama una API y ramifica", icon: "🔌", color: "#3DDC97", bg: "rgba(61,220,151,.15)" },
+  whatsapp_flow: { label: "WhatsApp Flow", description: "Formulario nativo de WhatsApp", icon: "📋", color: "#25D366", bg: "rgba(37,211,102,.16)" },
+  payment: { label: "Pago", description: "Cobro con pasarela", icon: "💳", color: "#FFC857", bg: "rgba(255,200,87,.15)" },
+  catalog: { label: "Catálogo", description: "Venta de productos por WhatsApp", icon: "🛒", color: "#6E42FF", bg: "rgba(110,66,255,.15)" },
+  template: { label: "Plantilla WA", description: "Mensaje con plantilla aprobada", icon: "🗂️", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
   end: { label: "Fin", description: "Cierra el flujo", icon: "⏹", color: "#6E70A0", bg: "rgba(110,112,160,.15)" },
 };
 
 /** Orden de los componentes en la paleta del constructor. */
 export const PALETTE_ORDER: NodeType[] = [
   "message", "media", "question", "buttons", "condition",
-  "ai", "delay", "action", "calendar", "tags", "human", "assign", "redirect", "end",
+  "ai", "delay", "action", "api", "calendar", "tags", "human", "assign", "redirect",
+  "catalog", "payment", "whatsapp_flow", "template", "end",
 ];

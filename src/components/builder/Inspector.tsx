@@ -69,11 +69,12 @@ export function Inspector({ node, onChange, catalogs }: Props) {
         <input className="input" value={d.label} onChange={(e) => onChange({ label: e.target.value })} />
       </Field>
 
-      {d.text !== undefined && node.type !== "calendar" && node.type !== "media" && (
-        <Field label="Mensaje">
-          <textarea className="input min-h-[80px]" value={d.text} onChange={(e) => onChange({ text: e.target.value })} />
-        </Field>
-      )}
+      {d.text !== undefined &&
+        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template"].includes(node.type) && (
+          <Field label="Mensaje">
+            <textarea className="input min-h-[80px]" value={d.text} onChange={(e) => onChange({ text: e.target.value })} />
+          </Field>
+        )}
 
       {/* Mensaje: adjuntos + retraso */}
       {node.type === "message" && (
@@ -289,6 +290,158 @@ export function Inspector({ node, onChange, catalogs }: Props) {
             ))}
           </select>
         </Field>
+      )}
+
+      {/* ── Acción API: request + ramas por respuesta ── */}
+      {node.type === "api" && (
+        <>
+          <Field label="URL del endpoint">
+            <input className="input" value={d.apiUrl ?? ""} placeholder="https://api.tu-servicio.com/…" onChange={(e) => onChange({ apiUrl: e.target.value })} />
+          </Field>
+          <Field label="Método">
+            <select className="input" value={d.apiMethod ?? "GET"} onChange={(e) => onChange({ apiMethod: e.target.value as DemanduNodeData["apiMethod"] })}>
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+          </Field>
+          <Field label="Headers (JSON, opcional)">
+            <textarea className="input min-h-[60px] font-mono text-xs" value={d.apiHeaders ?? ""} placeholder={'{ "Authorization": "Bearer {{token}}" }'} onChange={(e) => onChange({ apiHeaders: e.target.value })} />
+          </Field>
+          {(d.apiMethod === "POST" || d.apiMethod === "PUT") && (
+            <Field label="Body (JSON, opcional)">
+              <textarea className="input min-h-[70px] font-mono text-xs" value={d.apiBody ?? ""} placeholder={'{ "telefono": "{{@telefono}}" }'} onChange={(e) => onChange({ apiBody: e.target.value })} />
+            </Field>
+          )}
+          <Field label="Ramas por respuesta">
+            {buttons.map((b, i) => (
+              <div key={b.id} className="mb-2 flex items-center gap-2 rounded-xl border border-surface-border bg-surface-raised p-2.5">
+                <span className="text-muted-2">⿴</span>
+                <input
+                  className="flex-1 bg-transparent text-sm font-medium text-white focus:outline-none"
+                  value={b.label}
+                  placeholder="Nombre de la rama"
+                  onChange={(e) => updateButton(i, { label: e.target.value })}
+                />
+                <button className="text-muted-2 hover:text-danger" onClick={() => removeButton(i)} title="Quitar">✕</button>
+              </div>
+            ))}
+            <button className="w-full rounded-xl border border-dashed border-surface-border py-2.5 text-xs text-muted hover:border-pink hover:text-pink" onClick={addButton}>
+              ＋ Agregar rama
+            </button>
+            <p className="mt-2 text-[11px] text-muted-2">Cada rama tiene su propio punto de salida (•). Conéctalas según el resultado de la API (ej. éxito 2xx, error 4xx/5xx).</p>
+          </Field>
+        </>
+      )}
+
+      {/* ── WhatsApp Flow: formulario nativo ── */}
+      {node.type === "whatsapp_flow" && (
+        <>
+          <Field label="Flow ID (Meta)">
+            <input className="input" value={d.waFlowId ?? ""} placeholder="1234567890" onChange={(e) => onChange({ waFlowId: e.target.value })} />
+          </Field>
+          <div className="flex gap-2">
+            <Field label="Pantalla inicial"><input className="input" value={d.waFlowScreen ?? ""} placeholder="WELCOME" onChange={(e) => onChange({ waFlowScreen: e.target.value })} /></Field>
+            <Field label="Versión"><input className="input" value={d.waFlowVersion ?? "3"} onChange={(e) => onChange({ waFlowVersion: e.target.value })} /></Field>
+          </div>
+          <Field label="Encabezado (opcional)">
+            <input className="input" value={d.waHeader ?? ""} onChange={(e) => onChange({ waHeader: e.target.value })} />
+          </Field>
+          <Field label="Cuerpo del mensaje">
+            <textarea className="input min-h-[70px]" value={d.waBody ?? ""} placeholder="Completa el siguiente formulario para continuar." onChange={(e) => onChange({ waBody: e.target.value })} />
+          </Field>
+          <Field label="Pie de página (opcional)">
+            <input className="input" value={d.waFooter ?? ""} onChange={(e) => onChange({ waFooter: e.target.value })} />
+          </Field>
+          <Field label="Texto del botón (CTA)">
+            <input className="input" value={d.waFlowCta ?? ""} placeholder="Abrir formulario" onChange={(e) => onChange({ waFlowCta: e.target.value })} />
+          </Field>
+        </>
+      )}
+
+      {/* ── Pago: cobro con pasarela ── */}
+      {node.type === "payment" && (
+        <>
+          <Field label="Pasarela">
+            <select className="input" value={d.gateway ?? "stripe"} onChange={(e) => onChange({ gateway: e.target.value })}>
+              <option value="stripe">Stripe</option>
+              <option value="mercadopago">Mercado Pago</option>
+              <option value="conekta">Conekta</option>
+              <option value="paypal">PayPal</option>
+            </select>
+          </Field>
+          <div className="flex gap-2">
+            <Field label="Monto"><input className="input" value={d.amount ?? ""} placeholder="199.00 o {{@total}}" onChange={(e) => onChange({ amount: e.target.value })} /></Field>
+            <Field label="Moneda">
+              <select className="input" value={d.currency ?? "MXN"} onChange={(e) => onChange({ currency: e.target.value })}>
+                <option value="MXN">MXN</option>
+                <option value="USD">USD</option>
+                <option value="COP">COP</option>
+                <option value="PEN">PEN</option>
+                <option value="CLP">CLP</option>
+                <option value="ARS">ARS</option>
+                <option value="EUR">EUR</option>
+              </select>
+            </Field>
+          </div>
+          <Field label="Concepto / descripción del cobro">
+            <input className="input" value={d.text ?? ""} placeholder="Anticipo de tu pedido" onChange={(e) => onChange({ text: e.target.value })} />
+          </Field>
+          <div className="mb-3">
+            <Toggle label="Cobro nativo de WhatsApp Pay" checked={d.whatsappPayment ?? false} onChange={(v) => onChange({ whatsappPayment: v })} />
+          </div>
+          <Field label="Al pagar con éxito, ir a bot / flujo">
+            <select className="input" value={d.successBotId ?? ""} onChange={(e) => onChange({ successBotId: e.target.value })}>
+              <option value="">Continuar en este flujo</option>
+              {(catalogs?.bots ?? []).map((b: any) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+            </select>
+          </Field>
+          <Field label="Si el pago falla, ir a bot / flujo">
+            <select className="input" value={d.failureBotId ?? ""} onChange={(e) => onChange({ failureBotId: e.target.value })}>
+              <option value="">Continuar en este flujo</option>
+              {(catalogs?.bots ?? []).map((b: any) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+            </select>
+          </Field>
+        </>
+      )}
+
+      {/* ── Catálogo: venta de productos ── */}
+      {node.type === "catalog" && (
+        <>
+          <Field label="ID del catálogo (Meta Commerce)">
+            <input className="input" value={d.catalogId ?? ""} placeholder="ID del catálogo de WhatsApp" onChange={(e) => onChange({ catalogId: e.target.value })} />
+          </Field>
+          <Field label="Mensaje que acompaña el catálogo">
+            <textarea className="input min-h-[60px]" value={d.text ?? ""} placeholder="Estos son nuestros productos disponibles:" onChange={(e) => onChange({ text: e.target.value })} />
+          </Field>
+          <Field label="SKUs / IDs de producto (uno por línea, opcional)">
+            <textarea className="input min-h-[70px] font-mono text-xs" value={d.products ?? ""} placeholder={"sku-001\nsku-002"} onChange={(e) => onChange({ products: e.target.value })} />
+          </Field>
+          <p className="mb-4 text-[11px] text-muted-2">Si dejas los SKUs vacíos, se muestra el catálogo completo.</p>
+        </>
+      )}
+
+      {/* ── Plantilla de WhatsApp ── */}
+      {node.type === "template" && (
+        <>
+          <Field label="Nombre de la plantilla aprobada">
+            <input className="input" value={d.templateName ?? ""} placeholder="confirmacion_pedido" onChange={(e) => onChange({ templateName: e.target.value })} />
+          </Field>
+          <Field label="Idioma">
+            <select className="input" value={d.templateLang ?? "es_MX"} onChange={(e) => onChange({ templateLang: e.target.value })}>
+              <option value="es_MX">Español (MX)</option>
+              <option value="es">Español</option>
+              <option value="es_ES">Español (ES)</option>
+              <option value="en_US">Inglés (US)</option>
+              <option value="pt_BR">Portugués (BR)</option>
+            </select>
+          </Field>
+          <Field label="Variables / cuerpo (opcional)">
+            <textarea className="input min-h-[70px]" value={d.text ?? ""} placeholder={"{{1}} = nombre\n{{2}} = folio"} onChange={(e) => onChange({ text: e.target.value })} />
+          </Field>
+          <p className="mb-4 text-[11px] text-muted-2">Las plantillas deben estar aprobadas por Meta. Solo se pueden enviar fuera de la ventana de 24 h.</p>
+        </>
       )}
 
       {/* ── Acciones compartidas ── */}
