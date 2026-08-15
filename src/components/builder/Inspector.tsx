@@ -6,12 +6,14 @@ import {
   type DemanduNode, type DemanduNodeData, type NodeType, type NodeActionType, type FlowButton,
 } from "@/lib/flow/types";
 import type { Catalogs } from "@/lib/catalogs";
+import { MediaUpload } from "./MediaUpload";
 
 interface Props {
   node: DemanduNode | null;
   onChange: (patch: Partial<DemanduNodeData>) => void;
   onDelete?: (id: string) => void;
   catalogs?: Catalogs;
+  orgId?: string | null;
 }
 
 const ACTION_SOURCE: Partial<Record<NodeActionType, keyof Catalogs>> = {
@@ -24,7 +26,7 @@ const ACTION_SOURCE: Partial<Record<NodeActionType, keyof Catalogs>> = {
 };
 const NO_VALUE = new Set<NodeActionType>(["opt_out"]);
 
-export function Inspector({ node, onChange, onDelete, catalogs }: Props) {
+export function Inspector({ node, onChange, onDelete, catalogs, orgId }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => setMenuOpen(false), [node?.id]);
 
@@ -104,13 +106,19 @@ export function Inspector({ node, onChange, onDelete, catalogs }: Props) {
               <option value="file">Archivo / Documento</option>
             </select>
           </Field>
-          <Field label="URL del archivo">
-            <input className="input" value={d.mediaUrl ?? ""} placeholder="https://…" onChange={(e) => onChange({ mediaUrl: e.target.value })} />
+          <Field label="Archivo">
+            <MediaUpload
+              orgId={orgId ?? null}
+              kind={(d.mediaType ?? "image") as "image" | "video" | "file"}
+              value={d.mediaUrl}
+              fileName={d.mediaName}
+              onUploaded={(patch) => onChange(patch)}
+            />
           </Field>
-          {d.mediaUrl && d.mediaType === "image" && (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img src={d.mediaUrl} alt="preview" className="mb-4 max-h-40 w-full rounded-xl border border-surface-border object-cover" />
-          )}
+          <details className="mb-4">
+            <summary className="cursor-pointer text-[11px] text-muted-2 hover:text-muted">o pegar una URL manualmente</summary>
+            <input className="input mt-2" value={d.mediaUrl ?? ""} placeholder="https://…" onChange={(e) => onChange({ mediaUrl: e.target.value, mediaName: "" })} />
+          </details>
           <Field label="Texto / caption (opcional)">
             <textarea className="input min-h-[60px]" value={d.caption ?? ""} onChange={(e) => onChange({ caption: e.target.value })} />
           </Field>

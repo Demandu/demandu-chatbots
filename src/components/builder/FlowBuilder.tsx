@@ -9,6 +9,7 @@ import {
   MiniMap,
   MarkerType,
   addEdge,
+  reconnectEdge,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -16,9 +17,11 @@ import {
   type Edge,
   type Connection,
   type NodeTypes,
+  type EdgeTypes,
   type Viewport,
 } from "@xyflow/react";
 import { DemanduNodeCard } from "./DemanduNodeCard";
+import { DemanduEdge } from "./DemanduEdge";
 import { Palette } from "./Palette";
 import { Inspector } from "./Inspector";
 import { Webchat } from "@/components/Webchat";
@@ -32,8 +35,12 @@ const nodeTypes: NodeTypes = Object.fromEntries(
   (Object.keys(NODE_META) as NodeType[]).map((t) => [t, DemanduNodeCard])
 ) as NodeTypes;
 
+const edgeTypes: EdgeTypes = { demandu: DemanduEdge };
+
 const EDGE_STYLE = {
+  type: "demandu",
   animated: true,
+  reconnectable: true,
   markerEnd: { type: MarkerType.ArrowClosed, color: "#6E42FF", width: 18, height: 18 },
   style: { stroke: "#6E42FF", strokeWidth: 2.5 },
 };
@@ -57,7 +64,7 @@ function BuilderInner({
   const [showPreview, setShowPreview] = useState(false);
   const [save, setSave] = useState<SaveState>("saved");
   const { screenToFlowPosition } = useReactFlow();
-  const { catalogs } = useCatalogs();
+  const { catalogs, orgId } = useCatalogs();
 
   // Refs con el estado más reciente (para el guardado diferido)
   const nodesRef = useRef(nodes); nodesRef.current = nodes;
@@ -71,6 +78,27 @@ function BuilderInner({
 
   const onConnect = useCallback(
     (c: Connection) => setEdges((eds) => addEdge({ ...c, id: `e-${Date.now()}`, ...EDGE_STYLE }, eds)),
+    [setEdges]
+  );
+
+  // Re-conectar: arrastra un extremo de la flecha hacia otro nodo.
+  const reconnectDone = useRef(true);
+  const onReconnectStart = useCallback(() => { reconnectDone.current = false; }, []);
+  const onReconnect = useCallback(
+    (oldEdge: Edge, newConnection: Connection) => {
+      reconnectDone.current = true;
+      setEdges((eds) => reconnectEdge(oldEdge, newConnection, eds));
+    },
+    [setEdges]
+  );
+  // Si sueltas el extremo en el vacío, se desconecta (se elimina la arista).
+  const onReconnectEnd = useCallback(
+    (_: unknown, edge: Edge) => {
+      if (!reconnectDone.current) {
+        setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+      }
+      reconnectDone.current = true;
+    },
     [setEdges]
   );
 
@@ -195,6 +223,9 @@ function BuilderInner({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onReconnect={onReconnect}
+          onReconnectStart={onReconnectStart}
+          onReconnectEnd={onReconnectEnd}
           onDrop={onDrop}
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
           onNodeClick={(_, n) => setSelectedId(n.id)}
@@ -207,6 +238,7 @@ function BuilderInner({
           }}
           deleteKeyCode={["Backspace", "Delete"]}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           proOptions={{ hideAttribution: true }}
           {...viewportProps}
         >
@@ -228,7 +260,7 @@ function BuilderInner({
         )}
       </div>
 
-      <Inspector node={selected} onChange={patchSelected} onDelete={deleteNode} catalogs={catalogs} />
+      <Inspector node={selected} onChange={patchSelected} onDelete={deleteNode} catalogs={catalogs} orgId={orgId} />
     </div>
   );
 }

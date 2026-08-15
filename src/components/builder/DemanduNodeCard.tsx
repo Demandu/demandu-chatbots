@@ -38,8 +38,29 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
         </span>
       </div>
 
+      {/* Vista previa del archivo subido (nodo Multimedia) */}
+      {type === "media" && d.mediaUrl && (
+        <div className="px-3.5 pt-3">
+          {d.mediaType === "image" ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={d.mediaUrl} alt="" className="max-h-36 w-full rounded-lg border border-surface-border object-cover" />
+          ) : d.mediaType === "video" ? (
+            <video src={d.mediaUrl} className="max-h-36 w-full rounded-lg border border-surface-border" />
+          ) : (
+            <div className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-2.5 py-2 text-[11px] text-white">
+              <span className="text-sm">📄</span>
+              <span className="truncate">{d.mediaName ?? "Archivo adjunto"}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="px-3.5 py-3 text-[12.5px] leading-snug text-muted">
-        {text.length > 90 ? text.slice(0, 90) + "…" : text || meta.description}
+        {type === "media"
+          ? d.caption || (d.mediaUrl ? "" : meta.description)
+          : text.length > 90
+          ? text.slice(0, 90) + "…"
+          : text || meta.description}
       </div>
 
       {(type === "buttons" || type === "api") && d.buttons && (

@@ -89,6 +89,7 @@ export interface DemanduNodeData {
   /** solo para type = "media" (Multimedia) */
   mediaType?: "image" | "video" | "file";
   mediaUrl?: string;
+  mediaName?: string;
   caption?: string;
   /** solo para type = "delay" (Espera) */
   delayValue?: number;
