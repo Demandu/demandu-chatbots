@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Phone, Video, MoreVertical, Paperclip, Mic, Smile, ChevronLeft } from "lucide-react";
+import { Phone, Video, MoreVertical, Paperclip, Mic, Send, Smile, ChevronLeft } from "lucide-react";
 import type { Flow, FlowButton } from "@/lib/flow/types";
 import { getNode, getStartNode, defaultNext, buttonTarget, renderText } from "@/lib/flow/engine";
 import { hhmm } from "@/lib/utils";
@@ -23,6 +23,12 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [status, setStatus] = useState("en línea");
   const [started, setStarted] = useState(false);
+  const [input, setInput] = useState("");
+  const [awaiting, setAwaiting] = useState<
+    { nodeId: string; variable?: string; dataType?: string; retriesLeft: number; errorMessage?: string } | null
+  >(null);
+  /** Variables/atributos capturados durante la conversación (clave → valor). */
+  const vars = useRef<Record<string, string>>({});
   const bodyRef = useRef<HTMLDivElement>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -39,10 +45,12 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
   useEffect(() => () => clearTimers(), []);
 
   const botSay = useCallback(async (text: string) => {
+    // Sustituye {{atributo}} por el valor capturado
+    const t = (text ?? "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, k) => vars.current[k] ?? "");
     setStatus("escribiendo…");
     setMsgs((m) => [...m, { kind: "typing" }]);
     await wait(850);
-    setMsgs((m) => m.filter((x) => x.kind !== "typing").concat({ kind: "in", html: renderText(text), time: hhmm() }));
+    setMsgs((m) => m.filter((x) => x.kind !== "typing").concat({ kind: "in", html: renderText(t), time: hhmm() }));
     setStatus("en línea");
     await wait(450);
   }, []);
@@ -69,10 +77,13 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
           break;
         case "question":
           await botSay(node.data.text ?? "");
-          await wait(900);
-          userSay("Alejandro Castañón · Av. Bosque Real 123, Huixquilucan");
-          await wait(500);
-          { const n = defaultNext(flow, node); if (n) await step(n); }
+          setAwaiting({
+            nodeId: node.id,
+            variable: node.data.variable,
+            dataType: node.data.dataType,
+            retriesLeft: node.data.retries ?? 2,
+            errorMessage: node.data.errorMessage,
+          });
           break;
         case "human":
           await botSay(node.data.text ?? "");
@@ -133,6 +144,17 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
     userSay(slot.label);
     setStatus("agendando…");
     await wait(300);
+    const node = getNode(flow, meta.nodeId);
+    const d = (node?.data ?? {}) as typeof flow.nodes[number]["data"];
+    const email = d.attendeeAttr ? vars.current[d.attendeeAttr] : undefined;
+    const name = d.nameAttr ? vars.current[d.nameAttr] : undefined;
+    const company = d.companyAttr ? vars.current[d.companyAttr] : undefined;
+    const summary = `Cita — ${name || "Cliente"}${company ? " · " + company : ""}`;
+    const description =
+      "Cita agendada desde el chatbot de Demandu." +
+      (name ? `\nNombre: ${name}` : "") +
+      (company ? `\nEmpresa: ${company}` : "") +
+      (email ? `\nCorreo: ${email}` : "");
     try {
       const res = await fetch("/api/calendar/book", {
         method: "POST",
@@ -142,13 +164,19 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
           startISO: slot.startISO,
           endISO: slot.endISO,
           durationMin: meta.durationMin,
-          summary: "Cita · Demandu (prueba)",
+          summary,
+          description,
+          attendeeEmail: email,
         }),
       });
       const j = await res.json();
       setStatus("en línea");
       if (j.ok) {
-        await botSay(`¡Listo! Agendé tu cita para *${slot.label}*. Ya quedó en el calendario. ✅`);
+        await botSay(
+          `¡Listo${name ? ", " + name : ""}! Agendé tu cita para *${slot.label}*.` +
+            (email ? ` Te envié la invitación a *${email}*.` : "") +
+            " ✅"
+        );
       } else {
         await botSay(`No pude crear el evento${j.error ? ` (${j.error})` : ""}.`);
       }
@@ -156,13 +184,40 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
       setStatus("en línea");
       await botSay("Hubo un problema al agendar.");
     }
-    const node = getNode(flow, meta.nodeId);
+    if (node) { const n = defaultNext(flow, node); if (n) await step(n); }
+  };
+
+  const submitInput = async () => {
+    if (!awaiting) return;
+    const text = input.trim();
+    if (!text) return;
+    userSay(text);
+    setInput("");
+    const valid =
+      awaiting.dataType === "email"
+        ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)
+        : awaiting.dataType === "phone"
+        ? text.replace(/\D/g, "").length >= 7
+        : awaiting.dataType === "number"
+        ? !isNaN(Number(text))
+        : text.length > 0;
+    if (!valid && awaiting.retriesLeft > 0) {
+      await botSay(awaiting.errorMessage || "Ese dato no parece válido, ¿puedes intentarlo de nuevo?");
+      setAwaiting({ ...awaiting, retriesLeft: awaiting.retriesLeft - 1 });
+      return;
+    }
+    if (awaiting.variable) vars.current[awaiting.variable] = text;
+    const node = getNode(flow, awaiting.nodeId);
+    setAwaiting(null);
     if (node) { const n = defaultNext(flow, node); if (n) await step(n); }
   };
 
   const run = useCallback(async () => {
     clearTimers();
     setMsgs([]);
+    vars.current = {};
+    setAwaiting(null);
+    setInput("");
     setStarted(true);
     userSay("Hola, vi su anuncio 👀");
     await wait(600);
@@ -173,6 +228,9 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
   const reset = () => {
     clearTimers();
     setMsgs([]);
+    vars.current = {};
+    setAwaiting(null);
+    setInput("");
     setStarted(false);
     setStatus("en línea");
   };
@@ -278,13 +336,25 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
         {/* Footer */}
         <div className="flex flex-none items-center gap-2.5 bg-[#202c33] px-3 py-2.5">
           <Smile className="h-5 w-5 text-[#8696a0]" />
-          <div className="flex-1 rounded-full bg-[#2a3942] px-3.5 py-2 text-[13.5px] text-[#8696a0]">
-            Escribe un mensaje…
-          </div>
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); submitInput(); }
+            }}
+            disabled={!awaiting}
+            placeholder={awaiting ? "Escribe tu respuesta…" : "Escribe un mensaje…"}
+            className="flex-1 rounded-full bg-[#2a3942] px-3.5 py-2 text-[13.5px] text-[#e9edef] placeholder:text-[#8696a0] focus:outline-none disabled:cursor-not-allowed"
+          />
           <Paperclip className="h-5 w-5 text-[#8696a0]" />
-          <div className="grid h-10 w-10 place-items-center rounded-full bg-[#00a884] text-white">
-            <Mic className="h-5 w-5" />
-          </div>
+          <button
+            onClick={() => submitInput()}
+            disabled={!awaiting || !input.trim()}
+            className="grid h-10 w-10 flex-none place-items-center rounded-full bg-[#00a884] text-white transition disabled:opacity-50"
+            title={awaiting ? "Enviar" : ""}
+          >
+            {awaiting ? <Send className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+          </button>
         </div>
       </div>
 

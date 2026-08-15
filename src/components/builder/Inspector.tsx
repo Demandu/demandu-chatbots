@@ -362,6 +362,42 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
           <Field label="Mensaje al ofrecer horarios">
             <textarea className="input min-h-[70px]" value={d.text ?? ""} placeholder="Estos son los horarios disponibles para tu cita:" onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
+
+          <SectionTitle>Datos del cliente en el evento</SectionTitle>
+          {(catalogs?.attributes ?? []).length === 0 ? (
+            <p className="mb-3 text-[11px] text-muted-2">
+              Crea atributos (correo, nombre, empresa) en <a href="/settings/attributes" target="_blank" className="text-pink hover:underline">Configuración → Atributos</a> y captúralos con un nodo Pregunta antes de esta cita.
+            </p>
+          ) : (
+            <>
+              <Field label="Correo del cliente (se invita al evento)">
+                <select className="input" value={d.attendeeAttr ?? ""} onChange={(e) => onChange({ attendeeAttr: e.target.value })}>
+                  <option value="">Sin invitado</option>
+                  {(catalogs?.attributes ?? []).map((a: any) => (
+                    <option key={a.id} value={a.key}>{a.name} · {`{{${a.key}}}`}</option>
+                  ))}
+                </select>
+              </Field>
+              <div className="flex gap-2">
+                <Field label="Nombre del cliente">
+                  <select className="input" value={d.nameAttr ?? ""} onChange={(e) => onChange({ nameAttr: e.target.value })}>
+                    <option value="">—</option>
+                    {(catalogs?.attributes ?? []).map((a: any) => (<option key={a.id} value={a.key}>{a.name}</option>))}
+                  </select>
+                </Field>
+                <Field label="Empresa">
+                  <select className="input" value={d.companyAttr ?? ""} onChange={(e) => onChange({ companyAttr: e.target.value })}>
+                    <option value="">—</option>
+                    {(catalogs?.attributes ?? []).map((a: any) => (<option key={a.id} value={a.key}>{a.name}</option>))}
+                  </select>
+                </Field>
+              </div>
+              <p className="mb-2 text-[11px] text-muted-2">
+                El título del evento será <b className="text-muted">“Cita — Nombre · Empresa”</b> y se enviará invitación al correo.
+              </p>
+            </>
+          )}
+
           <p className="mb-4 text-[11px] text-muted-2">
             La disponibilidad respeta tu <b className="text-muted">Horario laboral</b> (Configuración → Horario laboral) y evita traslapes con eventos existentes.
           </p>

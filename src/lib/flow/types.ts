@@ -151,6 +151,10 @@ export interface DemanduNodeData {
   /** solo para type = "calendar" */
   calendarId?: string;
   durationMin?: number;
+  /** claves de atributo que alimentan el evento (invitado, nombre, empresa) */
+  attendeeAttr?: string;
+  nameAttr?: string;
+  companyAttr?: string;
   /** solo para type = "human" */
   team?: string;
   /** solo para type = "assign" (Asignar chat) */
