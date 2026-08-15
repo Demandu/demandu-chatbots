@@ -155,6 +155,16 @@ function BuilderInner({
     [setNodes, setEdges]
   );
 
+  // Marca un nodo como arranque de la conversación (único en el flujo).
+  const setStartNode = useCallback(
+    (id: string) => {
+      setNodes((nds) =>
+        nds.map((n) => ({ ...n, data: { ...n.data, isStart: n.id === id } }))
+      );
+    },
+    [setNodes]
+  );
+
   const liveFlow: Flow = useMemo(
     () => ({ ...flow, nodes: nodes as unknown as Flow["nodes"], edges: edges as unknown as Flow["edges"] }),
     [flow, nodes, edges]
@@ -260,7 +270,7 @@ function BuilderInner({
         )}
       </div>
 
-      <Inspector node={selected} onChange={patchSelected} onDelete={deleteNode} catalogs={catalogs} orgId={orgId} />
+      <Inspector node={selected} onChange={patchSelected} onDelete={deleteNode} onSetStart={setStartNode} catalogs={catalogs} orgId={orgId} />
     </div>
   );
 }

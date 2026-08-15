@@ -11,10 +11,20 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
 
   return (
     <div
-      className={`w-[230px] overflow-hidden rounded-2xl border bg-surface-card shadow-card transition ${
-        selected ? "border-pink shadow-glow" : "border-surface-border hover:border-violet"
+      className={`relative w-[230px] overflow-hidden rounded-2xl border bg-surface-card shadow-card transition ${
+        d.isStart
+          ? "border-success shadow-glow"
+          : selected
+          ? "border-pink shadow-glow"
+          : "border-surface-border hover:border-violet"
       }`}
     >
+      {d.isStart && (
+        <div className="absolute -top-2.5 left-3 z-10 flex items-center gap-1 rounded-full bg-success px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-[#04220f] shadow-card">
+          ▶ Inicio
+        </div>
+      )}
+
       {/* Barra de acento por tipo */}
       <div style={{ height: 4, background: meta.color }} />
 

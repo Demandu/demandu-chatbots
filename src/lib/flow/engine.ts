@@ -7,7 +7,11 @@ export function getNode(flow: Flow, id: string): DemanduNode | undefined {
 
 /** Nodo de inicio del flujo. */
 export function getStartNode(flow: Flow): DemanduNode | undefined {
-  return flow.nodes.find((n) => n.type === "start") ?? flow.nodes[0];
+  return (
+    flow.nodes.find((n) => n.data?.isStart) ??
+    flow.nodes.find((n) => n.type === "start") ??
+    flow.nodes[0]
+  );
 }
 
 /**

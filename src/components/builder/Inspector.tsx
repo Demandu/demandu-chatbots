@@ -12,6 +12,7 @@ interface Props {
   node: DemanduNode | null;
   onChange: (patch: Partial<DemanduNodeData>) => void;
   onDelete?: (id: string) => void;
+  onSetStart?: (id: string) => void;
   catalogs?: Catalogs;
   orgId?: string | null;
 }
@@ -26,7 +27,7 @@ const ACTION_SOURCE: Partial<Record<NodeActionType, keyof Catalogs>> = {
 };
 const NO_VALUE = new Set<NodeActionType>(["opt_out"]);
 
-export function Inspector({ node, onChange, onDelete, catalogs, orgId }: Props) {
+export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgId }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => setMenuOpen(false), [node?.id]);
 
@@ -67,6 +68,21 @@ export function Inspector({ node, onChange, onDelete, catalogs, orgId }: Props) 
         <h3 className="font-display text-base font-semibold text-white">{meta.label}</h3>
       </div>
       <p className="mb-4 text-xs text-muted-2">{meta.description} · ID: {node.id}</p>
+
+      {onSetStart && (
+        d.isStart ? (
+          <div className="mb-4 flex items-center gap-2 rounded-xl border border-success/40 bg-success/10 px-3 py-2.5 text-xs font-semibold text-success">
+            <span>▶</span> Este es el nodo de inicio de la conversación
+          </div>
+        ) : (
+          <button
+            onClick={() => onSetStart(node.id)}
+            className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-surface-border bg-surface-raised py-2.5 text-xs font-semibold text-muted transition hover:border-success hover:text-success"
+          >
+            ▶ Marcar como inicio de la conversación
+          </button>
+        )
+      )}
 
       <Field label="Título del nodo">
         <input className="input" value={d.label} onChange={(e) => onChange({ label: e.target.value })} />

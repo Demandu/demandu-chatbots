@@ -141,6 +141,8 @@ export interface DemanduNodeData {
   /** solo para type = "message" */
   media?: "none" | "image" | "video" | "file";
   typingDelay?: number;
+  /** marca este nodo como el arranque de la conversación (solo uno por flujo) */
+  isStart?: boolean;
   /** acciones que se disparan al llegar al nodo (capa compartida) */
   actions?: NodeAction[];
   /** siguiente nodo por defecto (no aplica a buttons/condition/end) */
