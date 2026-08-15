@@ -268,11 +268,14 @@ export function Inspector({ node, onChange, catalogs }: Props) {
               </select>
             </Field>
           )}
-          <div className="mb-4 space-y-2">
+          <div className="mb-2 space-y-2">
             <Toggle label="Solo en horario laboral" checked={d.businessHoursOnly ?? false} onChange={(v) => onChange({ businessHoursOnly: v })} />
             <Toggle label="No asignar a agentes offline" checked={d.skipOffline ?? true} onChange={(v) => onChange({ skipOffline: v })} />
             <Toggle label="Esperar a que un agente tome el chat" checked={d.waitForAssignment ?? true} onChange={(v) => onChange({ waitForAssignment: v })} />
           </div>
+          <p className="mb-4 text-[11px] text-muted-2">
+            El horario laboral se define en <b className="text-muted">Configuración → Horario laboral</b>.
+          </p>
         </>
       )}
 

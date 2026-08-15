@@ -6,6 +6,25 @@ import { getCurrentOrgId } from "@/lib/org";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 
+const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+
+// ── Horario laboral (a nivel organización) ───────────────────────────────────
+export async function updateBusinessHours(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  const business_hours: Record<string, any> = {};
+  for (const d of DAYS) {
+    business_hours[d] = {
+      enabled: formData.get(`${d}_enabled`) === "on",
+      open: s(formData.get(`${d}_open`)) || "09:00",
+      close: s(formData.get(`${d}_close`)) || "18:00",
+    };
+  }
+  const timezone = s(formData.get("timezone")) || "America/Mexico_City";
+  await createClient().from("organizations").update({ business_hours, timezone }).eq("id", orgId);
+  revalidatePath("/settings/hours");
+}
+
 // ── Etiquetas ────────────────────────────────────────────────────────────────
 export async function createTag(formData: FormData) {
   const name = s(formData.get("name"));

@@ -8,6 +8,7 @@ const TABS = [
   { href: "/settings/teams", label: "Equipos y miembros" },
   { href: "/settings/lead-groups", label: "Grupos de leads" },
   { href: "/settings/states", label: "Estados" },
+  { href: "/settings/hours", label: "Horario laboral" },
 ];
 
 export function SettingsNav() {
