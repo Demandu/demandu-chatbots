@@ -5,7 +5,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
 
 /** Verifica la firma X-Hub-Signature-256 del webhook con el App Secret. */
 export function verifySignature(rawBody: string, signature: string | null): boolean {
-  const secret = process.env.WHATSAPP_APP_SECRET;
+  const secret = process.env.META_APP_SECRET ?? process.env.WHATSAPP_APP_SECRET;
   if (!secret) return true; // si no hay secret configurado, no bloquea (best-effort)
   if (!signature) return false;
   const expected =

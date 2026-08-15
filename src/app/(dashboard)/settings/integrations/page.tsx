@@ -1,4 +1,3 @@
-import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { disconnectIntegration, saveWhatsappChannel, disconnectWhatsapp } from "../actions";
@@ -25,10 +24,12 @@ export default async function IntegrationsPage({
   const err = searchParams?.error;
   const connected = searchParams?.connected === "1";
 
-  const h = headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "demandu-chatbots.netlify.app";
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  const webhookUrl = `${proto}://${host}/api/webhooks/whatsapp`;
+  // El webhook vive en una Edge Function de Supabase (recibe los mensajes de
+  // WhatsApp). Al conectar por Embedded Signup se suscribe solo; este dato es
+  // solo de referencia / para conexión manual avanzada.
+  const supaBase = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://stgedtcsuyypzjbxcpoe.supabase.co";
+  const webhookUrl = `${supaBase}/functions/v1/whatsapp`;
+  const verifyToken = "demandu_wa_2026";
   const waBots = ((bots as any[]) ?? []).filter((b) => b.channel === "whatsapp");
 
   return (
@@ -121,9 +122,9 @@ export default async function IntegrationsPage({
               </div>
               <div className="flex flex-wrap gap-x-2">
                 <span className="text-muted-2">Verify token:</span>
-                <code className="font-mono text-white">el valor de <b>WHATSAPP_VERIFY_TOKEN</b> en Netlify</code>
+                <code className="font-mono text-white">{verifyToken}</code>
               </div>
-              <div className="text-muted-2">Suscríbete al campo <b className="text-muted">messages</b>.</div>
+              <div className="text-muted-2">Suscríbete al campo <b className="text-muted">messages</b>. Si conectas por el botón de arriba (Embedded Signup), esto se configura solo.</div>
             </div>
 
             {wa ? (

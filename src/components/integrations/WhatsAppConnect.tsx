@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 declare global {
   interface Window {
@@ -85,36 +86,45 @@ export function WhatsAppConnect({
     setStatus("connecting");
     setMsg("");
     window.FB.login(
-      (response: any) => {
+      async (response: any) => {
         const code = response?.authResponse?.code;
         if (!code) {
           setStatus("error");
           setMsg("Conexión cancelada o sin permisos.");
           return;
         }
-        fetch("/api/integrations/whatsapp/embedded", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code,
-            bot_id: botId,
-            phone_number_id: session.current.phone_number_id,
-            waba_id: session.current.waba_id,
-          }),
-        })
-          .then((r) => r.json())
-          .then((j) => {
-            if (j.ok) {
-              window.location.reload();
-            } else {
-              setStatus("error");
-              setMsg(j.error ?? "No se pudo completar la conexión.");
-            }
-          })
-          .catch(() => {
-            setStatus("error");
-            setMsg("Error de red al conectar.");
+        try {
+          // El intercambio del código lo hace una Edge Function de Supabase
+          // (ahí vive el App Secret, no en Netlify). Mandamos el access_token
+          // del usuario para que el servidor identifique su organización.
+          const supabase = createClient();
+          const { data: { session: sess } } = await supabase.auth.getSession();
+          const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+          const res = await fetch(`${base}/functions/v1/whatsapp-embedded`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${sess?.access_token ?? ""}`,
+              apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+            },
+            body: JSON.stringify({
+              code,
+              bot_id: botId,
+              phone_number_id: session.current.phone_number_id,
+              waba_id: session.current.waba_id,
+            }),
           });
+          const j = await res.json();
+          if (j.ok) {
+            window.location.reload();
+          } else {
+            setStatus("error");
+            setMsg(j.error ?? "No se pudo completar la conexión.");
+          }
+        } catch {
+          setStatus("error");
+          setMsg("Error de red al conectar.");
+        }
       },
       {
         config_id: configId,
@@ -129,7 +139,7 @@ export function WhatsAppConnect({
     return (
       <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 p-3 text-[11px] text-muted">
         Para habilitar la conexión con un clic, configura <b className="text-white">NEXT_PUBLIC_META_APP_ID</b> y{" "}
-        <b className="text-white">NEXT_PUBLIC_META_CONFIG_ID</b> en Netlify (y <b className="text-white">META_APP_SECRET</b> como secreta).
+        <b className="text-white">NEXT_PUBLIC_META_CONFIG_ID</b> en Netlify, y el secreto <b className="text-white">META_APP_SECRET</b> en Supabase (Edge Functions → Secrets).
       </p>
     );
   }
