@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Send, Bot, User, Phone, Mail, Tag as TagIcon, Sparkles, CheckCircle2, RotateCcw, MailPlus, CheckCheck, Smile, Paperclip } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { ChannelBadge } from "./ChannelBadge";
 
 type Contact = { id: string; name: string | null; phone: string | null; email: string | null; channel: string | null; tags: string[] | null };
 type State = { id: string; name: string; color: string };
@@ -211,7 +212,9 @@ export function InboxClient({
                   <div className="grid h-11 w-11 place-items-center rounded-full bg-gradient-to-br from-pink to-violet font-display text-sm font-bold text-white">
                     {initials(c.contact?.name)}
                   </div>
-                  <span className="absolute -bottom-0.5 -right-0.5 text-[11px]" title={ch.label}>{ch.emoji}</span>
+                  <span className="absolute -bottom-0.5 -right-0.5" title={ch.label}>
+                    <ChannelBadge channel={c.channel} size={17} />
+                  </span>
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
@@ -249,7 +252,10 @@ export function InboxClient({
         <div className="flex flex-1 flex-col bg-[#0b0b23]">
           {/* Header */}
           <div className="flex flex-none items-center gap-3 border-b border-surface-border px-4 py-2.5" style={{ backgroundColor: "#101026" }}>
-            <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-xs font-bold text-white">{initials(sel.contact?.name)}</div>
+            <div className="relative flex-none">
+              <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-xs font-bold text-white">{initials(sel.contact?.name)}</div>
+              <span className="absolute -bottom-1 -right-1"><ChannelBadge channel={sel.channel} size={15} /></span>
+            </div>
             <div className="min-w-0">
               <div className="text-sm font-semibold text-white">{sel.contact?.name ?? "Contacto"}</div>
               <div className="text-[11px] text-muted-2">{(CH[sel.channel] ?? CH.webchat).label} · {sel.contact?.phone ?? "—"}</div>

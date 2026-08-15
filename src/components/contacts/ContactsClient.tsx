@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Search } from "lucide-react";
 import { deleteContact } from "@/app/(dashboard)/contacts/actions";
+import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 
 type Contact = {
   id: string;
@@ -76,7 +77,16 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
                         <span className="font-medium text-white">{c.name ?? "—"}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-muted">{ch ? `${ch.emoji} ${ch.label}` : "—"}</td>
+                    <td className="px-4 py-3 text-muted">
+                      {c.channel ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <ChannelIcon channel={c.channel} className="h-4 w-4" />
+                          {ch?.label ?? c.channel}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-muted">{c.phone ?? "—"}</td>
                     <td className="px-4 py-3 text-muted">{c.email ?? "—"}</td>
                     <td className="px-4 py-3">
