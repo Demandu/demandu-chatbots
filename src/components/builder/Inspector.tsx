@@ -141,45 +141,95 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
         </>
       )}
 
-      {/* Botones: por opción (texto, keywords, etiqueta) */}
+      {/* Botones / Selección única: opciones + ajustes por opción + avanzado */}
       {node.type === "buttons" && (
-        <Field label="Opciones">
-          {buttons.map((b, i) => (
-            <div key={b.id} className="mb-3 rounded-xl border border-surface-border bg-surface-raised p-2.5">
-              <div className="flex items-center gap-2">
-                <span className="text-muted-2">⿴</span>
+        <>
+          <Field label="Opciones (el contacto elige una)">
+            {buttons.map((b, i) => (
+              <div key={b.id} className="mb-3 rounded-xl border border-surface-border bg-surface-raised p-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-2">⿴</span>
+                  <input
+                    className="flex-1 bg-transparent text-sm font-medium text-white focus:outline-none"
+                    value={b.label}
+                    placeholder="Texto del botón"
+                    onChange={(e) => updateButton(i, { label: e.target.value })}
+                  />
+                  <button className="text-muted-2 hover:text-danger" onClick={() => removeButton(i)} title="Quitar">✕</button>
+                </div>
+
                 <input
-                  className="flex-1 bg-transparent text-sm font-medium text-white focus:outline-none"
-                  value={b.label}
-                  placeholder="Texto del botón"
-                  onChange={(e) => updateButton(i, { label: e.target.value })}
-                />
-                <button className="text-muted-2 hover:text-danger" onClick={() => removeButton(i)} title="Quitar">✕</button>
-              </div>
-              <div className="mt-2 space-y-2 border-t border-surface-border pt-2">
-                <input
-                  className="w-full rounded-lg bg-surface-card px-2 py-1.5 text-xs text-white placeholder:text-muted-2 focus:outline-none"
+                  className="mt-2 w-full rounded-lg bg-surface-card px-2 py-1.5 text-xs text-white placeholder:text-muted-2 focus:outline-none"
                   value={b.keywords ?? ""}
-                  placeholder="Palabras clave (separadas por coma)"
+                  placeholder="Palabras clave que también la disparan (coma)"
                   onChange={(e) => updateButton(i, { keywords: e.target.value })}
                 />
-                <select
-                  className="w-full rounded-lg bg-surface-card px-2 py-1.5 text-xs text-white focus:outline-none"
-                  value={b.tagIds?.[0] ?? ""}
-                  onChange={(e) => updateButton(i, { tagIds: e.target.value ? [e.target.value] : [] })}
-                >
-                  <option value="">🏷️ Etiqueta al elegir… (opcional)</option>
-                  {(catalogs?.tags ?? []).map((t: any) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+
+                {/* Ajustes por opción (equivalente al engranaje de Single Choice) */}
+                <details className="mt-2">
+                  <summary className="cursor-pointer select-none text-[11px] font-semibold text-muted-2 hover:text-muted">
+                    ⚙️ Al elegir esta opción…
+                  </summary>
+                  <div className="mt-2 space-y-2 border-t border-surface-border pt-2">
+                    <select
+                      className="w-full rounded-lg bg-surface-card px-2 py-1.5 text-xs text-white focus:outline-none"
+                      value={b.tagIds?.[0] ?? ""}
+                      onChange={(e) => updateButton(i, { tagIds: e.target.value ? [e.target.value] : [] })}
+                    >
+                      <option value="">🏷️ Asignar etiqueta… (opcional)</option>
+                      {(catalogs?.tags ?? []).map((t: any) => (<option key={t.id} value={t.id}>{t.name}</option>))}
+                    </select>
+                    <select
+                      className="w-full rounded-lg bg-surface-card px-2 py-1.5 text-xs text-white focus:outline-none"
+                      value={b.statusId ?? ""}
+                      onChange={(e) => updateButton(i, { statusId: e.target.value })}
+                    >
+                      <option value="">🟢 Cambiar estado del chat… (opcional)</option>
+                      {(catalogs?.states ?? []).map((s: any) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+                    </select>
+                    <select
+                      className="w-full rounded-lg bg-surface-card px-2 py-1.5 text-xs text-white focus:outline-none"
+                      value={b.assignMemberId ?? ""}
+                      onChange={(e) => updateButton(i, { assignMemberId: e.target.value })}
+                    >
+                      <option value="">🧑‍💼 Asignar a un agente… (opcional)</option>
+                      {(catalogs?.members ?? []).map((m: any) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                    </select>
+                  </div>
+                </details>
               </div>
-            </div>
-          ))}
-          <button className="w-full rounded-xl border border-dashed border-surface-border py-2.5 text-xs text-muted hover:border-pink hover:text-pink" onClick={addButton}>
-            ＋ Agregar opción
-          </button>
-        </Field>
+            ))}
+            <button className="w-full rounded-xl border border-dashed border-surface-border py-2.5 text-xs text-muted hover:border-pink hover:text-pink" onClick={addButton}>
+              ＋ Agregar opción
+            </button>
+          </Field>
+
+          {/* Guardar la opción elegida en un atributo (mejora sobre BotPenguin) */}
+          <Field label="Guardar la opción elegida en el atributo (opcional)">
+            {(catalogs?.attributes ?? []).length === 0 ? (
+              <p className="text-[11px] text-muted-2">Crea atributos en Configuración → Atributos para poder guardar la elección.</p>
+            ) : (
+              <select className="input" value={d.variable ?? ""} onChange={(e) => onChange({ variable: e.target.value })}>
+                <option value="">No guardar</option>
+                {(catalogs?.attributes ?? []).map((a: any) => (
+                  <option key={a.id} value={a.key}>{a.name} · {`{{${a.key}}}`}</option>
+                ))}
+              </select>
+            )}
+          </Field>
+
+          <SectionTitle>Opciones avanzadas</SectionTitle>
+          <div className="mb-3 space-y-2">
+            <Toggle label="Permitir regresar" checked={d.allowBack ?? false} onChange={(v) => onChange({ allowBack: v })} />
+            <Toggle label="Permitir omitir la pregunta" checked={d.allowSkip ?? false} onChange={(v) => onChange({ allowSkip: v })} />
+            <Toggle label="Omitir si el contacto ya respondió antes" checked={d.skipIfAnswered ?? false} onChange={(v) => onChange({ skipIfAnswered: v })} />
+            <Toggle label="Notificarme cuando respondan" checked={d.notifyOnResponse ?? false} onChange={(v) => onChange({ notifyOnResponse: v })} />
+            <Toggle label="Incluir en Leads" checked={d.includeInLeads ?? false} onChange={(v) => onChange({ includeInLeads: v })} />
+          </div>
+          <Field label="Retraso antes de mostrar el mensaje (seg)">
+            <input type="number" min={0} step={0.5} className="input w-28" value={d.typingDelay ?? 0} onChange={(e) => onChange({ typingDelay: Number(e.target.value) })} />
+          </Field>
+        </>
       )}
 
       {/* Pregunta: validación + reintentos */}

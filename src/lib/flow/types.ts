@@ -34,6 +34,10 @@ export interface FlowButton {
   keywords?: string;
   /** etiquetas que se asignan al contacto al elegir esta opción */
   tagIds?: string[];
+  /** estado de conversación al que se cambia al elegir esta opción */
+  statusId?: string;
+  /** miembro/agente al que se asigna el chat al elegir esta opción */
+  assignMemberId?: string;
   description?: string;
 }
 
@@ -141,6 +145,12 @@ export interface DemanduNodeData {
   /** solo para type = "message" */
   media?: "none" | "image" | "video" | "file";
   typingDelay?: number;
+  /** solo para type = "buttons" (opciones avanzadas, estilo Single Choice) */
+  allowBack?: boolean;
+  allowSkip?: boolean;
+  skipIfAnswered?: boolean;
+  notifyOnResponse?: boolean;
+  includeInLeads?: boolean;
   /** marca este nodo como el arranque de la conversación (solo uno por flujo) */
   isStart?: boolean;
   /** acciones que se disparan al llegar al nodo (capa compartida) */
