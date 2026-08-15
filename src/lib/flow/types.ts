@@ -34,6 +34,7 @@ export type NodeActionType =
   | "set_attribute"
   | "notify_team"
   | "set_status"
+  | "opt_out"
   | "webhook";
 
 export interface NodeAction {
@@ -53,12 +54,13 @@ export const ACTION_META: Record<
   set_attribute: { label: "Guardar atributo", icon: "🧩", placeholder: "@ciudad = CDMX" },
   notify_team: { label: "Notificar al equipo", icon: "🔔", placeholder: "Canal o correo" },
   set_status: { label: "Cambiar estado", icon: "🟢", placeholder: "ganada" },
+  opt_out: { label: "Dar de baja (opt-out)", icon: "🚫", placeholder: "" },
   webhook: { label: "Disparar webhook", icon: "🔗", placeholder: "https://…" },
 };
 
 export const ACTION_ORDER: NodeActionType[] = [
   "add_tag", "remove_tag", "assign_agent", "assign_group",
-  "set_attribute", "notify_team", "set_status", "webhook",
+  "set_attribute", "notify_team", "set_status", "opt_out", "webhook",
 ];
 
 export interface DemanduNodeData {

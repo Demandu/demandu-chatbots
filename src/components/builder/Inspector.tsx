@@ -23,6 +23,9 @@ const ACTION_SOURCE: Partial<Record<NodeActionType, keyof Catalogs>> = {
   set_status: "states",
 };
 
+/** Acciones que no requieren un valor (solo se ejecutan). */
+const NO_VALUE = new Set<NodeActionType>(["opt_out"]);
+
 /** Panel de configuración del nodo seleccionado. */
 export function Inspector({ node, onChange, catalogs }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -178,7 +181,11 @@ export function Inspector({ node, onChange, catalogs }: Props) {
             <span className="grid h-7 w-7 flex-none place-items-center rounded-lg bg-pink/10 text-sm">{am.icon}</span>
             <div className="min-w-0 flex-1">
               <div className="text-[11px] font-bold text-white">{am.label}</div>
-              {ACTION_SOURCE[a.type] ? (
+              {NO_VALUE.has(a.type) ? (
+                <div className="text-[11px] leading-snug text-muted-2">
+                  Marca al contacto como dado de baja: no recibirá campañas ni plantillas de WhatsApp, aunque esté en un CSV o grupo.
+                </div>
+              ) : ACTION_SOURCE[a.type] ? (
                 (() => {
                   const list = (catalogs?.[ACTION_SOURCE[a.type]!] ?? []) as any[];
                   return (
