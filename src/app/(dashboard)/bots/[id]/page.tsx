@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
 import { FlowBuilder } from "@/components/builder/FlowBuilder";
+import { BotTitle } from "@/components/BotTitle";
 import { sampleFlow } from "@/lib/flow/sample";
 import { createClient } from "@/lib/supabase/server";
 import type { Flow } from "@/lib/flow/types";
@@ -31,13 +32,7 @@ export default async function BotBuilderPage({ params }: { params: { id: string 
 
   return (
     <>
-      <Topbar
-        crumb={
-          <span>
-            Bots / <span className="font-semibold text-white">{bot.name}</span>
-          </span>
-        }
-      />
+      <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <FlowBuilder
         flow={flow}
         flowId={(flowRow?.id as string) ?? null}

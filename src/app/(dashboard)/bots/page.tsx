@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { createClient } from "@/lib/supabase/server";
-import { createBot, deleteBot } from "./actions";
-import { Plus } from "lucide-react";
+import { createBot, deleteBot, importBot } from "./actions";
+import { Plus, Upload } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +22,30 @@ export default async function BotsPage() {
             <h2 className="font-display text-2xl font-bold text-white">Mis bots</h2>
             <p className="mt-1 text-muted">Diseña, prueba y publica tus flujos conversacionales.</p>
           </div>
-          <form action={createBot} className="flex items-end gap-2">
-            <input name="name" placeholder="Nombre del bot" className="input w-56" />
-            <button className="btn-primary">
-              <Plus className="h-4 w-4" /> Nuevo bot
-            </button>
-          </form>
+          <div className="flex flex-wrap items-end gap-2">
+            <form action={createBot} className="flex items-end gap-2">
+              <input name="name" placeholder="Nombre del bot" className="input w-48" />
+              <button className="btn-primary">
+                <Plus className="h-4 w-4" /> Nuevo bot
+              </button>
+            </form>
+            <form action={importBot} className="flex items-center gap-2 rounded-xl border border-dashed border-surface-border px-2.5 py-2">
+              <input
+                type="file"
+                name="file"
+                accept="application/json,.json"
+                required
+                className="max-w-[190px] text-xs text-muted-2 file:mr-2 file:rounded-lg file:border-0 file:bg-surface-raised file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-surface-card"
+              />
+              <button className="btn-ghost whitespace-nowrap">
+                <Upload className="h-4 w-4" /> Importar JSON
+              </button>
+            </form>
+          </div>
         </div>
+        <p className="-mt-3 mb-6 text-xs text-muted-2">
+          Importa un bot desde un JSON exportado (formato BotPenguin) para clonarlo como plantilla.
+        </p>
 
         {bots.length === 0 ? (
           <div className="card grid place-items-center p-12 text-center">
