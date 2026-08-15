@@ -238,6 +238,56 @@ export function Inspector({ node, onChange, catalogs }: Props) {
         </Field>
       )}
 
+      {/* Asignar chat: lógica de reparto */}
+      {node.type === "assign" && (
+        <>
+          <Field label="Repartir por">
+            <select className="input" value={d.assignBy ?? "round_robin"} onChange={(e) => onChange({ assignBy: e.target.value as DemanduNodeData["assignBy"] })}>
+              <option value="round_robin">Round-robin (equitativo)</option>
+              <option value="team">Equipo específico</option>
+              <option value="member">Miembro específico</option>
+            </select>
+          </Field>
+          {(d.assignBy ?? "round_robin") !== "member" && (
+            <Field label={d.assignBy === "team" ? "Equipo" : "Equipo (para el round-robin, opcional)"}>
+              <select className="input" value={d.teamId ?? ""} onChange={(e) => onChange({ teamId: e.target.value })}>
+                <option value="">{d.assignBy === "team" ? "Selecciona…" : "Todos los agentes"}</option>
+                {(catalogs?.teams ?? []).map((t: any) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {d.assignBy === "member" && (
+            <Field label="Miembro">
+              <select className="input" value={d.memberId ?? ""} onChange={(e) => onChange({ memberId: e.target.value })}>
+                <option value="">Selecciona…</option>
+                {(catalogs?.members ?? []).map((m: any) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <div className="mb-4 space-y-2">
+            <Toggle label="Solo en horario laboral" checked={d.businessHoursOnly ?? false} onChange={(v) => onChange({ businessHoursOnly: v })} />
+            <Toggle label="No asignar a agentes offline" checked={d.skipOffline ?? true} onChange={(v) => onChange({ skipOffline: v })} />
+            <Toggle label="Esperar a que un agente tome el chat" checked={d.waitForAssignment ?? true} onChange={(v) => onChange({ waitForAssignment: v })} />
+          </div>
+        </>
+      )}
+
+      {/* Redirigir a otro flujo/bot */}
+      {node.type === "redirect" && (
+        <Field label="Redirigir a otro bot / flujo">
+          <select className="input" value={d.targetBotId ?? ""} onChange={(e) => onChange({ targetBotId: e.target.value })}>
+            <option value="">Selecciona un bot…</option>
+            {(catalogs?.bots ?? []).map((b: any) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+
       {/* ── Acciones compartidas ── */}
       <SectionTitle>Acciones al llegar</SectionTitle>
       {actions.map((a, i) => {
@@ -330,5 +380,19 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
       <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-2">{children}</span>
       <span className="h-px flex-1 bg-surface-border" />
     </div>
+  );
+}
+
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-surface-border bg-surface-raised px-3 py-2 text-sm text-muted">
+      {label}
+      <span
+        onClick={(e) => { e.preventDefault(); onChange(!checked); }}
+        className={`relative h-5 w-9 flex-none rounded-full transition ${checked ? "bg-gradient-to-r from-pink to-violet" : "bg-surface-border"}`}
+      >
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? "left-[18px]" : "left-0.5"}`} />
+      </span>
+    </label>
   );
 }

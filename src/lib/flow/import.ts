@@ -20,12 +20,12 @@ const TYPE_MAP: Record<string, NodeType> = {
   condition: "condition",
   delay: "delay",
   live_chat: "human",
-  "assign-chat": "human",
+  "assign-chat": "assign",
   agent: "human",
+  redirect: "redirect",
   whatsapp_flow: "action",
   api: "action",
   payment: "action",
-  redirect: "action",
   googleSheet: "action",
 };
 
@@ -66,6 +66,13 @@ export function botpenguinToGraph(raw: any): { nodes: any[]; edges: any[] } {
     }
     if (q.type === "image") data.media = "image";
     if (type === "ai") data.aiProvider = "demandu";
+    if (type === "assign" && q.chatAssignment) {
+      const ca = q.chatAssignment;
+      data.assignBy = ca.logic === "roundRobin" ? "round_robin" : ca.assignBy === "teamMembers" ? "member" : "team";
+      data.businessHoursOnly = !!ca.assignInBusinessHours;
+      data.skipOffline = !!ca.doNotassignToOfflineUsers;
+      data.waitForAssignment = !!ca.waitForAssignment;
+    }
 
     nodes.push({ id: q.id, type, position: { x: pos.x, y: pos.y }, data });
 

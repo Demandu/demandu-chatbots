@@ -16,6 +16,8 @@ export type NodeType =
   | "calendar"
   | "tags"
   | "human"
+  | "assign"
+  | "redirect"
   | "end";
 
 export interface FlowButton {
@@ -95,6 +97,15 @@ export interface DemanduNodeData {
   durationMin?: number;
   /** solo para type = "human" */
   team?: string;
+  /** solo para type = "assign" (Asignar chat) */
+  assignBy?: "team" | "member" | "round_robin";
+  teamId?: string;
+  memberId?: string;
+  businessHoursOnly?: boolean;
+  skipOffline?: boolean;
+  waitForAssignment?: boolean;
+  /** solo para type = "redirect" */
+  targetBotId?: string;
   /** solo para type = "message" */
   media?: "none" | "image" | "video" | "file";
   typingDelay?: number;
@@ -144,11 +155,13 @@ export const NODE_META: Record<
   calendar: { label: "Agendar cita", description: "Google Calendar", icon: "📅", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
   tags: { label: "Etiquetar", description: "Segmenta el contacto", icon: "🏷", color: "#FFC857", bg: "rgba(255,200,87,.15)" },
   human: { label: "Agente humano", description: "Transferir a tu equipo", icon: "🧑‍💼", color: "#FF5A5F", bg: "rgba(255,90,95,.15)" },
+  assign: { label: "Asignar chat", description: "Reparte a agente / equipo", icon: "🎧", color: "#FF6FB0", bg: "rgba(255,111,176,.15)" },
+  redirect: { label: "Redirigir", description: "Va a otro flujo / bot", icon: "🔀", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
   end: { label: "Fin", description: "Cierra el flujo", icon: "⏹", color: "#6E70A0", bg: "rgba(110,112,160,.15)" },
 };
 
 /** Orden de los componentes en la paleta del constructor. */
 export const PALETTE_ORDER: NodeType[] = [
   "message", "media", "question", "buttons", "condition",
-  "ai", "delay", "action", "calendar", "tags", "human", "end",
+  "ai", "delay", "action", "calendar", "tags", "human", "assign", "redirect", "end",
 ];

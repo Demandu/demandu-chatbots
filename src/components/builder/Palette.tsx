@@ -5,9 +5,9 @@ import { NODE_META, type NodeType } from "@/lib/flow/types";
 /** Componentes agrupados por categoría en la paleta del constructor. */
 const CATEGORIES: { name: string; items: NodeType[] }[] = [
   { name: "Mensajes", items: ["message", "media", "question", "buttons"] },
-  { name: "Lógica", items: ["condition", "delay"] },
+  { name: "Lógica", items: ["condition", "delay", "redirect"] },
   { name: "Inteligencia", items: ["ai"] },
-  { name: "Acciones", items: ["action", "calendar", "tags", "human"] },
+  { name: "Acciones", items: ["action", "calendar", "tags", "human", "assign"] },
   { name: "Cierre", items: ["end"] },
 ];
 
