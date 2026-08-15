@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -27,12 +27,10 @@ import {
   NODE_META, type Flow, type DemanduNodeData, type NodeType,
 } from "@/lib/flow/types";
 
-/** Registra el mismo componente para todos los tipos de nodo. */
 const nodeTypes: NodeTypes = Object.fromEntries(
   (Object.keys(NODE_META) as NodeType[]).map((t) => [t, DemanduNodeCard])
 ) as NodeTypes;
 
-/** Estilo de arista de marca: violeta, flecha y flujo animado. */
 const EDGE_STYLE = {
   animated: true,
   markerEnd: { type: MarkerType.ArrowClosed, color: "#6E42FF", width: 18, height: 18 },
@@ -48,8 +46,7 @@ function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) 
   );
   const [selectedId, setSelectedId] = useState<string | null>(flow.nodes[0]?.id ?? null);
   const [showPreview, setShowPreview] = useState(false);
-  const [save, setSave] = useState<SaveState>("idle");
-  const wrapper = useRef<HTMLDivElement>(null);
+  const [save, setSave] = useState<SaveState>("saved");
   const { screenToFlowPosition } = useReactFlow();
   const { catalogs } = useCatalogs();
 
@@ -96,50 +93,52 @@ function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) 
     [flow, nodes, edges]
   );
 
-  const handleSave = useCallback(async () => {
-    if (!flowId) {
-      setSave("error");
-      return;
-    }
+  // ── Autoguardado (debounce) por cada cambio en el grafo ──────────────────────
+  const skipFirst = useRef(true);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (skipFirst.current) { skipFirst.current = false; return; }
+    if (!flowId) return;
     setSave("saving");
-    const graph = {
-      nodes: nodes.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
-      edges: edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle ?? null,
-        label: (e as any).label ?? null,
-      })),
-    };
-    const { error } = await createClient().from("flows").update({ graph }).eq("id", flowId);
-    setSave(error ? "error" : "saved");
-    setTimeout(() => setSave("idle"), 1800);
-  }, [flowId, nodes, edges]);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      const graph = {
+        nodes: nodes.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
+        edges: edges.map((e) => ({
+          id: e.id, source: e.source, target: e.target,
+          sourceHandle: e.sourceHandle ?? null, label: (e as any).label ?? null,
+        })),
+      };
+      const { error } = await createClient().from("flows").update({ graph }).eq("id", flowId);
+      setSave(error ? "error" : "saved");
+    }, 700);
+    return () => { if (timer.current) clearTimeout(timer.current); };
+  }, [nodes, edges, flowId]);
 
-  const saveLabel =
-    save === "saving" ? "Guardando…" : save === "saved" ? "✓ Guardado" : save === "error" ? "Error al guardar" : "Guardar";
+  const status =
+    save === "saving"
+      ? { dot: "bg-warning animate-pulse", text: "Guardando…" }
+      : save === "error"
+      ? { dot: "bg-danger", text: "Error al guardar" }
+      : { dot: "bg-success", text: "Guardado automáticamente" };
 
   return (
     <div className="flex flex-1 overflow-hidden">
       <Palette />
 
-      <div ref={wrapper} className="relative flex-1">
-        {/* Toolbar (pill) */}
-        <div className="absolute left-4 top-4 z-10 flex gap-1 rounded-2xl border border-surface-border bg-surface/70 p-1.5 backdrop-blur">
+      <div className="relative flex-1">
+        {/* Toolbar */}
+        <div className="absolute left-4 top-4 z-10 flex items-center gap-1 rounded-2xl border border-surface-border bg-surface/70 p-1.5 backdrop-blur">
           <button
             onClick={() => setShowPreview((s) => !s)}
             className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white"
           >
             ▶ Probar flujo
           </button>
-          <button
-            onClick={handleSave}
-            disabled={save === "saving"}
-            className="rounded-xl bg-demandu-gradient px-3 py-2 font-display text-xs font-semibold text-white disabled:opacity-60"
-          >
-            {saveLabel}
-          </button>
+          <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted">
+            <span className={`h-2 w-2 rounded-full ${status.dot}`} />
+            {status.text}
+          </div>
         </div>
 
         <ReactFlow
@@ -156,18 +155,17 @@ function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) 
           fitView
           proOptions={{ hideAttribution: true }}
         >
-          <Background color="#ffffff14" gap={26} />
+          <Background color="#c4c9d8" gap={26} />
           <Controls />
           <MiniMap
             pannable
             zoomable
-            maskColor="rgba(10,10,40,0.7)"
+            maskColor="rgba(20,22,50,0.08)"
             nodeColor={(n) => NODE_META[n.type as NodeType]?.color ?? "#6E42FF"}
-            style={{ background: "#0f1030", border: "1px solid #2a2c55", borderRadius: 10 }}
+            style={{ background: "#f5f6fb", border: "1px solid #d9dcea", borderRadius: 10 }}
           />
         </ReactFlow>
 
-        {/* Preview drawer */}
         {showPreview && (
           <div className="absolute inset-y-0 right-0 z-20 flex w-[420px] flex-col items-center justify-center border-l border-surface-border bg-surface/95 p-6 backdrop-blur">
             <Webchat flow={liveFlow} autostart />

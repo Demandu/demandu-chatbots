@@ -42,15 +42,16 @@
   }
 }
 
-/* React Flow — Demandu dark theme overrides */
-.react-flow__background { background-color: #0b0b23; }
+/* React Flow — lienzo claro (chrome oscuro + canvas gris claro) */
+.react-flow__background { background-color: #edeff5; }
 .react-flow__edge-path { stroke: #6E42FF; stroke-width: 2.5; }
-.react-flow__handle { background: #0b0b23; border: 2px solid #6e42ff; width: 11px; height: 11px; }
-.react-flow__controls { border-radius: 10px; overflow: hidden; box-shadow: none; }
+.react-flow__handle { background: #ffffff; border: 2px solid #6e42ff; width: 11px; height: 11px; }
+.react-flow__controls { border-radius: 10px; overflow: hidden; box-shadow: 0 6px 20px -8px rgba(0,0,0,.25); }
 .react-flow__controls-button {
-  background: #171838; border-bottom: 1px solid #2a2c55; color: #9a9cc7;
+  background: #ffffff; border-bottom: 1px solid #e6e8f0; color: #55597a;
 }
-.react-flow__controls-button:hover { background: #1b1c42; }
+.react-flow__controls-button:hover { background: #f1f2f8; }
+.react-flow__controls-button svg { fill: #55597a; }
 .react-flow__attribution { display: none; }
 
 /* Custom muted utility mapping */
