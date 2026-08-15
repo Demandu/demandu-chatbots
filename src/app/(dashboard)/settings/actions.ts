@@ -88,6 +88,17 @@ export async function createState(formData: FormData) {
     .insert({ org_id: orgId, name, color, is_default: false, sort: 100 });
   revalidatePath("/settings/states");
 }
+export async function updateState(formData: FormData) {
+  const id = s(formData.get("id"));
+  const name = s(formData.get("name"));
+  const color = s(formData.get("color")) || "#3A85FF";
+  if (!id || !name) return;
+  await createClient()
+    .from("conversation_states")
+    .update({ name, color })
+    .eq("id", id);
+  revalidatePath("/settings/states");
+}
 export async function deleteState(formData: FormData) {
   // Solo se permite borrar estados personalizados (no los de por defecto)
   await createClient()
