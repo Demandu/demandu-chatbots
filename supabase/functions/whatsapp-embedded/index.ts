@@ -1,20 +1,28 @@
 // Edge Function: whatsapp-embedded
-// Cierra el Embedded Signup de Meta: intercambia el `code` por un token de
-// negocio, resuelve el número, suscribe la app al webhook de la WABA y guarda
-// el canal en `whatsapp_channels`.
+// Cierra el Embedded Signup de Meta SIN tocar el webhook a nivel de app.
 //
-// El App Secret vive AQUÍ (secreto de Supabase: META_APP_SECRET), no en Netlify.
-// El App ID es público; se usa el valor por defecto de la app "Demandu Chatbots"
-// y puede sobreescribirse con el secreto META_APP_ID si algún día cambia.
+// PATRÓN (mismo que Demandu Property Management / demandu-residencial):
+// se reusa la app "Demandu Tech" (359551260017042) que ya es Business
+// Partner y que hoy tiene su webhook a nivel de app apuntando a
+// BotPenguin. NO cambiamos ese webhook. En su lugar, al conectar un
+// número nuevo hacemos un OVERRIDE de webhook POR NÚMERO
+// (webhook_configuration.override_callback_uri) hacia nuestra función
+// `whatsapp`. Así:
+//   • Los números que siguen en BotPenguin -> webhook de app (BotPenguin), intacto.
+//   • Los números nuevos de Demandu -> override -> nuestra función.
 //
-// Auth: el navegador manda el access_token de Supabase del usuario en el header
-// Authorization. Con él identificamos al usuario y su org (memberships).
+// No hace falta App Secret ni intercambio de code: usamos un token de
+// System User de larga duración (secreto WHATSAPP_TOKEN) con permisos
+// whatsapp_business_management + whatsapp_business_messaging, igual que
+// residencial. El navegador nos manda { waba_id, phone_number_id, bot_id }
+// (que obtiene del evento WA_EMBEDDED_SIGNUP del popup) + su access_token
+// de Supabase para identificar la organización.
+//
 // Se despliega con verify_jwt=false porque validamos el token manualmente.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GRAPH = "https://graph.facebook.com/v20.0";
-const DEFAULT_APP_ID = "1105017185196755"; // Demandu Chatbots
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -30,6 +38,13 @@ function json(obj: unknown, status = 200) {
   });
 }
 
+function generatePin(): string {
+  // PIN de verificación en dos pasos (6 dígitos) para /register.
+  let pin = "";
+  for (let i = 0; i < 6; i++) pin += Math.floor(Math.random() * 10);
+  return pin;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -37,12 +52,13 @@ Deno.serve(async (req) => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
-  const appId = Deno.env.get("META_APP_ID") ?? DEFAULT_APP_ID;
-  const secret = Deno.env.get("META_APP_SECRET");
-  if (!secret) return json({ error: "server_not_configured" }, 500);
+  const WHATSAPP_TOKEN = Deno.env.get("WHATSAPP_TOKEN");
+  const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") ?? "demandu_wa_2026";
+  if (!WHATSAPP_TOKEN) return json({ error: "server_not_configured" }, 500);
 
-  // 0) Autenticar al usuario a partir del access_token que manda el navegador
-  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  // 0) Autenticar al usuario a partir del access_token del navegador
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
   if (!token) return json({ error: "unauthorized" }, 401);
 
   const userClient = createClient(SUPABASE_URL, ANON, {
@@ -64,63 +80,86 @@ Deno.serve(async (req) => {
   if (!orgId) return json({ error: "no_org" }, 403);
 
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
-  const code = body.code as string | undefined;
+  const waba_id = body.waba_id as string | undefined;
+  const phone_number_id = body.phone_number_id as string | undefined;
   const bot_id = body.bot_id as string | undefined;
-  let pnid = body.phone_number_id as string | undefined;
-  const waid = body.waba_id as string | undefined;
-  if (!code) return json({ error: "missing_code" });
+  if (!waba_id || !phone_number_id) {
+    return json({ error: "missing_waba_or_phone" });
+  }
 
   try {
-    // 1) Intercambia el código por un token de negocio (System User)
-    const tok = await fetch(
-      `${GRAPH}/oauth/access_token?client_id=${appId}&client_secret=${secret}&code=${encodeURIComponent(code)}`,
-    ).then((r) => r.json());
-    if (!tok.access_token) {
-      return json({ error: tok.error?.message ?? "token_exchange_failed" });
-    }
-    const access_token: string = tok.access_token;
-
-    // 2) Resuelve el phone_number_id si el popup no lo entregó
-    if (!pnid && waid) {
-      const pn = await fetch(
-        `${GRAPH}/${waid}/phone_numbers?access_token=${access_token}`,
-      )
-        .then((r) => r.json())
-        .catch(() => null);
-      pnid = pn?.data?.[0]?.id;
-    }
-    if (!pnid) return json({ error: "no_phone_number" });
-
-    // 3) Suscribe nuestra app al webhook de esa WABA
-    if (waid) {
-      try {
-        await fetch(`${GRAPH}/${waid}/subscribed_apps`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${access_token}` },
-        });
-      } catch {
-        /* best-effort */
-      }
+    // 1) Suscribe nuestra app (Demandu Tech) al WABA de este número
+    const subRes = await fetch(`${GRAPH}/${waba_id}/subscribed_apps`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    });
+    const subJson = await subRes.json().catch(() => ({}));
+    if (!subRes.ok) {
+      return json({
+        error: `no_subscribe: ${subJson?.error?.message ?? JSON.stringify(subJson)}`,
+      });
     }
 
-    // 4) Número visible (para la UI)
+    // 2) Datos visibles del número
     let display: string | null = null;
     try {
       const info = await fetch(
-        `${GRAPH}/${pnid}?fields=display_phone_number&access_token=${access_token}`,
+        `${GRAPH}/${phone_number_id}?fields=display_phone_number,verified_name`,
+        { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } },
       ).then((r) => r.json());
       display = info?.display_phone_number ?? null;
     } catch {
       /* no-op */
     }
 
+    // 3) OVERRIDE de webhook POR NÚMERO -> nuestra función `whatsapp`.
+    //    Esto NO cambia el webhook a nivel de app (BotPenguin sigue igual).
+    const callbackUrl = `${SUPABASE_URL}/functions/v1/whatsapp`;
+    const overrideRes = await fetch(`${GRAPH}/${phone_number_id}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        webhook_configuration: {
+          override_callback_uri: callbackUrl,
+          verify_token: VERIFY_TOKEN,
+        },
+      }),
+    });
+    const overrideJson = await overrideRes.json().catch(() => ({}));
+    if (!overrideRes.ok) {
+      console.error("[whatsapp-embedded] override falló:", overrideJson);
+    }
+
+    // 4) Registra el número para Cloud API (idempotente)
+    const pin = generatePin();
+    const regRes = await fetch(`${GRAPH}/${phone_number_id}/register`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ messaging_product: "whatsapp", pin }),
+    });
+    let registerOk = regRes.ok;
+    if (!regRes.ok) {
+      const regJson = await regRes.json().catch(() => ({}));
+      const msg: string =
+        regJson?.error?.error_user_msg ?? regJson?.error?.message ?? "";
+      registerOk = /already registered|already verified/i.test(msg);
+      if (!registerOk) console.error("[whatsapp-embedded] register falló:", msg);
+    }
+
+    // 5) Guarda el canal. Enviamos con el mismo System User token.
     const { error } = await admin.from("whatsapp_channels").upsert(
       {
         org_id: orgId,
-        phone_number_id: pnid,
-        waba_id: waid ?? null,
+        phone_number_id,
+        waba_id,
         display_number: display,
-        access_token,
+        access_token: WHATSAPP_TOKEN,
         bot_id: bot_id || null,
         updated_at: new Date().toISOString(),
       },
@@ -128,7 +167,13 @@ Deno.serve(async (req) => {
     );
     if (error) return json({ error: error.message });
 
-    return json({ ok: true, number: display, phone_number_id: pnid });
+    return json({
+      ok: true,
+      number: display,
+      phone_number_id,
+      webhookOverrideOk: overrideRes.ok,
+      registerOk,
+    });
   } catch (e) {
     return json({ error: (e as Error)?.message ?? "embedded_signup_failed" });
   }

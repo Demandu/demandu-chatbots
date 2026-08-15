@@ -21,10 +21,13 @@ const REQUISITOS = [
 ];
 
 /**
- * Conexión de WhatsApp por Embedded Signup (Meta).
- * El cliente hace clic → popup de Meta → elige su WABA/número → autoriza.
- * Recibimos un `code` + info de sesión (phone_number_id, waba_id) que el
- * servidor intercambia por un token y guarda. Sin pegar tokens a mano.
+ * Conexión de WhatsApp por Embedded Signup (Meta), reusando la app
+ * "Demandu Tech". El resultado real (waba_id, phone_number_id) llega por
+ * el evento WA_EMBEDDED_SIGNUP del popup, NO por el callback de FB.login.
+ * Con esos datos llamamos a la Edge Function `whatsapp-embedded`, que hace
+ * el override de webhook POR NÚMERO (sin tocar el webhook de la app) y
+ * guarda el canal. El App Secret no se usa; el backend usa un System User
+ * token (secreto en Supabase).
  */
 export function WhatsAppConnect({
   appId,
@@ -42,14 +45,47 @@ export function WhatsAppConnect({
   const [status, setStatus] = useState<"idle" | "connecting" | "error">("idle");
   const [msg, setMsg] = useState("");
   const [checked, setChecked] = useState<boolean[]>(() => REQUISITOS.map(() => false));
-  const session = useRef<{ phone_number_id?: string; waba_id?: string }>({});
   const allChecked = checked.every(Boolean);
   const toggle = (i: number) => setChecked((c) => c.map((v, idx) => (idx === i ? !v : v)));
+
+  // El listener de postMessage necesita el botId más reciente sin re-suscribirse.
+  const botIdRef = useRef(botId);
+  botIdRef.current = botId;
+
+  /** Cierra la conexión llamando a la Edge Function con los datos del popup. */
+  const completeConnection = async (waba_id: string, phone_number_id: string) => {
+    setStatus("connecting");
+    setMsg("");
+    try {
+      const supabase = createClient();
+      const { data: { session: sess } } = await supabase.auth.getSession();
+      const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const res = await fetch(`${base}/functions/v1/whatsapp-embedded`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sess?.access_token ?? ""}`,
+          apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+        },
+        body: JSON.stringify({ waba_id, phone_number_id, bot_id: botIdRef.current }),
+      });
+      const j = await res.json();
+      if (j.ok) {
+        window.location.reload();
+      } else {
+        setStatus("error");
+        setMsg(j.error ?? "No se pudo completar la conexión.");
+      }
+    } catch {
+      setStatus("error");
+      setMsg("Error de red al conectar.");
+    }
+  };
 
   useEffect(() => {
     if (!appId) return;
     window.fbAsyncInit = function () {
-      window.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version: "v20.0" });
+      window.FB.init({ appId, cookie: true, autoLogAppEvents: true, xfbml: false, version: "v20.0" });
     };
     if (!document.getElementById("fb-sdk")) {
       const s = document.createElement("script");
@@ -63,17 +99,25 @@ export function WhatsAppConnect({
     const onMsg = (e: MessageEvent) => {
       if (typeof e.data !== "string") return;
       if (!e.origin || !e.origin.endsWith("facebook.com")) return;
+      let d: any;
       try {
-        const d = JSON.parse(e.data);
-        if (d.type === "WA_EMBEDDED_SIGNUP" && d.data) {
-          session.current = { phone_number_id: d.data.phone_number_id, waba_id: d.data.waba_id };
-        }
+        d = JSON.parse(e.data);
       } catch {
-        /* no-op */
+        return;
+      }
+      if (d.type !== "WA_EMBEDDED_SIGNUP") return;
+      // Éxito: llegan waba_id + phone_number_id
+      const { phone_number_id, waba_id } = d.data || {};
+      if (phone_number_id && waba_id) {
+        completeConnection(waba_id, phone_number_id);
+      } else if (d.data?.error_message || d.event === "ERROR") {
+        setStatus("error");
+        setMsg(d.data?.error_message ?? "Meta reportó un error al conectar.");
       }
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
   const launch = () => {
@@ -86,44 +130,11 @@ export function WhatsAppConnect({
     setStatus("connecting");
     setMsg("");
     window.FB.login(
-      async (response: any) => {
-        const code = response?.authResponse?.code;
-        if (!code) {
-          setStatus("error");
-          setMsg("Conexión cancelada o sin permisos.");
-          return;
-        }
-        try {
-          // El intercambio del código lo hace una Edge Function de Supabase
-          // (ahí vive el App Secret, no en Netlify). Mandamos el access_token
-          // del usuario para que el servidor identifique su organización.
-          const supabase = createClient();
-          const { data: { session: sess } } = await supabase.auth.getSession();
-          const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-          const res = await fetch(`${base}/functions/v1/whatsapp-embedded`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${sess?.access_token ?? ""}`,
-              apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
-            },
-            body: JSON.stringify({
-              code,
-              bot_id: botId,
-              phone_number_id: session.current.phone_number_id,
-              waba_id: session.current.waba_id,
-            }),
-          });
-          const j = await res.json();
-          if (j.ok) {
-            window.location.reload();
-          } else {
-            setStatus("error");
-            setMsg(j.error ?? "No se pudo completar la conexión.");
-          }
-        } catch {
-          setStatus("error");
-          setMsg("Error de red al conectar.");
+      (response: any) => {
+        // El resultado real (waba_id, phone_number_id) llega por el
+        // listener de postMessage (onMsg). Aquí solo detectamos cancelación.
+        if (!response?.authResponse) {
+          setStatus((s) => (s === "connecting" ? "idle" : s));
         }
       },
       {
@@ -139,7 +150,7 @@ export function WhatsAppConnect({
     return (
       <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 p-3 text-[11px] text-muted">
         Para habilitar la conexión con un clic, configura <b className="text-white">NEXT_PUBLIC_META_APP_ID</b> y{" "}
-        <b className="text-white">NEXT_PUBLIC_META_CONFIG_ID</b> en Netlify, y el secreto <b className="text-white">META_APP_SECRET</b> en Supabase (Edge Functions → Secrets).
+        <b className="text-white">NEXT_PUBLIC_META_CONFIG_ID</b> en Netlify, y el secreto <b className="text-white">WHATSAPP_TOKEN</b> (System User) en Supabase.
       </p>
     );
   }
