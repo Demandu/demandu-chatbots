@@ -7,16 +7,27 @@ import { getCurrentOrgId } from "@/lib/org";
 import { sampleFlow } from "@/lib/flow/sample";
 import { botpenguinToGraph } from "@/lib/flow/import";
 
+const CHANNELS = new Set(["whatsapp", "instagram", "messenger", "webchat"]);
+const CHANNEL_LABEL: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  messenger: "Messenger",
+  webchat: "Web",
+};
+
 /** Crea un bot + su flujo inicial (semilla) y abre el editor. */
 export async function createBot(formData: FormData) {
-  const name = String(formData.get("name") ?? "").trim() || "Nuevo bot";
+  const rawCh = String(formData.get("channel") ?? "").trim();
+  const channel = CHANNELS.has(rawCh) ? rawCh : "webchat";
+  const name =
+    String(formData.get("name") ?? "").trim() || `Bot de ${CHANNEL_LABEL[channel]}`;
   const orgId = await getCurrentOrgId();
   if (!orgId) return;
   const supabase = createClient();
 
   const { data: bot } = await supabase
     .from("bots")
-    .insert({ org_id: orgId, name, status: "draft" })
+    .insert({ org_id: orgId, name, status: "draft", channel })
     .select("id")
     .single();
   if (!bot) return;

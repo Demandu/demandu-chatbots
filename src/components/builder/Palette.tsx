@@ -1,18 +1,33 @@
 "use client";
 
-import { NODE_META, type NodeType } from "@/lib/flow/types";
+import { NODE_META, type NodeType, type BotChannel } from "@/lib/flow/types";
 
-/** Componentes agrupados por categoría en la paleta del constructor. */
-const CATEGORIES: { name: string; items: NodeType[] }[] = [
+type Category = { name: string; items: NodeType[] };
+
+/** Componentes comunes a todos los canales. */
+const COMMON: Category[] = [
   { name: "Mensajes", items: ["message", "media", "question", "buttons"] },
   { name: "Lógica", items: ["condition", "delay", "redirect"] },
   { name: "Inteligencia", items: ["ai"] },
   { name: "Acciones", items: ["action", "api", "calendar", "tags", "human", "assign"] },
-  { name: "Comercio & WhatsApp", items: ["catalog", "payment", "whatsapp_flow", "template"] },
-  { name: "Cierre", items: ["end"] },
 ];
 
-export function Palette() {
+/** Componentes exclusivos por canal (los de WhatsApp NO aparecen en otros canales). */
+const CHANNEL_EXTRA: Record<BotChannel, Category[]> = {
+  whatsapp: [{ name: "Comercio & WhatsApp", items: ["catalog", "payment", "whatsapp_flow", "template"] }],
+  instagram: [{ name: "Instagram", items: ["ig_story", "ig_comment", "ig_dm"] }],
+  messenger: [{ name: "Messenger", items: ["fb_comment", "template"] }],
+  webchat: [{ name: "Sitio web", items: ["web_form"] }],
+};
+
+const CLOSE: Category = { name: "Cierre", items: ["end"] };
+
+function categoriesFor(channel: BotChannel): Category[] {
+  return [...COMMON, ...(CHANNEL_EXTRA[channel] ?? CHANNEL_EXTRA.webchat), CLOSE];
+}
+
+export function Palette({ channel = "webchat" }: { channel?: BotChannel }) {
+  const CATEGORIES = categoriesFor(channel);
   const onDragStart = (e: React.DragEvent, type: NodeType) => {
     e.dataTransfer.setData("application/demandu-node", type);
     e.dataTransfer.effectAllowed = "move";

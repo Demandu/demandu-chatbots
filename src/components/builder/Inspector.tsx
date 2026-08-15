@@ -114,7 +114,7 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
       </Field>
 
       {d.text !== undefined &&
-        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template", "condition", "tags", "action"].includes(node.type) && (
+        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template", "condition", "tags", "action", "ig_story", "ig_comment", "fb_comment", "web_form"].includes(node.type) && (
           <Field label="Mensaje">
             <textarea className="input min-h-[80px]" value={d.text} onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
@@ -808,6 +808,45 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
             <textarea className="input min-h-[70px]" value={d.text ?? ""} placeholder={"{{1}} = nombre\n{{2}} = folio"} onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
           <p className="mb-4 text-[11px] text-muted-2">Las plantillas deben estar aprobadas por Meta. Solo se pueden enviar fuera de la ventana de 24 h.</p>
+        </>
+      )}
+
+      {/* ── Instagram: responder historia ── */}
+      {node.type === "ig_story" && (
+        <>
+          <Field label="Palabras clave en la historia (opcional)">
+            <input className="input" value={d.triggerKeywords ?? ""} placeholder="promo, precio, info" onChange={(e) => onChange({ triggerKeywords: e.target.value })} />
+          </Field>
+          <Field label="Mensaje de respuesta por DM">
+            <textarea className="input min-h-[70px]" value={d.text ?? ""} placeholder="¡Gracias por ver mi historia! 🙌 ¿Te ayudo con algo?" onChange={(e) => onChange({ text: e.target.value })} />
+          </Field>
+          <p className="mb-4 text-[11px] text-muted-2">Se activa cuando alguien responde o menciona tu historia de Instagram.</p>
+        </>
+      )}
+
+      {/* ── Instagram/Facebook: comentario → DM ── */}
+      {(node.type === "ig_comment" || node.type === "fb_comment") && (
+        <>
+          <Field label="Palabras clave en el comentario (opcional)">
+            <input className="input" value={d.triggerKeywords ?? ""} placeholder="info, precio, quiero" onChange={(e) => onChange({ triggerKeywords: e.target.value })} />
+          </Field>
+          <Field label="Respuesta pública al comentario">
+            <textarea className="input min-h-[56px]" value={d.publicReply ?? ""} placeholder="¡Te escribo por DM! 📩" onChange={(e) => onChange({ publicReply: e.target.value })} />
+          </Field>
+          <Field label="Mensaje que se envía por DM">
+            <textarea className="input min-h-[70px]" value={d.text ?? ""} placeholder="Hola 👋 aquí está la info que pediste…" onChange={(e) => onChange({ text: e.target.value })} />
+          </Field>
+          <p className="mb-4 text-[11px] text-muted-2">Responde automáticamente los comentarios y sigue la conversación en privado.</p>
+        </>
+      )}
+
+      {/* ── Web: formulario ── */}
+      {node.type === "web_form" && (
+        <>
+          <Field label="Texto de introducción">
+            <textarea className="input min-h-[60px]" value={d.text ?? ""} placeholder="Déjanos tus datos y te contactamos:" onChange={(e) => onChange({ text: e.target.value })} />
+          </Field>
+          <p className="mb-4 text-[11px] text-muted-2">Captura cada dato con nodos <b className="text-muted">Pregunta</b> a continuación (nombre, correo, teléfono…).</p>
         </>
       )}
 

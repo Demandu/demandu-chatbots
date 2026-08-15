@@ -37,6 +37,7 @@ export default async function BotBuilderPage({ params }: { params: { id: string 
         flow={flow}
         flowId={(flowRow?.id as string) ?? null}
         initialViewport={(graph.viewport as any) ?? null}
+        channel={(bot.channel as any) ?? "webchat"}
       />
     </>
   );

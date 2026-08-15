@@ -23,7 +23,15 @@ export type NodeType =
   | "payment"
   | "catalog"
   | "template"
+  | "ig_story"
+  | "ig_comment"
+  | "ig_dm"
+  | "fb_comment"
+  | "web_form"
   | "end";
+
+/** Canal al que pertenece un bot. */
+export type BotChannel = "whatsapp" | "instagram" | "messenger" | "webchat";
 
 export interface FlowButton {
   id: string;
@@ -166,6 +174,9 @@ export interface DemanduNodeData {
   /** solo para type = "end" (Fin) */
   finalStatusId?: string;
   reopenOnMessage?: boolean;
+  /** canales sociales (ig_story / ig_comment / fb_comment) */
+  triggerKeywords?: string;
+  publicReply?: string;
   /** solo para type = "assign" (Asignar chat) */
   assignBy?: "team" | "member" | "round_robin";
   teamId?: string;
@@ -267,6 +278,11 @@ export const NODE_META: Record<
   payment: { label: "Pago", description: "Cobro con pasarela", icon: "💳", color: "#FFC857", bg: "rgba(255,200,87,.15)" },
   catalog: { label: "Catálogo", description: "Venta de productos por WhatsApp", icon: "🛒", color: "#6E42FF", bg: "rgba(110,66,255,.15)" },
   template: { label: "Plantilla WA", description: "Mensaje con plantilla aprobada", icon: "🗂️", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
+  ig_story: { label: "Responder Historia", description: "Reacciona a menciones/respuestas de historias IG", icon: "🎬", color: "#E1306C", bg: "rgba(225,48,108,.15)" },
+  ig_comment: { label: "Comentarios IG → DM", description: "Responde comentarios y pasa a DM", icon: "💬", color: "#E1306C", bg: "rgba(225,48,108,.15)" },
+  ig_dm: { label: "Mensaje directo IG", description: "Envía un DM de Instagram", icon: "✉️", color: "#C13584", bg: "rgba(193,53,132,.15)" },
+  fb_comment: { label: "Comentarios FB → DM", description: "Responde comentarios de Facebook y pasa a DM", icon: "💬", color: "#0084FF", bg: "rgba(0,132,255,.15)" },
+  web_form: { label: "Formulario web", description: "Captura datos en tu sitio", icon: "📝", color: "#6E42FF", bg: "rgba(110,66,255,.15)" },
   end: { label: "Fin", description: "Cierra el flujo", icon: "⏹", color: "#6E70A0", bg: "rgba(110,112,160,.15)" },
 };
 

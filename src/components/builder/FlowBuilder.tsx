@@ -28,7 +28,7 @@ import { Webchat } from "@/components/Webchat";
 import { useCatalogs } from "@/lib/catalogs";
 import { createClient } from "@/lib/supabase/client";
 import {
-  NODE_META, type Flow, type DemanduNodeData, type NodeType,
+  NODE_META, type Flow, type DemanduNodeData, type NodeType, type BotChannel,
 } from "@/lib/flow/types";
 
 const nodeTypes: NodeTypes = Object.fromEntries(
@@ -51,10 +51,12 @@ function BuilderInner({
   flow,
   flowId,
   initialViewport,
+  channel = "webchat",
 }: {
   flow: Flow;
   flowId?: string | null;
   initialViewport?: Viewport | null;
+  channel?: BotChannel;
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(flow.nodes as unknown as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
@@ -140,6 +142,8 @@ function BuilderInner({
             },
           ],
         };
+      } else if (["ig_story", "ig_comment", "ig_dm", "fb_comment", "web_form"].includes(type)) {
+        data = { label: meta.label, text: "" };
       } else {
         data = { label: meta.label, text: meta.description };
       }
@@ -223,7 +227,7 @@ function BuilderInner({
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      <Palette />
+      <Palette channel={channel} />
 
       <div className="relative flex-1">
         {/* Toolbar */}
@@ -292,14 +296,16 @@ export function FlowBuilder({
   flow,
   flowId,
   initialViewport,
+  channel = "webchat",
 }: {
   flow: Flow;
   flowId?: string | null;
   initialViewport?: Viewport | null;
+  channel?: BotChannel;
 }) {
   return (
     <ReactFlowProvider>
-      <BuilderInner flow={flow} flowId={flowId} initialViewport={initialViewport} />
+      <BuilderInner flow={flow} flowId={flowId} initialViewport={initialViewport} channel={channel} />
     </ReactFlowProvider>
   );
 }

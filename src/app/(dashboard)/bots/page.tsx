@@ -2,9 +2,24 @@ import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { createClient } from "@/lib/supabase/server";
 import { createBot, deleteBot, importBot } from "./actions";
-import { Plus, Upload } from "lucide-react";
+import { ChannelIcon } from "@/components/inbox/ChannelBadge";
+import { Upload } from "lucide-react";
 
 export const dynamic = "force-dynamic";
+
+const CHANNEL_CARDS = [
+  { channel: "whatsapp", label: "WhatsApp", desc: "Cloud API · el más usado", color: "#25D366" },
+  { channel: "instagram", label: "Instagram", desc: "DM, historias y comentarios", color: "#E1306C" },
+  { channel: "messenger", label: "Messenger", desc: "Facebook Messenger", color: "#0084FF" },
+  { channel: "webchat", label: "Sitio web", desc: "Widget para tu página", color: "#6E42FF" },
+];
+
+const CHANNEL_LABEL: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  messenger: "Messenger",
+  webchat: "Web",
+};
 
 export default async function BotsPage() {
   const { data } = await createClient()
@@ -17,51 +32,75 @@ export default async function BotsPage() {
     <>
       <Topbar crumb={<span className="font-semibold text-white">Constructor · Mis bots</span>} />
       <div className="flex-1 overflow-auto p-8">
-        <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h2 className="font-display text-2xl font-bold text-white">Mis bots</h2>
-            <p className="mt-1 text-muted">Diseña, prueba y publica tus flujos conversacionales.</p>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <form action={createBot} className="flex items-end gap-2">
-              <input name="name" placeholder="Nombre del bot" className="input w-48" />
-              <button className="btn-primary">
-                <Plus className="h-4 w-4" /> Nuevo bot
-              </button>
-            </form>
-            <form action={importBot} className="flex items-center gap-2 rounded-xl border border-dashed border-surface-border px-2.5 py-2">
-              <input
-                type="file"
-                name="file"
-                accept="application/json,.json"
-                required
-                className="max-w-[190px] text-xs text-muted-2 file:mr-2 file:rounded-lg file:border-0 file:bg-surface-raised file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-surface-card"
-              />
-              <button className="btn-ghost whitespace-nowrap">
-                <Upload className="h-4 w-4" /> Importar JSON
-              </button>
-            </form>
-          </div>
-        </div>
-        <p className="-mt-3 mb-6 text-xs text-muted-2">
-          Importa un bot desde un JSON exportado (formato BotPenguin) para clonarlo como plantilla.
+        {/* ── Conectar a un canal ── */}
+        <h2 className="font-display text-2xl font-bold text-white">Crea un bot para tu canal</h2>
+        <p className="mb-5 mt-1 text-muted">
+          Elige el canal: cada uno abre el Constructor con los componentes específicos de esa plataforma.
         </p>
+
+        <div className="mb-10 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+          {CHANNEL_CARDS.map((c) => (
+            <form action={createBot} key={c.channel}>
+              <input type="hidden" name="channel" value={c.channel} />
+              <button
+                type="submit"
+                className="card group flex w-full flex-col items-start gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:border-pink"
+              >
+                {/* Sustituye este tile por tu imagen: <img src="/canales/whatsapp.png" .../> */}
+                <span
+                  className="grid h-14 w-14 place-items-center rounded-2xl"
+                  style={{ background: `${c.color}1f` }}
+                >
+                  <ChannelIcon channel={c.channel} className="h-8 w-8" />
+                </span>
+                <div>
+                  <div className="font-display text-base font-semibold text-white">{c.label}</div>
+                  <div className="text-xs text-muted-2">{c.desc}</div>
+                </div>
+                <span className="mt-1 text-xs font-semibold text-pink opacity-0 transition group-hover:opacity-100">
+                  Crear bot →
+                </span>
+              </button>
+            </form>
+          ))}
+        </div>
+
+        {/* ── Mis bots ── */}
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h3 className="font-display text-lg font-semibold text-white">Mis bots</h3>
+            <p className="mt-0.5 text-sm text-muted-2">Diseña, prueba y publica tus flujos conversacionales.</p>
+          </div>
+          <form action={importBot} className="flex items-center gap-2 rounded-xl border border-dashed border-surface-border px-2.5 py-2">
+            <input
+              type="file"
+              name="file"
+              accept="application/json,.json"
+              required
+              className="max-w-[190px] text-xs text-muted-2 file:mr-2 file:rounded-lg file:border-0 file:bg-surface-raised file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-surface-card"
+            />
+            <button className="btn-ghost whitespace-nowrap">
+              <Upload className="h-4 w-4" /> Importar JSON
+            </button>
+          </form>
+        </div>
 
         {bots.length === 0 ? (
           <div className="card grid place-items-center p-12 text-center">
             <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-pink/20 to-violet/20 text-2xl">🤖</div>
-            <h3 className="font-display text-lg font-semibold text-white">Crea tu primer bot</h3>
-            <p className="mt-1 max-w-sm text-sm text-muted-2">
-              Ponle un nombre arriba y dale “Nuevo bot”. Se abrirá el Constructor con un flujo de ejemplo listo para editar.
-            </p>
+            <h3 className="font-display text-lg font-semibold text-white">Aún no tienes bots</h3>
+            <p className="mt-1 max-w-sm text-sm text-muted-2">Elige un canal arriba para crear tu primer bot y abrir el Constructor.</p>
           </div>
         ) : (
-          <div className="grid max-w-4xl grid-cols-1 gap-3.5 md:grid-cols-2">
+          <div className="grid max-w-5xl grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
             {bots.map((b) => (
               <div key={b.id} className="card group relative p-5 transition hover:border-pink">
                 <Link href={`/bots/${b.id}`} className="block">
                   <div className="mb-3 flex items-center justify-between">
-                    <span className="rounded-lg bg-surface-raised px-2.5 py-1 text-xs font-semibold text-muted">Flujo</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-surface-raised px-2.5 py-1 text-xs font-semibold text-muted">
+                      <ChannelIcon channel={b.channel ?? "webchat"} className="h-3.5 w-3.5" />
+                      {CHANNEL_LABEL[b.channel ?? "webchat"] ?? "Web"}
+                    </span>
                     <span
                       className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
                         b.status === "published" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"
