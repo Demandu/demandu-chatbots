@@ -1,7 +1,7 @@
 "use client";
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { NODE_META, type NodeType, type DemanduNodeData } from "@/lib/flow/types";
+import { NODE_META, ACTION_META, type NodeType, type DemanduNodeData } from "@/lib/flow/types";
 
 /** Nodo visual del constructor. Se registra para todos los NodeType. */
 export function DemanduNodeCard({ type, data, selected }: NodeProps) {
@@ -53,6 +53,16 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
               {b.label}
               <Handle id={b.id} type="source" position={Position.Right} style={{ top: "50%" }} />
             </div>
+          ))}
+        </div>
+      )}
+
+      {d.actions && d.actions.length > 0 && (
+        <div className="flex gap-1.5 px-3.5 pb-3 text-sm">
+          {d.actions.map((a) => (
+            <span key={a.id} title={ACTION_META[a.type].label}>
+              {ACTION_META[a.type].icon}
+            </span>
           ))}
         </div>
       )}

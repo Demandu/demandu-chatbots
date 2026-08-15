@@ -25,6 +25,42 @@ export interface FlowButton {
   to?: string;
 }
 
+/** Acciones compartidas que se disparan al llegar a un nodo (capa transversal). */
+export type NodeActionType =
+  | "add_tag"
+  | "remove_tag"
+  | "assign_agent"
+  | "assign_group"
+  | "set_attribute"
+  | "notify_team"
+  | "set_status"
+  | "webhook";
+
+export interface NodeAction {
+  id: string;
+  type: NodeActionType;
+  value?: string;
+}
+
+export const ACTION_META: Record<
+  NodeActionType,
+  { label: string; icon: string; placeholder: string }
+> = {
+  add_tag: { label: "Asignar etiqueta", icon: "🏷️", placeholder: "nombre-etiqueta" },
+  remove_tag: { label: "Quitar etiqueta", icon: "🏷️", placeholder: "nombre-etiqueta" },
+  assign_agent: { label: "Asignar a agente", icon: "🧑‍💼", placeholder: "agente@demandu.tech" },
+  assign_group: { label: "Asignar a grupo", icon: "👥", placeholder: "Ventas" },
+  set_attribute: { label: "Guardar atributo", icon: "🧩", placeholder: "@ciudad = CDMX" },
+  notify_team: { label: "Notificar al equipo", icon: "🔔", placeholder: "Canal o correo" },
+  set_status: { label: "Cambiar estado", icon: "🟢", placeholder: "ganada" },
+  webhook: { label: "Disparar webhook", icon: "🔗", placeholder: "https://…" },
+};
+
+export const ACTION_ORDER: NodeActionType[] = [
+  "add_tag", "remove_tag", "assign_agent", "assign_group",
+  "set_attribute", "notify_team", "set_status", "webhook",
+];
+
 export interface DemanduNodeData {
   label: string;
   text?: string;
@@ -42,6 +78,11 @@ export interface DemanduNodeData {
   durationMin?: number;
   /** solo para type = "human" */
   team?: string;
+  /** solo para type = "message" */
+  media?: "none" | "image" | "video" | "file";
+  typingDelay?: number;
+  /** acciones que se disparan al llegar al nodo (capa compartida) */
+  actions?: NodeAction[];
   /** siguiente nodo por defecto (no aplica a buttons/condition/end) */
   to?: string;
 }

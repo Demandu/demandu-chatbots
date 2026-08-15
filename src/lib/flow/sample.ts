@@ -6,7 +6,7 @@ export const sampleFlow: Flow = {
   name: "Flujo de Ventas · Tienda Demo",
   nodes: [
     { id: "start", type: "start", position: { x: 40, y: 40 }, data: { label: "Cliente escribe", text: "Se activa cuando llega un mensaje nuevo.", to: "welcome" } },
-    { id: "welcome", type: "message", position: { x: 40, y: 220 }, data: { label: "Bienvenida", text: "¡Hola! 👋 Soy *Lana*, la asistente de Tienda Demo. ¿Cómo puedo ayudarte hoy?", to: "menu" } },
+    { id: "welcome", type: "message", position: { x: 40, y: 220 }, data: { label: "Bienvenida", text: "¡Hola! 👋 Soy *Lana*, la asistente de Tienda Demo. ¿Cómo puedo ayudarte hoy?", media: "none", typingDelay: 1, actions: [{ id: "a1", type: "add_tag", value: "lead-caliente" }, { id: "a2", type: "assign_group", value: "Ventas" }], to: "menu" } },
     {
       id: "menu", type: "buttons", position: { x: 40, y: 400 },
       data: {
