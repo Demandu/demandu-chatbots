@@ -23,6 +23,11 @@ export interface FlowButton {
   label: string;
   /** id del nodo destino */
   to?: string;
+  /** palabras clave que también disparan esta opción (NLP) */
+  keywords?: string;
+  /** etiquetas que se asignan al contacto al elegir esta opción */
+  tagIds?: string[];
+  description?: string;
 }
 
 /** Acciones compartidas que se disparan al llegar a un nodo (capa transversal). */
@@ -71,6 +76,16 @@ export interface DemanduNodeData {
   /** solo para type = "question": variable donde se guarda la respuesta */
   variable?: string;
   dataType?: "text" | "number" | "email" | "phone";
+  required?: boolean;
+  retries?: number;
+  errorMessage?: string;
+  /** solo para type = "media" (Multimedia) */
+  mediaType?: "image" | "video" | "file";
+  mediaUrl?: string;
+  caption?: string;
+  /** solo para type = "delay" (Espera) */
+  delayValue?: number;
+  delayUnit?: "seconds" | "minutes" | "hours";
   /** solo para type = "ai" */
   aiProvider?: "demandu" | "anthropic" | "openai" | "gemini";
   systemPrompt?: string;
