@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutGrid, Workflow, Inbox, Users, Megaphone,
-  PieChart, Plug, Sparkles,
+  PieChart, Plug, Sparkles, Settings,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ const MAIN = [
 ];
 
 const CONFIG = [
+  { href: "/settings", label: "Configuración", icon: Settings },
   { href: "/analytics", label: "Analytics", icon: PieChart },
   { href: "/settings/integrations", label: "Integraciones", icon: Plug },
   { href: "/settings/ai", label: "Lana AI", icon: Sparkles },
