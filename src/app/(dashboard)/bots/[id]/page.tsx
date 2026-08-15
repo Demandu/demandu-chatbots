@@ -22,6 +22,13 @@ export default async function BotBuilderPage({ params }: { params: { id: string 
     .limit(1)
     .maybeSingle();
 
+  // Estado de conexión del canal (por ahora, WhatsApp)
+  const { data: wa } = await supabase
+    .from("whatsapp_channels")
+    .select("bot_id, display_number, phone_number_id")
+    .eq("bot_id", params.id)
+    .maybeSingle();
+
   const graph = (flowRow?.graph as any) ?? { nodes: sampleFlow.nodes, edges: sampleFlow.edges };
   const flow: Flow = {
     id: flowRow?.id ?? "new",
@@ -38,6 +45,9 @@ export default async function BotBuilderPage({ params }: { params: { id: string 
         flowId={(flowRow?.id as string) ?? null}
         initialViewport={(graph.viewport as any) ?? null}
         channel={(bot.channel as any) ?? "webchat"}
+        botId={bot.id}
+        connected={!!wa}
+        number={(wa as any)?.display_number ?? (wa as any)?.phone_number_id ?? null}
       />
     </>
   );

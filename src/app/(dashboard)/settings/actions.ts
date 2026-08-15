@@ -207,3 +207,32 @@ export async function disconnectIntegration(formData: FormData) {
   await supabase.from("integrations").delete().eq("org_id", orgId).eq("provider", provider);
   revalidatePath("/settings/integrations");
 }
+
+// ── WhatsApp Cloud API ───────────────────────────────────────────────────────
+export async function saveWhatsappChannel(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  const phone_number_id = s(formData.get("phone_number_id"));
+  const access_token = s(formData.get("access_token"));
+  if (!phone_number_id || !access_token) return;
+  await createClient().from("whatsapp_channels").upsert(
+    {
+      org_id: orgId,
+      phone_number_id,
+      waba_id: s(formData.get("waba_id")) || null,
+      display_number: s(formData.get("display_number")) || null,
+      access_token,
+      bot_id: s(formData.get("bot_id")) || null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "org_id" }
+  );
+  revalidatePath("/settings/integrations");
+}
+
+export async function disconnectWhatsapp(_formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  await createClient().from("whatsapp_channels").delete().eq("org_id", orgId);
+  revalidatePath("/settings/integrations");
+}

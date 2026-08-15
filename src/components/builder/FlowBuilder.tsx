@@ -22,6 +22,7 @@ import {
 } from "@xyflow/react";
 import { DemanduNodeCard } from "./DemanduNodeCard";
 import { DemanduEdge } from "./DemanduEdge";
+import { ConnectButton } from "./ConnectButton";
 import { Palette } from "./Palette";
 import { Inspector } from "./Inspector";
 import { Webchat } from "@/components/Webchat";
@@ -52,11 +53,17 @@ function BuilderInner({
   flowId,
   initialViewport,
   channel = "webchat",
+  botId = "",
+  connected = false,
+  number = null,
 }: {
   flow: Flow;
   flowId?: string | null;
   initialViewport?: Viewport | null;
   channel?: BotChannel;
+  botId?: string;
+  connected?: boolean;
+  number?: string | null;
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(flow.nodes as unknown as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
@@ -242,6 +249,9 @@ function BuilderInner({
             <span className={`h-2 w-2 rounded-full ${status.dot}`} />
             {status.text}
           </div>
+          <div className="ml-1 border-l border-surface-border pl-1.5">
+            <ConnectButton channel={channel} botId={botId} connected={connected} number={number} />
+          </div>
         </div>
 
         <ReactFlow
@@ -297,15 +307,29 @@ export function FlowBuilder({
   flowId,
   initialViewport,
   channel = "webchat",
+  botId = "",
+  connected = false,
+  number = null,
 }: {
   flow: Flow;
   flowId?: string | null;
   initialViewport?: Viewport | null;
   channel?: BotChannel;
+  botId?: string;
+  connected?: boolean;
+  number?: string | null;
 }) {
   return (
     <ReactFlowProvider>
-      <BuilderInner flow={flow} flowId={flowId} initialViewport={initialViewport} channel={channel} />
+      <BuilderInner
+        flow={flow}
+        flowId={flowId}
+        initialViewport={initialViewport}
+        channel={channel}
+        botId={botId}
+        connected={connected}
+        number={number}
+      />
     </ReactFlowProvider>
   );
 }
