@@ -88,6 +88,27 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
         </div>
       )}
 
+      {/* Ramas del nodo Condición: una salida por rama + "En caso contrario" */}
+      {type === "condition" && (
+        <div className="flex flex-col gap-1.5 px-3.5 pb-3.5">
+          {(d.conditions ?? []).map((c) => (
+            <div
+              key={c.id}
+              className="relative flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-white"
+            >
+              <span className="text-[11px]">⑂</span>
+              <span className="truncate">{c.label || "Condición"}</span>
+              <Handle id={c.id} type="source" position={Position.Right} style={{ top: "50%" }} />
+            </div>
+          ))}
+          <div className="relative flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-2.5 py-1.5 text-xs text-muted">
+            <span className="h-1.5 w-1.5 flex-none rounded-full bg-muted-2" />
+            En caso contrario
+            <Handle id="otherwise" type="source" position={Position.Right} style={{ top: "50%" }} />
+          </div>
+        </div>
+      )}
+
       {d.actions && d.actions.length > 0 && (
         <div className="flex gap-1.5 px-3.5 pb-3 text-sm">
           {d.actions.map((a) => (
@@ -98,7 +119,7 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
         </div>
       )}
 
-      {type !== "buttons" && type !== "api" && type !== "end" && (
+      {type !== "buttons" && type !== "api" && type !== "condition" && type !== "end" && (
         <Handle type="source" position={Position.Right} />
       )}
     </div>

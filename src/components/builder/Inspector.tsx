@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import {
-  NODE_META, ACTION_META, ACTION_ORDER,
+  NODE_META, ACTION_META, ACTION_ORDER, OPERATOR_LABEL, OPERATORS_WITHOUT_VALUE,
   type DemanduNode, type DemanduNodeData, type NodeType, type NodeActionType, type FlowButton,
+  type ConditionBranch, type ConditionRule, type ConditionOperator,
 } from "@/lib/flow/types";
 import type { Catalogs } from "@/lib/catalogs";
 import { MediaUpload } from "./MediaUpload";
@@ -52,6 +53,24 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
   const removeAction = (i: number) =>
     onChange({ actions: actions.filter((_, idx) => idx !== i) });
 
+  // ── Condición: ramas y reglas ──
+  const conditions = d.conditions ?? [];
+  const setConditions = (next: ConditionBranch[]) => onChange({ conditions: next });
+  const addBranch = () =>
+    setConditions([
+      ...conditions,
+      { id: `c-${Date.now()}`, label: `Condición ${conditions.length + 1}`, match: "all", rules: [{ id: `r-${Date.now()}`, operator: "equals" }] },
+    ]);
+  const updateBranch = (bi: number, patch: Partial<ConditionBranch>) =>
+    setConditions(conditions.map((b, i) => (i === bi ? { ...b, ...patch } : b)));
+  const removeBranch = (bi: number) => setConditions(conditions.filter((_, i) => i !== bi));
+  const addRule = (bi: number) =>
+    updateBranch(bi, { rules: [...conditions[bi].rules, { id: `r-${Date.now()}`, operator: "equals" }] });
+  const updateRule = (bi: number, ri: number, patch: Partial<ConditionRule>) =>
+    updateBranch(bi, { rules: conditions[bi].rules.map((r, i) => (i === ri ? { ...r, ...patch } : r)) });
+  const removeRule = (bi: number, ri: number) =>
+    updateBranch(bi, { rules: conditions[bi].rules.filter((_, i) => i !== ri) });
+
   const updateButton = (i: number, patch: Partial<FlowButton>) =>
     onChange({ buttons: buttons.map((b, idx) => (idx === i ? { ...b, ...patch } : b)) });
   const removeButton = (i: number) =>
@@ -89,7 +108,7 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
       </Field>
 
       {d.text !== undefined &&
-        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template"].includes(node.type) && (
+        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template", "condition"].includes(node.type) && (
           <Field label="Mensaje">
             <textarea className="input min-h-[80px]" value={d.text} onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
@@ -389,6 +408,98 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
             ))}
           </select>
         </Field>
+      )}
+
+      {/* ── Condición: ramas con reglas (atributo · operador · valor) ── */}
+      {node.type === "condition" && (
+        <>
+          <p className="mb-3 text-[11px] text-muted-2">
+            Las ramas se evalúan de arriba hacia abajo. El contacto sigue la primera que se cumpla; si ninguna aplica, toma la salida <b className="text-muted">En caso contrario</b>.
+          </p>
+          {conditions.map((br, bi) => (
+            <div key={br.id} className="mb-3 rounded-xl border border-warning/40 bg-surface-raised p-2.5">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-warning">⑂</span>
+                <input
+                  className="flex-1 bg-transparent text-sm font-semibold text-white focus:outline-none"
+                  value={br.label}
+                  placeholder="Nombre de la rama"
+                  onChange={(e) => updateBranch(bi, { label: e.target.value })}
+                />
+                <button className="text-muted-2 hover:text-danger" onClick={() => removeBranch(bi)} title="Quitar rama">✕</button>
+              </div>
+
+              {br.rules.length > 1 && (
+                <div className="mb-2 flex items-center gap-2 text-[11px] text-muted-2">
+                  Se cumple si
+                  <select
+                    className="rounded-md bg-surface-card px-1.5 py-1 text-[11px] text-white focus:outline-none"
+                    value={br.match}
+                    onChange={(e) => updateBranch(bi, { match: e.target.value as "all" | "any" })}
+                  >
+                    <option value="all">TODAS las reglas (Y)</option>
+                    <option value="any">CUALQUIER regla (O)</option>
+                  </select>
+                </div>
+              )}
+
+              {br.rules.map((r, ri) => {
+                const noValue = OPERATORS_WITHOUT_VALUE.includes(r.operator);
+                return (
+                  <div key={r.id} className="mb-1.5 space-y-1.5 rounded-lg bg-surface-card p-2">
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        className="min-w-0 flex-1 rounded-md bg-surface-raised px-1.5 py-1 text-xs text-white focus:outline-none"
+                        value={r.attribute ?? ""}
+                        onChange={(e) => updateRule(bi, ri, { attribute: e.target.value })}
+                      >
+                        <option value="">Atributo…</option>
+                        {(catalogs?.attributes ?? []).map((a: any) => (
+                          <option key={a.id} value={a.key}>{a.name}</option>
+                        ))}
+                      </select>
+                      <button className="flex-none text-muted-2 hover:text-danger" onClick={() => removeRule(bi, ri)} title="Quitar regla">✕</button>
+                    </div>
+                    <select
+                      className="w-full rounded-md bg-surface-raised px-1.5 py-1 text-xs text-white focus:outline-none"
+                      value={r.operator}
+                      onChange={(e) => updateRule(bi, ri, { operator: e.target.value as ConditionOperator })}
+                    >
+                      {(Object.keys(OPERATOR_LABEL) as ConditionOperator[]).map((op) => (
+                        <option key={op} value={op}>{OPERATOR_LABEL[op]}</option>
+                      ))}
+                    </select>
+                    {!noValue && (
+                      <input
+                        className="w-full rounded-md bg-surface-raised px-2 py-1 text-xs text-white placeholder:text-muted-2 focus:outline-none"
+                        value={r.value ?? ""}
+                        placeholder="Valor a comparar"
+                        onChange={(e) => updateRule(bi, ri, { value: e.target.value })}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+              <button
+                className="mt-1 w-full rounded-lg border border-dashed border-surface-border py-1.5 text-[11px] text-muted hover:border-pink hover:text-pink"
+                onClick={() => addRule(bi)}
+              >
+                ＋ Agregar regla (Y/O)
+              </button>
+            </div>
+          ))}
+          <button
+            className="w-full rounded-xl border border-dashed border-surface-border py-2.5 text-xs text-muted hover:border-pink hover:text-pink"
+            onClick={addBranch}
+          >
+            ＋ Agregar rama
+          </button>
+          {(catalogs?.attributes ?? []).length === 0 && (
+            <p className="mt-2 text-[11px] text-muted-2">
+              Crea atributos en <a href="/settings/attributes" target="_blank" className="text-pink hover:underline">Configuración → Atributos</a> para poder compararlos aquí.
+            </p>
+          )}
+        </>
       )}
 
       {/* ── Acción API: request + ramas por respuesta ── */}

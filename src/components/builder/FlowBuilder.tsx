@@ -127,6 +127,19 @@ function BuilderInner({
         };
       } else if (type === "payment") {
         data = { label: meta.label, text: "Cobro con pasarela", currency: "MXN", gateway: "stripe" };
+      } else if (type === "condition") {
+        data = {
+          label: meta.label,
+          text: "Ramifica según los datos del contacto",
+          conditions: [
+            {
+              id: `c1-${now}`,
+              label: "Condición 1",
+              match: "all",
+              rules: [{ id: `r1-${now}`, operator: "equals" }],
+            },
+          ],
+        };
       } else {
         data = { label: meta.label, text: meta.description };
       }

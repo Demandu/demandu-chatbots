@@ -41,6 +41,52 @@ export interface FlowButton {
   description?: string;
 }
 
+/** Operadores para el nodo Condición. */
+export type ConditionOperator =
+  | "equals"
+  | "not_equals"
+  | "contains"
+  | "not_contains"
+  | "starts_with"
+  | "ends_with"
+  | "greater_than"
+  | "less_than"
+  | "is_empty"
+  | "is_not_empty";
+
+export interface ConditionRule {
+  id: string;
+  /** clave del atributo/variable a evaluar (ej. ciudad) */
+  attribute?: string;
+  operator: ConditionOperator;
+  value?: string;
+}
+
+/** Una rama del nodo Condición. Su id es el sourceHandle de la arista de salida. */
+export interface ConditionBranch {
+  id: string;
+  label: string;
+  /** "all" = se cumplen todas las reglas (Y); "any" = al menos una (O) */
+  match: "all" | "any";
+  rules: ConditionRule[];
+}
+
+/** Operadores que no requieren un valor de comparación. */
+export const OPERATORS_WITHOUT_VALUE: ConditionOperator[] = ["is_empty", "is_not_empty"];
+
+export const OPERATOR_LABEL: Record<ConditionOperator, string> = {
+  equals: "es igual a",
+  not_equals: "es distinto de",
+  contains: "contiene",
+  not_contains: "no contiene",
+  starts_with: "empieza con",
+  ends_with: "termina con",
+  greater_than: "es mayor que",
+  less_than: "es menor que",
+  is_empty: "está vacío",
+  is_not_empty: "no está vacío",
+};
+
 /** Acciones compartidas que se disparan al llegar a un nodo (capa transversal). */
 export type NodeActionType =
   | "add_tag"
@@ -155,6 +201,8 @@ export interface DemanduNodeData {
   isStart?: boolean;
   /** acciones que se disparan al llegar al nodo (capa compartida) */
   actions?: NodeAction[];
+  /** solo para type = "condition": ramas evaluadas en orden (con salida "otherwise") */
+  conditions?: ConditionBranch[];
   /** siguiente nodo por defecto (no aplica a buttons/condition/end) */
   to?: string;
 }

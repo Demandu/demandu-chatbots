@@ -67,6 +67,11 @@ export function botpenguinToGraph(raw: any): { nodes: any[]; edges: any[] } {
     }
     if (q.type === "image") data.media = "image";
     if (type === "ai") data.aiProvider = "demandu";
+    if (type === "condition") {
+      data.conditions = [
+        { id: `c-${q.id}`, label: "Condición 1", match: "all", rules: [{ id: `r-${q.id}`, operator: "equals" }] },
+      ];
+    }
     if (type === "api") {
       data.apiUrl = q.apiConfig?.url ?? q.api?.url ?? "";
       data.apiMethod = (q.apiConfig?.method ?? q.api?.method ?? "GET").toUpperCase();
@@ -120,6 +125,11 @@ export function botpenguinToGraph(raw: any): { nodes: any[]; edges: any[] } {
       const tgt = q.next?.target;
       if (tgt && ids.has(tgt)) {
         edges.push({ id: `e-${q.id}`, source: q.id, target: tgt, sourceHandle: `ok-${q.id}`, label: "Éxito" });
+      }
+    } else if (type === "condition") {
+      const tgt = q.next?.target;
+      if (tgt && ids.has(tgt)) {
+        edges.push({ id: `e-${q.id}`, source: q.id, target: tgt, sourceHandle: "otherwise", label: null });
       }
     } else {
       const tgt = q.next?.target;
