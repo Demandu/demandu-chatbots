@@ -85,10 +85,15 @@ export async function importBot(formData: FormData) {
     json?.payload?.name ||
     "Bot importado";
 
+  // Canal del bot importado. Por defecto WhatsApp (el caso más común al
+  // importar flujos de BotPenguin); si viene otro válido, se respeta.
+  const rawCh = String(formData.get("channel") ?? "").trim();
+  const channel = CHANNELS.has(rawCh) ? rawCh : "whatsapp";
+
   const supabase = createClient();
   const { data: bot } = await supabase
     .from("bots")
-    .insert({ org_id: orgId, name, status: "draft" })
+    .insert({ org_id: orgId, name, status: "draft", channel })
     .select("id")
     .single();
   if (!bot) return;

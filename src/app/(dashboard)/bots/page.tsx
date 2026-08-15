@@ -72,12 +72,22 @@ export default async function BotsPage() {
             <p className="mt-0.5 text-sm text-muted-2">Diseña, prueba y publica tus flujos conversacionales.</p>
           </div>
           <form action={importBot} className="flex items-center gap-2 rounded-xl border border-dashed border-surface-border px-2.5 py-2">
+            <select
+              name="channel"
+              defaultValue="whatsapp"
+              title="Canal del bot importado"
+              className="rounded-lg border border-surface-border bg-surface-raised px-2 py-1.5 text-xs font-semibold text-white"
+            >
+              {CHANNEL_CARDS.map((c) => (
+                <option key={c.channel} value={c.channel}>{c.label}</option>
+              ))}
+            </select>
             <input
               type="file"
               name="file"
               accept="application/json,.json"
               required
-              className="max-w-[190px] text-xs text-muted-2 file:mr-2 file:rounded-lg file:border-0 file:bg-surface-raised file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-surface-card"
+              className="max-w-[170px] text-xs text-muted-2 file:mr-2 file:rounded-lg file:border-0 file:bg-surface-raised file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-surface-card"
             />
             <button className="btn-ghost whitespace-nowrap">
               <Upload className="h-4 w-4" /> Importar JSON
