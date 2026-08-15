@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0a0a28;
+  --foreground: #edeeff;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-[#0a0a28] text-[#edeeff] font-sans;
+    background-image:
+      radial-gradient(120% 120% at 100% 0%, rgba(110, 66, 255, 0.16) 0%, rgba(10, 10, 40, 0) 55%),
+      radial-gradient(120% 120% at 0% 100%, rgba(246, 74, 151, 0.14) 0%, rgba(10, 10, 40, 0) 55%);
+    background-attachment: fixed;
+  }
+  * {
+    @apply border-surface-border;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-demandu-gradient px-5 py-2.5
+      font-display text-sm font-semibold text-white transition
+      hover:opacity-90 disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-surface-border
+      bg-surface-raised px-4 py-2.5 text-sm font-medium text-muted transition hover:text-white;
+  }
+  .input {
+    @apply w-full rounded-xl border border-surface-border bg-surface-raised px-3.5 py-2.5 text-sm
+      text-[#edeeff] placeholder:text-[#6e70a0] focus:border-pink focus:outline-none;
+  }
+  .card {
+    @apply rounded-2xl border border-surface-border bg-surface-card;
+  }
+}
+
+/* React Flow — Demandu dark theme overrides */
+.react-flow__background { background-color: #0b0b23; }
+.react-flow__edge-path { stroke: url(#demandu-edge); stroke-width: 2; }
+.react-flow__handle { background: #0b0b23; border: 2px solid #6e42ff; width: 11px; height: 11px; }
+.react-flow__controls { border-radius: 10px; overflow: hidden; box-shadow: none; }
+.react-flow__controls-button {
+  background: #171838; border-bottom: 1px solid #2a2c55; color: #9a9cc7;
+}
+.react-flow__controls-button:hover { background: #1b1c42; }
+.react-flow__attribution { display: none; }
+
+/* Custom muted utility mapping */
+.text-muted { color: #9a9cc7; }
+.text-muted-2 { color: #6e70a0; }
