@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function SettingsIndex() {
-  redirect("/settings/tags");
+  redirect("/settings/attributes");
 }

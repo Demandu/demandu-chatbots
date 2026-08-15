@@ -10,9 +10,10 @@ export interface Catalogs {
   teams: any[];
   states: any[];
   bots: any[];
+  attributes: any[];
 }
 
-const EMPTY: Catalogs = { tags: [], members: [], groups: [], teams: [], states: [], bots: [] };
+const EMPTY: Catalogs = { tags: [], members: [], groups: [], teams: [], states: [], bots: [], attributes: [] };
 
 /** Lee los catálogos de la organización (RLS los aísla) para poblar los selectores. */
 export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: string | null } {
@@ -23,13 +24,14 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
   useEffect(() => {
     const supabase = createClient();
     (async () => {
-      const [t, m, g, tm, s, b, mem] = await Promise.all([
+      const [t, m, g, tm, s, b, at, mem] = await Promise.all([
         supabase.from("tags").select("id,name,color").order("name"),
         supabase.from("team_members").select("id,name,email").order("name"),
         supabase.from("lead_groups").select("id,name,color").order("name"),
         supabase.from("teams").select("id,name").order("name"),
         supabase.from("conversation_states").select("id,name,color").order("sort"),
         supabase.from("bots").select("id,name").order("name"),
+        supabase.from("custom_attributes").select("id,name,key,type,purpose").order("sort"),
         supabase.from("memberships").select("org_id").limit(1).maybeSingle(),
       ]);
       setCatalogs({
@@ -39,6 +41,7 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
         teams: tm.data ?? [],
         states: s.data ?? [],
         bots: b.data ?? [],
+        attributes: at.data ?? [],
       });
       setOrgId((mem.data as any)?.org_id ?? null);
       setLoading(false);

@@ -185,8 +185,32 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
       {/* Pregunta: validación + reintentos */}
       {node.type === "question" && (
         <>
-          <Field label="Guardar respuesta en variable / atributo">
-            <input className="input" value={d.variable ?? ""} placeholder="@ciudad" onChange={(e) => onChange({ variable: e.target.value })} />
+          <Field label="Guardar la respuesta en el atributo">
+            {(catalogs?.attributes ?? []).length === 0 ? (
+              <div className="rounded-xl border border-dashed border-surface-border px-3 py-3 text-[11px] text-muted-2">
+                Aún no tienes atributos. Créalos en <a href="/settings/attributes" target="_blank" className="font-semibold text-pink hover:underline">Configuración → Atributos</a> y aquí podrás elegirlos.
+              </div>
+            ) : (
+              <>
+                <select
+                  className="input"
+                  value={d.variable ?? ""}
+                  onChange={(e) => {
+                    const attr = (catalogs?.attributes ?? []).find((a: any) => a.key === e.target.value);
+                    const map: Record<string, DemanduNodeData["dataType"]> = { string: "text", number: "number", float: "number", email: "email", phone: "phone" };
+                    onChange({ variable: e.target.value, dataType: (attr && map[attr.type]) || d.dataType });
+                  }}
+                >
+                  <option value="">Selecciona un atributo…</option>
+                  {(catalogs?.attributes ?? []).map((a: any) => (
+                    <option key={a.id} value={a.key}>{a.name} · {`{{${a.key}}}`}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-muted-2">
+                  ¿Falta uno? Créalo en <a href="/settings/attributes" target="_blank" className="text-pink hover:underline">Configuración → Atributos</a>.
+                </p>
+              </>
+            )}
           </Field>
           <Field label="Validar como">
             <select className="input" value={d.dataType ?? "text"} onChange={(e) => onChange({ dataType: e.target.value as DemanduNodeData["dataType"] })}>

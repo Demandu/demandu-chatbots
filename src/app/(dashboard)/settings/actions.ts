@@ -125,3 +125,55 @@ export async function deleteState(formData: FormData) {
     .eq("id", s(formData.get("id")));
   revalidatePath("/settings/states");
 }
+
+// ── Atributos personalizados ─────────────────────────────────────────────────
+const ATTR_TYPES = new Set(["string", "number", "float", "email", "phone", "date", "boolean", "list"]);
+const ATTR_PURPOSES = new Set(["chatbot", "api", "agent"]);
+
+/** Convierte un nombre en una clave de máquina segura (snake_case ascii). */
+function slugKey(v: string): string {
+  return v
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60) || "atributo";
+}
+
+export async function createAttribute(formData: FormData) {
+  const name = s(formData.get("name"));
+  if (!name) return;
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  const rawKey = s(formData.get("key"));
+  const key = slugKey(rawKey || name);
+  const type = ATTR_TYPES.has(s(formData.get("type"))) ? s(formData.get("type")) : "string";
+  const purpose = ATTR_PURPOSES.has(s(formData.get("purpose"))) ? s(formData.get("purpose")) : "chatbot";
+  await createClient().from("custom_attributes").insert({
+    org_id: orgId, name, key, type, purpose, visible: true, sort: 100,
+  });
+  revalidatePath("/settings/attributes");
+}
+
+export async function updateAttribute(formData: FormData) {
+  const id = s(formData.get("id"));
+  const name = s(formData.get("name"));
+  if (!id || !name) return;
+  const type = ATTR_TYPES.has(s(formData.get("type"))) ? s(formData.get("type")) : "string";
+  const purpose = ATTR_PURPOSES.has(s(formData.get("purpose"))) ? s(formData.get("purpose")) : "chatbot";
+  await createClient().from("custom_attributes").update({ name, type, purpose }).eq("id", id);
+  revalidatePath("/settings/attributes");
+}
+
+export async function toggleAttributeVisibility(formData: FormData) {
+  const id = s(formData.get("id"));
+  const visible = s(formData.get("visible")) === "true";
+  if (!id) return;
+  await createClient().from("custom_attributes").update({ visible: !visible }).eq("id", id);
+  revalidatePath("/settings/attributes");
+}
+
+export async function deleteAttribute(formData: FormData) {
+  await createClient().from("custom_attributes").delete().eq("id", s(formData.get("id")));
+  revalidatePath("/settings/attributes");
+}
