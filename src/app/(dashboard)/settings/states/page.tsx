@@ -49,18 +49,16 @@ export default async function StatesPage() {
                 Guardar
               </button>
             </form>
-            {!st.is_default && (
-              <form action={deleteState}>
-                <input type="hidden" name="id" value={st.id} />
-                <button className="px-1 text-muted-2 transition hover:text-danger" title="Eliminar">✕</button>
-              </form>
-            )}
+            <form action={deleteState}>
+              <input type="hidden" name="id" value={st.id} />
+              <button className="px-1 text-muted-2 transition hover:text-danger" title="Eliminar">✕</button>
+            </form>
           </div>
         ))}
       </div>
 
       <p className="mt-3 text-xs text-muted-2">
-        Edita el nombre o el color y pulsa <b className="text-muted">Guardar</b>. Los estados por defecto se pueden editar pero no eliminar.
+        Edita el nombre o el color y pulsa <b className="text-muted">Guardar</b>. Puedes eliminar cualquier estado con la ✕.
       </p>
     </div>
   );

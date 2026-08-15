@@ -100,11 +100,9 @@ export async function updateState(formData: FormData) {
   revalidatePath("/settings/states");
 }
 export async function deleteState(formData: FormData) {
-  // Solo se permite borrar estados personalizados (no los de por defecto)
   await createClient()
     .from("conversation_states")
     .delete()
-    .eq("id", s(formData.get("id")))
-    .eq("is_default", false);
+    .eq("id", s(formData.get("id")));
   revalidatePath("/settings/states");
 }
