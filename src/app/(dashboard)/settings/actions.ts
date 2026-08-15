@@ -177,3 +177,31 @@ export async function deleteAttribute(formData: FormData) {
   await createClient().from("custom_attributes").delete().eq("id", s(formData.get("id")));
   revalidatePath("/settings/attributes");
 }
+
+// ── Integraciones ────────────────────────────────────────────────────────────
+export async function disconnectIntegration(formData: FormData) {
+  const provider = s(formData.get("provider"));
+  if (!provider) return;
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  const supabase = createClient();
+  // Intenta revocar el token en Google (best-effort)
+  if (provider === "google_calendar") {
+    const { data } = await supabase
+      .from("integrations")
+      .select("access_token, refresh_token")
+      .eq("org_id", orgId)
+      .eq("provider", provider)
+      .maybeSingle();
+    const token = (data?.refresh_token as string) || (data?.access_token as string);
+    if (token) {
+      try {
+        await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, { method: "POST" });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+  await supabase.from("integrations").delete().eq("org_id", orgId).eq("provider", provider);
+  revalidatePath("/settings/integrations");
+}

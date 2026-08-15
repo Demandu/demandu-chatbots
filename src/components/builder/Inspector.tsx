@@ -337,12 +337,34 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
 
       {node.type === "calendar" && (
         <>
-          <Field label="Calendario (Google)">
-            <input className="input" value={d.calendarId ?? ""} onChange={(e) => onChange({ calendarId: e.target.value })} />
+          {!catalogs?.googleCalendarConnected ? (
+            <div className="mb-4 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-muted">
+              Aún no has conectado Google Calendar. Conéctalo en{" "}
+              <a href="/settings/integrations" target="_blank" className="font-semibold text-pink hover:underline">Configuración → Integraciones</a>{" "}
+              y luego elige aquí el calendario.
+            </div>
+          ) : (
+            <Field label="Calendario de Google">
+              <select className="input" value={d.calendarId ?? ""} onChange={(e) => onChange({ calendarId: e.target.value })}>
+                <option value="">Selecciona un calendario…</option>
+                {(catalogs?.calendars ?? []).map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.summary}{c.primary ? " (principal)" : ""}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <Field label="Duración de la cita">
+            <div className="flex items-center gap-2">
+              <input type="number" min={5} step={5} className="input w-28" value={d.durationMin ?? 30} onChange={(e) => onChange({ durationMin: Number(e.target.value) })} />
+              <span className="text-sm text-muted-2">minutos</span>
+            </div>
           </Field>
-          <Field label="Mensaje de confirmación">
-            <textarea className="input min-h-[70px]" value={d.text ?? ""} onChange={(e) => onChange({ text: e.target.value })} />
+          <Field label="Mensaje al ofrecer horarios">
+            <textarea className="input min-h-[70px]" value={d.text ?? ""} placeholder="Estos son los horarios disponibles para tu cita:" onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
+          <p className="mb-4 text-[11px] text-muted-2">
+            La disponibilidad respeta tu <b className="text-muted">Horario laboral</b> (Configuración → Horario laboral) y evita traslapes con eventos existentes.
+          </p>
         </>
       )}
 

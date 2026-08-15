@@ -11,9 +11,15 @@ export interface Catalogs {
   states: any[];
   bots: any[];
   attributes: any[];
+  /** Calendarios de Google Calendar si la integración está conectada */
+  calendars: any[];
+  googleCalendarConnected: boolean;
 }
 
-const EMPTY: Catalogs = { tags: [], members: [], groups: [], teams: [], states: [], bots: [], attributes: [] };
+const EMPTY: Catalogs = {
+  tags: [], members: [], groups: [], teams: [], states: [], bots: [], attributes: [],
+  calendars: [], googleCalendarConnected: false,
+};
 
 /** Lee los catálogos de la organización (RLS los aísla) para poblar los selectores. */
 export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: string | null } {
@@ -24,7 +30,7 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
   useEffect(() => {
     const supabase = createClient();
     (async () => {
-      const [t, m, g, tm, s, b, at, mem] = await Promise.all([
+      const [t, m, g, tm, s, b, at, gc, mem] = await Promise.all([
         supabase.from("tags").select("id,name,color").order("name"),
         supabase.from("team_members").select("id,name,email").order("name"),
         supabase.from("lead_groups").select("id,name,color").order("name"),
@@ -32,6 +38,7 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
         supabase.from("conversation_states").select("id,name,color").order("sort"),
         supabase.from("bots").select("id,name").order("name"),
         supabase.from("custom_attributes").select("id,name,key,type,purpose").order("sort"),
+        supabase.from("integrations").select("account_email,data").eq("provider", "google_calendar").maybeSingle(),
         supabase.from("memberships").select("org_id").limit(1).maybeSingle(),
       ]);
       setCatalogs({
@@ -42,6 +49,8 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
         states: s.data ?? [],
         bots: b.data ?? [],
         attributes: at.data ?? [],
+        calendars: ((gc.data as any)?.data?.calendars as any[]) ?? [],
+        googleCalendarConnected: !!gc.data,
       });
       setOrgId((mem.data as any)?.org_id ?? null);
       setLoading(false);
