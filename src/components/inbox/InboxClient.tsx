@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Send, Bot, User, Phone, Mail, Tag as TagIcon, Sparkles } from "lucide-react";
+import { Search, Send, Bot, User, Phone, Mail, Tag as TagIcon, Sparkles, CheckCircle2, RotateCcw, MailPlus, CheckCheck, Smile, Paperclip } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 type Contact = { id: string; name: string | null; phone: string | null; email: string | null; channel: string | null; tags: string[] | null };
@@ -45,6 +45,13 @@ function clock(iso: string) {
 function initials(name?: string | null) {
   return (name ?? "?").trim().slice(0, 2).toUpperCase();
 }
+
+// Estilo WhatsApp Web con paleta Demandu
+const WA_CANVAS = "#0a0a1f";
+const WA_OUT_BG = "#3a2b6e"; // burbuja saliente (violeta Demandu, en vez del verde de WhatsApp)
+const WA_IN_BG = "#191a3d"; // burbuja entrante (oscuro Demandu, en vez del gris de WhatsApp)
+const WA_DOODLE =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='70'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='48' cy='34' r='2'/%3E%3Ccircle cx='24' cy='58' r='2'/%3E%3Cpath d='M56 8h6v6h-6z'/%3E%3C/g%3E%3C/svg%3E\")";
 
 export function InboxClient({
   initial,
@@ -140,6 +147,19 @@ export function InboxClient({
     await sb.from("contacts").update({ tags: next }).eq("id", sel.contact.id);
   };
 
+  const setConvStatus = async (status: string) => {
+    if (!sel) return;
+    setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, status } : c)));
+    await sb.from("conversations").update({ status }).eq("id", sel.id);
+  };
+  const markUnread = async () => {
+    if (!sel) return;
+    const id = sel.id;
+    setConvos((cs) => cs.map((c) => (c.id === id ? { ...c, unread: Math.max(1, c.unread) } : c)));
+    await sb.from("conversations").update({ unread: 1 }).eq("id", id);
+    setSelId(null);
+  };
+
   const filtered = convos.filter((c) => {
     if (filter === "abiertas" && c.status === "closed") return false;
     if (filter === "cerradas" && c.status !== "closed") return false;
@@ -228,13 +248,35 @@ export function InboxClient({
       ) : (
         <div className="flex flex-1 flex-col bg-[#0b0b23]">
           {/* Header */}
-          <div className="flex flex-none items-center gap-3 border-b border-surface-border bg-surface px-4 py-2.5">
+          <div className="flex flex-none items-center gap-3 border-b border-surface-border px-4 py-2.5" style={{ backgroundColor: "#101026" }}>
             <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-xs font-bold text-white">{initials(sel.contact?.name)}</div>
             <div className="min-w-0">
               <div className="text-sm font-semibold text-white">{sel.contact?.name ?? "Contacto"}</div>
               <div className="text-[11px] text-muted-2">{(CH[sel.channel] ?? CH.webchat).label} · {sel.contact?.phone ?? "—"}</div>
             </div>
             <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={markUnread}
+                title="Marcar como no leído"
+                className="grid h-8 w-8 place-items-center rounded-lg border border-surface-border bg-surface-raised text-muted transition hover:text-white"
+              >
+                <MailPlus className="h-4 w-4" />
+              </button>
+              {sel.status === "closed" ? (
+                <button
+                  onClick={() => setConvStatus("open")}
+                  className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-surface-raised px-2.5 py-1.5 text-xs font-semibold text-muted transition hover:text-white"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Reabrir
+                </button>
+              ) : (
+                <button
+                  onClick={() => setConvStatus("closed")}
+                  className="flex items-center gap-1.5 rounded-lg border border-success/40 bg-success/10 px-2.5 py-1.5 text-xs font-semibold text-success transition hover:bg-success/20"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Cerrar
+                </button>
+              )}
               <select
                 value={sel.assignee_member_id ?? ""}
                 onChange={(e) => setAssignee(e.target.value)}
@@ -254,35 +296,55 @@ export function InboxClient({
             </div>
           </div>
 
-          {/* Mensajes */}
-          <div ref={bodyRef} className="flex flex-1 flex-col gap-2 overflow-y-auto px-6 py-4">
+          {/* Mensajes (estilo WhatsApp Web · paleta Demandu) */}
+          <div
+            ref={bodyRef}
+            className="flex flex-1 flex-col gap-1.5 overflow-y-auto px-[8%] py-4"
+            style={{ backgroundColor: WA_CANVAS, backgroundImage: WA_DOODLE }}
+          >
             {messages.map((m) => {
               const out = m.direction === "outbound";
               return (
-                <div key={m.id} className={`max-w-[64%] rounded-2xl px-3.5 py-2 text-[13.5px] leading-snug ${out ? "self-end rounded-tr-sm bg-demandu-gradient text-white" : "self-start rounded-tl-sm bg-surface-card text-white"}`}>
+                <div
+                  key={m.id}
+                  className={`relative max-w-[65%] px-2.5 pb-1.5 pt-1.5 text-[13.5px] leading-snug shadow-sm ${
+                    out ? "self-end rounded-lg rounded-tr-sm text-[#f3f0ff]" : "self-start rounded-lg rounded-tl-sm text-[#e9edef]"
+                  }`}
+                  style={{ backgroundColor: out ? WA_OUT_BG : WA_IN_BG }}
+                >
                   {out && (
-                    <div className="mb-0.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide opacity-80">
+                    <div className="mb-0.5 flex items-center gap-1 text-[11px] font-semibold" style={{ color: m.sender === "bot" ? "#8B66FF" : "#FF6FB0" }}>
                       {m.sender === "bot" ? <><Bot className="h-3 w-3" /> Lana</> : <><User className="h-3 w-3" /> Agente</>}
                     </div>
                   )}
-                  <div>{m.body}</div>
-                  <div className={`mt-0.5 text-right text-[10px] ${out ? "text-white/70" : "text-muted-2"}`}>{clock(m.created_at)}</div>
+                  <span className="whitespace-pre-wrap break-words align-bottom">{m.body}</span>
+                  <span className="ml-2 inline-flex select-none items-center gap-0.5 align-bottom text-[10px] text-white/55">
+                    {clock(m.created_at)}
+                    {out && <CheckCheck className="h-3 w-3" style={{ color: "#7fb2ff" }} />}
+                  </span>
                 </div>
               );
             })}
           </div>
 
-          {/* Composer */}
-          <div className="flex flex-none items-end gap-2 border-t border-surface-border bg-surface px-4 py-3">
+          {/* Composer (estilo WhatsApp Web · Demandu) */}
+          <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "#101026" }}>
+            <Smile className="mb-2 h-6 w-6 flex-none text-muted-2" />
+            <Paperclip className="mb-2 h-5 w-5 flex-none text-muted-2" />
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
               rows={1}
-              placeholder="Escribe un mensaje…  (Enter para enviar)"
-              className="max-h-32 min-h-[42px] flex-1 resize-none rounded-xl border border-surface-border bg-surface-raised px-3.5 py-2.5 text-sm text-white placeholder:text-muted-2 focus:border-pink focus:outline-none"
+              placeholder="Escribe un mensaje"
+              className="max-h-32 min-h-[42px] flex-1 resize-none rounded-lg bg-surface-raised px-3.5 py-2.5 text-sm text-white placeholder:text-muted-2 focus:outline-none"
             />
-            <button onClick={send} disabled={!text.trim()} className="grid h-[42px] w-[42px] flex-none place-items-center rounded-xl bg-demandu-gradient text-white disabled:opacity-50">
+            <button
+              onClick={send}
+              disabled={!text.trim()}
+              className="grid h-[42px] w-[42px] flex-none place-items-center rounded-full text-white transition disabled:opacity-50"
+              style={{ backgroundColor: "#6E42FF" }}
+            >
               <Send className="h-5 w-5" />
             </button>
           </div>
