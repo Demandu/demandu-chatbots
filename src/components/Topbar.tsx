@@ -1,4 +1,5 @@
 import { Bell, Plus } from "lucide-react";
+import { UserMenu } from "./UserMenu";
 
 export function Topbar({ crumb }: { crumb?: React.ReactNode }) {
   return (
@@ -11,9 +12,7 @@ export function Topbar({ crumb }: { crumb?: React.ReactNode }) {
         <button className="grid h-9 w-9 place-items-center rounded-xl border border-surface-border bg-surface-raised text-muted">
           <Plus className="h-4 w-4" />
         </button>
-        <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet font-display text-sm font-bold text-white">
-          AC
-        </div>
+        <UserMenu />
       </div>
     </header>
   );
