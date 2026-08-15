@@ -78,6 +78,12 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
   const addButton = () =>
     onChange({ buttons: [...buttons, { id: `b${buttons.length + 1}-${Date.now()}`, label: "Nueva opción" }] });
 
+  const toggleId = (arr: string[] | undefined, id: string) => {
+    const set = new Set(arr ?? []);
+    if (set.has(id)) set.delete(id); else set.add(id);
+    return Array.from(set);
+  };
+
   return (
     <div className="w-[380px] overflow-auto border-l border-surface-border bg-surface p-5">
       <div className="mb-1 flex items-center gap-2.5">
@@ -108,7 +114,7 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
       </Field>
 
       {d.text !== undefined &&
-        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template", "condition"].includes(node.type) && (
+        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template", "condition", "tags", "action"].includes(node.type) && (
           <Field label="Mensaje">
             <textarea className="input min-h-[80px]" value={d.text} onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
@@ -405,14 +411,36 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
       )}
 
       {node.type === "human" && (
-        <Field label="Asignar a equipo">
-          <select className="input" value={d.team ?? ""} onChange={(e) => onChange({ team: e.target.value })}>
-            <option value="">Sin equipo específico</option>
-            {(catalogs?.teams ?? []).map((t: any) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-        </Field>
+        <>
+          <Field label="Asignar a equipo">
+            <select className="input" value={d.team ?? ""} onChange={(e) => onChange({ team: e.target.value })}>
+              <option value="">Sin equipo específico</option>
+              {(catalogs?.teams ?? []).map((t: any) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="O a un agente específico (opcional)">
+            <select className="input" value={d.memberId ?? ""} onChange={(e) => onChange({ memberId: e.target.value })}>
+              <option value="">Cualquiera del equipo</option>
+              {(catalogs?.members ?? []).map((m: any) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="mb-3 space-y-2">
+            <Toggle label="Notificar al equipo cuando entre el chat" checked={d.notifyTeam ?? true} onChange={(v) => onChange({ notifyTeam: v })} />
+            <Toggle label="Solo transferir en horario laboral" checked={d.businessHoursOnly ?? false} onChange={(v) => onChange({ businessHoursOnly: v })} />
+          </div>
+          {d.businessHoursOnly && (
+            <Field label="Mensaje fuera de horario">
+              <textarea className="input min-h-[60px]" value={d.offlineMessage ?? ""} placeholder="Ahora no hay asesores disponibles. Déjanos tu mensaje y te contactamos pronto." onChange={(e) => onChange({ offlineMessage: e.target.value })} />
+            </Field>
+          )}
+          <p className="mb-4 text-[11px] text-muted-2">
+            El horario laboral se define en <b className="text-muted">Configuración → Horario laboral</b>.
+          </p>
+        </>
       )}
 
       {/* Asignar chat: lógica de reparto */}
@@ -466,6 +494,77 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
             ))}
           </select>
         </Field>
+      )}
+
+      {/* ── Etiquetar: asignar/quitar etiquetas + grupo de leads ── */}
+      {node.type === "tags" && (
+        <>
+          <Field label="Etiquetas a asignar">
+            <TagChips
+              options={catalogs?.tags ?? []}
+              selected={d.tagIdsAdd ?? []}
+              onToggle={(id) => onChange({ tagIdsAdd: toggleId(d.tagIdsAdd, id) })}
+              empty="Crea etiquetas en Configuración → Etiquetas."
+            />
+          </Field>
+          <Field label="Etiquetas a quitar (opcional)">
+            <TagChips
+              options={catalogs?.tags ?? []}
+              selected={d.tagIdsRemove ?? []}
+              onToggle={(id) => onChange({ tagIdsRemove: toggleId(d.tagIdsRemove, id) })}
+            />
+          </Field>
+          <Field label="Agregar a grupo de leads (opcional)">
+            <select className="input" value={d.leadGroupId ?? ""} onChange={(e) => onChange({ leadGroupId: e.target.value })}>
+              <option value="">Ninguno</option>
+              {(catalogs?.groups ?? []).map((g: any) => (<option key={g.id} value={g.id}>{g.name}</option>))}
+            </select>
+          </Field>
+        </>
+      )}
+
+      {/* ── Acción / Webhook: disparo a un endpoint (sin ramificar) ── */}
+      {node.type === "action" && (
+        <>
+          <Field label="URL del webhook">
+            <input className="input" value={d.apiUrl ?? ""} placeholder="https://tu-servicio.com/webhook" onChange={(e) => onChange({ apiUrl: e.target.value })} />
+          </Field>
+          <Field label="Método">
+            <select className="input" value={d.apiMethod ?? "POST"} onChange={(e) => onChange({ apiMethod: e.target.value as DemanduNodeData["apiMethod"] })}>
+              <option value="POST">POST</option>
+              <option value="GET">GET</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+          </Field>
+          <Field label="Headers (JSON, opcional)">
+            <textarea className="input min-h-[56px] font-mono text-xs" value={d.apiHeaders ?? ""} placeholder={'{ "Authorization": "Bearer {{token}}" }'} onChange={(e) => onChange({ apiHeaders: e.target.value })} />
+          </Field>
+          {(d.apiMethod === "POST" || d.apiMethod === "PUT" || !d.apiMethod) && (
+            <Field label="Body (JSON, opcional)">
+              <textarea className="input min-h-[64px] font-mono text-xs" value={d.apiBody ?? ""} placeholder={'{ "telefono": "{{telefono}}" }'} onChange={(e) => onChange({ apiBody: e.target.value })} />
+            </Field>
+          )}
+          <p className="mb-4 text-[11px] text-muted-2">
+            Se dispara al llegar al nodo (sin esperar la respuesta). Si necesitas ramificar según el resultado, usa el nodo <b className="text-muted">Acción API</b>.
+          </p>
+        </>
+      )}
+
+      {/* ── Fin: estado final + reapertura ── */}
+      {node.type === "end" && (
+        <>
+          <Field label="Estado final de la conversación">
+            <select className="input" value={d.finalStatusId ?? ""} onChange={(e) => onChange({ finalStatusId: e.target.value })}>
+              <option value="">No cambiar</option>
+              {(catalogs?.states ?? []).map((s: any) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+            </select>
+          </Field>
+          <div className="mb-2">
+            <Toggle label="Reabrir si el contacto escribe de nuevo" checked={d.reopenOnMessage ?? true} onChange={(v) => onChange({ reopenOnMessage: v })} />
+          </div>
+          <p className="mb-4 text-[11px] text-muted-2">Este nodo cierra el flujo. El mensaje de arriba es la despedida que verá el contacto.</p>
+        </>
       )}
 
       {/* ── Condición: ramas con reglas (atributo · operador · valor) ── */}
@@ -807,6 +906,39 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div className="mb-4">
       <label className="mb-1.5 block text-xs font-semibold text-muted">{label}</label>
       {children}
+    </div>
+  );
+}
+
+function TagChips({
+  options,
+  selected,
+  onToggle,
+  empty,
+}: {
+  options: any[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  empty?: string;
+}) {
+  if (options.length === 0) return <p className="text-[11px] text-muted-2">{empty ?? "No hay opciones."}</p>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => {
+        const on = selected.includes(o.id);
+        return (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => onToggle(o.id)}
+            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+              on ? "border-pink bg-pink/15 text-pink" : "border-surface-border bg-surface-raised text-muted hover:text-white"
+            }`}
+          >
+            {on ? "✓ " : ""}{o.name}
+          </button>
+        );
+      })}
     </div>
   );
 }

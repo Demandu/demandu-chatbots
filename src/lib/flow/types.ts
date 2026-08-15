@@ -157,6 +157,15 @@ export interface DemanduNodeData {
   companyAttr?: string;
   /** solo para type = "human" */
   team?: string;
+  notifyTeam?: boolean;
+  offlineMessage?: string;
+  /** solo para type = "tags" (Etiquetar) */
+  tagIdsAdd?: string[];
+  tagIdsRemove?: string[];
+  leadGroupId?: string;
+  /** solo para type = "end" (Fin) */
+  finalStatusId?: string;
+  reopenOnMessage?: boolean;
   /** solo para type = "assign" (Asignar chat) */
   assignBy?: "team" | "member" | "round_robin";
   teamId?: string;
