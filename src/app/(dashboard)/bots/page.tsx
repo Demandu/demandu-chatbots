@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createBot, deleteBot, importBot } from "./actions";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { BotCardName } from "@/components/BotCardName";
+import { CreateBotButton } from "@/components/CreateBotButton";
 import { Upload } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -43,10 +44,7 @@ export default async function BotsPage() {
           {CHANNEL_CARDS.map((c) => (
             <form action={createBot} key={c.channel}>
               <input type="hidden" name="channel" value={c.channel} />
-              <button
-                type="submit"
-                className="card group flex w-full flex-col items-start gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:border-pink"
-              >
+              <CreateBotButton>
                 {/* Sustituye este tile por tu imagen: <img src="/canales/whatsapp.png" .../> */}
                 <span
                   className="grid h-14 w-14 place-items-center rounded-2xl"
@@ -58,10 +56,7 @@ export default async function BotsPage() {
                   <div className="font-display text-base font-semibold text-white">{c.label}</div>
                   <div className="text-xs text-muted-2">{c.desc}</div>
                 </div>
-                <span className="mt-1 text-xs font-semibold text-pink opacity-0 transition group-hover:opacity-100">
-                  Crear bot →
-                </span>
-              </button>
+              </CreateBotButton>
             </form>
           ))}
         </div>
