@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { updateBusinessHours } from "../actions";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -25,8 +26,13 @@ const TIMEZONES = [
   "Europe/Madrid",
 ];
 
-export default async function HoursPage() {
+export default async function HoursPage({
+  searchParams,
+}: {
+  searchParams: { saved?: string };
+}) {
   const orgId = await getCurrentOrgId();
+  const saved = searchParams?.saved === "1";
   const { data: org } = await createClient()
     .from("organizations")
     .select("business_hours, timezone")
@@ -38,6 +44,11 @@ export default async function HoursPage() {
 
   return (
     <form action={updateBusinessHours} className="max-w-xl">
+      {saved && (
+        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-success">
+          ✓ Horario laboral guardado.
+        </div>
+      )}
       <div className="mb-5 card p-4">
         <label className="mb-1.5 block text-xs font-semibold text-muted">Zona horaria</label>
         <select name="timezone" defaultValue={tz} className="input">
@@ -67,7 +78,7 @@ export default async function HoursPage() {
       </div>
 
       <div className="mt-5 flex items-center gap-3">
-        <button className="btn-primary">Guardar horario</button>
+        <SubmitButton>Guardar horario</SubmitButton>
         <p className="text-xs text-muted-2">El nodo “Asignar chat” usará este horario cuando actives “solo horario laboral”.</p>
       </div>
     </form>

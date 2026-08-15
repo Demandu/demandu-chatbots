@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 
@@ -23,6 +24,7 @@ export async function updateBusinessHours(formData: FormData) {
   const timezone = s(formData.get("timezone")) || "America/Mexico_City";
   await createClient().from("organizations").update({ business_hours, timezone }).eq("id", orgId);
   revalidatePath("/settings/hours");
+  redirect("/settings/hours?saved=1");
 }
 
 // ── Etiquetas ────────────────────────────────────────────────────────────────
