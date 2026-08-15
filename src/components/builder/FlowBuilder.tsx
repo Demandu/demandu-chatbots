@@ -22,6 +22,7 @@ import { Palette } from "./Palette";
 import { Inspector } from "./Inspector";
 import { Webchat } from "@/components/Webchat";
 import { useCatalogs } from "@/lib/catalogs";
+import { createClient } from "@/lib/supabase/client";
 import {
   NODE_META, type Flow, type DemanduNodeData, type NodeType,
 } from "@/lib/flow/types";
@@ -31,20 +32,23 @@ const nodeTypes: NodeTypes = Object.fromEntries(
   (Object.keys(NODE_META) as NodeType[]).map((t) => [t, DemanduNodeCard])
 ) as NodeTypes;
 
-/** Estilo de arista de marca: gradiente violeta, flecha y flujo animado. */
+/** Estilo de arista de marca: violeta, flecha y flujo animado. */
 const EDGE_STYLE = {
   animated: true,
   markerEnd: { type: MarkerType.ArrowClosed, color: "#6E42FF", width: 18, height: 18 },
   style: { stroke: "#6E42FF", strokeWidth: 2.5 },
 };
 
-function BuilderInner({ flow }: { flow: Flow }) {
+type SaveState = "idle" | "saving" | "saved" | "error";
+
+function BuilderInner({ flow, flowId }: { flow: Flow; flowId?: string | null }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(flow.nodes as unknown as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     (flow.edges as unknown as Edge[]).map((e) => ({ ...e, ...EDGE_STYLE }))
   );
-  const [selectedId, setSelectedId] = useState<string | null>("welcome");
+  const [selectedId, setSelectedId] = useState<string | null>(flow.nodes[0]?.id ?? null);
   const [showPreview, setShowPreview] = useState(false);
+  const [save, setSave] = useState<SaveState>("idle");
   const wrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
   const { catalogs } = useCatalogs();
@@ -92,6 +96,30 @@ function BuilderInner({ flow }: { flow: Flow }) {
     [flow, nodes, edges]
   );
 
+  const handleSave = useCallback(async () => {
+    if (!flowId) {
+      setSave("error");
+      return;
+    }
+    setSave("saving");
+    const graph = {
+      nodes: nodes.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
+      edges: edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? null,
+        label: (e as any).label ?? null,
+      })),
+    };
+    const { error } = await createClient().from("flows").update({ graph }).eq("id", flowId);
+    setSave(error ? "error" : "saved");
+    setTimeout(() => setSave("idle"), 1800);
+  }, [flowId, nodes, edges]);
+
+  const saveLabel =
+    save === "saving" ? "Guardando…" : save === "saved" ? "✓ Guardado" : save === "error" ? "Error al guardar" : "Guardar";
+
   return (
     <div className="flex flex-1 overflow-hidden">
       <Palette />
@@ -101,12 +129,16 @@ function BuilderInner({ flow }: { flow: Flow }) {
         <div className="absolute left-4 top-4 z-10 flex gap-1 rounded-2xl border border-surface-border bg-surface/70 p-1.5 backdrop-blur">
           <button
             onClick={() => setShowPreview((s) => !s)}
-            className="rounded-xl bg-demandu-gradient px-3 py-2 font-display text-xs font-semibold text-white"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white"
           >
             ▶ Probar flujo
           </button>
-          <button className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white">
-            ⟳ Publicar
+          <button
+            onClick={handleSave}
+            disabled={save === "saving"}
+            className="rounded-xl bg-demandu-gradient px-3 py-2 font-display text-xs font-semibold text-white disabled:opacity-60"
+          >
+            {saveLabel}
           </button>
         </div>
 
@@ -148,10 +180,10 @@ function BuilderInner({ flow }: { flow: Flow }) {
   );
 }
 
-export function FlowBuilder({ flow }: { flow: Flow }) {
+export function FlowBuilder({ flow, flowId }: { flow: Flow; flowId?: string | null }) {
   return (
     <ReactFlowProvider>
-      <BuilderInner flow={flow} />
+      <BuilderInner flow={flow} flowId={flowId} />
     </ReactFlowProvider>
   );
 }
