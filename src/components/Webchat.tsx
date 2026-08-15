@@ -7,10 +7,12 @@ import { getNode, getStartNode, defaultNext, buttonTarget, renderText } from "@/
 import { hhmm } from "@/lib/utils";
 import { LogoMark } from "./Logo";
 
+type Slot = { startISO: string; endISO: string; label: string };
 type Msg =
   | { kind: "in"; html: string; time: string }
   | { kind: "out"; text: string; time: string }
   | { kind: "buttons"; buttons: FlowButton[]; nodeId: string }
+  | { kind: "slots"; slots: Slot[]; calendarId: string; nodeId: string; durationMin: number }
   | { kind: "typing" };
 
 /**
@@ -46,7 +48,7 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
   }, []);
 
   const userSay = useCallback((text: string) => {
-    setMsgs((m) => m.filter((x) => x.kind !== "buttons").concat({ kind: "out", text, time: hhmm() }));
+    setMsgs((m) => m.filter((x) => x.kind !== "buttons" && x.kind !== "slots").concat({ kind: "out", text, time: hhmm() }));
   }, []);
 
   const step = useCallback(
@@ -76,6 +78,35 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
           await botSay(node.data.text ?? "");
           setStatus("conectando con un asesor…");
           break;
+        case "calendar": {
+          await botSay(node.data.text ?? "¿Qué horario te acomoda mejor?");
+          setStatus("consultando disponibilidad…");
+          try {
+            const res = await fetch("/api/calendar/slots", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ calendarId: node.data.calendarId, durationMin: node.data.durationMin ?? 30 }),
+            });
+            const j = await res.json();
+            setStatus("en línea");
+            if (j.error === "not_connected") {
+              await botSay("⚠️ _(Preview)_ Conecta Google Calendar en *Configuración → Integraciones* para ofrecer horarios reales.");
+              const n = defaultNext(flow, node); if (n) await step(n);
+              break;
+            }
+            if (!j.slots || j.slots.length === 0) {
+              await botSay("No encuentro horarios disponibles en el rango configurado. Revisa tu *Horario laboral*.");
+              const n = defaultNext(flow, node); if (n) await step(n);
+              break;
+            }
+            setMsgs((m) => [...m, { kind: "slots", slots: j.slots, calendarId: j.calendarId, nodeId: node.id, durationMin: node.data.durationMin ?? 30 }]);
+          } catch {
+            setStatus("en línea");
+            await botSay("No pude consultar la disponibilidad en este momento.");
+            const n = defaultNext(flow, node); if (n) await step(n);
+          }
+          break;
+        }
         case "end":
           await botSay(node.data.text ?? "");
           break;
@@ -93,6 +124,40 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
     await wait(400);
     const t = buttonTarget(flow, nodeId, b);
     if (t) await step(t);
+  };
+
+  const onSlot = async (
+    slot: Slot,
+    meta: { calendarId: string; nodeId: string; durationMin: number }
+  ) => {
+    userSay(slot.label);
+    setStatus("agendando…");
+    await wait(300);
+    try {
+      const res = await fetch("/api/calendar/book", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          calendarId: meta.calendarId,
+          startISO: slot.startISO,
+          endISO: slot.endISO,
+          durationMin: meta.durationMin,
+          summary: "Cita · Demandu (prueba)",
+        }),
+      });
+      const j = await res.json();
+      setStatus("en línea");
+      if (j.ok) {
+        await botSay(`¡Listo! Agendé tu cita para *${slot.label}*. Ya quedó en el calendario. ✅`);
+      } else {
+        await botSay(`No pude crear el evento${j.error ? ` (${j.error})` : ""}.`);
+      }
+    } catch {
+      setStatus("en línea");
+      await botSay("Hubo un problema al agendar.");
+    }
+    const node = getNode(flow, meta.nodeId);
+    if (node) { const n = defaultNext(flow, node); if (n) await step(n); }
   };
 
   const run = useCallback(async () => {
@@ -174,6 +239,23 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
                 <div key={i} className="max-w-[80%] self-end rounded-lg rounded-tr-sm bg-[#005c4b] px-2.5 py-1.5 text-[13.5px] leading-snug text-[#e9edef]">
                   {m.text}
                   <span className="ml-2 float-right text-[10px] text-[#a7c9bf]">{m.time} ✓✓</span>
+                </div>
+              );
+            if (m.kind === "slots")
+              return (
+                <div key={i} className="my-1 max-w-[85%] self-start">
+                  <div className="mb-1 text-[11px] text-[#8696a0]">📅 Horarios disponibles</div>
+                  <div className="grid grid-cols-1 gap-1.5">
+                    {m.slots.map((s) => (
+                      <button
+                        key={s.startISO}
+                        onClick={() => onSlot(s, { calendarId: m.calendarId, nodeId: m.nodeId, durationMin: m.durationMin })}
+                        className="rounded-lg border border-[#2a3942] bg-[#182229] px-3 py-2 text-left text-[13px] font-medium capitalize text-[#e9edef] hover:border-[#00a884] hover:bg-[#1e2a32]"
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               );
             // buttons

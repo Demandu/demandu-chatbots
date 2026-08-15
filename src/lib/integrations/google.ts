@@ -105,3 +105,87 @@ export async function fetchCalendars(accessToken: string): Promise<GCalItem[]> {
     .filter((c: any) => c.accessRole === "owner" || c.accessRole === "writer")
     .map((c: any) => ({ id: c.id, summary: c.summary, primary: !!c.primary, accessRole: c.accessRole }));
 }
+
+/**
+ * Devuelve un access_token válido para la organización, refrescándolo si expiró.
+ * `supabase` es un cliente de servidor (con sesión del usuario). Retorna null si
+ * la organización no tiene Google Calendar conectado.
+ */
+export async function getValidAccessTokenForOrg(supabase: any, orgId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from("integrations")
+    .select("access_token, refresh_token, token_expiry")
+    .eq("org_id", orgId)
+    .eq("provider", "google_calendar")
+    .maybeSingle();
+  if (!data) return null;
+
+  const expiry = data.token_expiry ? new Date(data.token_expiry).getTime() : 0;
+  // Si faltan más de 60s, el token sirve
+  if (expiry - Date.now() > 60_000 && data.access_token) return data.access_token as string;
+
+  // Refrescar
+  if (!data.refresh_token) return (data.access_token as string) ?? null;
+  try {
+    const t = await refreshAccessToken(data.refresh_token as string);
+    const newExpiry = new Date(Date.now() + (t.expires_in ?? 3600) * 1000).toISOString();
+    await supabase
+      .from("integrations")
+      .update({ access_token: t.access_token, token_expiry: newExpiry, updated_at: new Date().toISOString() })
+      .eq("org_id", orgId)
+      .eq("provider", "google_calendar");
+    return t.access_token;
+  } catch {
+    return (data.access_token as string) ?? null;
+  }
+}
+
+export interface BusyInterval { start: string; end: string }
+
+export async function freeBusy(
+  accessToken: string,
+  calendarId: string,
+  timeMinISO: string,
+  timeMaxISO: string
+): Promise<BusyInterval[]> {
+  const res = await fetch("https://www.googleapis.com/calendar/v3/freeBusy", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ timeMin: timeMinISO, timeMax: timeMaxISO, items: [{ id: calendarId }] }),
+  });
+  if (!res.ok) throw new Error(`freeBusy failed: ${res.status} ${await res.text()}`);
+  const j = await res.json();
+  return (j.calendars?.[calendarId]?.busy ?? []) as BusyInterval[];
+}
+
+export async function createCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  ev: {
+    summary: string;
+    description?: string;
+    startISO: string;
+    endISO: string;
+    timeZone: string;
+    attendeeEmail?: string;
+  }
+): Promise<{ id: string; htmlLink: string }> {
+  const body: any = {
+    summary: ev.summary,
+    description: ev.description,
+    start: { dateTime: ev.startISO, timeZone: ev.timeZone },
+    end: { dateTime: ev.endISO, timeZone: ev.timeZone },
+  };
+  if (ev.attendeeEmail) body.attendees = [{ email: ev.attendeeEmail }];
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=all`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) throw new Error(`createEvent failed: ${res.status} ${await res.text()}`);
+  const j = await res.json();
+  return { id: j.id, htmlLink: j.htmlLink };
+}
