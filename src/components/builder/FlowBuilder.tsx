@@ -118,6 +118,15 @@ function BuilderInner({
     [selectedId, setNodes]
   );
 
+  const deleteNode = useCallback(
+    (id: string) => {
+      setNodes((nds) => nds.filter((n) => n.id !== id));
+      setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
+      setSelectedId((cur) => (cur === id ? null : cur));
+    },
+    [setNodes, setEdges]
+  );
+
   const liveFlow: Flow = useMemo(
     () => ({ ...flow, nodes: nodes as unknown as Flow["nodes"], edges: edges as unknown as Flow["edges"] }),
     [flow, nodes, edges]
@@ -191,6 +200,12 @@ function BuilderInner({
           onNodeClick={(_, n) => setSelectedId(n.id)}
           onPaneClick={() => setSelectedId(null)}
           onMoveEnd={(_, vp) => { viewportRef.current = vp; scheduleSave(); }}
+          onNodesDelete={(deleted) => {
+            const del = new Set(deleted.map((n) => n.id));
+            setEdges((eds) => eds.filter((e) => !del.has(e.source) && !del.has(e.target)));
+            setSelectedId((cur) => (cur && del.has(cur) ? null : cur));
+          }}
+          deleteKeyCode={["Backspace", "Delete"]}
           nodeTypes={nodeTypes}
           proOptions={{ hideAttribution: true }}
           {...viewportProps}
@@ -213,7 +228,7 @@ function BuilderInner({
         )}
       </div>
 
-      <Inspector node={selected} onChange={patchSelected} catalogs={catalogs} />
+      <Inspector node={selected} onChange={patchSelected} onDelete={deleteNode} catalogs={catalogs} />
     </div>
   );
 }

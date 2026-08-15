@@ -10,6 +10,7 @@ import type { Catalogs } from "@/lib/catalogs";
 interface Props {
   node: DemanduNode | null;
   onChange: (patch: Partial<DemanduNodeData>) => void;
+  onDelete?: (id: string) => void;
   catalogs?: Catalogs;
 }
 
@@ -23,7 +24,7 @@ const ACTION_SOURCE: Partial<Record<NodeActionType, keyof Catalogs>> = {
 };
 const NO_VALUE = new Set<NodeActionType>(["opt_out"]);
 
-export function Inspector({ node, onChange, catalogs }: Props) {
+export function Inspector({ node, onChange, onDelete, catalogs }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => setMenuOpen(false), [node?.id]);
 
@@ -515,6 +516,19 @@ export function Inspector({ node, onChange, catalogs }: Props) {
         <>
           <SectionTitle>Siguiente paso</SectionTitle>
           <p className="text-xs text-muted-2">Conecta este nodo arrastrando desde su punto de salida (•) hacia otro nodo en el lienzo.</p>
+        </>
+      )}
+
+      {onDelete && (
+        <>
+          <SectionTitle>Zona de peligro</SectionTitle>
+          <button
+            onClick={() => onDelete(node.id)}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-danger/40 bg-danger/10 py-2.5 text-xs font-semibold text-danger transition hover:bg-danger/20"
+          >
+            🗑️ Eliminar nodo
+          </button>
+          <p className="mt-2 text-[11px] text-muted-2">También puedes seleccionar el nodo y pulsar <b className="text-muted">Supr</b> o <b className="text-muted">Retroceso</b>.</p>
         </>
       )}
     </div>
