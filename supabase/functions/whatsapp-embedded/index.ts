@@ -163,7 +163,7 @@ Deno.serve(async (req) => {
         bot_id: bot_id || null,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "org_id" },
+      { onConflict: "bot_id" },
     );
     if (error) return json({ error: error.message });
 

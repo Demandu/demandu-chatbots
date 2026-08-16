@@ -138,6 +138,36 @@ async function handleIncoming(opts: any) {
   return { vars, awaiting: nextAwait };
 }
 
+// ---- selección de flujo por disparador ----
+// Prioridad: (1) palabra clave (interrumpe incluso a mitad de conversación),
+// (2) continuar el flujo activo, (3) lead que regresa, (4) bienvenida.
+function chooseFlow(flows: any[], text: string, isReturning: boolean, state: any) {
+  const t = (text || "").toLowerCase();
+  for (const f of flows) {
+    if (
+      f.trigger_type === "keyword" &&
+      Array.isArray(f.keywords) &&
+      f.keywords.some((k: string) => k && t.includes(String(k).toLowerCase()))
+    ) {
+      return f;
+    }
+  }
+  if (state?.awaiting && state?.flow_id) {
+    const cur = flows.find((f: any) => f.id === state.flow_id);
+    if (cur) return cur;
+  }
+  if (isReturning) {
+    const r = flows.find((f: any) => f.trigger_type === "returning");
+    if (r) return r;
+  }
+  return (
+    flows.find((f: any) => f.trigger_type === "welcome") ??
+    flows.find((f: any) => f.trigger_type !== "keyword") ??
+    flows[0] ??
+    null
+  );
+}
+
 function json(o: any) { return new Response(JSON.stringify(o), { headers: { "Content-Type": "application/json" } }); }
 
 // ---- estados de entrega (difusiones) ----
@@ -219,12 +249,31 @@ Deno.serve(async (req: Request) => {
       await db.from("messages").insert({ conversation_id: conv.id, org_id: cfg.org_id, direction: "inbound", sender: "contact", body: text });
       await db.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
       if (cfg.bot_id && conv.status !== "assigned") {
-        const { data: flowRow } = await db.from("flows").select("graph").eq("bot_id", cfg.bot_id).order("version", { ascending: false }).limit(1).maybeSingle();
-        const graph = flowRow?.graph ?? { nodes: [], edges: [] };
-        const flow = { nodes: graph.nodes ?? [], edges: graph.edges ?? [] };
-        if (flow.nodes.length) {
-          const newState = await handleIncoming({ flow, pnid, token: cfg.access_token, to: from, orgId: cfg.org_id, convId: conv.id, db, flowState: conv.flow_state ?? {}, text });
-          await db.from("conversations").update({ flow_state: newState }).eq("id", conv.id);
+        // ¿Lead que regresa? (tiene más de una conversación con nosotros)
+        const { count: convCount } = await db
+          .from("conversations")
+          .select("id", { count: "exact", head: true })
+          .eq("contact_id", contact.id);
+        const isReturning = (convCount ?? 1) > 1;
+
+        // Todos los flujos habilitados del bot y elegir por disparador
+        const { data: flowRows } = await db
+          .from("flows")
+          .select("id, graph, trigger_type, keywords, enabled")
+          .eq("bot_id", cfg.bot_id);
+        const flows = (flowRows ?? []).filter((f: any) => f.enabled !== false);
+        const state = conv.flow_state ?? {};
+        const chosen = chooseFlow(flows, text, isReturning, state);
+
+        if (chosen) {
+          const graph = chosen.graph ?? { nodes: [], edges: [] };
+          const flow = { nodes: graph.nodes ?? [], edges: graph.edges ?? [] };
+          if (flow.nodes.length) {
+            // Si cambiamos de flujo, ese flujo arranca desde el inicio (sin arrastrar awaiting)
+            const flowState = state.flow_id === chosen.id ? state : { vars: state.vars ?? {} };
+            const newState = await handleIncoming({ flow, pnid, token: cfg.access_token, to: from, orgId: cfg.org_id, convId: conv.id, db, flowState, text });
+            await db.from("conversations").update({ flow_state: { ...newState, flow_id: chosen.id } }).eq("id", conv.id);
+          }
         }
       }
     } catch (e) {
