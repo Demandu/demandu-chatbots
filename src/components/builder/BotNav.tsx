@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GitBranch, Plug, Settings } from "lucide-react";
+import { GitBranch, Megaphone, FileText, Plug, Settings } from "lucide-react";
 
 /**
  * Menú de secciones DE UN BOT (cada bot tiene su propia configuración,
@@ -13,6 +13,8 @@ export function BotNav({ botId }: { botId: string }) {
   const base = `/bots/${botId}`;
   const tabs = [
     { href: base, label: "Flujos", icon: GitBranch, active: pathname === base },
+    { href: `${base}/broadcasts`, label: "Difusiones", icon: Megaphone, active: pathname.startsWith(`${base}/broadcasts`) },
+    { href: `${base}/templates`, label: "Plantillas", icon: FileText, active: pathname.startsWith(`${base}/templates`) },
     { href: `${base}/install`, label: "Conexión", icon: Plug, active: pathname.startsWith(`${base}/install`) },
     { href: `${base}/settings`, label: "Ajustes", icon: Settings, active: pathname.startsWith(`${base}/settings`) },
   ];

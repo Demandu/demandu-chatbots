@@ -8,12 +8,12 @@ import { getCurrentOrgId } from "@/lib/org";
 const GRAPH = "https://graph.facebook.com/v20.0";
 const MAX_RECIPIENTS = 500;
 
-/** Lee el canal de WhatsApp de la org (waba_id, phone_number_id, token). */
-async function getChannel(supabase: ReturnType<typeof createClient>, orgId: string) {
+/** Lee el canal de WhatsApp de un BOT (waba_id, phone_number_id, token). */
+async function getChannel(supabase: ReturnType<typeof createClient>, botId: string) {
   const { data } = await supabase
     .from("whatsapp_channels")
     .select("waba_id, phone_number_id, access_token, display_number")
-    .eq("org_id", orgId)
+    .eq("bot_id", botId)
     .maybeSingle();
   return data as
     | { waba_id: string | null; phone_number_id: string | null; access_token: string | null; display_number: string | null }
@@ -28,24 +28,21 @@ function parseTemplate(components: any[]): { body: string; variables: number } {
   return { body: text, variables: matches ? matches.length : 0 };
 }
 
-/** Sincroniza las plantillas aprobadas/pendientes de la WABA desde Meta. */
-export async function syncTemplates() {
+/** Sincroniza las plantillas de la WABA de ESE bot desde Meta. */
+export async function syncTemplates(formData: FormData) {
   const orgId = await getCurrentOrgId();
   if (!orgId) return;
+  const botId = String(formData.get("bot_id") ?? "");
+  if (!botId) return;
   const supabase = createClient();
-  const ch = await getChannel(supabase, orgId);
+  const ch = await getChannel(supabase, botId);
   if (!ch?.waba_id || !ch?.access_token) {
-    redirect("/campaigns?tab=plantillas&error=sin_canal");
+    redirect(`/bots/${botId}/templates?error=sin_canal`);
   }
 
-  // OJO: redirect() lanza una excepción especial, así que NO debe ir dentro
-  // del try/catch (el catch se la tragaría). Acumulamos el error y redirigimos
-  // al final, fuera del try.
   let errParam = "";
   try {
-    const res = await fetch(
-      `${GRAPH}/${ch.waba_id}/message_templates?limit=200&access_token=${ch.access_token}`,
-    );
+    const res = await fetch(`${GRAPH}/${ch.waba_id}/message_templates?limit=200&access_token=${ch.access_token}`);
     const j = await res.json();
     if (!res.ok || !Array.isArray(j?.data)) {
       errParam = j?.error?.message ?? "meta_error";
@@ -55,6 +52,7 @@ export async function syncTemplates() {
         await supabase.from("whatsapp_templates").upsert(
           {
             org_id: orgId,
+            bot_id: botId,
             waba_id: ch.waba_id,
             meta_id: String(t.id ?? ""),
             name: t.name,
@@ -66,7 +64,7 @@ export async function syncTemplates() {
             variables,
             updated_at: new Date().toISOString(),
           },
-          { onConflict: "org_id,name,language" },
+          { onConflict: "bot_id,name,language" },
         );
       }
     }
@@ -74,24 +72,26 @@ export async function syncTemplates() {
     errParam = "red";
   }
 
-  revalidatePath("/campaigns");
-  if (errParam) redirect(`/campaigns?tab=plantillas&error=${encodeURIComponent(errParam)}`);
-  redirect("/campaigns?tab=plantillas&synced=1");
+  revalidatePath(`/bots/${botId}/templates`);
+  if (errParam) redirect(`/bots/${botId}/templates?error=${encodeURIComponent(errParam)}`);
+  redirect(`/bots/${botId}/templates?synced=1`);
 }
 
-/** Crea una difusión y envía la plantilla a la audiencia por Cloud API. */
+/** Crea una difusión desde un BOT y envía la plantilla a su audiencia. */
 export async function sendCampaign(formData: FormData) {
   const orgId = await getCurrentOrgId();
   if (!orgId) return;
   const supabase = createClient();
 
+  const botId = String(formData.get("bot_id") ?? "");
   const templateId = String(formData.get("template_id") ?? "");
   const name = String(formData.get("name") ?? "").trim() || "Difusión";
-  const tag = String(formData.get("tag") ?? "").trim(); // opcional
+  const tag = String(formData.get("tag") ?? "").trim();
+  if (!botId) return;
 
-  const ch = await getChannel(supabase, orgId);
+  const ch = await getChannel(supabase, botId);
   if (!ch?.phone_number_id || !ch?.access_token) {
-    redirect("/campaigns?tab=difusion&error=sin_canal");
+    redirect(`/bots/${botId}/broadcasts?error=sin_canal`);
   }
 
   const { data: tpl } = await supabase
@@ -99,7 +99,7 @@ export async function sendCampaign(formData: FormData) {
     .select("name, language, variables")
     .eq("id", templateId)
     .maybeSingle();
-  if (!tpl) redirect("/campaigns?tab=difusion&error=sin_plantilla");
+  if (!tpl) redirect(`/bots/${botId}/broadcasts?error=sin_plantilla`);
 
   // Audiencia: contactos de WhatsApp no dados de baja (opcional por etiqueta)
   let q = supabase
@@ -112,11 +112,11 @@ export async function sendCampaign(formData: FormData) {
   const { data: contacts } = await q.limit(MAX_RECIPIENTS + 1);
   const audience = (contacts ?? []).filter((c) => c.phone);
 
-  // Crea la campaña
   const { data: campaign } = await supabase
     .from("campaigns")
     .insert({
       org_id: orgId,
+      bot_id: botId,
       name,
       template_name: (tpl as any).name,
       template_language: (tpl as any).language,
@@ -125,54 +125,34 @@ export async function sendCampaign(formData: FormData) {
     })
     .select("id")
     .single();
-  if (!campaign) redirect("/campaigns?tab=difusion&error=no_campaign");
+  if (!campaign) redirect(`/bots/${botId}/broadcasts?error=no_campaign`);
 
   const vars = (tpl as any).variables ?? 0;
-  let sent = 0;
-  let failed = 0;
 
   for (const c of audience.slice(0, MAX_RECIPIENTS)) {
     const components =
       vars > 0
-        ? [
-            {
-              type: "body",
-              parameters: Array.from({ length: vars }, (_, i) => ({
-                type: "text",
-                text: i === 0 ? c.name || "" : "",
-              })),
-            },
-          ]
+        ? [{ type: "body", parameters: Array.from({ length: vars }, (_, i) => ({ type: "text", text: i === 0 ? c.name || "" : "" })) }]
         : undefined;
 
     let wamid: string | null = null;
     let error: string | null = null;
     try {
-      const res = await fetch(`${GRAPH}/${ch!.phone_number_id}/messages`, {
+      const res = await fetch(`${GRAPH}/${ch.phone_number_id}/messages`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${ch!.access_token}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${ch.access_token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           messaging_product: "whatsapp",
           to: c.phone,
           type: "template",
-          template: {
-            name: (tpl as any).name,
-            language: { code: (tpl as any).language || "es" },
-            ...(components ? { components } : {}),
-          },
+          template: { name: (tpl as any).name, language: { code: (tpl as any).language || "es" }, ...(components ? { components } : {}) },
         }),
       });
       const j = await res.json();
-      if (res.ok && j?.messages?.[0]?.id) {
-        wamid = j.messages[0].id;
-        sent++;
-      } else {
-        error = j?.error?.message ?? "error";
-        failed++;
-      }
+      if (res.ok && j?.messages?.[0]?.id) wamid = j.messages[0].id;
+      else error = j?.error?.message ?? "error";
     } catch (e) {
       error = (e as Error)?.message ?? "red";
-      failed++;
     }
 
     await supabase.from("campaign_recipients").insert({
@@ -190,6 +170,6 @@ export async function sendCampaign(formData: FormData) {
 
   await supabase.from("campaigns").update({ status: "sent" }).eq("id", (campaign as any).id);
 
-  revalidatePath("/campaigns");
+  revalidatePath(`/bots/${botId}/broadcasts`);
   redirect(`/campaigns/${(campaign as any).id}`);
 }
