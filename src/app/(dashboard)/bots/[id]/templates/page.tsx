@@ -5,6 +5,7 @@ import { BotTitle } from "@/components/BotTitle";
 import { BotNav } from "@/components/builder/BotNav";
 import { createClient } from "@/lib/supabase/server";
 import { syncTemplates } from "../../../campaigns/actions";
+import { channelOf } from "@/lib/channels";
 import { RefreshCw, Megaphone } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,8 @@ export default async function BotTemplatesPage({
     }
   }
   if (!bot) notFound();
+  // Feature solo de WhatsApp: si el canal no lo soporta, de vuelta al bot.
+  if (channelOf(bot.channel) !== "whatsapp") redirect(`/bots/${bot.id}`);
 
   const [{ data: templates }, { data: wa }] = await Promise.all([
     supabase.from("whatsapp_templates").select("*").eq("bot_id", params.id).order("updated_at", { ascending: false }),
@@ -48,7 +51,7 @@ export default async function BotTemplatesPage({
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="flex-1 overflow-auto p-8">
-        <BotNav botId={bot.id} />
+        <BotNav botId={bot.id} channel={bot.channel} />
 
         <div className="mb-3 flex items-center justify-between">
           <div>

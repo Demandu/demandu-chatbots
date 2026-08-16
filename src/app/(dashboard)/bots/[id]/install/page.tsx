@@ -38,7 +38,7 @@ export default async function BotInstallPage({ params }: { params: { id: string 
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="flex-1 overflow-auto p-8">
-        <BotNav botId={bot.id} />
+        <BotNav botId={bot.id} channel={bot.channel} />
         <h2 className="mb-1 font-display text-2xl font-bold text-white">Conexión</h2>
         <p className="mb-6 max-w-2xl text-sm text-muted">
           {channel === "webchat"

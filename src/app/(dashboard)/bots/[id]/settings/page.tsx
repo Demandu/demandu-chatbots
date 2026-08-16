@@ -35,7 +35,7 @@ export default async function BotSettingsPage({ params }: { params: { id: string
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="flex-1 overflow-auto p-8">
-        <BotNav botId={bot.id} />
+        <BotNav botId={bot.id} channel={bot.channel} />
         <h2 className="mb-5 font-display text-2xl font-bold text-white">Ajustes del bot</h2>
 
         <div className="max-w-2xl space-y-4">

@@ -2,25 +2,37 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GitBranch, Megaphone, FileText, Plug, Settings } from "lucide-react";
+import { MessagesSquare, Megaphone, FileText, Plug, Settings } from "lucide-react";
+import { channelOf, featuresFor, FEATURES, type FeatureKey } from "@/lib/channels";
 
 /**
- * Menú de secciones DE UN BOT (cada bot tiene su propia configuración,
- * como en BotPenguin). Se muestra dentro del espacio del bot.
+ * Menú de secciones DE UN CHATBOT. Cada chatbot tiene su propia configuración.
+ * Las pestañas se muestran según el CANAL (WhatsApp ve todo; Instagram,
+ * Messenger y web no ven Envíos masivos ni Plantillas — reglas de Meta/API).
  */
-export function BotNav({ botId }: { botId: string }) {
+const TAB_UI: Record<FeatureKey, { suffix: string; icon: any }> = {
+  flows: { suffix: "", icon: MessagesSquare },
+  broadcasts: { suffix: "/broadcasts", icon: Megaphone },
+  templates: { suffix: "/templates", icon: FileText },
+  install: { suffix: "/install", icon: Plug },
+  settings: { suffix: "/settings", icon: Settings },
+};
+
+export function BotNav({ botId, channel }: { botId: string; channel?: string | null }) {
   const pathname = usePathname();
   const base = `/bots/${botId}`;
-  const tabs = [
-    { href: base, label: "Flujos", icon: GitBranch, active: pathname === base },
-    { href: `${base}/broadcasts`, label: "Difusiones", icon: Megaphone, active: pathname.startsWith(`${base}/broadcasts`) },
-    { href: `${base}/templates`, label: "Plantillas", icon: FileText, active: pathname.startsWith(`${base}/templates`) },
-    { href: `${base}/install`, label: "Conexión", icon: Plug, active: pathname.startsWith(`${base}/install`) },
-    { href: `${base}/settings`, label: "Ajustes", icon: Settings, active: pathname.startsWith(`${base}/settings`) },
-  ];
+  const ch = channelOf(channel);
+
+  const allowed = featuresFor(ch);
+  const tabs = FEATURES.filter((f) => allowed.includes(f.key)).map((f) => {
+    const ui = TAB_UI[f.key];
+    const href = `${base}${ui.suffix}`;
+    const active = ui.suffix === "" ? pathname === base : pathname.startsWith(href);
+    return { href, label: f.label, icon: ui.icon, active };
+  });
 
   return (
-    <div className="mb-6 inline-flex gap-1 rounded-xl border border-surface-border bg-surface p-1">
+    <div className="mb-6 inline-flex flex-wrap gap-1 rounded-xl border border-surface-border bg-surface p-1">
       {tabs.map((t) => (
         <Link
           key={t.href}

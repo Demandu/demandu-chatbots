@@ -1,0 +1,97 @@
+// ============================================================================
+// Fuente ÚNICA de verdad: qué feature y qué componente aplica en cada canal.
+// La consumen el menú del bot (BotNav) y la paleta del constructor.
+// Regla: un chatbot solo muestra lo que su canal permite (reglas de Meta/API).
+// Ver proyecto: matriz-canales-features-componentes.md
+// ============================================================================
+
+export type Channel = "whatsapp" | "instagram" | "messenger" | "webchat";
+
+export const CHANNEL_META: Record<Channel, { label: string; color: string }> = {
+  whatsapp: { label: "WhatsApp", color: "#25D366" },
+  instagram: { label: "Instagram", color: "#E1306C" },
+  messenger: { label: "Messenger", color: "#0084FF" },
+  webchat: { label: "Sitio web", color: "#7c4dff" },
+};
+
+export function channelOf(raw?: string | null): Channel {
+  return (raw as Channel) in CHANNEL_META ? (raw as Channel) : "webchat";
+}
+
+// ---------------------------------------------------------------------------
+// FEATURES (pestañas / secciones dentro de un chatbot)
+// ---------------------------------------------------------------------------
+export type FeatureKey =
+  | "flows"        // Conversaciones automáticas — todos
+  | "broadcasts"   // Envíos masivos — solo WhatsApp
+  | "templates"    // Plantillas de mensajes — solo WhatsApp
+  | "install"      // Conexión — todos (distinto por canal)
+  | "settings";    // Ajustes — todos
+
+// Pensado para que el ORDEN del array sea el orden de las pestañas.
+export const FEATURES: {
+  key: FeatureKey;
+  label: string;
+  channels: Channel[];
+}[] = [
+  { key: "flows", label: "Conversaciones automáticas", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
+  { key: "broadcasts", label: "Envíos masivos", channels: ["whatsapp"] },
+  { key: "templates", label: "Plantillas de mensajes", channels: ["whatsapp"] },
+  { key: "install", label: "Conexión", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
+  { key: "settings", label: "Ajustes", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
+];
+
+export function featuresFor(channel: Channel): FeatureKey[] {
+  return FEATURES.filter((f) => f.channels.includes(channel)).map((f) => f.key);
+}
+export function hasFeature(channel: Channel, key: FeatureKey): boolean {
+  return featuresFor(channel).includes(key);
+}
+
+// ---------------------------------------------------------------------------
+// COMPONENTES (bloques del constructor de flujos)
+// `desc` = frase corta en la paleta (qué hace). `lana` = lo que Lana "dice"
+// como tutorial en texto. Mini-videos por bloque: fase posterior.
+// ---------------------------------------------------------------------------
+export type ComponentKey =
+  | "text" | "media" | "buttons" | "list" | "carousel" | "question"
+  | "condition" | "delay" | "ai" | "human" | "assign" | "tag" | "redirect"
+  | "template" | "catalog" | "form" | "location" | "payment" | "end";
+
+const ALL: Channel[] = ["whatsapp", "instagram", "messenger", "webchat"];
+
+export const COMPONENTS: Record<ComponentKey, {
+  label: string;
+  desc: string;
+  lana: string;
+  channels: Channel[];
+}> = {
+  text:      { label: "Mensaje", desc: "Envía un texto a tu cliente.", lana: "Es el bloque más básico: escribe lo que tu chatbot le dirá al cliente. Puedes usar {{nombre}} para saludarlo por su nombre.", channels: ALL },
+  media:     { label: "Imagen / archivo", desc: "Manda una foto, video o PDF.", lana: "Sube una imagen, video o documento. Ideal para catálogos, menús o comprobantes.", channels: ALL },
+  buttons:   { label: "Botones", desc: "Da opciones para elegir con un toque.", lana: "En vez de que el cliente escriba, le das opciones listas para tocar. En WhatsApp e Instagram puedes poner hasta 3.", channels: ALL },
+  list:      { label: "Lista de opciones", desc: "Un menú desplegable de opciones.", lana: "Un menú con varias opciones agrupadas. Perfecto cuando tienes más de 3 opciones. Funciona en WhatsApp y en tu web.", channels: ["whatsapp", "webchat"] },
+  carousel:  { label: "Carrusel de tarjetas", desc: "Varias tarjetas deslizables con foto.", lana: "Muestra varias tarjetas con foto y botón que el cliente desliza. Genial para productos en Instagram, Messenger o tu web.", channels: ["instagram", "messenger", "webchat"] },
+  question:  { label: "Pregunta", desc: "Pide un dato (nombre, correo…) y lo guarda.", lana: "Le preguntas algo al cliente (su nombre, correo, teléfono…) y el chatbot lo guarda para usarlo después.", channels: ALL },
+  condition: { label: "Si… entonces", desc: "Toma un camino según la respuesta.", lana: "Hace que la conversación tome distintos caminos según lo que el cliente respondió. Por ejemplo: si dijo 'sí', va por aquí; si no, por allá.", channels: ALL },
+  delay:     { label: "Espera", desc: "Pausa unos segundos antes de seguir.", lana: "Agrega una pausa (o el 'escribiendo…') para que la conversación se sienta más natural.", channels: ALL },
+  ai:        { label: "Respuesta con IA (Lana)", desc: "Deja que la IA responda con tus datos.", lana: "Yo (Lana) respondo con inteligencia artificial usando la info de tu negocio. Útil para preguntas abiertas que no tienen un guion fijo.", channels: ALL },
+  human:     { label: "Pasar a un humano", desc: "Avisa a tu equipo para que conteste.", lana: "Cuando el cliente necesita a una persona, este bloque avisa a tu equipo y les pasa la conversación.", channels: ALL },
+  assign:    { label: "Asignar a un agente", desc: "Reparte el chat a un equipo o persona.", lana: "Reparte la conversación entre tu equipo (por turnos, por área u horario) para que nadie quede sin atender.", channels: ALL },
+  tag:       { label: "Etiquetar", desc: "Marca al contacto (ej. 'interesado').", lana: "Le pones una etiqueta al contacto (por ejemplo 'interesado' o 'cliente') para segmentarlo después.", channels: ALL },
+  redirect:  { label: "Ir a otra conversación", desc: "Salta a otro flujo del chatbot.", lana: "Envía al cliente a otra de tus conversaciones automáticas. Sirve para reutilizar partes sin repetirlas.", channels: ALL },
+  template:  { label: "Enviar plantilla de WhatsApp", desc: "Mensaje aprobado por Meta.", lana: "Envía una plantilla aprobada por Meta. Es la única forma de escribirle primero a alguien en WhatsApp fuera de las 24 horas.", channels: ["whatsapp"] },
+  catalog:   { label: "Mostrar producto / catálogo", desc: "Vende productos por WhatsApp.", lana: "Muestra productos de tu catálogo directo en el chat para que el cliente compre sin salir de WhatsApp.", channels: ["whatsapp"] },
+  form:      { label: "Formulario (WhatsApp Flow)", desc: "Pide varios datos en una sola pantalla.", lana: "Un formulario nativo de WhatsApp: el cliente llena varios campos en una sola pantalla, sin ir pregunta por pregunta.", channels: ["whatsapp"] },
+  location:  { label: "Pedir ubicación", desc: "Solicita la ubicación del cliente.", lana: "Le pides al cliente que comparta su ubicación. Útil para envíos o para encontrar la sucursal más cercana.", channels: ["whatsapp"] },
+  payment:   { label: "Cobro / pago", desc: "Cobra dentro del chat.", lana: "Cobra dentro de WhatsApp con tu pasarela de pago. (En otros canales, más adelante, será con un enlace de pago.)", channels: ["whatsapp"] },
+  end:       { label: "Fin", desc: "Termina la conversación.", lana: "Cierra la conversación automática. Puedes poner un mensaje de despedida.", channels: ALL },
+};
+
+export function componentsFor(channel: Channel): ComponentKey[] {
+  return (Object.keys(COMPONENTS) as ComponentKey[]).filter((k) =>
+    COMPONENTS[k].channels.includes(channel)
+  );
+}
+export function componentAllowed(channel: Channel, key: ComponentKey): boolean {
+  return COMPONENTS[key].channels.includes(channel);
+}

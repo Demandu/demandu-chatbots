@@ -3,25 +3,25 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutGrid, Workflow, Inbox, Users, Megaphone,
-  PieChart, Plug, Sparkles, Settings,
+  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
 
+// Lenguaje simple para gente no técnica. Cada opción dice en humano qué es.
+// "Envíos masivos" (solo WhatsApp) NO va aquí: vive dentro de cada chatbot.
+// "Integraciones" tampoco: cada canal se conecta desde la pestaña Conexión del bot.
 const MAIN = [
-  { href: "/dashboard", label: "Panel", icon: LayoutGrid },
-  { href: "/bots", label: "Chatbots", icon: Workflow },
-  { href: "/inbox", label: "Bandeja / Chat", icon: Inbox },
+  { href: "/dashboard", label: "Inicio", icon: Home },
+  { href: "/bots", label: "Chatbots", icon: Bot },
+  { href: "/inbox", label: "Conversaciones", icon: MessagesSquare },
   { href: "/contacts", label: "Contactos", icon: Users },
-  { href: "/campaigns", label: "Campañas", icon: Megaphone },
 ];
 
 const CONFIG = [
   { href: "/settings", label: "Configuración", icon: Settings },
-  { href: "/analytics", label: "Analytics", icon: PieChart },
-  { href: "/settings/integrations", label: "Integraciones", icon: Plug },
-  { href: "/settings/ai", label: "Lana AI", icon: Sparkles },
+  { href: "/analytics", label: "Resultados", icon: BarChart3 },
+  { href: "/settings/ai", label: "Lana IA", icon: Sparkles },
 ];
 
 export function Sidebar() {
@@ -59,7 +59,7 @@ export function Sidebar() {
       ))}
 
       <p className="px-2.5 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-muted-2">
-        Configuración
+        Ajustes
       </p>
       {CONFIG.map((i) => (
         <Item key={i.href} {...i} />
