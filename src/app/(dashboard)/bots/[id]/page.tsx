@@ -64,7 +64,7 @@ export default async function BotBuilderPage({ params }: { params: { id: string 
         channel={(bot.channel as any) ?? "webchat"}
         botId={bot.id}
         connected={!!wa}
-        number={(wa as any)?.display_number ?? (wa as any)?.phone_number_id ?? null}
+        number={(wa as any)?.display_number ?? null}
       />
     </>
   );

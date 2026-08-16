@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
-import { disconnectIntegration, saveWhatsappChannel, disconnectWhatsapp } from "../actions";
+import { disconnectIntegration, disconnectWhatsapp } from "../actions";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { WhatsAppConnect } from "@/components/integrations/WhatsAppConnect";
 
@@ -24,12 +24,6 @@ export default async function IntegrationsPage({
   const err = searchParams?.error;
   const connected = searchParams?.connected === "1";
 
-  // El webhook vive en una Edge Function de Supabase (recibe los mensajes de
-  // WhatsApp). Al conectar por Embedded Signup se suscribe solo; este dato es
-  // solo de referencia / para conexión manual avanzada.
-  const supaBase = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://stgedtcsuyypzjbxcpoe.supabase.co";
-  const webhookUrl = `${supaBase}/functions/v1/whatsapp`;
-  const verifyToken = "demandu_wa_2026";
   const waBots = ((bots as any[]) ?? []).filter((b) => b.channel === "whatsapp");
 
   return (
@@ -49,8 +43,8 @@ export default async function IntegrationsPage({
       {err && (
         <div className="mb-4 rounded-xl border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm text-danger">
           {err === "missing_credentials"
-            ? "Faltan las credenciales de Google (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) en el servidor."
-            : `No se pudo conectar: ${err}`}
+            ? "La conexión con Google no está disponible en este momento. Escríbenos a soporte y lo habilitamos."
+            : "No se pudo completar la conexión. Inténtalo de nuevo o contacta a soporte."}
         </div>
       )}
 
@@ -111,26 +105,12 @@ export default async function IntegrationsPage({
                 <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-2">Sin conectar</span>
               )}
             </div>
-            <p className="mt-1 text-xs text-muted-2">Recibe y responde mensajes de WhatsApp en vivo con tu bot y tu Bandeja.</p>
-
-            {/* Datos del webhook para pegar en Meta */}
-            <div className="mt-3 space-y-1.5 rounded-xl border border-surface-border bg-surface-raised p-3 text-xs">
-              <div className="text-muted-2">En tu app de Meta → WhatsApp → Configuración → Webhook:</div>
-              <div className="flex flex-wrap gap-x-2">
-                <span className="text-muted-2">URL de callback:</span>
-                <code className="break-all font-mono text-white">{webhookUrl}</code>
-              </div>
-              <div className="flex flex-wrap gap-x-2">
-                <span className="text-muted-2">Verify token:</span>
-                <code className="font-mono text-white">{verifyToken}</code>
-              </div>
-              <div className="text-muted-2">Suscríbete al campo <b className="text-muted">messages</b>. Si conectas por el botón de arriba (Embedded Signup), esto se configura solo.</div>
-            </div>
+            <p className="mt-1 text-xs text-muted-2">Recibe y responde mensajes de WhatsApp en vivo con tu bot y tu Bandeja. Conéctalo con un clic — nosotros configuramos todo lo demás por ti.</p>
 
             {wa ? (
               <div className="mt-3">
                 <p className="text-xs text-muted">
-                  Número: <b className="text-white">{(wa as any).display_number ?? (wa as any).phone_number_id}</b>
+                  Número: <b className="text-white">{(wa as any).display_number ?? "Conectado"}</b>
                   {waBots.length > 0 && (wa as any).bot_id && (
                     <> · Bot: <b className="text-white">{waBots.find((b) => b.id === (wa as any).bot_id)?.name ?? "—"}</b></>
                   )}
@@ -142,46 +122,11 @@ export default async function IntegrationsPage({
                 </form>
               </div>
             ) : (
-              <>
-                <WhatsAppConnect
-                  appId={process.env.NEXT_PUBLIC_META_APP_ID}
-                  configId={process.env.NEXT_PUBLIC_META_CONFIG_ID}
-                  bots={waBots.map((b) => ({ id: b.id, name: b.name }))}
-                />
-
-                {/* Fallback manual (avanzado) */}
-                <details className="mt-4">
-                  <summary className="cursor-pointer text-[11px] font-semibold text-muted-2 hover:text-muted">Conexión manual (avanzada)</summary>
-                  <form action={saveWhatsappChannel} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold text-muted">Phone Number ID</label>
-                      <input name="phone_number_id" required className="input" placeholder="1234567890" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold text-muted">WABA ID (opcional)</label>
-                      <input name="waba_id" className="input" placeholder="WABA id" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold text-muted">Número visible (opcional)</label>
-                      <input name="display_number" className="input" placeholder="+52 55…" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold text-muted">Bot que responderá</label>
-                      <select name="bot_id" className="input">
-                        <option value="">— elige un bot de WhatsApp —</option>
-                        {waBots.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
-                      </select>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="mb-1 block text-xs font-semibold text-muted">Access Token (permanente)</label>
-                      <input name="access_token" required type="password" className="input font-mono" placeholder="EAAG…" />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <button className="btn-primary">Guardar conexión manual</button>
-                    </div>
-                  </form>
-                </details>
-              </>
+              <WhatsAppConnect
+                appId={process.env.NEXT_PUBLIC_META_APP_ID}
+                configId={process.env.NEXT_PUBLIC_META_CONFIG_ID}
+                bots={waBots.map((b) => ({ id: b.id, name: b.name }))}
+              />
             )}
           </div>
         </div>

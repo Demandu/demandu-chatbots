@@ -100,7 +100,7 @@ export function ConnectButton({
                   Conecta tu cuenta con Facebook para que el bot responda {channel === "instagram" ? "DM, historias y comentarios de Instagram" : "los mensajes y comentarios de tu página de Facebook"}.
                 </p>
                 <div className="rounded-xl border border-warning/40 bg-warning/10 p-3 text-[12px] text-muted">
-                  El login embebido de {LABEL[channel]} usa la misma Meta app. Lo activamos junto con el de WhatsApp una vez que tu app tenga la configuración y los permisos aprobados. Mientras, avísame y lo dejamos listo.
+                  La conexión de {LABEL[channel]} estará disponible muy pronto. Escríbenos a soporte y la habilitamos para tu cuenta.
                 </div>
               </div>
             )}

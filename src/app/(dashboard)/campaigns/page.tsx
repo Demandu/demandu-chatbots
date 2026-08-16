@@ -130,7 +130,7 @@ export default async function CampaignsPage({
             {tpls.length === 0 ? (
               <div className="card grid place-items-center p-12 text-center">
                 <Megaphone className="mb-2 h-8 w-8 text-muted-2" />
-                <p className="text-sm text-muted-2">Aún no hay plantillas. Dale a <b className="text-white">Sincronizar con Meta</b> para traer las de tu WABA.</p>
+                <p className="text-sm text-muted-2">Aún no hay plantillas. Dale a <b className="text-white">Sincronizar con Meta</b> para traer las de tu cuenta de WhatsApp.</p>
               </div>
             ) : (
               <div className="overflow-hidden rounded-2xl border border-surface-border">

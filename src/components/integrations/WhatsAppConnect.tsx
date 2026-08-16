@@ -10,6 +10,18 @@ declare global {
   }
 }
 
+/** Traduce los códigos de error del backend a mensajes de cara al cliente. */
+const ERROR_MAP: Record<string, string> = {
+  unauthorized: "Tu sesión expiró. Vuelve a iniciar sesión e inténtalo de nuevo.",
+  no_org: "No encontramos tu cuenta. Cierra sesión y vuelve a entrar.",
+  server_not_configured: "La conexión con WhatsApp no está disponible en este momento. Contacta a soporte.",
+  missing_waba_or_phone: "No recibimos los datos de tu número desde Meta. Vuelve a intentar la conexión.",
+};
+function friendlyError(code?: string): string {
+  if (code && ERROR_MAP[code]) return ERROR_MAP[code];
+  return "No se pudo completar la conexión. Inténtalo de nuevo o contacta a soporte.";
+}
+
 /** Requisitos que el usuario debe confirmar ANTES de abrir el Embedded Signup. */
 const REQUISITOS = [
   "Tengo un número de teléfono que NO está registrado en la app de WhatsApp ni WhatsApp Business (o puedo eliminarlo de ahí), y que puede recibir SMS o llamada para el código de verificación.",
@@ -74,7 +86,7 @@ export function WhatsAppConnect({
         window.location.reload();
       } else {
         setStatus("error");
-        setMsg(j.error ?? "No se pudo completar la conexión.");
+        setMsg(friendlyError(j.error));
       }
     } catch {
       setStatus("error");
@@ -124,7 +136,7 @@ export function WhatsAppConnect({
     if (!allChecked) return;
     if (!window.FB || !configId) {
       setStatus("error");
-      setMsg("Falta configurar el App ID / Config ID de Meta en Netlify.");
+      setMsg("La conexión con WhatsApp no está disponible en este momento. Contacta a soporte.");
       return;
     }
     setStatus("connecting");
@@ -149,8 +161,7 @@ export function WhatsAppConnect({
   if (!appId || !configId) {
     return (
       <p className="mt-3 rounded-xl border border-warning/40 bg-warning/10 p-3 text-[11px] text-muted">
-        Para habilitar la conexión con un clic, configura <b className="text-white">NEXT_PUBLIC_META_APP_ID</b> y{" "}
-        <b className="text-white">NEXT_PUBLIC_META_CONFIG_ID</b> en Netlify, y el secreto <b className="text-white">WHATSAPP_TOKEN</b> (System User) en Supabase.
+        La conexión con WhatsApp no está disponible en este momento. Escríbenos a soporte y lo habilitamos para tu cuenta.
       </p>
     );
   }
