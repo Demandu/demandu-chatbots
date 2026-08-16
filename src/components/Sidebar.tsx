@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 const MAIN = [
   { href: "/dashboard", label: "Panel", icon: LayoutGrid },
-  { href: "/bots", label: "Constructor", icon: Workflow },
+  { href: "/bots", label: "Chatbots", icon: Workflow },
   { href: "/inbox", label: "Bandeja / Chat", icon: Inbox },
   { href: "/contacts", label: "Contactos", icon: Users },
   { href: "/campaigns", label: "Campañas", icon: Megaphone },

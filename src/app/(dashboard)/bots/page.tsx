@@ -30,42 +30,26 @@ export default async function BotsPage() {
     .order("created_at", { ascending: false });
   const bots = (data ?? []) as any[];
 
+  // Conteo y agrupación por canal
+  const byChannel: Record<string, any[]> = {};
+  for (const b of bots) {
+    const ch = (b.channel as string) ?? "webchat";
+    (byChannel[ch] ??= []).push(b);
+  }
+  const count = (ch: string) => byChannel[ch]?.length ?? 0;
+
   return (
     <>
-      <Topbar crumb={<span className="font-semibold text-white">Constructor · Mis bots</span>} />
+      <Topbar crumb={<span className="font-semibold text-white">Chatbots</span>} />
       <div className="flex-1 overflow-auto p-8">
-        {/* ── Conectar a un canal ── */}
-        <h2 className="font-display text-2xl font-bold text-white">Crea un bot para tu canal</h2>
-        <p className="mb-5 mt-1 text-muted">
-          Elige el canal: cada uno abre el Constructor con los componentes específicos de esa plataforma.
-        </p>
-
-        <div className="mb-10 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-          {CHANNEL_CARDS.map((c) => (
-            <form action={createBot} key={c.channel}>
-              <input type="hidden" name="channel" value={c.channel} />
-              <CreateBotButton>
-                {/* Sustituye este tile por tu imagen: <img src="/canales/whatsapp.png" .../> */}
-                <span
-                  className="grid h-14 w-14 place-items-center rounded-2xl"
-                  style={{ background: `${c.color}1f` }}
-                >
-                  <ChannelIcon channel={c.channel} className="h-8 w-8" />
-                </span>
-                <div>
-                  <div className="font-display text-base font-semibold text-white">{c.label}</div>
-                  <div className="text-xs text-muted-2">{c.desc}</div>
-                </div>
-              </CreateBotButton>
-            </form>
-          ))}
-        </div>
-
-        {/* ── Mis bots ── */}
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h3 className="font-display text-lg font-semibold text-white">Mis bots</h3>
-            <p className="mt-0.5 text-sm text-muted-2">Diseña, prueba y publica tus flujos conversacionales.</p>
+            <h2 className="font-display text-2xl font-bold text-white">Tus chatbots</h2>
+            <p className="mt-1 text-muted">
+              {bots.length === 0
+                ? "Aún no tienes chatbots. Elige un canal abajo para crear el primero."
+                : <>Tienes <b className="text-white">{bots.length}</b> chatbot{bots.length === 1 ? "" : "s"} en {Object.keys(byChannel).length} canal{Object.keys(byChannel).length === 1 ? "" : "es"}.</>}
+            </p>
           </div>
           <form action={importBot} className="flex items-center gap-2 rounded-xl border border-dashed border-surface-border px-2.5 py-2">
             <select
@@ -83,7 +67,7 @@ export default async function BotsPage() {
               name="file"
               accept="application/json,.json"
               required
-              className="max-w-[170px] text-xs text-muted-2 file:mr-2 file:rounded-lg file:border-0 file:bg-surface-raised file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-surface-card"
+              className="max-w-[150px] text-xs text-muted-2 file:mr-2 file:rounded-lg file:border-0 file:bg-surface-raised file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-surface-card"
             />
             <button className="btn-ghost whitespace-nowrap">
               <Upload className="h-4 w-4" /> Importar JSON
@@ -91,38 +75,80 @@ export default async function BotsPage() {
           </form>
         </div>
 
+        {/* Tarjetas por canal con contador + crear */}
+        <div className="mb-10 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+          {CHANNEL_CARDS.map((c) => (
+            <form action={createBot} key={c.channel}>
+              <input type="hidden" name="channel" value={c.channel} />
+              <CreateBotButton>
+                <div className="flex w-full items-center justify-between">
+                  <span
+                    className="grid h-14 w-14 place-items-center rounded-2xl"
+                    style={{ background: `${c.color}1f` }}
+                  >
+                    <ChannelIcon channel={c.channel} className="h-8 w-8" />
+                  </span>
+                  <span className="rounded-full bg-surface-raised px-2.5 py-1 text-xs font-bold text-white">
+                    {count(c.channel)}
+                  </span>
+                </div>
+                <div>
+                  <div className="font-display text-base font-semibold text-white">{c.label}</div>
+                  <div className="text-xs text-muted-2">
+                    {count(c.channel) === 0 ? c.desc : `${count(c.channel)} chatbot${count(c.channel) === 1 ? "" : "s"}`}
+                  </div>
+                </div>
+              </CreateBotButton>
+            </form>
+          ))}
+        </div>
+
+        {/* Bots agrupados por canal */}
         {bots.length === 0 ? (
           <div className="card grid place-items-center p-12 text-center">
             <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-pink/20 to-violet/20 text-2xl">🤖</div>
-            <h3 className="font-display text-lg font-semibold text-white">Aún no tienes bots</h3>
-            <p className="mt-1 max-w-sm text-sm text-muted-2">Elige un canal arriba para crear tu primer bot y abrir el Constructor.</p>
+            <h3 className="font-display text-lg font-semibold text-white">Aún no tienes chatbots</h3>
+            <p className="mt-1 max-w-sm text-sm text-muted-2">Elige un canal arriba para crear tu primer chatbot y abrir sus flujos.</p>
           </div>
         ) : (
-          <div className="grid max-w-5xl grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
-            {bots.map((b) => (
-              <div key={b.id} className="card group relative p-5 transition hover:border-pink">
-                <div className="mb-3 flex items-center justify-between pr-6">
-                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-surface-raised px-2.5 py-1 text-xs font-semibold text-muted">
-                    <ChannelIcon channel={b.channel ?? "webchat"} className="h-3.5 w-3.5" />
-                    {CHANNEL_LABEL[b.channel ?? "webchat"] ?? "Web"}
+          <div className="space-y-8">
+            {CHANNEL_CARDS.filter((c) => count(c.channel) > 0).map((c) => (
+              <section key={c.channel}>
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="grid h-6 w-6 place-items-center rounded-lg" style={{ background: `${c.color}1f` }}>
+                    <ChannelIcon channel={c.channel} className="h-4 w-4" />
                   </span>
-                  <span
-                    className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
-                      b.status === "published" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"
-                    }`}
-                  >
-                    {b.status === "published" ? "Publicado" : "Borrador"}
-                  </span>
+                  <h3 className="font-display text-lg font-semibold text-white">{c.label}</h3>
+                  <span className="rounded-full bg-surface-raised px-2 py-0.5 text-xs font-bold text-muted">{count(c.channel)}</span>
                 </div>
-                <BotCardName botId={b.id} initialName={b.name} />
-                <Link href={`/bots/${b.id}`} className="mt-1 block text-sm text-muted-2 transition hover:text-white">
-                  Abrir bot y flujos →
-                </Link>
-                <form action={deleteBot} className="absolute right-4 top-4 opacity-0 transition group-hover:opacity-100">
-                  <input type="hidden" name="id" value={b.id} />
-                  <button className="text-muted-2 transition hover:text-danger" title="Eliminar bot">✕</button>
-                </form>
-              </div>
+                <div className="grid max-w-6xl grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
+                  {byChannel[c.channel].map((b) => (
+                    <div key={b.id} className="card group relative p-5 transition hover:border-pink">
+                      <div className="mb-3 flex items-center justify-between pr-6">
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-surface-raised px-2.5 py-1 text-xs font-semibold text-muted">
+                          <ChannelIcon channel={b.channel ?? "webchat"} className="h-3.5 w-3.5" />
+                          {CHANNEL_LABEL[b.channel ?? "webchat"] ?? "Web"}
+                        </span>
+                        <span
+                          className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+                            b.status === "published" ? "bg-success/15 text-success" : "bg-warning/15 text-warning"
+                          }`}
+                        >
+                          {b.status === "published" ? "Publicado" : "Borrador"}
+                        </span>
+                      </div>
+                      <BotCardName botId={b.id} initialName={b.name} />
+                      <Link href={`/bots/${b.id}`} className="mt-1 block text-sm text-muted-2 transition hover:text-white">
+                        Abrir bot y flujos →
+                      </Link>
+                      <form action={deleteBot} className="absolute right-4 top-4 opacity-0 transition group-hover:opacity-100">
+                        <input type="hidden" name="id" value={b.id} />
+                        <button className="text-muted-2 transition hover:text-danger" title="Eliminar bot">✕</button>
+                      </form>
+                    </div>
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         )}
