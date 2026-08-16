@@ -56,8 +56,9 @@ export default async function FlowBuilderPage({ params }: { params: { id: string
         }
       />
 
+      <div className="flow-light flex min-h-0 flex-1 flex-col bg-canvas">
       {/* Barra de disparador del flujo */}
-      <form action={setFlowTrigger} className="flex flex-wrap items-end gap-3 border-b border-surface-border bg-surface/60 px-6 py-2.5">
+      <form action={setFlowTrigger} className="flex flex-wrap items-end gap-3 border-b border-[#e6e8f2] bg-white px-6 py-2.5">
         <input type="hidden" name="id" value={flowRow.id} />
         <input type="hidden" name="bot_id" value={bot.id} />
         <div>
@@ -92,6 +93,7 @@ export default async function FlowBuilderPage({ params }: { params: { id: string
         connected={!!wa}
         number={(wa as any)?.display_number ?? null}
       />
+      </div>
     </>
   );
 }

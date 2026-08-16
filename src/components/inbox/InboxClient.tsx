@@ -47,12 +47,12 @@ function initials(name?: string | null) {
   return (name ?? "?").trim().slice(0, 2).toUpperCase();
 }
 
-// Estilo WhatsApp Web con paleta Demandu
-const WA_CANVAS = "#0a0a1f";
-const WA_OUT_BG = "#3a2b6e"; // burbuja saliente (violeta Demandu, en vez del verde de WhatsApp)
-const WA_IN_BG = "#191a3d"; // burbuja entrante (oscuro Demandu, en vez del gris de WhatsApp)
+// Estilo WhatsApp Web CLARO con paleta Demandu
+const WA_CANVAS = "#ece9f6"; // lienzo claro (lavanda muy suave)
+const WA_OUT_BG = "#e7ddff"; // burbuja saliente (violeta claro Demandu)
+const WA_IN_BG = "#ffffff"; // burbuja entrante (blanca)
 const WA_DOODLE =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='70'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='48' cy='34' r='2'/%3E%3Ccircle cx='24' cy='58' r='2'/%3E%3Cpath d='M56 8h6v6h-6z'/%3E%3C/g%3E%3C/svg%3E\")";
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='70'%3E%3Cg fill='%236e42ff' fill-opacity='0.05'%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='48' cy='34' r='2'/%3E%3Ccircle cx='24' cy='58' r='2'/%3E%3Cpath d='M56 8h6v6h-6z'/%3E%3C/g%3E%3C/svg%3E\")";
 
 export function InboxClient({
   initial,
@@ -169,7 +169,7 @@ export function InboxClient({
   });
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flow-light flex flex-1 overflow-hidden">
       {/* ── Lista de conversaciones ── */}
       <div className="flex w-[330px] flex-none flex-col border-r border-surface-border bg-surface">
         <div className="border-b border-surface-border p-3">
@@ -241,7 +241,7 @@ export function InboxClient({
 
       {/* ── Hilo de conversación ── */}
       {!sel ? (
-        <div className="flex flex-1 items-center justify-center bg-[#0b0b23] text-center">
+        <div className="flex flex-1 items-center justify-center bg-[#f4f5fb] text-center">
           <div className="max-w-xs">
             <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-pink/20 to-violet/20 text-2xl">💬</div>
             <h3 className="font-display text-lg font-semibold text-white">Bandeja unificada</h3>
@@ -249,9 +249,9 @@ export function InboxClient({
           </div>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col bg-[#0b0b23]">
+        <div className="flex flex-1 flex-col bg-[#f4f5fb]">
           {/* Header */}
-          <div className="flex flex-none items-center gap-3 border-b border-surface-border px-4 py-2.5" style={{ backgroundColor: "#101026" }}>
+          <div className="flex flex-none items-center gap-3 border-b border-surface-border px-4 py-2.5" style={{ backgroundColor: "#ffffff" }}>
             <div className="relative flex-none">
               <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-xs font-bold text-white">{initials(sel.contact?.name)}</div>
               <span className="absolute -bottom-1 -right-1"><ChannelBadge channel={sel.channel} size={15} /></span>
@@ -314,7 +314,7 @@ export function InboxClient({
                 <div
                   key={m.id}
                   className={`relative max-w-[65%] px-2.5 pb-1.5 pt-1.5 text-[13.5px] leading-snug shadow-sm ${
-                    out ? "self-end rounded-lg rounded-tr-sm text-[#f3f0ff]" : "self-start rounded-lg rounded-tl-sm text-[#e9edef]"
+                    out ? "self-end rounded-lg rounded-tr-sm text-[#2c2550]" : "self-start rounded-lg rounded-tl-sm text-[#1b1c39]"
                   }`}
                   style={{ backgroundColor: out ? WA_OUT_BG : WA_IN_BG }}
                 >
@@ -324,7 +324,7 @@ export function InboxClient({
                     </div>
                   )}
                   <span className="whitespace-pre-wrap break-words align-bottom">{m.body}</span>
-                  <span className="ml-2 inline-flex select-none items-center gap-0.5 align-bottom text-[10px] text-white/55">
+                  <span className="ml-2 inline-flex select-none items-center gap-0.5 align-bottom text-[10px] text-black/40">
                     {clock(m.created_at)}
                     {out && <CheckCheck className="h-3 w-3" style={{ color: "#7fb2ff" }} />}
                   </span>
@@ -334,7 +334,7 @@ export function InboxClient({
           </div>
 
           {/* Composer (estilo WhatsApp Web · Demandu) */}
-          <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "#101026" }}>
+          <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "#ffffff" }}>
             <Smile className="mb-2 h-6 w-6 flex-none text-muted-2" />
             <Paperclip className="mb-2 h-5 w-5 flex-none text-muted-2" />
             <textarea
@@ -349,7 +349,7 @@ export function InboxClient({
               onClick={send}
               disabled={!text.trim()}
               className="grid h-[42px] w-[42px] flex-none place-items-center rounded-full text-white transition disabled:opacity-50"
-              style={{ backgroundColor: "#6E42FF" }}
+              style={{ backgroundColor: "#6E42FF", color: "#fff" }}
             >
               <Send className="h-5 w-5" />
             </button>
@@ -383,7 +383,7 @@ export function InboxClient({
                     key={t.id}
                     onClick={() => toggleTag(t.name)}
                     className={`rounded-full border px-2.5 py-1 text-xs font-medium transition ${on ? "border-transparent text-white" : "border-surface-border bg-surface-raised text-muted hover:text-white"}`}
-                    style={on ? { background: t.color } : undefined}
+                    style={on ? { background: t.color, color: "#fff" } : undefined}
                   >
                     {on ? "✓ " : ""}{t.name}
                   </button>

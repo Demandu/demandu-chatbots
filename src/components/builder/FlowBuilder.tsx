@@ -238,7 +238,7 @@ function BuilderInner({
 
       <div className="relative flex-1">
         {/* Toolbar */}
-        <div className="absolute left-4 top-4 z-10 flex items-center gap-1 rounded-2xl border border-surface-border bg-surface/70 p-1.5 backdrop-blur">
+        <div className="absolute left-4 top-4 z-10 flex items-center gap-1 rounded-2xl border border-[#e6e8f2] bg-white/85 p-1.5 shadow-sm backdrop-blur">
           <button
             onClick={() => setShowPreview((s) => !s)}
             className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white"
@@ -291,7 +291,7 @@ function BuilderInner({
         </ReactFlow>
 
         {showPreview && (
-          <div className="absolute inset-y-0 right-0 z-20 flex w-[420px] flex-col items-center justify-center border-l border-surface-border bg-surface/95 p-6 backdrop-blur">
+          <div className="absolute inset-y-0 right-0 z-20 flex w-[420px] flex-col items-center justify-center border-l border-[#e6e8f2] bg-white/95 p-6 backdrop-blur">
             <Webchat flow={liveFlow} autostart />
           </div>
         )}

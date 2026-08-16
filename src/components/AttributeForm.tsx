@@ -47,41 +47,41 @@ export function AttributeForm() {
         setName(""); setKey(""); setKeyEdited(false); setPurpose("chatbot");
         formRef.current?.reset();
       }}
-      className="mb-6 rounded-2xl border border-surface-border bg-surface-card p-4"
+      className="mb-6 rounded-2xl border border-[#e6e8f2] bg-white p-4"
     >
       <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-muted">Nombre del atributo</label>
+          <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre del atributo</label>
           <input
             name="name"
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Ciudad de entrega"
-            className="input"
+            className="input-l"
           />
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-muted">Clave (uso interno)</label>
+          <label className="mb-1.5 block text-xs font-semibold text-ink-2">Clave (uso interno)</label>
           <input
             name="key"
             value={effectiveKey}
             onChange={(e) => { setKeyEdited(true); setKey(e.target.value); }}
             placeholder="ciudad_de_entrega"
-            className="input font-mono text-xs"
+            className="input-l font-mono text-xs"
           />
-          <p className="mt-1 text-[11px] text-muted-2">Se usa en el flujo como <span className="font-mono text-muted">{`{{${effectiveKey || "clave"}}}`}</span></p>
+          <p className="mt-1 text-[11px] text-ink-3">Se usa en la conversación como <span className="font-mono text-ink-2">{`{{${effectiveKey || "clave"}}}`}</span></p>
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-muted">Tipo de dato</label>
-          <select name="type" defaultValue="string" className="input">
+          <label className="mb-1.5 block text-xs font-semibold text-ink-2">Tipo de dato</label>
+          <select name="type" defaultValue="string" className="input-l">
             {TYPES.map((t) => (<option key={t.value} value={t.value}>{t.label}</option>))}
           </select>
         </div>
       </div>
 
       <div className="mb-2">
-        <label className="mb-1.5 block text-xs font-semibold text-muted">¿De dónde se obtiene el valor?</label>
+        <label className="mb-1.5 block text-xs font-semibold text-ink-2">¿De dónde se obtiene el valor?</label>
         <div className="flex flex-wrap gap-2">
           {PURPOSES.map((p) => (
             <button
@@ -91,7 +91,7 @@ export function AttributeForm() {
               className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${
                 purpose === p.value
                   ? "border-pink bg-pink/10 text-pink"
-                  : "border-surface-border bg-surface-raised text-muted hover:text-white"
+                  : "border-[#e2e4f0] bg-[#f4f5fb] text-ink-2 hover:text-ink"
               }`}
             >
               {p.label}
@@ -99,7 +99,7 @@ export function AttributeForm() {
           ))}
         </div>
         <input type="hidden" name="purpose" value={purpose} />
-        <p className="mt-1.5 text-[11px] text-muted-2">{activePurpose.hint}</p>
+        <p className="mt-1.5 text-[11px] text-ink-3">{activePurpose.hint}</p>
       </div>
 
       <div className="flex justify-end">

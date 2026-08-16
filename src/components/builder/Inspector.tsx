@@ -8,6 +8,7 @@ import {
 } from "@/lib/flow/types";
 import type { Catalogs } from "@/lib/catalogs";
 import { MediaUpload } from "./MediaUpload";
+import { LanaAvatar } from "@/components/Lana";
 
 interface Props {
   node: DemanduNode | null;
@@ -92,7 +93,22 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
         </span>
         <h3 className="font-display text-base font-semibold text-white">{meta.label}</h3>
       </div>
-      <p className="mb-4 text-xs text-muted-2">{meta.description} · ID: {node.id}</p>
+
+      {/* Lana explica este bloque (texto ahora; mini-video por bloque después) */}
+      <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-pink/25 bg-pink/5 p-3">
+        <LanaAvatar size={34} />
+        <div className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-pink">Lana explica</div>
+          <p className="mt-0.5 text-[12px] leading-snug text-muted">{meta.description}</p>
+          <button
+            type="button"
+            className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-surface-border bg-surface-raised px-2 py-1 text-[11px] font-semibold text-muted transition hover:border-pink hover:text-pink"
+          >
+            ▶ Ver tutorial (30 seg)
+          </button>
+        </div>
+      </div>
+      <p className="mb-4 text-[10px] text-muted-2">ID: {node.id}</p>
 
       {onSetStart && (
         d.isStart ? (

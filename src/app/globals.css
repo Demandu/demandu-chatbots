@@ -77,3 +77,33 @@
 /* Custom muted utility mapping */
 .text-muted { color: #9a9cc7; }
 .text-muted-2 { color: #6e70a0; }
+
+/* ===========================================================================
+   Constructor de flujos en TEMA CLARO — con alcance en .flow-light.
+   Convierte de una sola vez la paleta, el inspector y las tarjetas de nodo
+   (que usan las clases oscuras compartidas) sin editar cada componente.
+   Las barras siguen oscuras fuera de este contenedor.
+   =========================================================================== */
+.flow-light .bg-surface { background-color: #ffffff; }
+.flow-light .bg-surface-raised { background-color: #f4f5fb; }
+.flow-light .bg-surface-card { background-color: #ffffff; }
+.flow-light .border-surface-border { border-color: #e6e8f2; }
+.flow-light .text-white { color: #1b1c39; }
+.flow-light .text-muted { color: #585b80; }
+.flow-light .text-muted-2 { color: #8a8db0; }
+.flow-light .input {
+  background-color: #ffffff; border-color: #e2e4f0; color: #1b1c39;
+}
+.flow-light .input::placeholder { color: #9498b8; }
+.flow-light .btn-ghost {
+  background-color: #ffffff; border-color: #e2e4f0; color: #2c2e43;
+}
+.flow-light .shadow-card { box-shadow: 0 12px 40px -12px rgba(20,20,60,.18); }
+/* Los elementos con degradado o color de marca conservan texto blanco
+   (avatares, badges, botones activos) — se aplican DESPUÉS del override de
+   .text-white para ganarle por orden de fuente. */
+.flow-light .bg-demandu-gradient,
+.flow-light .bg-gradient-to-r,
+.flow-light .bg-gradient-to-br,
+.flow-light .bg-pink,
+.flow-light .bg-success { color: #ffffff; }

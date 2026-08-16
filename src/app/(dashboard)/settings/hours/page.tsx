@@ -45,32 +45,32 @@ export default async function HoursPage({
   return (
     <form action={updateBusinessHours} className="max-w-xl">
       {saved && (
-        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-success">
+        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
           ✓ Horario laboral guardado.
         </div>
       )}
-      <div className="mb-5 card p-4">
-        <label className="mb-1.5 block text-xs font-semibold text-muted">Zona horaria</label>
-        <select name="timezone" defaultValue={tz} className="input">
+      <div className="mb-5 card-l p-4">
+        <label className="mb-1.5 block text-xs font-semibold text-ink-2">Zona horaria</label>
+        <select name="timezone" defaultValue={tz} className="input-l">
           {TIMEZONES.map((z) => (
             <option key={z} value={z}>{z}</option>
           ))}
         </select>
       </div>
 
-      <div className="card divide-y divide-surface-border">
+      <div className="card-l divide-y divide-[#e6e8f2]">
         {DAYS.map((d) => {
           const day = bh?.[d.key] ?? { enabled: false, open: "09:00", close: "18:00" };
           return (
             <div key={d.key} className="flex flex-wrap items-center gap-3 px-4 py-3">
-              <label className="flex w-32 items-center gap-2.5 text-sm font-medium text-white">
+              <label className="flex w-32 items-center gap-2.5 text-sm font-medium text-ink">
                 <input type="checkbox" name={`${d.key}_enabled`} defaultChecked={!!day.enabled} className="accent-pink" />
                 {d.label}
               </label>
-              <div className="flex items-center gap-2 text-sm text-muted">
-                <input type="time" name={`${d.key}_open`} defaultValue={day.open ?? "09:00"} className="rounded-lg border border-surface-border bg-surface-raised px-2.5 py-1.5 text-white focus:outline-none" />
+              <div className="flex items-center gap-2 text-sm text-ink-2">
+                <input type="time" name={`${d.key}_open`} defaultValue={day.open ?? "09:00"} className="rounded-lg border border-[#e2e4f0] bg-white px-2.5 py-1.5 text-ink focus:outline-none" />
                 <span>a</span>
-                <input type="time" name={`${d.key}_close`} defaultValue={day.close ?? "18:00"} className="rounded-lg border border-surface-border bg-surface-raised px-2.5 py-1.5 text-white focus:outline-none" />
+                <input type="time" name={`${d.key}_close`} defaultValue={day.close ?? "18:00"} className="rounded-lg border border-[#e2e4f0] bg-white px-2.5 py-1.5 text-ink focus:outline-none" />
               </div>
             </div>
           );
@@ -79,7 +79,7 @@ export default async function HoursPage({
 
       <div className="mt-5 flex items-center gap-3">
         <SubmitButton>Guardar horario</SubmitButton>
-        <p className="text-xs text-muted-2">El nodo “Asignar chat” usará este horario cuando actives “solo horario laboral”.</p>
+        <p className="text-xs text-ink-3">El bloque “Asignar chat” usará este horario cuando actives “solo horario laboral”.</p>
       </div>
     </form>
   );

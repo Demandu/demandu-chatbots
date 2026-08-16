@@ -29,14 +29,14 @@ export default async function IntegrationsPage({
   return (
     <div>
       <div className="mb-5">
-        <h2 className="font-display text-lg font-semibold text-white">Integraciones</h2>
-        <p className="text-xs text-muted-2">
-          Conecta servicios externos para potenciar tus flujos. La conexión la inicias tú y puedes revocarla cuando quieras.
+        <h2 className="font-display text-lg font-semibold text-ink">Integraciones</h2>
+        <p className="text-xs text-ink-3">
+          Conecta servicios externos para potenciar tus conversaciones. La conexión la inicias tú y puedes revocarla cuando quieras.
         </p>
       </div>
 
       {connected && (
-        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-success">
+        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
           ✅ Google Calendar se conectó correctamente.
         </div>
       )}
@@ -49,26 +49,26 @@ export default async function IntegrationsPage({
       )}
 
       {/* Tarjeta Google Calendar */}
-      <div className="rounded-2xl border border-surface-border bg-surface-card p-5">
+      <div className="rounded-2xl border border-[#e6e8f2] bg-white p-5">
         <div className="flex items-start gap-4">
-          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl bg-white text-2xl">📅</span>
+          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-[#e6e8f2] bg-white text-2xl">📅</span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h3 className="font-display text-base font-semibold text-white">Google Calendar</h3>
+              <h3 className="font-display text-base font-semibold text-ink">Google Calendar</h3>
               {google ? (
-                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-success">Conectado</span>
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#0f9d63]">Conectado</span>
               ) : (
-                <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-2">Sin conectar</span>
+                <span className="rounded-full bg-[#f1f2f9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Sin conectar</span>
               )}
             </div>
-            <p className="mt-1 text-xs text-muted-2">
-              Permite que el nodo <b className="text-muted">Agendar cita</b> cree eventos y revise disponibilidad en tu calendario.
+            <p className="mt-1 text-xs text-ink-3">
+              Permite que el bloque <b className="text-ink-2">Agendar cita</b> cree eventos y revise disponibilidad en tu calendario.
             </p>
 
             {google ? (
               <div className="mt-3">
-                <p className="text-xs text-muted">
-                  Cuenta: <b className="text-white">{google.account_email ?? "—"}</b>
+                <p className="text-xs text-ink-2">
+                  Cuenta: <b className="text-ink">{google.account_email ?? "—"}</b>
                   {calendars.length > 0 && <> · {calendars.length} calendario(s) disponibles</>}
                 </p>
                 <form action={disconnectIntegration} className="mt-3">
@@ -91,28 +91,28 @@ export default async function IntegrationsPage({
       </div>
 
       {/* ── WhatsApp Cloud API ── */}
-      <div className="mt-4 rounded-2xl border border-surface-border bg-surface-card p-5">
+      <div className="mt-4 rounded-2xl border border-[#e6e8f2] bg-white p-5">
         <div className="flex items-start gap-4">
-          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl bg-white">
+          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-[#e6e8f2] bg-white">
             <ChannelIcon channel="whatsapp" className="h-7 w-7" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h3 className="font-display text-base font-semibold text-white">WhatsApp Cloud API</h3>
+              <h3 className="font-display text-base font-semibold text-ink">WhatsApp Cloud API</h3>
               {wa ? (
-                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-success">Conectado</span>
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#0f9d63]">Conectado</span>
               ) : (
-                <span className="rounded-full bg-surface-raised px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-2">Sin conectar</span>
+                <span className="rounded-full bg-[#f1f2f9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Sin conectar</span>
               )}
             </div>
-            <p className="mt-1 text-xs text-muted-2">Recibe y responde mensajes de WhatsApp en vivo con tu bot y tu Bandeja. Conéctalo con un clic — nosotros configuramos todo lo demás por ti.</p>
+            <p className="mt-1 text-xs text-ink-3">Recibe y responde mensajes de WhatsApp en vivo con tu chatbot y tu Bandeja. Conéctalo con un clic — nosotros configuramos todo lo demás por ti.</p>
 
             {wa ? (
               <div className="mt-3">
-                <p className="text-xs text-muted">
-                  Número: <b className="text-white">{(wa as any).display_number ?? "Conectado"}</b>
+                <p className="text-xs text-ink-2">
+                  Número: <b className="text-ink">{(wa as any).display_number ?? "Conectado"}</b>
                   {waBots.length > 0 && (wa as any).bot_id && (
-                    <> · Bot: <b className="text-white">{waBots.find((b) => b.id === (wa as any).bot_id)?.name ?? "—"}</b></>
+                    <> · Bot: <b className="text-ink">{waBots.find((b) => b.id === (wa as any).bot_id)?.name ?? "—"}</b></>
                   )}
                 </p>
                 <form action={disconnectWhatsapp} className="mt-3">

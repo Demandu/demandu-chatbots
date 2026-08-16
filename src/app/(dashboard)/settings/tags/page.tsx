@@ -9,31 +9,31 @@ export default async function TagsPage() {
 
   return (
     <div>
-      <form action={createTag} className="mb-6 flex items-end gap-3 rounded-2xl border border-surface-border bg-surface-card p-4">
+      <form action={createTag} className="mb-6 flex items-end gap-3 rounded-2xl border border-[#e6e8f2] bg-white p-4">
         <div className="flex-1">
-          <label className="mb-1.5 block text-xs font-semibold text-muted">Nombre de la etiqueta</label>
-          <input name="name" required placeholder="lead-caliente" className="input" />
+          <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre de la etiqueta</label>
+          <input name="name" required placeholder="lead-caliente" className="input-l" />
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-muted">Color</label>
-          <input type="color" name="color" defaultValue="#F64A97" className="h-11 w-14 cursor-pointer rounded-lg border border-surface-border bg-surface-raised" />
+          <label className="mb-1.5 block text-xs font-semibold text-ink-2">Color</label>
+          <input type="color" name="color" defaultValue="#F64A97" className="h-11 w-14 cursor-pointer rounded-lg border border-[#e2e4f0] bg-white" />
         </div>
         <button className="btn-primary">Crear etiqueta</button>
       </form>
 
       <div className="flex flex-wrap gap-2">
         {tags.map((t) => (
-          <div key={t.id} className="flex items-center gap-2 rounded-full border border-surface-border bg-surface-card px-3 py-1.5">
+          <div key={t.id} className="flex items-center gap-2 rounded-full border border-[#e6e8f2] bg-white px-3 py-1.5">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: t.color }} />
-            <span className="text-sm text-white">{t.name}</span>
+            <span className="text-sm text-ink">{t.name}</span>
             <form action={deleteTag}>
               <input type="hidden" name="id" value={t.id} />
-              <button className="text-muted-2 transition hover:text-danger" title="Eliminar">✕</button>
+              <button className="text-ink-3 transition hover:text-danger" title="Eliminar">✕</button>
             </form>
           </div>
         ))}
         {tags.length === 0 && (
-          <p className="text-sm text-muted-2">Aún no tienes etiquetas. Crea la primera arriba 👆</p>
+          <p className="text-sm text-ink-3">Aún no tienes etiquetas. Crea la primera arriba 👆</p>
         )}
       </div>
     </div>

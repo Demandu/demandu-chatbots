@@ -23,7 +23,7 @@ export default async function InboxPage() {
 
   return (
     <>
-      <Topbar crumb={<span className="font-semibold text-white">Bandeja</span>} />
+      <Topbar crumb={<span className="font-semibold text-white">Conversaciones</span>} />
       <InboxClient
         initial={(conv.data as any[]) ?? []}
         members={(mem.data as any[]) ?? []}
