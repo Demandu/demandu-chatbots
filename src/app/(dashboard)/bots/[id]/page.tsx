@@ -2,10 +2,11 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { ConnectButton } from "@/components/builder/ConnectButton";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { createFlow, deleteFlow } from "../actions";
+import { BotNav } from "@/components/builder/BotNav";
+import { FlowToggle } from "@/components/builder/FlowToggle";
 import { Plus, Pencil, MessageSquareText } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -46,18 +47,9 @@ export default async function BotPage({ params }: { params: { id: string } }) {
 
   return (
     <>
-      <Topbar
-        crumb={<BotTitle botId={bot.id} initialName={bot.name} />}
-        actions={
-          <ConnectButton
-            channel={(bot.channel as any) ?? "webchat"}
-            botId={bot.id}
-            connected={!!wa}
-            number={(wa as any)?.display_number ?? null}
-          />
-        }
-      />
+      <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="flex-1 overflow-auto p-8">
+        <BotNav botId={bot.id} />
         <div className="mb-1 flex items-center gap-2">
           <h2 className="font-display text-2xl font-bold text-white">Flujos del bot</h2>
         </div>
@@ -84,6 +76,7 @@ export default async function BotPage({ params }: { params: { id: string } }) {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
+                            <FlowToggle flowId={f.id} enabled={f.enabled !== false} />
                             <h3 className="font-display text-lg font-semibold text-white">{f.name}</h3>
                             <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${meta.badge}`}>{meta.label}</span>
                             {!f.enabled && <span className="rounded-md bg-surface-raised px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-2">Pausado</span>}

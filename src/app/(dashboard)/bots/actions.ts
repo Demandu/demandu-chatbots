@@ -52,6 +52,7 @@ export async function deleteBot(formData: FormData) {
   if (!id) return;
   await createClient().from("bots").delete().eq("id", id);
   revalidatePath("/bots");
+  redirect("/bots");
 }
 
 export async function renameBot(formData: FormData) {
@@ -151,6 +152,16 @@ export async function createFlow(formData: FormData) {
 
   revalidatePath(`/bots/${botId}`);
   redirect(`/bots/${botId}/flows/${flow.id}`);
+}
+
+/** Publica o vuelve a borrador un bot. */
+export async function setBotStatus(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  const status = String(formData.get("status") ?? "draft") === "published" ? "published" : "draft";
+  await createClient().from("bots").update({ status }).eq("id", id);
+  revalidatePath(`/bots/${id}`);
+  revalidatePath(`/bots/${id}/settings`);
 }
 
 export async function deleteFlow(formData: FormData) {
