@@ -39,6 +39,8 @@ export async function createBot(formData: FormData) {
     graph: seed,
     is_live: true,
     version: 1,
+    name: "Bienvenida",
+    trigger_type: "welcome",
   });
 
   revalidatePath("/bots");
@@ -104,8 +106,75 @@ export async function importBot(formData: FormData) {
     graph,
     is_live: true,
     version: 1,
+    name: "Bienvenida",
+    trigger_type: "welcome",
   });
 
   revalidatePath("/bots");
   redirect(`/bots/${bot.id}`);
+}
+
+// ─────────────── Flujos dentro de un bot (con disparador) ───────────────
+
+const TRIGGERS = new Set(["welcome", "keyword", "returning"]);
+function defaultFlowName(t: string) {
+  return t === "keyword" ? "Palabras clave" : t === "returning" ? "Leads que regresan" : "Bienvenida";
+}
+function parseKeywords(raw: string) {
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+/** Crea un flujo nuevo dentro de un bot, con su disparador, y abre el editor. */
+export async function createFlow(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  const botId = String(formData.get("bot_id") ?? "");
+  if (!botId) return;
+  const rawT = String(formData.get("trigger_type") ?? "welcome");
+  const trigger_type = TRIGGERS.has(rawT) ? rawT : "welcome";
+  const name = String(formData.get("name") ?? "").trim() || defaultFlowName(trigger_type);
+  const keywords = parseKeywords(String(formData.get("keywords") ?? ""));
+
+  const supabase = createClient();
+  // El de bienvenida arranca con el flujo semilla; los demás, en blanco.
+  const seed =
+    trigger_type === "welcome"
+      ? { nodes: sampleFlow.nodes, edges: sampleFlow.edges }
+      : { nodes: [], edges: [] };
+
+  const { data: flow } = await supabase
+    .from("flows")
+    .insert({ bot_id: botId, org_id: orgId, graph: seed, is_live: true, version: 1, name, trigger_type, keywords, enabled: true })
+    .select("id")
+    .single();
+  if (!flow) return;
+
+  revalidatePath(`/bots/${botId}`);
+  redirect(`/bots/${botId}/flows/${flow.id}`);
+}
+
+export async function deleteFlow(formData: FormData) {
+  const botId = String(formData.get("bot_id") ?? "");
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  await createClient().from("flows").delete().eq("id", id);
+  revalidatePath(`/bots/${botId}`);
+}
+
+/** Guarda el disparador de un flujo (tipo, nombre, palabras clave, activo). */
+export async function setFlowTrigger(formData: FormData) {
+  const botId = String(formData.get("bot_id") ?? "");
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  const rawT = String(formData.get("trigger_type") ?? "welcome");
+  const trigger_type = TRIGGERS.has(rawT) ? rawT : "welcome";
+  const name = String(formData.get("name") ?? "").trim();
+  const keywords = parseKeywords(String(formData.get("keywords") ?? ""));
+  const enabled = formData.get("enabled") === "on";
+
+  const patch: Record<string, unknown> = { trigger_type, keywords, enabled };
+  if (name) patch.name = name;
+  await createClient().from("flows").update(patch).eq("id", id);
+  revalidatePath(`/bots/${botId}`);
+  revalidatePath(`/bots/${botId}/flows/${id}`);
 }

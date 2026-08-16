@@ -116,7 +116,7 @@ export default async function BotsPage() {
                 </div>
                 <BotCardName botId={b.id} initialName={b.name} />
                 <Link href={`/bots/${b.id}`} className="mt-1 block text-sm text-muted-2 transition hover:text-white">
-                  Abrir en el Constructor →
+                  Abrir bot y flujos →
                 </Link>
                 <form action={deleteBot} className="absolute right-4 top-4 opacity-0 transition group-hover:opacity-100">
                   <input type="hidden" name="id" value={b.id} />
