@@ -34,38 +34,38 @@ export default async function BotSettingsPage({ params }: { params: { id: string
   return (
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
-      <div className="flex-1 overflow-auto p-8">
+      <div className="min-h-full flex-1 overflow-auto bg-canvas p-8 text-ink">
         <BotNav botId={bot.id} channel={bot.channel} />
-        <h2 className="mb-5 font-display text-2xl font-bold text-white">Ajustes del bot</h2>
+        <h2 className="mb-5 font-display text-2xl font-bold text-ink">Ajustes del chatbot</h2>
 
         <div className="max-w-2xl space-y-4">
           {/* Canal */}
-          <div className="card flex items-center justify-between p-5">
+          <div className="card-l flex items-center justify-between p-5">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-2">Canal</div>
-              <div className="mt-1 font-semibold text-white">{CHANNEL_LABEL[channel] ?? "Web"}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">Canal</div>
+              <div className="mt-1 font-semibold text-ink">{CHANNEL_LABEL[channel] ?? "Sitio web"}</div>
             </div>
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-white">
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-[#e6e8f2] bg-white">
               <ChannelIcon channel={channel} className="h-6 w-6" />
             </span>
           </div>
 
           {/* Nombre */}
-          <div className="card p-5">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">Nombre del bot</div>
+          <div className="card-l p-5">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">Nombre del chatbot</div>
             <form action={renameBot} className="flex items-center gap-2">
               <input type="hidden" name="id" value={bot.id} />
-              <input name="name" defaultValue={bot.name} className="input flex-1" />
-              <button className="btn-ghost">Guardar</button>
+              <input name="name" defaultValue={bot.name} className="input-l flex-1" />
+              <button className="btn-soft">Guardar</button>
             </form>
           </div>
 
           {/* Estado */}
-          <div className="card flex items-center justify-between p-5">
+          <div className="card-l flex items-center justify-between p-5">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-2">Estado</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">Estado</div>
               <div className="mt-1">
-                <span className={`rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${published ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}>
+                <span className={`rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${published ? "bg-success/15 text-[#0f9d63]" : "bg-warning/20 text-[#a06a00]"}`}>
                   {published ? "Publicado" : "Borrador"}
                 </span>
               </div>
@@ -73,14 +73,14 @@ export default async function BotSettingsPage({ params }: { params: { id: string
             <form action={setBotStatus}>
               <input type="hidden" name="id" value={bot.id} />
               <input type="hidden" name="status" value={published ? "draft" : "published"} />
-              <button className="btn-primary">{published ? "Pasar a borrador" : "Publicar bot"}</button>
+              <button className="btn-primary">{published ? "Pasar a borrador" : "Publicar chatbot"}</button>
             </form>
           </div>
 
           {/* Zona peligrosa */}
           <div className="rounded-2xl border border-danger/40 bg-danger/5 p-5">
-            <div className="text-sm font-semibold text-white">Eliminar bot</div>
-            <p className="mt-1 text-xs text-muted-2">Se borran el bot y todos sus flujos. Esta acción no se puede deshacer.</p>
+            <div className="text-sm font-semibold text-ink">Eliminar chatbot</div>
+            <p className="mt-1 text-xs text-ink-3">Se borran el chatbot y todas sus conversaciones. Esta acción no se puede deshacer.</p>
             <form action={deleteBot} className="mt-3">
               <input type="hidden" name="id" value={bot.id} />
               <button className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-2 text-xs font-semibold text-danger transition hover:bg-danger/20">

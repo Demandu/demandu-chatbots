@@ -37,24 +37,24 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
 
   return (
     <div>
-      <div className="mb-4 flex w-full max-w-sm items-center gap-2 rounded-xl border border-surface-border bg-surface-raised px-3 py-2">
-        <Search className="h-4 w-4 text-muted-2" />
+      <div className="mb-4 flex w-full max-w-sm items-center gap-2 rounded-xl border border-[#e2e4f0] bg-white px-3 py-2">
+        <Search className="h-4 w-4 text-ink-3" />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Buscar por nombre, teléfono o correo…"
-          className="w-full bg-transparent text-sm text-white placeholder:text-muted-2 focus:outline-none"
+          className="w-full bg-transparent text-sm text-ink placeholder:text-ink-3 focus:outline-none"
         />
       </div>
 
       {filtered.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-surface-border px-4 py-8 text-center text-sm text-muted-2">
+        <p className="rounded-xl border border-dashed border-[#d7d9e8] px-4 py-8 text-center text-sm text-ink-3">
           {contacts.length === 0 ? "Aún no tienes contactos. Agrega el primero arriba." : "Sin resultados."}
         </p>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-surface-border">
+        <div className="overflow-hidden rounded-2xl border border-[#e6e8f2]">
           <table className="w-full text-sm">
-            <thead className="bg-surface-raised text-left text-[11px] font-bold uppercase tracking-wide text-muted-2">
+            <thead className="bg-[#f4f5fb] text-left text-[11px] font-bold uppercase tracking-wide text-ink-3">
               <tr>
                 <th className="px-4 py-3">Nombre</th>
                 <th className="px-4 py-3">Canal</th>
@@ -64,20 +64,20 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
                 <th className="px-4 py-3 text-right">Acción</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-surface-border">
+            <tbody className="divide-y divide-[#e6e8f2]">
               {filtered.map((c) => {
                 const ch = c.channel ? CH[c.channel] : null;
                 return (
-                  <tr key={c.id} className="bg-surface-card">
+                  <tr key={c.id} className="bg-white">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
                         <span className="grid h-8 w-8 flex-none place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-[11px] font-bold text-white">
                           {(c.name ?? "?").slice(0, 2).toUpperCase()}
                         </span>
-                        <span className="font-medium text-white">{c.name ?? "—"}</span>
+                        <span className="font-medium text-ink">{c.name ?? "—"}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-muted">
+                    <td className="px-4 py-3 text-ink-2">
                       {c.channel ? (
                         <span className="inline-flex items-center gap-1.5">
                           <ChannelIcon channel={c.channel} className="h-4 w-4" />
@@ -87,15 +87,15 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
                         "—"
                       )}
                     </td>
-                    <td className="px-4 py-3 text-muted">{c.phone ?? "—"}</td>
-                    <td className="px-4 py-3 text-muted">{c.email ?? "—"}</td>
+                    <td className="px-4 py-3 text-ink-2">{c.phone ?? "—"}</td>
+                    <td className="px-4 py-3 text-ink-2">{c.email ?? "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
                         {(c.tags ?? []).length === 0 ? (
-                          <span className="text-muted-2">—</span>
+                          <span className="text-ink-3">—</span>
                         ) : (
                           (c.tags ?? []).map((t) => (
-                            <span key={t} className="rounded-full bg-surface-raised px-2 py-0.5 text-[11px] text-muted">{t}</span>
+                            <span key={t} className="rounded-full bg-[#f1f2f9] px-2 py-0.5 text-[11px] text-ink-2">{t}</span>
                           ))
                         )}
                       </div>
@@ -103,7 +103,7 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
                     <td className="px-4 py-3 text-right">
                       <form action={deleteContact} className="inline">
                         <input type="hidden" name="id" value={c.id} />
-                        <button className="px-1 text-muted-2 transition hover:text-danger" title="Eliminar">✕</button>
+                        <button className="px-1 text-ink-3 transition hover:text-danger" title="Eliminar">✕</button>
                       </form>
                     </td>
                   </tr>

@@ -69,20 +69,20 @@ export function ConnectButton({
       {open && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={() => setOpen(false)}>
           <div
-            className="w-full max-w-lg rounded-2xl border border-surface-border bg-surface-card p-6 shadow-card"
+            className="w-full max-w-lg rounded-2xl border border-[#e6e8f2] bg-white p-6 text-ink shadow-card"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center gap-3">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-white">
+              <span className="grid h-10 w-10 place-items-center rounded-xl border border-[#e6e8f2] bg-white">
                 <ChannelIcon channel={channel} className="h-6 w-6" />
               </span>
-              <h3 className="flex-1 font-display text-lg font-semibold text-white">Conectar {LABEL[channel]}</h3>
-              <button onClick={() => setOpen(false)} className="text-muted-2 hover:text-white"><X className="h-5 w-5" /></button>
+              <h3 className="flex-1 font-display text-lg font-semibold text-ink">Conectar {LABEL[channel]}</h3>
+              <button onClick={() => setOpen(false)} className="text-ink-3 hover:text-ink"><X className="h-5 w-5" /></button>
             </div>
 
             {channel === "whatsapp" && (
               <div>
-                <p className="mb-1 text-sm text-muted-2">
+                <p className="mb-1 text-sm text-ink-2">
                   Se abrirá el registro oficial de Meta. Inicia sesión con Facebook, elige tu número de WhatsApp Business y autoriza — nosotros hacemos el resto.
                 </p>
                 <WhatsAppConnect
@@ -95,11 +95,11 @@ export function ConnectButton({
             )}
 
             {(channel === "instagram" || channel === "messenger") && (
-              <div className="space-y-3 text-sm text-muted">
-                <p className="text-muted-2">
-                  Conecta tu cuenta con Facebook para que el bot responda {channel === "instagram" ? "DM, historias y comentarios de Instagram" : "los mensajes y comentarios de tu página de Facebook"}.
+              <div className="space-y-3 text-sm text-ink-2">
+                <p className="text-ink-2">
+                  Conecta tu cuenta con Facebook para que el chatbot responda {channel === "instagram" ? "DM, historias y comentarios de Instagram" : "los mensajes y comentarios de tu página de Facebook"}.
                 </p>
-                <div className="rounded-xl border border-warning/40 bg-warning/10 p-3 text-[12px] text-muted">
+                <div className="rounded-xl border border-warning/50 bg-warning/10 p-3 text-[12px] text-ink-2">
                   La conexión de {LABEL[channel]} estará disponible muy pronto. Escríbenos a soporte y la habilitamos para tu cuenta.
                 </div>
               </div>
@@ -107,8 +107,8 @@ export function ConnectButton({
 
             {channel === "webchat" && (
               <div>
-                <p className="mb-2 text-sm text-muted-2">
-                  Para el sitio web no conectas una cuenta: instalas este código. Pégalo antes de <code className="font-mono text-muted">&lt;/body&gt;</code> en tu página.
+                <p className="mb-2 text-sm text-ink-2">
+                  Para el sitio web no conectas una cuenta: instalas este código. Pégalo antes de <code className="font-mono text-ink">&lt;/body&gt;</code> en tu página.
                 </p>
                 <div className="relative">
                   <pre className="max-h-56 overflow-auto rounded-xl border border-surface-border bg-[#0a0a1f] p-3 text-[11px] leading-relaxed text-[#e9edef]">{snippet}</pre>
@@ -119,7 +119,7 @@ export function ConnectButton({
                     {copied ? <><Check className="h-3 w-3" /> Copiado</> : <><Copy className="h-3 w-3" /> Copiar</>}
                   </button>
                 </div>
-                <p className="mt-2 text-[11px] text-muted-2">El widget embebible (widget.js) queda activo en el siguiente paso; el código ya apunta a este bot.</p>
+                <p className="mt-2 text-[11px] text-ink-3">El widget embebible (widget.js) queda activo en el siguiente paso; el código ya apunta a este chatbot.</p>
               </div>
             )}
           </div>
