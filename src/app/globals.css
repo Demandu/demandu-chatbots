@@ -40,6 +40,26 @@
   .card {
     @apply rounded-2xl border border-surface-border bg-surface-card;
   }
+
+  /* --- Tema CLARO para el área de contenido (chrome/barras siguen oscuras) --- */
+  .card-l {
+    @apply rounded-2xl border border-[#e6e8f2] bg-white;
+  }
+  .input-l {
+    @apply w-full rounded-xl border border-[#e2e4f0] bg-white px-3.5 py-2.5 text-sm
+      text-[#1b1c39] placeholder:text-[#9498b8] focus:border-pink focus:outline-none;
+  }
+  .btn-soft {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-[#e2e4f0]
+      bg-white px-4 py-2.5 text-sm font-medium text-[#2c2e43] transition hover:border-[#c9cce0];
+  }
+}
+
+@layer utilities {
+  .bg-canvas { background-color: #eaecf4; }
+  .text-ink { color: #1b1c39; }
+  .text-ink-2 { color: #585b80; }
+  .text-ink-3 { color: #9498b8; }
 }
 
 /* React Flow — lienzo claro (chrome oscuro + canvas gris claro) */

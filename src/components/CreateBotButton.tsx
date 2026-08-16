@@ -15,7 +15,7 @@ export function CreateBotButton({ children }: { children: React.ReactNode }) {
       type="submit"
       disabled={pending}
       aria-busy={pending}
-      className="card group relative flex w-full flex-col items-start gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:border-pink disabled:cursor-wait disabled:opacity-80"
+      className="card-l group relative flex w-full flex-col items-start gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:border-pink disabled:cursor-wait disabled:opacity-80"
     >
       {children}
       <span className="mt-1 text-xs font-semibold text-pink">

@@ -44,12 +44,12 @@ export function BotCardName({ botId, initialName }: { botId: string; initialName
             if (e.key === "Enter") save();
             if (e.key === "Escape") cancel();
           }}
-          className="min-w-0 flex-1 rounded-md border border-pink bg-surface-raised px-2 py-1 font-display text-lg font-semibold text-white focus:outline-none"
+          className="min-w-0 flex-1 rounded-md border border-pink bg-white px-2 py-1 font-display text-lg font-semibold text-ink focus:outline-none"
         />
         <button onClick={save} disabled={saving} title="Guardar" className="flex-none text-success hover:opacity-80">
           <Check className="h-4 w-4" />
         </button>
-        <button onClick={cancel} title="Cancelar" className="flex-none text-muted-2 hover:text-white">
+        <button onClick={cancel} title="Cancelar" className="flex-none text-ink-3 hover:text-ink">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -58,11 +58,11 @@ export function BotCardName({ botId, initialName }: { botId: string; initialName
 
   return (
     <div className="flex items-center gap-2">
-      <h3 className="truncate font-display text-lg font-semibold text-white">{name}</h3>
+      <h3 className="truncate font-display text-lg font-semibold text-ink">{name}</h3>
       <button
         onClick={() => setEditing(true)}
-        title="Renombrar bot"
-        className="flex-none text-muted-2 opacity-0 transition hover:text-pink group-hover:opacity-100"
+        title="Renombrar chatbot"
+        className="flex-none text-ink-3 opacity-0 transition hover:text-pink group-hover:opacity-100"
       >
         <Pencil className="h-3.5 w-3.5" />
       </button>
