@@ -36,33 +36,43 @@ const DEFAULT_WIDGET = {
 };
 
 export async function POST(req: Request) {
-  let body: any;
   try {
-    body = await req.json();
-  } catch {
-    return json({ error: "bad_request" }, 400);
-  }
+    // Sin la llave de servidor no podemos atender al visitante (no autenticado).
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      console.error("[webchat] faltan variables de entorno del servidor");
+      return json({ error: "server_not_configured" }, 503);
+    }
 
-  const botId = String(body?.botId ?? "");
-  const sessionId = String(body?.sessionId ?? "");
-  const text = String(body?.text ?? "");
-  const isStart = !!body?.start;
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "bad_request" }, 400);
+    }
 
-  if (!botId || !sessionId) return json({ error: "missing_params" }, 400);
+    const botId = String(body?.botId ?? "");
+    const sessionId = String(body?.sessionId ?? "");
+    const text = String(body?.text ?? "");
+    const isStart = !!body?.start;
 
-  const admin = createAdminClient();
+    if (!botId || !sessionId) return json({ error: "missing_params" }, 400);
 
-  const { data: bot } = await admin
-    .from("bots")
-    .select("id, org_id, name, channel, widget")
-    .eq("id", botId)
-    .maybeSingle();
+    const admin = createAdminClient();
 
-  if (!bot || bot.channel !== "webchat") return json({ error: "bot_not_found" }, 404);
+    const { data: bot, error: botErr } = await admin
+      .from("bots")
+      .select("id, org_id, name, channel, widget")
+      .eq("id", botId)
+      .maybeSingle();
 
-  const widget = { ...DEFAULT_WIDGET, ...((bot.widget as any) ?? {}) };
+    if (botErr) {
+      console.error("[webchat] error leyendo bot:", botErr.message);
+      return json({ error: "db_error" }, 500);
+    }
+    if (!bot || bot.channel !== "webchat") return json({ error: "bot_not_found" }, 404);
 
-  try {
+    const widget = { ...DEFAULT_WIDGET, ...((bot.widget as any) ?? {}) };
+
     // Contacto anónimo del navegador (identificado por su sessionId)
     const { data: contact } = await admin
       .from("contacts")
@@ -159,8 +169,8 @@ export async function POST(req: Request) {
       .eq("id", conv.id);
 
     return json({ sessionId, widget, messages: result.out });
-  } catch (e) {
-    console.error("[webchat]", e);
-    return json({ error: "server_error" }, 500);
+  } catch (e: any) {
+    console.error("[webchat]", e?.message ?? e);
+    return json({ error: "server_error", detail: e?.message ?? "desconocido" }, 500);
   }
 }
