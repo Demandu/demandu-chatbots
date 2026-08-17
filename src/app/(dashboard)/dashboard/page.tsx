@@ -27,7 +27,7 @@ export default async function InicioPage() {
 
   const doCards = [
     {
-      href: "/bots",
+      href: "/bots/new",
       title: noBots ? "Crear un chatbot" : "Crear otro chatbot",
       desc: "Un robot que contesta solo por WhatsApp, Instagram o tu web.",
       icon: Bot,
@@ -63,7 +63,7 @@ export default async function InicioPage() {
               minutos y <b className="text-ink">Lana</b> te acompaña en cada paso.
             </p>
             <Link
-              href="/bots"
+              href="/bots/new"
               className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-demandu-gradient px-6 py-3.5 text-[15px] font-semibold text-white transition hover:opacity-90"
             >
               <Plus className="h-5 w-5" />

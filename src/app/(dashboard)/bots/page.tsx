@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { createClient } from "@/lib/supabase/server";
-import { createBot, deleteBot, importBot } from "./actions";
+import { deleteBot, importBot } from "./actions";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { BotCardName } from "@/components/BotCardName";
-import { CreateBotButton } from "@/components/CreateBotButton";
 import { LanaAvatar } from "@/components/Lana";
-import { Upload, ArrowRight } from "lucide-react";
+import { Upload, ArrowRight, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -42,43 +41,45 @@ export default async function BotsPage() {
     <>
       <Topbar crumb={<span className="font-semibold text-white">Chatbots</span>} />
       <div className="min-h-full flex-1 overflow-auto bg-canvas p-8 text-ink">
-        <div className="mb-6">
-          <h1 className="font-display text-2xl font-bold text-ink">Chatbots</h1>
-          <p className="mt-1 text-ink-2">
-            {bots.length === 0
-              ? "Aún no tienes chatbots. Elige abajo dónde quieres atender y crea el primero."
-              : <>Tienes <b className="text-ink">{bots.length}</b> chatbot{bots.length === 1 ? "" : "s"}. Cada uno atiende un canal y puede tener varias conversaciones automáticas.</>}
-          </p>
+        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="font-display text-2xl font-bold text-ink">Chatbots</h1>
+            <p className="mt-1 text-ink-2">
+              {bots.length === 0
+                ? "Aún no tienes chatbots. Elige abajo dónde quieres atender y crea el primero."
+                : <>Tienes <b className="text-ink">{bots.length}</b> chatbot{bots.length === 1 ? "" : "s"}. Cada uno atiende un canal y puede tener varias conversaciones automáticas.</>}
+            </p>
+          </div>
+          <Link href="/bots/new" className="btn-primary flex-none">
+            <Plus className="h-4 w-4" /> Crear chatbot
+          </Link>
         </div>
 
-        {/* Elegir canal = crear chatbot */}
+        {/* Elegir canal = crear chatbot (con el asistente de Lana) */}
         <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-3">Crear un chatbot — elige dónde va a atender</p>
         <div className="mb-10 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
           {CHANNEL_CARDS.map((c) => (
-            <form action={createBot} key={c.channel}>
-              <input type="hidden" name="channel" value={c.channel} />
-              <CreateBotButton>
-                <div className="flex w-full items-center justify-between">
-                  <span
-                    className="grid h-14 w-14 place-items-center rounded-2xl"
-                    style={{ background: `${c.color}1f` }}
-                  >
-                    <ChannelIcon channel={c.channel} className="h-8 w-8" />
-                  </span>
-                  {count(c.channel) > 0 && (
-                    <span className="rounded-full bg-[#f1f2f9] px-2.5 py-1 text-xs font-bold text-ink-2">
-                      {count(c.channel)}
-                    </span>
-                  )}
+            <Link
+              key={c.channel}
+              href={`/bots/new?channel=${c.channel}`}
+              className="card-l group relative flex w-full flex-col items-start gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:border-pink"
+            >
+              <div className="flex w-full items-center justify-between">
+                <span className="grid h-14 w-14 place-items-center rounded-2xl" style={{ background: `${c.color}1f` }}>
+                  <ChannelIcon channel={c.channel} className="h-8 w-8" />
+                </span>
+                {count(c.channel) > 0 && (
+                  <span className="rounded-full bg-[#f1f2f9] px-2.5 py-1 text-xs font-bold text-ink-2">{count(c.channel)}</span>
+                )}
+              </div>
+              <div>
+                <div className="font-display text-base font-semibold text-ink">{c.label}</div>
+                <div className="text-xs text-ink-3">
+                  {count(c.channel) === 0 ? c.desc : `${count(c.channel)} chatbot${count(c.channel) === 1 ? "" : "s"}`}
                 </div>
-                <div>
-                  <div className="font-display text-base font-semibold text-ink">{c.label}</div>
-                  <div className="text-xs text-ink-3">
-                    {count(c.channel) === 0 ? c.desc : `${count(c.channel)} chatbot${count(c.channel) === 1 ? "" : "s"}`}
-                  </div>
-                </div>
-              </CreateBotButton>
-            </form>
+              </div>
+              <span className="mt-0.5 text-xs font-semibold text-pink opacity-0 transition group-hover:opacity-100">Crear aquí →</span>
+            </Link>
           ))}
         </div>
 
@@ -88,9 +89,12 @@ export default async function BotsPage() {
             <LanaAvatar size={72} />
             <h3 className="font-display text-lg font-semibold text-ink">Creemos tu primer chatbot 🩷</h3>
             <p className="max-w-sm text-sm text-ink-2">
-              Soy Lana y te acompaño. Toca arriba el canal donde atiendes a tus clientes (WhatsApp es el más
-              usado) y en segundos tendrás tu chatbot listo para configurar.
+              Soy Lana y te acompaño paso a paso. Elige el canal donde atiendes a tus clientes (WhatsApp es el
+              más usado) y en unos minutos tendrás tu chatbot listo.
             </p>
+            <Link href="/bots/new" className="btn-primary mt-1">
+              <Plus className="h-4 w-4" /> Crear mi primer chatbot
+            </Link>
           </div>
         ) : (
           <div className="space-y-8">

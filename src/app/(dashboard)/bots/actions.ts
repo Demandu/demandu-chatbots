@@ -115,6 +115,70 @@ export async function importBot(formData: FormData) {
   redirect(`/bots/${bot.id}`);
 }
 
+// ─────────────── Wizard de primeros pasos ───────────────
+
+/** Grafo inicial mínimo para un chatbot nuevo: inicio → mensaje de bienvenida. */
+function starterGraph(welcome: string) {
+  return {
+    nodes: [
+      { id: "start", type: "start", position: { x: 60, y: 60 }, data: { label: "Cliente escribe", text: "Se activa cuando llega un mensaje nuevo.", to: "welcome" } },
+      { id: "welcome", type: "message", position: { x: 60, y: 240 }, data: { label: "Bienvenida", text: welcome, media: "none", typingDelay: 1, isStart: true } },
+    ],
+    edges: [{ id: "e-start", source: "start", target: "welcome" }],
+  };
+}
+
+const DEFAULT_WELCOME = "¡Hola! 👋 Gracias por escribirnos. ¿En qué te puedo ayudar hoy?";
+
+/**
+ * Crea un chatbot borrador con su flujo de Bienvenida (para el wizard).
+ * Devuelve los IDs para que el wizard siga con Conexión y Primer mensaje.
+ */
+export async function createDraftBot(channel: string, name: string): Promise<{ botId: string; flowId: string } | null> {
+  const ch = CHANNELS.has(channel) ? channel : "webchat";
+  const nm = String(name ?? "").trim() || `Chatbot de ${CHANNEL_LABEL[ch]}`;
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return null;
+  const supabase = createClient();
+
+  const { data: bot } = await supabase
+    .from("bots")
+    .insert({ org_id: orgId, name: nm, status: "draft", channel: ch })
+    .select("id")
+    .single();
+  if (!bot) return null;
+
+  const { data: flow } = await supabase
+    .from("flows")
+    .insert({ bot_id: bot.id, org_id: orgId, graph: starterGraph(DEFAULT_WELCOME), is_live: true, version: 1, name: "Bienvenida", trigger_type: "welcome", enabled: true })
+    .select("id")
+    .single();
+
+  revalidatePath("/bots");
+  return { botId: bot.id, flowId: (flow?.id as string) ?? "" };
+}
+
+/** Fija el texto del mensaje de bienvenida del flujo (paso "Primer mensaje" del wizard). */
+export async function setWelcomeMessage(flowId: string, text: string) {
+  const body = String(text ?? "").trim();
+  if (!flowId || !body) return;
+  const supabase = createClient();
+  const { data: flow } = await supabase.from("flows").select("graph, bot_id").eq("id", flowId).maybeSingle();
+  const graph = ((flow?.graph as any) ?? starterGraph(body)) as any;
+  const nodes = (graph.nodes ?? []) as any[];
+  // Actualiza el nodo de bienvenida (id "welcome") o, en su defecto, el primer mensaje.
+  let touched = false;
+  const next = nodes.map((n) => {
+    if (!touched && (n.id === "welcome" || n.type === "message")) {
+      touched = true;
+      return { ...n, data: { ...n.data, text: body } };
+    }
+    return n;
+  });
+  await supabase.from("flows").update({ graph: { ...graph, nodes: next } }).eq("id", flowId);
+  if (flow?.bot_id) revalidatePath(`/bots/${flow.bot_id}`);
+}
+
 // ─────────────── Flujos dentro de un bot (con disparador) ───────────────
 
 const TRIGGERS = new Set(["welcome", "keyword", "returning"]);
