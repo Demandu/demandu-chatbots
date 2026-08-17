@@ -9,6 +9,8 @@
  * así que funciona sin depender de ningún servicio de embeddings.
  */
 
+import { embedQuery } from "./ingest";
+
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest";
 
@@ -33,7 +35,13 @@ export function aiConfigured(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;
 }
 
-/** Trae los fragmentos de conocimiento más relevantes para la pregunta. */
+/**
+ * Trae los fragmentos de conocimiento más relevantes para la pregunta.
+ * Estrategia en cascada:
+ *   1) Búsqueda por SIGNIFICADO (embeddings) — entiende sinónimos y frases.
+ *   2) Búsqueda por PALABRAS CLAVE (full-text español) — sin llaves externas.
+ *   3) Los primeros fragmentos, para que al menos haya contexto.
+ */
 export async function findKnowledge(
   admin: any,
   botId: string,
@@ -43,6 +51,24 @@ export async function findKnowledge(
   const q = (question ?? "").trim();
   if (!q) return [];
 
+  // 1) Por significado
+  try {
+    const vector = await embedQuery(q);
+    if (vector) {
+      const { data, error } = await admin.rpc("match_bot_knowledge", {
+        p_bot_id: botId,
+        p_embedding: vector,
+        p_limit: limit,
+      });
+      if (!error && data?.length) {
+        return (data as any[]).map((d) => ({ title: d.title, content: d.content }));
+      }
+    }
+  } catch {
+    /* seguimos a palabras clave */
+  }
+
+  // 2) Por palabras clave
   try {
     const { data, error } = await admin
       .from("bot_knowledge")
