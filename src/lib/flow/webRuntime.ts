@@ -172,18 +172,21 @@ export async function runWebFlow(opts: {
 
   const nextAwait = await runFrom(startId, ctx);
 
-  // Guarda las respuestas del bot en la Bandeja
+  // Guarda las respuestas del bot en la Bandeja.
+  // OJO: `payload` es NOT NULL con default '{}' — nunca mandar null aquí,
+  // porque invalida el insert completo y el bot "contesta" sin quedar registrado.
   if (ctx.out.length) {
-    await opts.admin.from("messages").insert(
+    const { error } = await opts.admin.from("messages").insert(
       ctx.out.map((m) => ({
         conversation_id: opts.conversationId,
         org_id: opts.orgId,
         direction: "outbound",
         sender: "bot",
         body: m.text,
-        payload: m.buttons ? { buttons: m.buttons } : null,
+        payload: m.buttons ? { buttons: m.buttons } : {},
       })),
     );
+    if (error) console.error("[webchat] no se guardaron los mensajes del bot:", error.message);
   }
 
   return { vars, awaiting: nextAwait, out: ctx.out };
