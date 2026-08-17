@@ -28,6 +28,7 @@ export type FeatureKey =
   | "templates"    // Plantillas de mensajes — solo WhatsApp
   | "catalog"      // Catálogo de productos — solo WhatsApp
   | "forms"        // Formularios de WhatsApp — solo WhatsApp
+  | "appearance"   // Apariencia de la burbuja — solo sitio web
   | "install"      // Conexión — todos (distinto por canal)
   | "settings";    // Ajustes — todos
 
@@ -43,6 +44,7 @@ export const FEATURES: {
   { key: "templates", label: "Plantillas de mensajes", channels: ["whatsapp"] },
   { key: "catalog", label: "Catálogo", channels: ["whatsapp"] },
   { key: "forms", label: "Formularios", channels: ["whatsapp"] },
+  { key: "appearance", label: "Apariencia", channels: ["webchat"] },
   { key: "install", label: "Conexión", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
   { key: "settings", label: "Ajustes", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
 ];
