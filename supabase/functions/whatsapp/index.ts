@@ -179,20 +179,28 @@ async function handleStatuses(db: any, statuses: any[]) {
     if (!wamid || !s) continue;
     const tsAt = new Date((Number(st.timestamp) || Date.now() / 1000) * 1000).toISOString();
     if (s === "failed") {
-      await db.from("campaign_recipients")
-        .update({ status: "failed", error: st?.errors?.[0]?.title ?? st?.errors?.[0]?.message ?? "failed" })
-        .eq("wa_message_id", wamid);
+      const err = st?.errors?.[0]?.title ?? st?.errors?.[0]?.message ?? "failed";
+      await db.from("campaign_recipients").update({ status: "failed", error: err }).eq("wa_message_id", wamid);
+      await db.from("drip_sends").update({ status: "failed", error: err }).eq("wa_message_id", wamid);
       continue;
     }
     if (!(s in STATUS_RANK)) continue;
-    const { data: rec } = await db.from("campaign_recipients").select("id,status").eq("wa_message_id", wamid).maybeSingle();
-    if (!rec) continue;
-    if ((STATUS_RANK[s] ?? 0) <= (STATUS_RANK[rec.status] ?? 0)) continue; // no bajar de estado
     const patch: any = { status: s };
     if (s === "sent") patch.sent_at = tsAt;
     if (s === "delivered") patch.delivered_at = tsAt;
     if (s === "read") patch.read_at = tsAt;
-    await db.from("campaign_recipients").update(patch).eq("id", rec.id);
+
+    // Difusiones
+    const { data: rec } = await db.from("campaign_recipients").select("id,status").eq("wa_message_id", wamid).maybeSingle();
+    if (rec && (STATUS_RANK[s] ?? 0) > (STATUS_RANK[rec.status] ?? 0)) {
+      await db.from("campaign_recipients").update(patch).eq("id", rec.id);
+    }
+
+    // Seguimientos (drips)
+    const { data: dsend } = await db.from("drip_sends").select("id,status").eq("wa_message_id", wamid).maybeSingle();
+    if (dsend && (STATUS_RANK[s] ?? 0) > (STATUS_RANK[dsend.status] ?? 0)) {
+      await db.from("drip_sends").update(patch).eq("id", dsend.id);
+    }
   }
 }
 
@@ -230,14 +238,18 @@ Deno.serve(async (req: Request) => {
       const { data: cfg } = await db.from("whatsapp_channels").select("*").eq("phone_number_id", pnid).maybeSingle();
       if (!cfg) return json({ ok: true });
 
-      // Atribuir respuesta a una difusión reciente (para "quién respondió")
+      // Atribuir respuesta a una difusión o seguimiento reciente ("quién respondió")
+      const since = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+      const repliedPatch = { status: "replied", replied_at: new Date().toISOString() };
       try {
-        await db.from("campaign_recipients")
-          .update({ status: "replied", replied_at: new Date().toISOString() })
-          .eq("org_id", cfg.org_id)
-          .eq("phone", from)
-          .in("status", ["sent", "delivered", "read"])
-          .gte("created_at", new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString());
+        await db.from("campaign_recipients").update(repliedPatch)
+          .eq("org_id", cfg.org_id).eq("phone", from)
+          .in("status", ["sent", "delivered", "read"]).gte("created_at", since);
+      } catch { /* best-effort */ }
+      try {
+        await db.from("drip_sends").update(repliedPatch)
+          .eq("org_id", cfg.org_id).eq("phone", from)
+          .in("status", ["sent", "delivered", "read"]).gte("created_at", since);
       } catch { /* best-effort */ }
 
       const { data: contact } = await db.from("contacts").upsert({ org_id: cfg.org_id, channel: "whatsapp", external_id: from, name, phone: from }, { onConflict: "org_id,channel,external_id" }).select("id").single();

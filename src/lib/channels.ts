@@ -24,7 +24,10 @@ export function channelOf(raw?: string | null): Channel {
 export type FeatureKey =
   | "flows"        // Conversaciones automáticas — todos
   | "broadcasts"   // Envíos masivos — solo WhatsApp
+  | "drips"        // Seguimientos automáticos — solo WhatsApp
   | "templates"    // Plantillas de mensajes — solo WhatsApp
+  | "catalog"      // Catálogo de productos — solo WhatsApp
+  | "forms"        // Formularios de WhatsApp — solo WhatsApp
   | "install"      // Conexión — todos (distinto por canal)
   | "settings";    // Ajustes — todos
 
@@ -36,7 +39,10 @@ export const FEATURES: {
 }[] = [
   { key: "flows", label: "Conversaciones automáticas", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
   { key: "broadcasts", label: "Envíos masivos", channels: ["whatsapp"] },
+  { key: "drips", label: "Seguimientos", channels: ["whatsapp"] },
   { key: "templates", label: "Plantillas de mensajes", channels: ["whatsapp"] },
+  { key: "catalog", label: "Catálogo", channels: ["whatsapp"] },
+  { key: "forms", label: "Formularios", channels: ["whatsapp"] },
   { key: "install", label: "Conexión", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
   { key: "settings", label: "Ajustes", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
 ];
