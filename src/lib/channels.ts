@@ -29,6 +29,8 @@ export type FeatureKey =
   | "catalog"      // Catálogo de productos — solo WhatsApp
   | "forms"        // Formularios de WhatsApp — solo WhatsApp
   | "appearance"   // Apariencia de la burbuja — solo sitio web
+  | "ai"           // Lana IA (personalidad) — todos
+  | "training"     // Entrenamiento (info del negocio) — todos
   | "install"      // Conexión — todos (distinto por canal)
   | "settings";    // Ajustes — todos
 
@@ -45,6 +47,8 @@ export const FEATURES: {
   { key: "catalog", label: "Catálogo", channels: ["whatsapp"] },
   { key: "forms", label: "Formularios", channels: ["whatsapp"] },
   { key: "appearance", label: "Apariencia", channels: ["webchat"] },
+  { key: "ai", label: "Lana IA", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
+  { key: "training", label: "Entrenamiento", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
   { key: "install", label: "Conexión", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
   { key: "settings", label: "Ajustes", channels: ["whatsapp", "instagram", "messenger", "webchat"] },
 ];

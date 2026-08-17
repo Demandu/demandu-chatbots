@@ -1,5 +1,6 @@
 import { getNode, getStartNode, defaultNext, buttonTarget } from "./engine";
 import type { Flow, DemanduNode, ConditionRule, FlowButton } from "./types";
+import { aiAnswer, type AiSettings } from "@/lib/ai/answer";
 
 /**
  * Motor de conversación para canales que NO envían por una API externa
@@ -18,6 +19,9 @@ interface Ctx {
   admin: any;
   vars: Record<string, string>;
   out: OutMsg[];
+  botId: string;
+  aiSettings: AiSettings | null;
+  lastUserText: string;
 }
 
 function interp(t: string | undefined, vars: Record<string, string>) {
@@ -62,6 +66,24 @@ function evalCondition(flow: Flow, node: DemanduNode, vars: Record<string, strin
   return flow.edges.find((e) => e.source === node.id && e.sourceHandle === "otherwise")?.target;
 }
 
+/** Últimos mensajes de la conversación, para que la IA tenga contexto. */
+async function recentHistory(ctx: Ctx): Promise<{ role: "user" | "assistant"; content: string }[]> {
+  try {
+    const { data } = await ctx.admin
+      .from("messages")
+      .select("direction, body")
+      .eq("conversation_id", ctx.conversationId)
+      .order("created_at", { ascending: false })
+      .limit(6);
+    return ((data ?? []) as any[])
+      .reverse()
+      .filter((m) => m.body)
+      .map((m) => ({ role: m.direction === "inbound" ? ("user" as const) : ("assistant" as const), content: m.body }));
+  } catch {
+    return [];
+  }
+}
+
 async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting> {
   let current = startId;
   let guard = 0;
@@ -98,6 +120,28 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
         if (node.data.caption) push(ctx, node.data.caption);
         current = defaultNext(ctx.flow, node);
         break;
+      case "ai": {
+        // Responde con IA usando la info del negocio (Bot Training).
+        // Si no hay pregunta todavía, muestra el texto del nodo y espera.
+        if (!ctx.lastUserText) {
+          if (node.data.text) push(ctx, node.data.text);
+          return { nodeId: node.id, type: "question" };
+        }
+        const settings: AiSettings = {
+          ...(ctx.aiSettings ?? {}),
+          ...(node.data.systemPrompt ? { persona: node.data.systemPrompt } : {}),
+        };
+        const answer = await aiAnswer({
+          admin: ctx.admin,
+          botId: ctx.botId,
+          question: ctx.lastUserText,
+          settings,
+          history: await recentHistory(ctx),
+        });
+        push(ctx, answer);
+        // El nodo de IA se queda escuchando: la siguiente pregunta vuelve aquí.
+        return { nodeId: node.id, type: "question" };
+      }
       default:
         if (node.data.text) push(ctx, node.data.text);
         current = defaultNext(ctx.flow, node);
@@ -140,6 +184,8 @@ export async function runWebFlow(opts: {
   flowState: any;
   text: string;
   isStart?: boolean;
+  botId: string;
+  aiSettings?: AiSettings | null;
 }): Promise<{ vars: Record<string, string>; awaiting: Awaiting; out: OutMsg[] }> {
   const vars: Record<string, string> = { ...(opts.flowState?.vars ?? {}) };
   const ctx: Ctx = {
@@ -149,6 +195,9 @@ export async function runWebFlow(opts: {
     admin: opts.admin,
     vars,
     out: [],
+    botId: opts.botId,
+    aiSettings: opts.aiSettings ?? null,
+    lastUserText: opts.isStart ? "" : (opts.text ?? ""),
   };
 
   const awaiting = opts.flowState?.awaiting as Awaiting;
@@ -157,8 +206,13 @@ export async function runWebFlow(opts: {
   if (!opts.isStart && awaiting?.nodeId) {
     const node = getNode(opts.flow, awaiting.nodeId);
     if (awaiting.type === "question") {
-      if (node?.data.variable) vars[node.data.variable] = opts.text;
-      startId = node ? defaultNext(opts.flow, node) : undefined;
+      // Un nodo de IA se queda escuchando: cada pregunta vuelve a entrar en él.
+      if (node?.type === "ai") {
+        startId = node.id;
+      } else {
+        if (node?.data.variable) vars[node.data.variable] = opts.text;
+        startId = node ? defaultNext(opts.flow, node) : undefined;
+      }
     } else if (awaiting.type === "buttons") {
       const t = (opts.text ?? "").toLowerCase();
       const btn = (node?.data.buttons ?? []).find(

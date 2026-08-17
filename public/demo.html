@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pastelería La Dulce · Sitio de prueba</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,Helvetica,Arial,sans-serif;
+       color:#1b1c39;line-height:1.6;background:#fff}
+  header{background:linear-gradient(120deg,#fff,#f3efff);border-bottom:1px solid #e7e2fb;padding:18px 30px;
+         display:flex;align-items:center;gap:12px}
+  header .logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#F64A97,#6E42FF);
+               display:grid;place-items:center;color:#fff;font-weight:800}
+  header b{font-size:18px;letter-spacing:-.02em}
+  header nav{margin-left:auto;display:flex;gap:22px;font-size:14px;color:#585b80}
+  .hero{max-width:900px;margin:0 auto;padding:60px 30px 40px;text-align:center}
+  .hero h1{font-size:40px;font-weight:800;letter-spacing:-.03em;line-height:1.15}
+  .hero p{color:#585b80;font-size:17px;margin-top:14px}
+  .grid{max-width:900px;margin:0 auto;padding:0 30px 60px;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .card{border:1px solid #e6e8f2;border-radius:16px;padding:22px}
+  .card .em{font-size:30px}
+  .card h3{font-size:16px;margin:10px 0 4px}
+  .card p{font-size:14px;color:#585b80}
+  .note{max-width:900px;margin:0 auto 60px;padding:20px 24px;background:#eef7fd;border:1px solid #dbe7f5;
+        border-radius:16px;font-size:14.5px;color:#41506b}
+  .note b{color:#1b1c39}
+  footer{border-top:1px solid #e6e8f2;padding:24px 30px;text-align:center;color:#9498b8;font-size:13px}
+  @media(max-width:720px){.grid{grid-template-columns:1fr}.hero h1{font-size:30px}}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">D</span><b>Pastelería La Dulce</b>
+  <nav><span>Inicio</span><span>Productos</span><span>Contacto</span></nav>
+</header>
+
+<div class="hero">
+  <h1>Pasteles artesanales,<br>hechos el mismo día</h1>
+  <p>Este es un sitio de mentiras 🙂 — sirve para probar cómo se ve y funciona tu chatbot en una página real.</p>
+</div>
+
+<div class="grid">
+  <div class="card"><div class="em">🎂</div><h3>Pasteles</h3><p>Desde $499, para cualquier ocasión.</p></div>
+  <div class="card"><div class="em">🧁</div><h3>Cupcakes</h3><p>Cajas de 6 y 12 piezas.</p></div>
+  <div class="card"><div class="em">🚚</div><h3>Entrega</h3><p>A domicilio en menos de 3 horas.</p></div>
+</div>
+
+<div class="note">
+  👉 <b>Busca la burbuja de chat abajo a la derecha</b> y dale clic. Debe saludarte tu chatbot “Prueba”.
+  Todo lo que escribas aquí aparecerá en tu plataforma, en la sección <b>Conversaciones</b>.
+  <br><br>
+  Si no aparece la burbuja: asegúrate de haber corrido <b>./publish.sh</b>, y abre la consola del navegador
+  con <b>F12</b> para ver si hay algún error.
+</div>
+
+<footer>Sitio de prueba · el chat es real, la pastelería no 😄</footer>
+
+<!-- ↓↓↓ Tu chatbot: este es el mismo código que instalarías en un sitio real ↓↓↓ -->
+<script>
+  (function (d) {
+    var s = d.createElement('script');
+    s.src = 'https://demandu-chatbots.netlify.app/widget.js';
+    s.async = 1;
+    s.dataset.bot = '5aa32bde-63bf-4952-9f9f-08a16704bdf1';
+    d.body.appendChild(s);
+  })(document);
+</script>
+
+</body>
+</html>

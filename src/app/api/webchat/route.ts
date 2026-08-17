@@ -61,7 +61,7 @@ export async function POST(req: Request) {
 
     const { data: bot, error: botErr } = await admin
       .from("bots")
-      .select("id, org_id, name, channel, widget")
+      .select("id, org_id, name, channel, widget, ai")
       .eq("id", botId)
       .maybeSingle();
 
@@ -161,6 +161,8 @@ export async function POST(req: Request) {
       flowState,
       text,
       isStart,
+      botId: bot.id,
+      aiSettings: (bot as any).ai ?? null,
     });
 
     await admin

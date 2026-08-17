@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessagesSquare, Megaphone, FileText, Plug, Settings, Timer, ShoppingBag, ClipboardList, Palette } from "lucide-react";
+import { MessagesSquare, Megaphone, FileText, Plug, Settings, Timer, ShoppingBag, ClipboardList, Palette, Sparkles, BookOpen } from "lucide-react";
 import { channelOf, featuresFor, FEATURES, type FeatureKey } from "@/lib/channels";
 
 /**
@@ -18,6 +18,8 @@ const TAB_UI: Record<FeatureKey, { suffix: string; icon: any }> = {
   catalog: { suffix: "/catalog", icon: ShoppingBag },
   forms: { suffix: "/forms", icon: ClipboardList },
   appearance: { suffix: "/appearance", icon: Palette },
+  ai: { suffix: "/ai", icon: Sparkles },
+  training: { suffix: "/training", icon: BookOpen },
   install: { suffix: "/install", icon: Plug },
   settings: { suffix: "/settings", icon: Settings },
 };
