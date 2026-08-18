@@ -136,6 +136,8 @@ export async function aiAnswer(opts: {
   question: string;
   settings?: AiSettings | null;
   history?: { role: "user" | "assistant"; content: string }[];
+  /** Las pruebas desde el panel no se cobran: pasan `logUsage: false`. */
+  logUsage?: boolean;
 }): Promise<string> {
   const ai: Required<AiSettings> = { ...AI_DEFAULTS, ...(opts.settings ?? {}) };
 
@@ -184,7 +186,7 @@ export async function aiAnswer(opts: {
 
     // Registra el consumo de IA para el panel y la facturación.
     // Best-effort: si falla, la conversación no se ve afectada.
-    if (text) {
+    if (text && opts.logUsage !== false) {
       try {
         await opts.admin.from("usage_events").insert({
           org_id: opts.orgId,

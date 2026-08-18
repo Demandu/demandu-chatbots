@@ -3,7 +3,8 @@ import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
 import { BotNav } from "@/components/builder/BotNav";
-import { LanaSays, LanaAvatar } from "@/components/Lana";
+import { LanaSays } from "@/components/Lana";
+import { AiTester } from "@/components/ai/AiTester";
 import { createClient } from "@/lib/supabase/server";
 import { AI_DEFAULTS, aiConfigured } from "@/lib/ai/answer";
 import { saveAiSettings } from "./actions";
@@ -60,8 +61,8 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
               <div className="text-sm font-semibold text-ink">{lista ? "IA disponible" : "IA no disponible aún"}</div>
               <div className="text-xs text-ink-3">
                 {lista
-                  ? "Tu plataforma ya puede generar respuestas."
-                  : "Falta configurar el servicio de IA. Mientras tanto, el bot usará tu mensaje de respaldo."}
+                  ? "Ya está lista. No tienes que contratar ni configurar nada más."
+                  : "Todavía no está activa en tu cuenta. Escríbenos y la encendemos. Mientras tanto, tu chatbot usa el mensaje de respaldo."}
               </div>
             </div>
           </div>
@@ -126,37 +127,22 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
             </div>
           </div>
 
-          {/* Vista previa */}
-          <div className="lg:col-span-1">
+          {/* Prueba en vivo */}
+          <div className="lg:col-span-1 space-y-5">
+            <AiTester botId={bot.id as string} />
             <div className="card-l p-5">
-              <h3 className="mb-3 font-display text-base font-semibold text-ink">Así se comportará</h3>
-              <div className="space-y-2.5 rounded-xl bg-[#f4f5fb] p-3">
-                <div className="ml-auto max-w-[85%] rounded-xl rounded-br-sm bg-demandu-gradient px-3 py-2 text-[12.5px] text-white">
-                  ¿A qué hora abren los sábados?
-                </div>
-                <div className="flex items-end gap-2">
-                  <LanaAvatar size={26} />
-                  <div className="max-w-[85%] rounded-xl rounded-bl-sm bg-white px-3 py-2 text-[12.5px] text-ink shadow-sm">
-                    {(saberes ?? 0) > 0
-                      ? "Responderá con lo que cargaste en Entrenamiento."
-                      : "Aún no tiene información cargada, así que respondería:"}
-                  </div>
-                </div>
-                {(saberes ?? 0) === 0 && (
-                  <div className="flex items-end gap-2">
-                    <span className="w-[26px]" />
-                    <div className="max-w-[85%] rounded-xl rounded-bl-sm bg-white px-3 py-2 text-[12.5px] italic text-ink-2 shadow-sm">
-                      {ai.fallback}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <p className="mt-3 text-[11px] text-ink-3">
-                Recuerda agregar el bloque <b className="text-ink-2">Respuesta con IA</b> en el constructor para que se
-                active en la conversación.
+              <h3 className="mb-1 font-display text-base font-semibold text-ink">Para que conteste sola</h3>
+              <p className="text-xs text-ink-2">
+                Agrega el bloque <b className="text-ink">Respuesta con IA</b> en el constructor de tu conversación.
+                Ahí es donde tu chatbot deja el guión y contesta con lo que aprendió de tu negocio.
+              </p>
+              <p className="mt-2 text-[11px] text-ink-3">
+                Cuantos más temas cargues en <b className="text-ink-2">Entrenamiento</b>, mejor contesta. Si algo no
+                está ahí, dirá tu mensaje de respaldo en vez de inventarlo.
               </p>
             </div>
           </div>
+
         </form>
       </div>
     </>
