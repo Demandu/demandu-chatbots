@@ -70,7 +70,7 @@ export default async function BotBroadcastsPage({
   return (
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
+      <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <BotNav botId={bot.id} channel={bot.channel} />
         <h2 className="mb-1 font-display text-2xl font-bold text-ink">Envíos masivos</h2>
         <p className="mb-5 text-sm text-ink-2">Envía plantillas aprobadas a tus contactos desde este chatbot y mide entrega, lectura y respuesta.</p>

@@ -112,13 +112,60 @@ function detectarAtajo(texto: string, atajos: any): "reset" | "agent" | null {
 }
 
 // ---- envío a WhatsApp ----
-async function waPost(pnid: string, token: string, payload: any) {
-  const res = await fetch(`${GRAPH}/${pnid}/messages`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", ...payload }),
-  });
-  if (!res.ok) console.error("wa send", res.status, await res.text());
+/**
+ * Traduce los errores de Meta a algo que un cliente no técnico entienda.
+ * Es lo que se muestra en la Bandeja cuando un mensaje no llega.
+ */
+function motivoMeta(code: number, mensaje: string): string {
+  switch (code) {
+    case 131037:
+      return "Meta todavía no aprueba el nombre para mostrar de tu número. Hasta que lo apruebe, WhatsApp no deja enviar mensajes.";
+    case 131047:
+      return "Pasaron más de 24 horas desde el último mensaje del cliente. Para retomar hay que enviarle una plantilla aprobada.";
+    case 131026:
+      return "Ese número no puede recibir mensajes de WhatsApp.";
+    case 131051:
+      return "Ese tipo de mensaje no está permitido en este número.";
+    case 131056:
+      return "Demasiados mensajes seguidos a este número. Meta pidió esperar un momento.";
+    case 190:
+    case 401:
+      return "La conexión con Meta caducó. Hay que volver a conectar el número.";
+    case 132000:
+    case 132001:
+    case 132007:
+      return "La plantilla no existe o no está aprobada por Meta.";
+    case 133010:
+      return "El número no está registrado en WhatsApp Business.";
+    default:
+      return mensaje || "WhatsApp no aceptó el mensaje.";
+  }
+}
+
+type ResultadoEnvio = { ok: boolean; error?: string; code?: number };
+
+async function waPost(pnid: string, token: string, payload: any): Promise<ResultadoEnvio> {
+  try {
+    const res = await fetch(`${GRAPH}/${pnid}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", ...payload }),
+    });
+    if (res.ok) return { ok: true };
+    const cuerpo = await res.text().catch(() => "");
+    console.error("wa send", res.status, cuerpo);
+    let code = res.status;
+    let mensaje = "";
+    try {
+      const j = JSON.parse(cuerpo);
+      code = j?.error?.code ?? code;
+      mensaje = j?.error?.message ?? "";
+    } catch { /* respuesta no JSON */ }
+    return { ok: false, code, error: motivoMeta(code, mensaje) };
+  } catch (e) {
+    console.error("wa send red:", e);
+    return { ok: false, error: "No se pudo conectar con WhatsApp." };
+  }
 }
 function sendText(pnid: string, token: string, to: string, body: string) {
   return waPost(pnid, token, { to, type: "text", text: { body: body.slice(0, 4096) } });
@@ -300,20 +347,36 @@ function evalCondition(flow: any, node: any, vars: Record<string, string>) {
   return other?.target;
 }
 
+/**
+ * Guarda el mensaje en la Bandeja anotando si WhatsApp lo aceptó.
+ * Es importante: antes se guardaba igual aunque Meta lo rechazara, y el equipo
+ * veía una conversación que el cliente nunca recibió.
+ */
+async function registrar(ctx: any, body: string, envio: ResultadoEnvio, extra: any = {}) {
+  const payload: any = { ...extra };
+  if (!envio.ok) payload.no_entregado = { motivo: envio.error ?? "No se pudo enviar", code: envio.code ?? null };
+  await ctx.db.from("messages").insert({
+    conversation_id: ctx.convId, org_id: ctx.orgId,
+    direction: "outbound", sender: "bot", body, payload,
+  });
+}
+
 async function say(ctx: any, body: string) {
   if (esEjemplo(body)) return; // bloque sin configurar: no molestamos al cliente
   const text = interp(body, ctx.vars);
   if (!text) return;
-  await sendText(ctx.pnid, ctx.token, ctx.to, text);
-  await ctx.db.from("messages").insert({ conversation_id: ctx.convId, org_id: ctx.orgId, direction: "outbound", sender: "bot", body: text });
+  const envio = await sendText(ctx.pnid, ctx.token, ctx.to, text);
+  await registrar(ctx, text, envio);
 }
 async function sayButtons(ctx: any, body: string, node: any) {
   let text = interp(body, ctx.vars);
   const hint = ctx.atajos?.hint;
   if (hint?.enabled && hint?.onOptions && hint?.text) text = `${text}\n\n${hint.text}`;
   const buttons = node.data.buttons ?? [];
-  await sendButtons(ctx.pnid, ctx.token, ctx.to, text || "Elige una opción", buttons);
-  await ctx.db.from("messages").insert({ conversation_id: ctx.convId, org_id: ctx.orgId, direction: "outbound", sender: "bot", body: text || "(opciones)", payload: { buttons: buttons.map((b: any) => ({ id: b.id, label: b.label })) } });
+  const envio = await sendButtons(ctx.pnid, ctx.token, ctx.to, text || "Elige una opción", buttons);
+  await registrar(ctx, text || "(opciones)", envio, {
+    buttons: buttons.map((b: any) => ({ id: b.id, label: b.label })),
+  });
 }
 
 async function runFrom(startId: string | undefined, ctx: any) {
@@ -333,12 +396,13 @@ async function runFrom(startId: string | undefined, ctx: any) {
         const kind = (node.data.mediaType ?? "image") as "image" | "video" | "file";
         const caption = interp(node.data.caption ?? "", ctx.vars);
         if (node.data.mediaUrl) {
-          await sendMedia(ctx.pnid, ctx.token, ctx.to, kind, node.data.mediaUrl, caption, node.data.mediaName);
-          await ctx.db.from("messages").insert({
-            conversation_id: ctx.convId, org_id: ctx.orgId, direction: "outbound", sender: "bot",
-            body: caption || `(${kind === "video" ? "video" : kind === "file" ? "archivo" : "imagen"})`,
-            payload: { media: { type: kind, url: node.data.mediaUrl, name: node.data.mediaName ?? null } },
-          });
+          const envio = await sendMedia(ctx.pnid, ctx.token, ctx.to, kind, node.data.mediaUrl, caption, node.data.mediaName);
+          await registrar(
+            ctx,
+            caption || `(${kind === "video" ? "video" : kind === "file" ? "archivo" : "imagen"})`,
+            envio,
+            { media: { type: kind, url: node.data.mediaUrl, name: node.data.mediaName ?? null } },
+          );
         } else if (caption) {
           // Sin archivo cargado todavía: al menos mandamos el texto, no un ejemplo.
           await say(ctx, node.data.caption ?? "");
@@ -414,6 +478,15 @@ async function handleIncoming(opts: any) {
       const t = opts.text.toLowerCase();
       const btn = (node?.data.buttons ?? []).find((b: any) => b.id === opts.text || (b.label ?? "").toLowerCase() === t);
       startId = btn && node ? buttonTarget(opts.flow, node.id, btn) : (node ? defaultNext(opts.flow, node) : undefined);
+
+      // Escribió algo que no era ninguna opción y el bloque no tiene salida
+      // por defecto: antes el bot se quedaba MUDO y el lead quedaba atorado.
+      // Ahora se vuelven a mostrar las opciones.
+      if (!btn && !startId && node) {
+        await say(ctx, "No entendí esa respuesta 🤔 Elige una de las opciones:");
+        await sayButtons(ctx, node.data.text ?? "", node);
+        return { vars, awaiting: { nodeId: node.id, type: "buttons" }, hintEnviado: opts.flowState?.hintEnviado ?? false };
+      }
     }
   } else {
     startId = getStartNode(opts.flow)?.id;

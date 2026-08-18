@@ -22,7 +22,7 @@ export default async function ContactsPage() {
   return (
     <>
       <Topbar crumb={<span className="font-semibold text-white">Contactos</span>} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
+      <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <h2 className="font-display text-2xl font-bold text-ink">Contactos</h2>
         <p className="mb-6 mt-1 text-ink-2">Toda tu base de contactos en un solo lugar.</p>
 

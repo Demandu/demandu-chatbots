@@ -59,7 +59,7 @@ export default async function BotFormsPage({
   return (
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
+      <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <BotNav botId={bot.id} channel={bot.channel} />
 
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">

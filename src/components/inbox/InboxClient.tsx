@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Smile, Paperclip, ChevronLeft, Hand } from "lucide-react";
+import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Smile, Paperclip, ChevronLeft, Hand, AlertTriangle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ChannelBadge } from "./ChannelBadge";
@@ -35,7 +35,11 @@ type Convo = {
   state: State | null;
   member: Member | null;
 };
-type Message = { id: string; direction: string; sender: string; body: string | null; created_at: string };
+type Message = {
+  id: string; direction: string; sender: string; body: string | null; created_at: string;
+  /** Si WhatsApp rechazó el envío, aquí viene el motivo en humano. */
+  payload?: { no_entregado?: { motivo: string; code: number | null } } | null;
+};
 
 const CH: Record<string, { label: string; emoji: string; color: string }> = {
   whatsapp: { label: "WhatsApp", emoji: "🟢", color: "#25D366" },
@@ -128,7 +132,7 @@ export function InboxClient({
 
   const loadMessages = useCallback(
     async (id: string) => {
-      const { data } = await sb.from("messages").select("id,direction,sender,body,created_at").eq("conversation_id", id).order("created_at");
+      const { data } = await sb.from("messages").select("id,direction,sender,body,created_at,payload").eq("conversation_id", id).order("created_at");
       setMessages((data as any) ?? []);
     },
     [sb]
@@ -521,6 +525,19 @@ export function InboxClient({
             </div>
           </div>
 
+          {(() => {
+            const fallo = [...messages].reverse().find((m) => m.payload?.no_entregado)?.payload?.no_entregado;
+            if (!fallo) return null;
+            return (
+              <div className="flex flex-none items-start gap-2 border-b border-danger/40 bg-danger/10 px-4 py-2.5 text-xs text-ink-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-danger" />
+                <span>
+                  <b className="text-danger">WhatsApp no está entregando tus mensajes.</b> {fallo.motivo}
+                </span>
+              </div>
+            );
+          })()}
+
           {errorTraduccion && (
             <div className="flex flex-none items-center justify-between gap-3 border-b border-warning/40 bg-warning/10 px-4 py-2 text-xs text-ink-2">
               <span>{errorTraduccion}</span>
@@ -569,8 +586,17 @@ export function InboxClient({
                     style={{ color: out ? paleta.metaOut : "rgba(0,0,0,.42)" }}
                   >
                     {clock(m.created_at)}
-                    {out && <CheckCheck className="h-3 w-3" />}
+                    {out && !m.payload?.no_entregado && <CheckCheck className="h-3 w-3" />}
                   </span>
+                  {m.payload?.no_entregado && (
+                    <span
+                      className="mt-1 flex items-center gap-1 text-[10.5px] font-semibold"
+                      style={{ color: "#c02b31" }}
+                      title={m.payload.no_entregado.motivo}
+                    >
+                      <AlertTriangle className="h-3 w-3" /> No se entregó
+                    </span>
+                  )}
                 </div>
               );
             })}

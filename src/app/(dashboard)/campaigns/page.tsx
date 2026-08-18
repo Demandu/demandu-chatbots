@@ -38,7 +38,7 @@ export default async function CampaignsRollupPage() {
   return (
     <>
       <Topbar crumb={<span className="font-semibold text-white">Campañas</span>} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
+      <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <div className="mb-5">
           <h2 className="font-display text-2xl font-bold text-ink">Envíos de todos tus chatbots</h2>
           <p className="mt-1 text-sm text-ink-2">

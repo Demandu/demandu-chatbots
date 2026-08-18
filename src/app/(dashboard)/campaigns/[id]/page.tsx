@@ -55,7 +55,7 @@ export default async function CampaignDetail({ params }: { params: { id: string 
   return (
     <>
       <Topbar crumb={<span className="font-semibold text-white">Campañas / {(campaign as any).name}</span>} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
+      <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <Link href="/campaigns" className="mb-4 inline-flex items-center gap-1.5 text-sm text-ink-2 hover:text-ink">
           <ArrowLeft className="h-4 w-4" /> Volver a Envíos
         </Link>
