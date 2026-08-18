@@ -17,7 +17,9 @@ export type PrefsAviso = {
   tono: Tono;
   /** 0 a 100 */
   volumen: number;
-  /** Aviso del sistema operativo (fuera del navegador) */
+  /** Tarjeta de aviso dentro de la app (la que se VE mientras trabajas) */
+  enApp: boolean;
+  /** Aviso del sistema operativo (cuando estás en otra pestaña) */
   escritorio: boolean;
   /** Contador en el título de la pestaña */
   titulo: boolean;
@@ -36,6 +38,7 @@ export const PREFS_DEFAULT: PrefsAviso = {
   sonido: true,
   tono: "campana",
   volumen: 60,
+  enApp: true,
   escritorio: false,
   titulo: true,
   soloMias: false,

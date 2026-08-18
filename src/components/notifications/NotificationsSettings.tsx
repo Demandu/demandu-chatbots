@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, BellOff, Volume2, Play, Monitor, Moon, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Bell, BellOff, Volume2, Play, Monitor, Moon, CheckCircle2, AlertTriangle, MessageSquare } from "lucide-react";
+import { lanzarAviso } from "./Toasts";
 import {
   PREFS_DEFAULT, TONOS_DISPONIBLES, guardarPrefs, leerPrefs, permisoEscritorio,
   pedirPermisoEscritorio, reproducirTono, enSilencio, type PrefsAviso, type Tono,
@@ -127,6 +128,14 @@ export function NotificationsSettings() {
 
       <div className={p.activo ? "space-y-3" : "pointer-events-none space-y-3 opacity-45"}>
         <Switch
+          titulo="Aviso dentro de la app"
+          detalle="La tarjeta que aparece arriba a la derecha con el nombre y un adelanto del mensaje. Tócala para abrir la conversación."
+          valor={p.enApp}
+          onChange={(v) => set({ enApp: v })}
+          icono={<MessageSquare className="h-4 w-4" />}
+        />
+
+        <Switch
           titulo="Sonido"
           detalle="Reproduce un tono corto cuando llega un mensaje."
           valor={p.sonido}
@@ -182,7 +191,7 @@ export function NotificationsSettings() {
 
         <Switch
           titulo="Aviso en el escritorio"
-          detalle="Una notificación de tu computadora, aunque tengas Demandu en otra pestaña."
+          detalle="La notificación de tu sistema, para cuando estás en OTRA pestaña o programa. Si estás viendo Demandu, verás la tarjeta de arriba en vez de esta."
           valor={p.escritorio}
           onChange={activarEscritorio}
           icono={<Monitor className="h-4 w-4" />}
@@ -264,6 +273,34 @@ export function NotificationsSettings() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="rounded-xl border border-[#e6e8f2] bg-white p-4">
+        <div className="mb-1 text-sm font-semibold text-ink">¿Funciona?</div>
+        <p className="mb-3 text-xs text-ink-3">
+          Lanza un aviso de prueba con tu configuración actual, tal cual lo verías al llegar un mensaje real.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            if (p.sonido) reproducirTono(p.tono, p.volumen);
+            if (p.enApp) {
+              lanzarAviso({
+                titulo: "Mensaje de prueba",
+                cuerpo: "Así se ve un aviso cuando un cliente te escribe. 👋",
+                href: "/inbox",
+              });
+            }
+          }}
+          className="btn-soft px-3 py-2 text-sm"
+        >
+          Probar aviso
+        </button>
+        {!p.activo && (
+          <p className="mt-2 text-[11px] text-ink-3">
+            Los avisos están apagados: préndelos arriba para recibirlos de verdad.
+          </p>
+        )}
       </div>
 
       <p className="text-xs text-ink-3">
