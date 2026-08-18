@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Send, Bot, User, CheckCircle2, RotateCcw, MailPlus, CheckCheck, Smile, Paperclip, ChevronLeft } from "lucide-react";
+import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Smile, Paperclip, ChevronLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ChannelBadge } from "./ChannelBadge";
 import { ContactPanel } from "./ContactPanel";
+import { ConvoMenu, type AccionChat } from "./ConvoMenu";
+import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
 import { paletaChat } from "@/lib/chatColors";
 
@@ -82,6 +84,9 @@ export function InboxClient({
   const [filter, setFilter] = useState<"todas" | "abiertas" | "cerradas">("todas");
   const [q, setQ] = useState("");
   const bodyRef = useRef<HTMLDivElement>(null);
+  // Acción destructiva pendiente de confirmar (vaciar o eliminar un chat)
+  const [porConfirmar, setPorConfirmar] = useState<{ id: string; accion: "vaciar" | "eliminar"; quien: string } | null>(null);
+  const [borrando, setBorrando] = useState(false);
 
   // Toda la paleta del chat sale del color de burbuja que eligió el cliente,
   // así el fondo y los textos siempre contrastan bien.
@@ -167,12 +172,56 @@ export function InboxClient({
     setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, status } : c)));
     await sb.from("conversations").update({ status }).eq("id", sel.id);
   };
-  const markUnread = async () => {
-    if (!sel) return;
-    const id = sel.id;
+
+  /** Marca sin leer sin abrirla (si estaba abierta, la cierra para que no se relea). */
+  const marcarNoLeido = async (id: string) => {
     setConvos((cs) => cs.map((c) => (c.id === id ? { ...c, unread: Math.max(1, c.unread) } : c)));
+    if (selId === id) setSelId(null);
     await sb.from("conversations").update({ unread: 1 }).eq("id", id);
-    setSelId(null);
+  };
+  const marcarLeido = async (id: string) => {
+    setConvos((cs) => cs.map((c) => (c.id === id ? { ...c, unread: 0 } : c)));
+    await sb.from("conversations").update({ unread: 0 }).eq("id", id);
+  };
+  const cambiarEstado = async (id: string, status: string) => {
+    setConvos((cs) => cs.map((c) => (c.id === id ? { ...c, status } : c)));
+    await sb.from("conversations").update({ status }).eq("id", id);
+  };
+
+  /** Borra los mensajes pero conserva la conversación y el contacto. */
+  const vaciarChat = async (id: string) => {
+    await sb.from("messages").delete().eq("conversation_id", id);
+    if (selId === id) setMessages([]);
+    loadConvos();
+  };
+  /** Borra la conversación entera (sus mensajes se van en cascada). El contacto se queda. */
+  const eliminarChat = async (id: string) => {
+    await sb.from("messages").delete().eq("conversation_id", id);
+    await sb.from("conversations").delete().eq("id", id);
+    setConvos((cs) => cs.filter((c) => c.id !== id));
+    if (selId === id) { setSelId(null); setMessages([]); }
+  };
+
+  const nombreDe = (c: Convo | null) => c?.contact?.name || c?.contact?.wa_name || "este contacto";
+
+  const onAccion = (c: Convo, a: AccionChat) => {
+    if (a === "no_leido") return void marcarNoLeido(c.id);
+    if (a === "leido") return void marcarLeido(c.id);
+    if (a === "cerrar") return void cambiarEstado(c.id, "closed");
+    if (a === "reabrir") return void cambiarEstado(c.id, "open");
+    setPorConfirmar({ id: c.id, accion: a, quien: nombreDe(c) });
+  };
+
+  const confirmarAccion = async () => {
+    if (!porConfirmar) return;
+    setBorrando(true);
+    try {
+      if (porConfirmar.accion === "vaciar") await vaciarChat(porConfirmar.id);
+      else await eliminarChat(porConfirmar.id);
+    } finally {
+      setBorrando(false);
+      setPorConfirmar(null);
+    }
   };
 
   const filtered = convos.filter((c) => {
@@ -222,10 +271,15 @@ export function InboxClient({
             const ch = CH[c.channel] ?? CH.webchat;
             const active = c.id === selId;
             return (
-              <button
+              // Es un div (no un button) porque adentro lleva el menú "⋮",
+              // y un botón dentro de otro botón no es HTML válido.
+              <div
                 key={c.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => setSelId(c.id)}
-                className={`flex w-full items-center gap-3 border-b border-surface-border px-3.5 py-3 text-left transition hover:bg-surface-raised ${active ? "bg-surface-raised" : ""}`}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelId(c.id); } }}
+                className={`group flex w-full cursor-pointer items-center gap-3 border-b border-surface-border px-3.5 py-3 text-left transition hover:bg-surface-raised ${active ? "bg-surface-raised" : ""}`}
               >
                 <div className="relative flex-none">
                   <div className="grid h-11 w-11 place-items-center rounded-full bg-gradient-to-br from-pink to-violet font-display text-sm font-bold text-white">
@@ -245,7 +299,15 @@ export function InboxClient({
                         {c.contact?.name || c.contact?.wa_name || "Contacto"}
                       </span>
                     </span>
-                    <span className="flex-none text-[11px] text-muted-2">{ago(c.last_message_at)}</span>
+                    <span className="flex flex-none items-center gap-1">
+                      <span className="text-[11px] text-muted-2">{ago(c.last_message_at)}</span>
+                      <ConvoMenu
+                        cerrada={c.status === "closed"}
+                        sinLeer={c.unread > 0}
+                        onAccion={(a) => onAccion(c, a)}
+                        className="-mr-1.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+                      />
+                    </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs text-muted-2">{c.member?.name ? `👤 ${c.member.name}` : "Sin asignar"}</span>
@@ -259,7 +321,7 @@ export function InboxClient({
                     </span>
                   )}
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -297,13 +359,12 @@ export function InboxClient({
               <div className="text-[11px] text-muted-2">{(CH[sel.channel] ?? CH.webchat).label} · {sel.contact?.phone ?? "—"}</div>
             </div>
             <div className="flex w-full items-center gap-2 overflow-x-auto sm:ml-auto sm:w-auto sm:overflow-visible">
-              <button
-                onClick={markUnread}
-                title="Marcar como no leído"
-                className="grid h-8 w-8 place-items-center rounded-lg border border-surface-border bg-surface-raised text-muted transition hover:text-white"
-              >
-                <MailPlus className="h-4 w-4" />
-              </button>
+              <ConvoMenu
+                cerrada={sel.status === "closed"}
+                sinLeer={sel.unread > 0}
+                onAccion={(a) => onAccion(sel, a)}
+                className="flex-none rounded-lg border border-surface-border bg-surface-raised"
+              />
               {sel.status === "closed" ? (
                 <button
                   onClick={() => setConvStatus("open")}
@@ -413,6 +474,29 @@ export function InboxClient({
         </div>
       )}
 
+      <Confirm
+        abierto={!!porConfirmar}
+        ocupado={borrando}
+        titulo={porConfirmar?.accion === "vaciar" ? "¿Vaciar los mensajes?" : "¿Eliminar este chat?"}
+        detalle={
+          porConfirmar?.accion === "vaciar" ? (
+            <>
+              Se borran todos los mensajes de la conversación con{" "}
+              <b className="text-ink">{porConfirmar?.quien}</b>, pero la conversación y el contacto se quedan. Esto no
+              se puede deshacer.
+            </>
+          ) : (
+            <>
+              Se borra la conversación con <b className="text-ink">{porConfirmar?.quien}</b> y todos sus mensajes.{" "}
+              <b className="text-ink">El contacto se queda</b> en tu lista. Si te vuelve a escribir, se abre una
+              conversación nueva. Esto no se puede deshacer.
+            </>
+          )
+        }
+        confirmar={porConfirmar?.accion === "vaciar" ? "Sí, vaciar" : "Sí, eliminar"}
+        onConfirmar={confirmarAccion}
+        onCancelar={() => setPorConfirmar(null)}
+      />
     </div>
   );
 }

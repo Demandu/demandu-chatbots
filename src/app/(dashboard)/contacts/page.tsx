@@ -16,7 +16,7 @@ const CHANNELS = [
 export default async function ContactsPage() {
   const { data } = await createClient()
     .from("contacts")
-    .select("id,name,phone,email,channel,tags,created_at")
+    .select("id,name,wa_name,phone,email,company,country,channel,tags,created_at")
     .order("created_at", { ascending: false });
 
   return (
