@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
+import { NotificationsWatcher } from "./notifications/NotificationsWatcher";
 
 /**
  * Marco de la aplicación, adaptable a cualquier pantalla.
@@ -74,6 +75,9 @@ export function Shell({ sidebar, children }: { sidebar: React.ReactNode; childre
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+
+        {/* Vigila mensajes nuevos en toda la app, no solo en la Bandeja */}
+        <NotificationsWatcher />
 
         <style jsx global>{`
           @keyframes slideIn {

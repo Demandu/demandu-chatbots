@@ -238,19 +238,27 @@ export async function disconnectWhatsapp(_formData: FormData) {
 }
 
 // ── Apariencia del chat (color de las burbujas que enviamos) ─────────────────
-export async function guardarColorBurbuja(formData: FormData) {
+export async function guardarColorBurbuja(
+  _estado: { ok: boolean; mensaje: string },
+  formData: FormData,
+): Promise<{ ok: boolean; mensaje: string }> {
   const orgId = await getCurrentOrgId();
-  if (!orgId) return;
+  if (!orgId) return { ok: false, mensaje: "No pudimos identificar tu cuenta." };
 
   // Solo aceptamos un color hex válido: nada de texto libre en el estilo.
   const raw = s(formData.get("bubble_out"));
-  const color = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : "#e7ddff";
+  if (!/^#[0-9a-fA-F]{6}$/.test(raw)) {
+    return { ok: false, mensaje: "Ese color no es válido. Usa el selector." };
+  }
 
   const supabase = createClient();
   const { data: org } = await supabase.from("organizations").select("branding").eq("id", orgId).maybeSingle();
-  const branding = { ...(((org as any)?.branding ?? {}) as Record<string, unknown>), bubble_out: color };
+  const branding = { ...(((org as any)?.branding ?? {}) as Record<string, unknown>), bubble_out: raw };
 
-  await supabase.from("organizations").update({ branding }).eq("id", orgId);
+  const { error } = await supabase.from("organizations").update({ branding }).eq("id", orgId);
+  if (error) return { ok: false, mensaje: "No se pudo guardar. Intenta de nuevo." };
+
   revalidatePath("/settings/chat");
   revalidatePath("/inbox");
+  return { ok: true, mensaje: "Color guardado" };
 }

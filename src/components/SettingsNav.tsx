@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/settings/plan", label: "Plan y uso" },
   { href: "/admin/planes", label: "Planes a la medida", adminOnly: true },
+  { href: "/settings/notifications", label: "Notificaciones" },
   { href: "/settings/chat", label: "Apariencia del chat" },
   { href: "/settings/attributes", label: "Atributos" },
   { href: "/settings/tags", label: "Etiquetas" },

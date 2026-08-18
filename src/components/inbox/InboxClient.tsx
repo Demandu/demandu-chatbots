@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { ChannelBadge } from "./ChannelBadge";
 import { ContactPanel } from "./ContactPanel";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
+import { paletaChat } from "@/lib/chatColors";
 
 type Contact = {
   id: string; name: string | null; wa_name: string | null; phone: string | null; email: string | null;
@@ -53,12 +54,8 @@ function initials(name?: string | null) {
   return (name ?? "?").trim().slice(0, 2).toUpperCase();
 }
 
-// Estilo WhatsApp Web CLARO con paleta Demandu
-const WA_CANVAS = "#ece9f6"; // lienzo claro (lavanda muy suave)
-const WA_OUT_BG = "#e7ddff"; // burbuja saliente (violeta claro Demandu)
-const WA_IN_BG = "#ffffff"; // burbuja entrante (blanca)
-const WA_DOODLE =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='70' height='70'%3E%3Cg fill='%236e42ff' fill-opacity='0.05'%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='48' cy='34' r='2'/%3E%3Ccircle cx='24' cy='58' r='2'/%3E%3Cpath d='M56 8h6v6h-6z'/%3E%3C/g%3E%3C/svg%3E\")";
+// El estilo del chat ya no está fijo: sale de `paletaChat()` a partir del
+// color de burbuja que eligió el cliente en Configuración → Apariencia.
 
 export function InboxClient({
   initial,
@@ -85,6 +82,10 @@ export function InboxClient({
   const [filter, setFilter] = useState<"todas" | "abiertas" | "cerradas">("todas");
   const [q, setQ] = useState("");
   const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Toda la paleta del chat sale del color de burbuja que eligió el cliente,
+  // así el fondo y los textos siempre contrastan bien.
+  const paleta = useMemo(() => paletaChat(bubbleOut), [bubbleOut]);
 
   const sel = convos.find((c) => c.id === selId) ?? null;
 
@@ -266,7 +267,7 @@ export function InboxClient({
 
       {/* ── Hilo de conversación ── */}
       {!sel ? (
-        <div className="hidden flex-1 items-center justify-center bg-[#f4f5fb] text-center md:flex">
+        <div className="hidden flex-1 items-center justify-center text-center md:flex" style={{ backgroundColor: paleta.canvas }}>
           <div className="max-w-xs">
             <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-pink/20 to-violet/20 text-2xl">💬</div>
             <h3 className="font-display text-lg font-semibold text-white">Bandeja unificada</h3>
@@ -274,7 +275,7 @@ export function InboxClient({
           </div>
         </div>
       ) : (
-        <div className="flex min-w-0 flex-1 flex-col bg-[#f4f5fb]">
+        <div className="flex min-w-0 flex-1 flex-col" style={{ backgroundColor: paleta.canvas }}>
           {/* Header */}
           <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-surface-border px-3 py-2.5 sm:flex-nowrap sm:px-4" style={{ backgroundColor: "#ffffff" }}>
             {/* Volver a la lista (solo móvil) */}
@@ -341,7 +342,7 @@ export function InboxClient({
           <div
             ref={bodyRef}
             className="flex flex-1 flex-col gap-1.5 overflow-y-auto px-[8%] py-4"
-            style={{ backgroundColor: WA_CANVAS, backgroundImage: WA_DOODLE }}
+            style={{ backgroundColor: paleta.canvas, backgroundImage: paleta.doodle }}
           >
             {messages.map((m) => {
               const out = m.direction === "outbound";
@@ -349,9 +350,9 @@ export function InboxClient({
                 <div
                   key={m.id}
                   className={`relative max-w-[82%] px-2.5 pb-1.5 pt-1.5 text-[13.5px] leading-snug shadow-sm sm:max-w-[65%] ${
-                    out ? "self-end rounded-lg rounded-tr-sm text-[#2c2550]" : "self-start rounded-lg rounded-tl-sm text-[#1b1c39]"
+                    out ? "self-end rounded-lg rounded-tr-sm" : "self-start rounded-lg rounded-tl-sm"
                   }`}
-                  style={{ backgroundColor: out ? (bubbleOut || WA_OUT_BG) : WA_IN_BG }}
+                  style={{ backgroundColor: out ? paleta.out : paleta.in, color: out ? paleta.textOut : paleta.textIn }}
                 >
                   {out && (
                     <div className="mb-0.5 flex items-center gap-1 text-[11px] font-semibold" style={{ color: m.sender === "bot" ? "#8B66FF" : "#FF6FB0" }}>
@@ -359,9 +360,12 @@ export function InboxClient({
                     </div>
                   )}
                   <span className="whitespace-pre-wrap break-words align-bottom">{m.body}</span>
-                  <span className="ml-2 inline-flex select-none items-center gap-0.5 align-bottom text-[10px] text-black/40">
+                  <span
+                    className="ml-2 inline-flex select-none items-center gap-0.5 align-bottom text-[10px]"
+                    style={{ color: out ? paleta.metaOut : "rgba(0,0,0,.42)" }}
+                  >
                     {clock(m.created_at)}
-                    {out && <CheckCheck className="h-3 w-3" style={{ color: "#7fb2ff" }} />}
+                    {out && <CheckCheck className="h-3 w-3" />}
                   </span>
                 </div>
               );
