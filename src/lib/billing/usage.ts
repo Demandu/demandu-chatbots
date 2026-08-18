@@ -23,6 +23,8 @@ export type Usage = {
   planCode: string;
   planName: string;
   metrics: Metric[];
+  /** Cuántas de las respuestas del mes las generó la IA (solo informativo). */
+  aiAnswers: number;
   anyOver: boolean;
   anyNear: boolean;
 };
@@ -61,7 +63,7 @@ function metric(
 
 const EMPTY: Usage = {
   periodStart: "", periodEnd: "", planCode: "", planName: "—",
-  metrics: [], anyOver: false, anyNear: false,
+  metrics: [], aiAnswers: 0, anyOver: false, anyNear: false,
 };
 
 /** Lee el consumo del mes. Nunca lanza excepción. */
@@ -80,13 +82,6 @@ export async function getUsage(supabase: any, orgId: string | null): Promise<Usa
         "Mensajes que enviaron tu chatbot y tu equipo este mes. Los que escriben tus clientes no cuentan.",
         Number(row.messages_used ?? 0),
         Number(row.messages_limit ?? 0),
-      ),
-      metric(
-        "ai",
-        "Respuestas con IA",
-        "Respuestas generadas con inteligencia artificial usando la información de tu negocio.",
-        Number(row.ai_used ?? 0),
-        Number(row.ai_limit ?? 0),
       ),
       metric(
         "storage",
@@ -118,6 +113,7 @@ export async function getUsage(supabase: any, orgId: string | null): Promise<Usa
       planCode: row.plan_code ?? "",
       planName: row.plan_name ?? "—",
       metrics,
+      aiAnswers: Number(row.ai_used ?? 0),
       anyOver: metrics.some((m) => m.over),
       anyNear: metrics.some((m) => m.near),
     };

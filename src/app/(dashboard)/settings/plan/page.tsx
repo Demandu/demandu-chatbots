@@ -3,7 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { getUsage, getAddons } from "@/lib/billing/usage";
 import { UsagePanel } from "@/components/billing/UsagePanel";
-import { Check, Plus } from "lucide-react";
+import { AddonCart } from "@/components/billing/AddonCart";
+import { stripeConfigured } from "@/lib/billing/stripe";
+import { Check } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +17,7 @@ function espacio(mb: number) {
   return mb >= 1024 ? `${Math.round(mb / 1024)} GB` : `${mb} MB`;
 }
 
-export default async function PlanPage() {
+export default async function PlanPage({ searchParams }: { searchParams: { pago?: string } }) {
   const supabase = createClient();
   const orgId = await getCurrentOrgId();
 
@@ -32,6 +34,17 @@ export default async function PlanPage() {
 
   return (
     <div>
+      {searchParams?.pago === "ok" && (
+        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
+          ✅ ¡Listo! Tu compra se registró. Tus nuevos límites ya están activos.
+        </div>
+      )}
+      {searchParams?.pago === "cancelado" && (
+        <div className="mb-4 rounded-xl border border-[#e6e8f2] bg-[#f4f5fb] px-4 py-2.5 text-sm text-ink-2">
+          Cancelaste el pago. No se te cobró nada.
+        </div>
+      )}
+
       <div className="mb-5">
         <h2 className="font-display text-lg font-semibold text-ink">Tu plan y consumo</h2>
         <p className="text-xs text-ink-3">
@@ -91,8 +104,8 @@ export default async function PlanPage() {
 
               <ul className="mt-4 space-y-2 text-sm text-ink-2">
                 {[
-                  [`${Number(p.messages_month).toLocaleString("es-MX")}`, "mensajes enviados/mes"],
-                  [`${Number(p.ai_messages_month).toLocaleString("es-MX")}`, "respuestas con IA/mes"],
+                  [`${Number(p.messages_month).toLocaleString("es-MX")}`, "mensajes al mes"],
+                  ["Respuestas con IA", "incluidas"],
                   [espacio(p.storage_mb), "de entrenamiento"],
                   [`${p.agents_included}`, `agente${p.agents_included === 1 ? "" : "s"} incluido${p.agents_included === 1 ? "" : "s"}`],
                   [p.bots_limit >= 999 ? "Chatbots ilimitados" : `${p.bots_limit}`, p.bots_limit >= 999 ? "" : "chatbots"],
@@ -132,30 +145,20 @@ export default async function PlanPage() {
         </div>
       )}
 
-      {/* Complementos disponibles */}
-      <h3 className="mb-3 font-display text-base font-semibold text-ink">Complementos</h3>
-      <p className="mb-3 text-xs text-ink-3">
-        Amplía solo lo que necesitas, sin cambiar de plan. Se suman a tus límites al instante.
+      {/* Complementos con carrito */}
+      <h3 className="mb-1 font-display text-base font-semibold text-ink">Amplía tu plan</h3>
+      <p className="mb-4 text-xs text-ink-3">
+        Elige lo que necesites, revisa tu carrito a la derecha y paga. Se activa al instante.
       </p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {listaAddons.map((a) => (
-          <div key={a.code} className="card-l flex flex-col p-4">
-            <div className="font-semibold text-ink">{a.name}</div>
-            <p className="mt-0.5 flex-1 text-xs text-ink-2">{a.description}</p>
-            <div className="mt-3 flex items-center justify-between">
-              <span className="font-display text-lg font-bold text-ink">
-                {usd(a.price)}
-                <span className="text-xs font-medium text-ink-3">{a.recurring ? "/mes" : " único"}</span>
-              </span>
-              <a
-                href={`mailto:contacto@demandu.tech?subject=${encodeURIComponent("Quiero contratar: " + a.name)}`}
-                className="btn-soft px-3 py-1.5 text-xs"
-              >
-                <Plus className="h-3.5 w-3.5" /> Contratar
-              </a>
-            </div>
-          </div>
-        ))}
+      <div className="mb-7">
+        <AddonCart
+          addons={listaAddons.map((a) => ({
+            code: a.code, name: a.name, description: a.description,
+            price: Number(a.price), recurring: !!a.recurring, unit: a.unit,
+            isQuote: !!a.is_quote,
+          }))}
+          pagosActivos={stripeConfigured()}
+        />
       </div>
 
       <div className="card-l mt-6 p-5">
