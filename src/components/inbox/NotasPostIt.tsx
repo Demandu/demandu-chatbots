@@ -154,7 +154,7 @@ export function NotasPostIt({ contactId, orgId }: { contactId: string; orgId: st
             type="button"
             onClick={agregar}
             disabled={!texto.trim() || guardando}
-            className="inline-flex items-center gap-1 rounded-lg bg-[#3a3410] px-2.5 py-1 text-xs font-semibold text-white transition disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-lg bg-[#3a3410] px-2.5 py-1 text-xs font-semibold text-[#fffdf2] transition hover:bg-[#54491a] disabled:opacity-40"
           >
             {guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
             Pegar nota

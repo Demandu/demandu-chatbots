@@ -106,4 +106,24 @@
 .flow-light .bg-gradient-to-r,
 .flow-light .bg-gradient-to-br,
 .flow-light .bg-pink,
+.flow-light .bg-danger,
+.flow-light .bg-violet,
 .flow-light .bg-success { color: #ffffff; }
+
+/* Estados :hover dentro del área clara.
+   Sin esto, `hover:text-white` pone texto BLANCO sobre fondo claro y el botón
+   desaparece al pasar el cursor; y `hover:bg-surface-raised` traía el gris
+   oscuro del tema original. Aquí se traducen a sus equivalentes claros. */
+.flow-light .hover\:text-white:hover { color: #1b1c39; }
+.flow-light .focus-within\:text-white:focus-within { color: #1b1c39; }
+.flow-light .hover\:bg-surface-raised:hover { background-color: #eef0f7; }
+.flow-light .hover\:bg-surface:hover { background-color: #f4f5fb; }
+.flow-light .hover\:bg-surface-card:hover { background-color: #ffffff; }
+
+/* Excepción: sobre fondos de marca el blanco SÍ contrasta, así que se queda. */
+.flow-light .bg-demandu-gradient.hover\:text-white:hover,
+.flow-light .bg-gradient-to-r.hover\:text-white:hover,
+.flow-light .bg-gradient-to-br.hover\:text-white:hover,
+.flow-light .bg-pink.hover\:text-white:hover,
+.flow-light .bg-danger.hover\:text-white:hover,
+.flow-light .bg-success.hover\:text-white:hover { color: #ffffff; }
