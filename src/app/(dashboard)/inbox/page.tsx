@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
   const sb = createClient();
-  const [conv, mem, st, tg, attr, org] = await Promise.all([
+  const [conv, mem, st, tg, attr, org, rapidas] = await Promise.all([
     sb
       .from("conversations")
       .select(
@@ -21,6 +21,7 @@ export default async function InboxPage() {
     sb.from("tags").select("id,name,color").order("name"),
     sb.from("custom_attributes").select("id,name,key").eq("visible", true).order("sort"),
     sb.from("organizations").select("id, branding").limit(1).maybeSingle(),
+    sb.from("quick_replies").select("id, shortcut, title, body, category, sort, uses").order("sort").order("created_at"),
   ]);
 
   const branding = ((org.data as any)?.branding ?? {}) as { bubble_out?: string };
@@ -36,6 +37,7 @@ export default async function InboxPage() {
         attrs={(attr.data as any[]) ?? []}
         bubbleOut={branding.bubble_out ?? null}
         orgId={(org.data as any)?.id ?? null}
+        quickReplies={(rapidas.data as any[]) ?? []}
       />
     </>
   );

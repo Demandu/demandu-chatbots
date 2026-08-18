@@ -22,6 +22,19 @@ export type ContactoFicha = {
 /** Atributo definido por el cliente en Configuración. `key` es donde se guarda. */
 type Attr = { id: string; name: string; key: string };
 
+/**
+ * Atributos que YA tienen su campo fijo arriba en la ficha.
+ * Si el chatbot captura "nombre" o "correo", no queremos verlos dos veces:
+ * se muestran una sola vez, en su campo de siempre.
+ */
+const EQUIVALENTES: Record<string, "name" | "email" | "phone" | "company" | "country"> = {
+  nombre: "name", name: "name", nombre_completo: "name", nombrecompleto: "name",
+  correo: "email", email: "email", mail: "email", correo_electronico: "email",
+  telefono: "phone", phone: "phone", celular: "phone", whatsapp: "phone", movil: "phone",
+  empresa: "company", company: "company", negocio: "company", compania: "company",
+  pais: "country", country: "country",
+};
+
 /** Campo que se guarda solo al salir (sin botón de guardar: menos fricción). */
 function Campo({
   label,
@@ -102,7 +115,28 @@ export function ContactPanel({
   onToggleTag: (name: string) => void;
 }) {
   const sb = createClient();
-  const iso = contact.country ?? paisDesdeTelefono(contact.phone);
+  const attrsData = contact.attributes ?? {};
+
+  // Los atributos que duplican un campo fijo no se listan aparte…
+  const extras = attrs.filter((a) => !EQUIVALENTES[a.key?.toLowerCase?.() ?? ""]);
+
+  // …pero su valor no se pierde: si el campo fijo está vacío y el chatbot
+  // sí capturó el dato, se muestra ahí para que el agente lo confirme.
+  const capturado = (campo: "name" | "email" | "phone" | "company" | "country") => {
+    for (const [clave, destino] of Object.entries(EQUIVALENTES)) {
+      if (destino !== campo) continue;
+      const v = attrsData[clave];
+      if (v != null && String(v).trim()) return String(v).trim();
+    }
+    return "";
+  };
+
+  // `||` a propósito, no `??`: un campo guardado como cadena vacía también
+  // debe caer al valor que capturó el chatbot.
+  const valorNombre = contact.name || capturado("name");
+  const valorCorreo = contact.email || capturado("email");
+  const valorEmpresa = contact.company || capturado("company");
+  const iso = contact.country || capturado("country") || paisDesdeTelefono(contact.phone);
 
   const guardar = async (patch: Partial<ContactoFicha>) => {
     onPatch(patch);
@@ -114,7 +148,7 @@ export function ContactPanel({
     await sb.from("contacts").update({ attributes: next }).eq("id", contact.id);
   };
 
-  const iniciales = (contact.name || contact.wa_name || "?").trim().slice(0, 2).toUpperCase();
+  const iniciales = (valorNombre || contact.wa_name || "?").trim().slice(0, 2).toUpperCase();
 
   return (
     <div className="flex flex-col gap-4">
@@ -124,7 +158,7 @@ export function ContactPanel({
           {iniciales}
         </div>
         <div className="mt-2 font-display text-base font-semibold text-white">
-          {contact.name || contact.wa_name || "Contacto"}
+          {valorNombre || contact.wa_name || "Contacto"}
         </div>
         <div className="text-xs text-muted-2">{canal}</div>
         {iso && (
@@ -146,21 +180,21 @@ export function ContactPanel({
         <Campo
           label="Nombre"
           icon={<User className="h-3.5 w-3.5" />}
-          value={contact.name ?? ""}
+          value={valorNombre}
           placeholder="Como quieres llamarle"
           onSave={(v) => guardar({ name: v || null })}
         />
         <Campo
           label="Correo"
           icon={<Mail className="h-3.5 w-3.5" />}
-          value={contact.email ?? ""}
+          value={valorCorreo}
           placeholder="correo@empresa.com"
           onSave={(v) => guardar({ email: v || null })}
         />
         <Campo
           label="Empresa"
           icon={<Building2 className="h-3.5 w-3.5" />}
-          value={contact.company ?? ""}
+          value={valorEmpresa}
           placeholder="Nombre de su empresa"
           onSave={(v) => guardar({ company: v || null })}
         />
@@ -185,14 +219,14 @@ export function ContactPanel({
       </div>
 
       {/* Atributos que definió el cliente en Configuración */}
-      {attrs.length > 0 && (
+      {extras.length > 0 && (
         <div className="space-y-3 border-t border-surface-border pt-4">
           <div className="text-[11px] font-bold uppercase tracking-wide text-muted-2">Otros datos</div>
-          {attrs.map((a) => (
+          {extras.map((a) => (
             <Campo
               key={a.id}
               label={a.name}
-              value={String((contact.attributes ?? {})[a.key] ?? "")}
+              value={String(attrsData[a.key] ?? "")}
               placeholder="—"
               onSave={(v) => guardarAtributo(a.key, v)}
             />

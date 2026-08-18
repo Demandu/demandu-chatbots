@@ -8,6 +8,8 @@ import { ChannelBadge } from "./ChannelBadge";
 import { ContactPanel } from "./ContactPanel";
 import { ConvoMenu, type AccionChat } from "./ConvoMenu";
 import { TraductorBoton } from "./TraductorBoton";
+import { RespuestasRapidas } from "./RespuestasRapidas";
+import { rellenar, type RespuestaRapida } from "@/lib/quickReplies";
 import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
 import { paletaChat } from "@/lib/chatColors";
@@ -71,6 +73,7 @@ export function InboxClient({
   attrs = [],
   bubbleOut,
   orgId,
+  quickReplies = [],
 }: {
   initial: Convo[];
   members: Member[];
@@ -82,6 +85,8 @@ export function InboxClient({
   bubbleOut?: string | null;
   /** Organización actual, para guardar las notas internas */
   orgId?: string | null;
+  /** Mensajes prediseñados del equipo */
+  quickReplies?: RespuestaRapida[];
 }) {
   const sb = useMemo(() => createClient(), []);
   const [convos, setConvos] = useState<Convo[]>(initial);
@@ -101,6 +106,9 @@ export function InboxClient({
   const [traducciones, setTraducciones] = useState<Record<string, string>>({});
   const [traduciendo, setTraduciendo] = useState(false);
   const [errorTraduccion, setErrorTraduccion] = useState("");
+  // Respuestas rápidas: se abren con el botón ⚡ o escribiendo "/" al inicio
+  const [rapidasAbierto, setRapidasAbierto] = useState(false);
+  const cajaTexto = useRef<HTMLTextAreaElement>(null);
 
   // Toda la paleta del chat sale del color de burbuja que eligió el cliente,
   // así el fondo y los textos siempre contrastan bien.
@@ -289,6 +297,40 @@ export function InboxClient({
       setPorConfirmar(null);
     }
   };
+
+  /** Si el mensaje empieza con "/", lo que sigue filtra las respuestas rápidas. */
+  const atajoEscrito = /^\/(\S*)$/.exec(text);
+  const busquedaRapida = atajoEscrito ? atajoEscrito[1] : "";
+  useEffect(() => {
+    if (atajoEscrito) setRapidasAbierto(true);
+    else if (busquedaRapida === "" && text !== "") setRapidasAbierto(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+
+  /** Mete la respuesta en el cuadro de escritura, con los datos del lead ya puestos. */
+  const usarRapida = useCallback(
+    async (r: RespuestaRapida) => {
+      const c = sel?.contact;
+      const nombre = c?.name || c?.wa_name || "";
+      const cuerpo = rellenar(r.body, {
+        nombre,
+        primerNombre: nombre.split(/\s+/)[0] ?? "",
+        telefono: c?.phone ?? "",
+        empresa: (c as any)?.company ?? "",
+        agente: sel?.member?.name ?? "",
+      });
+      setText(cuerpo);
+      setRapidasAbierto(false);
+      setTimeout(() => {
+        cajaTexto.current?.focus();
+        const n = cuerpo.length;
+        cajaTexto.current?.setSelectionRange(n, n);
+      }, 20);
+      // Para poder ordenarlas por uso más adelante (no bloquea nada si falla)
+      try { await sb.rpc("bump_quick_reply", { p_id: r.id }); } catch { /* opcional */ }
+    },
+    [sel, sb],
+  );
 
   const filtered = convos.filter((c) => {
     if (filter === "solicitudes" && !c.handoff_requested_at) return false;
@@ -538,12 +580,25 @@ export function InboxClient({
           <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "#ffffff" }}>
             <Smile className="mb-2 h-6 w-6 flex-none text-muted-2" />
             <Paperclip className="mb-2 h-5 w-5 flex-none text-muted-2" />
+            <RespuestasRapidas
+              respuestas={quickReplies}
+              abierto={rapidasAbierto}
+              busqueda={busquedaRapida}
+              onAbrir={() => setRapidasAbierto(true)}
+              onCerrar={() => setRapidasAbierto(false)}
+              onElegir={usarRapida}
+            />
             <textarea
+              ref={cajaTexto}
               value={text}
               onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+              onKeyDown={(e) => {
+                // Con el selector abierto, Enter elige la respuesta (no envía).
+                if (rapidasAbierto && ["Enter", "Tab", "ArrowUp", "ArrowDown", "Escape"].includes(e.key)) return;
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+              }}
               rows={1}
-              placeholder="Escribe un mensaje"
+              placeholder="Escribe un mensaje  ·  / para respuestas rápidas"
               className="max-h-32 min-h-[42px] flex-1 resize-none rounded-lg bg-surface-raised px-3.5 py-2.5 text-sm text-white placeholder:text-muted-2 focus:outline-none"
             />
             <button
