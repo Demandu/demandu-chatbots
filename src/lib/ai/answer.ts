@@ -46,16 +46,19 @@ export async function findKnowledge(
   admin: any,
   botId: string,
   question: string,
+  orgId: string,
   limit = 5,
 ): Promise<{ title: string; content: string }[]> {
   const q = (question ?? "").trim();
-  if (!q) return [];
+  // AISLAMIENTO: sin organización Y chatbot no se busca nada. Nunca.
+  if (!q || !botId || !orgId) return [];
 
   // 1) Por significado
   try {
     const vector = await embedQuery(q);
     if (vector) {
       const { data, error } = await admin.rpc("match_bot_knowledge", {
+        p_org_id: orgId,
         p_bot_id: botId,
         p_embedding: vector,
         p_limit: limit,
@@ -73,6 +76,7 @@ export async function findKnowledge(
     const { data, error } = await admin
       .from("bot_knowledge")
       .select("title, content")
+      .eq("org_id", orgId)
       .eq("bot_id", botId)
       .eq("enabled", true)
       .textSearch("search", q, { type: "websearch", config: "spanish" })
@@ -89,6 +93,7 @@ export async function findKnowledge(
     const { data } = await admin
       .from("bot_knowledge")
       .select("title, content")
+      .eq("org_id", orgId)
       .eq("bot_id", botId)
       .eq("enabled", true)
       .order("created_at", { ascending: true })
@@ -127,6 +132,7 @@ function buildSystem(ai: Required<AiSettings>, knowledge: { title: string; conte
 export async function aiAnswer(opts: {
   admin: any;
   botId: string;
+  orgId: string;
   question: string;
   settings?: AiSettings | null;
   history?: { role: "user" | "assistant"; content: string }[];
@@ -139,7 +145,8 @@ export async function aiAnswer(opts: {
     return ai.fallback;
   }
 
-  const knowledge = await findKnowledge(opts.admin, opts.botId, opts.question);
+  // El conocimiento SIEMPRE se acota a la organización y al chatbot.
+  const knowledge = await findKnowledge(opts.admin, opts.botId, opts.question, opts.orgId);
 
   const messages = [
     ...(opts.history ?? []).slice(-6),
@@ -174,6 +181,19 @@ export async function aiAnswer(opts: {
       .map((c: any) => c.text)
       .join("\n")
       .trim();
+
+    // Registra el consumo de IA para el panel y la facturación.
+    // Best-effort: si falla, la conversación no se ve afectada.
+    if (text) {
+      try {
+        await opts.admin.from("usage_events").insert({
+          org_id: opts.orgId,
+          bot_id: opts.botId,
+          kind: "ai_message",
+          quantity: 1,
+        });
+      } catch { /* no bloquea la respuesta */ }
+    }
 
     return text || ai.fallback;
   } catch (e: any) {

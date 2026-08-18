@@ -2,18 +2,22 @@ import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { LanaAvatar } from "@/components/Lana";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentOrgId } from "@/lib/org";
+import { getUsage } from "@/lib/billing/usage";
+import { UsagePanel } from "@/components/billing/UsagePanel";
 import { Bot, MessagesSquare, BarChart3, Plus, ArrowRight } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function InicioPage() {
   const sb = createClient();
-  const [{ count: bots }, { count: convs }, { count: contacts }, { count: msgs }] =
+  const [{ count: bots }, { count: convs }, { count: contacts }, { count: msgs }, usage] =
     await Promise.all([
       sb.from("bots").select("id", { count: "exact", head: true }),
       sb.from("conversations").select("id", { count: "exact", head: true }),
       sb.from("contacts").select("id", { count: "exact", head: true }),
       sb.from("messages").select("id", { count: "exact", head: true }),
+      getUsage(sb, await getCurrentOrgId()),
     ]);
 
   const noBots = (bots ?? 0) === 0;
@@ -73,7 +77,12 @@ export default async function InicioPage() {
           <LanaAvatar size={132} className="shadow-[0_12px_40px_-8px_rgba(124,66,255,0.45)]" />
         </div>
 
-        {/* Stats reales */}
+        {/* Consumo del plan */}
+        <div className="mb-8">
+          <UsagePanel usage={usage} />
+        </div>
+
+        {/* Actividad acumulada */}
         <div className="mb-8 grid grid-cols-2 gap-3.5 md:grid-cols-4">
           {stats.map((s) => (
             <div key={s.k} className="card-l p-5">

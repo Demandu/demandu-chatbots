@@ -134,6 +134,7 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
         const answer = await aiAnswer({
           admin: ctx.admin,
           botId: ctx.botId,
+          orgId: ctx.orgId,
           question: ctx.lastUserText,
           settings,
           history: await recentHistory(ctx),
