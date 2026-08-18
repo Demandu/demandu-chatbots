@@ -50,7 +50,7 @@ export default async function BotTemplatesPage({
   return (
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-8 text-ink">
+      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <BotNav botId={bot.id} channel={bot.channel} />
 
         <div className="mb-3 flex items-center justify-between">
@@ -87,8 +87,8 @@ export default async function BotTemplatesPage({
             <p className="text-sm text-ink-2">Sin plantillas aún. Dale a <b className="text-ink">Sincronizar con Meta</b>.</p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-[#e6e8f2]">
-            <table className="w-full text-left text-sm">
+          <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+            <table className="min-w-[560px] w-full text-left text-sm">
               <thead className="bg-[#f4f5fb] text-xs uppercase tracking-wide text-ink-3">
                 <tr>
                   <th className="px-4 py-3">Nombre</th>

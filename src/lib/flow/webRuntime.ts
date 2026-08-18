@@ -28,7 +28,28 @@ function interp(t: string | undefined, vars: Record<string, string>) {
   return (t ?? "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_: string, k: string) => vars[k] ?? "");
 }
 
+/**
+ * Textos de ejemplo que el constructor deja al soltar un bloque nuevo.
+ * Si un bloque todavía los tiene, es que no se configuró: no se envían.
+ */
+const PLACEHOLDERS = new Set([
+  "Disparador del flujo", "Texto simple", "Imagen, video o archivo",
+  "Captura una respuesta", "Opciones / menú", "Ramifica según reglas",
+  "Ramifica según los datos del contacto", "Respuesta con IA", "Pausa temporizada",
+  "Webhook o integración", "Google Calendar", "Segmenta el contacto",
+  "Transferir a tu equipo", "Reparte a agente / equipo", "Va a otro flujo / bot",
+  "Llama una API y ramifica", "Llama una API y ramifica por respuesta",
+  "Formulario nativo de WhatsApp", "Cobro con pasarela",
+  "Venta de productos por WhatsApp", "Mensaje con plantilla aprobada",
+  "Reacciona a menciones/respuestas de historias IG",
+  "Responde comentarios y pasa a DM", "Envía un DM de Instagram",
+  "Responde comentarios de Facebook y pasa a DM",
+  "Captura datos en tu sitio", "Cierra el flujo",
+]);
+const esEjemplo = (t?: string | null) => !!t && PLACEHOLDERS.has(t.trim());
+
 function push(ctx: Ctx, text: string, buttons?: FlowButton[]) {
+  if (esEjemplo(text) && !(buttons ?? []).length) return;
   const body = interp(text, ctx.vars);
   const opts = (buttons ?? []).map((b) => ({ id: b.id, label: b.label ?? "Opción" }));
   if (!body && !opts.length) return;

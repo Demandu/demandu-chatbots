@@ -6,12 +6,12 @@ export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
   const sb = createClient();
-  const [conv, mem, st, tg] = await Promise.all([
+  const [conv, mem, st, tg, attr, org] = await Promise.all([
     sb
       .from("conversations")
       .select(
         "id, channel, status, unread, last_message_at, state_id, assignee_member_id, " +
-          "contact:contacts(id,name,phone,email,channel,tags), " +
+          "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
           "state:conversation_states(id,name,color), " +
           "member:team_members(id,name)"
       )
@@ -19,7 +19,11 @@ export default async function InboxPage() {
     sb.from("team_members").select("id,name").order("name"),
     sb.from("conversation_states").select("id,name,color").order("sort"),
     sb.from("tags").select("id,name,color").order("name"),
+    sb.from("custom_attributes").select("id,name,key").eq("visible", true).order("sort"),
+    sb.from("organizations").select("branding").limit(1).maybeSingle(),
   ]);
+
+  const branding = ((org.data as any)?.branding ?? {}) as { bubble_out?: string };
 
   return (
     <>
@@ -29,6 +33,8 @@ export default async function InboxPage() {
         members={(mem.data as any[]) ?? []}
         states={(st.data as any[]) ?? []}
         tags={(tg.data as any[]) ?? []}
+        attrs={(attr.data as any[]) ?? []}
+        bubbleOut={branding.bubble_out ?? null}
       />
     </>
   );

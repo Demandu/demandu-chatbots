@@ -38,7 +38,7 @@ export function BotNav({ botId, channel }: { botId: string; channel?: string | n
   });
 
   return (
-    <div className="mb-6 inline-flex flex-wrap gap-1 rounded-xl border border-surface-border bg-surface p-1">
+    <div className="mb-6 inline-flex max-w-full flex-wrap gap-1 rounded-xl border border-surface-border bg-surface p-1">
       {tabs.map((t) => (
         <Link
           key={t.href}

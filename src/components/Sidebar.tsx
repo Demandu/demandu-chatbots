@@ -46,7 +46,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="flex w-[248px] flex-col gap-1.5 border-r border-surface-border bg-gradient-to-b from-[#0d0d34] to-[#0a0a26] p-4">
+    <aside className="flex w-[248px] flex-none flex-col gap-1.5 overflow-y-auto border-r border-surface-border bg-gradient-to-b from-[#0d0d34] to-[#0a0a26] p-4">
       <div className="px-2 pb-4 pt-1.5">
         <Logo />
       </div>

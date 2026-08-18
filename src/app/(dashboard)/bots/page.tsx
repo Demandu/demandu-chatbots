@@ -40,7 +40,7 @@ export default async function BotsPage() {
   return (
     <>
       <Topbar crumb={<span className="font-semibold text-white">Chatbots</span>} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-8 text-ink">
+      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="font-display text-2xl font-bold text-ink">Chatbots</h1>

@@ -71,8 +71,8 @@ export default async function TeamsPage() {
           </div>
         </form>
 
-        <div className="overflow-hidden rounded-2xl border border-[#e6e8f2]">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+          <table className="min-w-[560px] w-full text-sm">
             <thead className="bg-[#f4f5fb] text-xs text-ink-3">
               <tr>
                 <th className="px-4 py-2.5 text-left font-semibold">Nombre</th>

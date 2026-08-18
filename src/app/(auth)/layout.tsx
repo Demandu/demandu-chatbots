@@ -2,7 +2,7 @@ import { Logo } from "@/components/Logo";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
+    <div className="grid min-h-[100dvh] lg:grid-cols-2">
       {/* Brand panel */}
       <div className="relative hidden overflow-hidden bg-navy lg:block">
         <div className="absolute inset-0 bg-demandu-radial" />

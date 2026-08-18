@@ -52,8 +52,8 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
           {contacts.length === 0 ? "Aún no tienes contactos. Agrega el primero arriba." : "Sin resultados."}
         </p>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-[#e6e8f2]">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+          <table className="min-w-[560px] w-full text-sm">
             <thead className="bg-[#f4f5fb] text-left text-[11px] font-bold uppercase tracking-wide text-ink-3">
               <tr>
                 <th className="px-4 py-3">Nombre</th>

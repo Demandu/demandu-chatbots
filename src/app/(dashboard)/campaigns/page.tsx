@@ -38,7 +38,7 @@ export default async function CampaignsRollupPage() {
   return (
     <>
       <Topbar crumb={<span className="font-semibold text-white">Campañas</span>} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-8 text-ink">
+      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <div className="mb-5">
           <h2 className="font-display text-2xl font-bold text-ink">Envíos de todos tus chatbots</h2>
           <p className="mt-1 text-sm text-ink-2">
@@ -68,7 +68,7 @@ export default async function CampaignsRollupPage() {
                     </div>
                     <span className="flex-none text-xs text-ink-3">{c.audience_count} destinatarios</span>
                   </div>
-                  <div className="grid grid-cols-4 gap-2 text-center">
+                  <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
                     {[
                       { k: "Enviados", v: s.sent, c: "text-ink" },
                       { k: "Entregados", v: s.delivered, c: "text-sky-600", p: pct(s.delivered, s.sent) },

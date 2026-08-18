@@ -35,7 +35,7 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
 
   if (!node) {
     return (
-      <div className="w-[380px] border-l border-surface-border bg-surface p-5 text-sm text-muted-2">
+      <div className="w-[380px] max-w-[88vw] flex-none border-l border-surface-border bg-surface p-5 text-sm text-muted-2">
         Selecciona un nodo para configurarlo.
       </div>
     );
@@ -86,7 +86,7 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
   };
 
   return (
-    <div className="w-[380px] overflow-auto border-l border-surface-border bg-surface p-5">
+    <div className="w-[380px] max-w-[88vw] flex-none overflow-auto border-l border-surface-border bg-surface p-5">
       <div className="mb-1 flex items-center gap-2.5">
         <span className="grid h-8 w-8 place-items-center rounded-xl text-base" style={{ background: meta.bg, color: meta.color }}>
           {meta.icon}

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Sora, Inter } from "next/font/google";
 import "@xyflow/react/dist/style.css";
 import "./globals.css";
@@ -21,6 +21,13 @@ export const metadata: Metadata = {
   title: "Demandu · Plataforma Conversacional",
   description:
     "Convierte conversaciones en clientes. La plataforma de IA conversacional de Demandu.",
+};
+
+/** La app se adapta al ancho real del dispositivo, desde monitores hasta celulares. */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

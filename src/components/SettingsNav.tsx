@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 
 const TABS = [
   { href: "/settings/plan", label: "Plan y uso" },
+  { href: "/admin/planes", label: "Planes a la medida", adminOnly: true },
+  { href: "/settings/chat", label: "Apariencia del chat" },
   { href: "/settings/attributes", label: "Atributos" },
   { href: "/settings/tags", label: "Etiquetas" },
   { href: "/settings/teams", label: "Equipos y miembros" },
@@ -14,11 +16,12 @@ const TABS = [
   { href: "/settings/integrations", label: "Integraciones" },
 ];
 
-export function SettingsNav() {
+/** `isAdmin` lo decide el servidor; las pestañas internas no se muestran a clientes. */
+export function SettingsNav({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
   return (
-    <div className="flex w-fit flex-wrap gap-1 rounded-xl border border-surface-border bg-surface-raised p-1">
-      {TABS.map((t) => {
+    <div className="flex w-fit max-w-full flex-wrap gap-1 rounded-xl border border-surface-border bg-surface-raised p-1">
+      {TABS.filter((t) => !t.adminOnly || isAdmin).map((t) => {
         const active = pathname === t.href;
         return (
           <Link

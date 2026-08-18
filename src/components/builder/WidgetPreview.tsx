@@ -87,7 +87,7 @@ export function WidgetPreview({
           </div>
 
           <div
-            className={`absolute bottom-4 w-[270px] overflow-hidden rounded-2xl bg-white shadow-[0_18px_50px_-12px_rgba(0,0,0,.35)] ${
+            className={`absolute bottom-4 w-[270px] max-w-[calc(100%-2rem)] overflow-hidden rounded-2xl bg-white shadow-[0_18px_50px_-12px_rgba(0,0,0,.35)] ${
               v.position === "left" ? "left-4" : "right-4"
             }`}
           >

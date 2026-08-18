@@ -1,11 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Send, Bot, User, Phone, Mail, Tag as TagIcon, Sparkles, CheckCircle2, RotateCcw, MailPlus, CheckCheck, Smile, Paperclip } from "lucide-react";
+import { Search, Send, Bot, User, CheckCircle2, RotateCcw, MailPlus, CheckCheck, Smile, Paperclip, ChevronLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ChannelBadge } from "./ChannelBadge";
+import { ContactPanel } from "./ContactPanel";
+import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
 
-type Contact = { id: string; name: string | null; phone: string | null; email: string | null; channel: string | null; tags: string[] | null };
+type Contact = {
+  id: string; name: string | null; wa_name: string | null; phone: string | null; email: string | null;
+  company: string | null; country: string | null; notes: string | null;
+  attributes: Record<string, any> | null; channel: string | null; tags: string[] | null;
+};
 type State = { id: string; name: string; color: string };
 type Member = { id: string; name: string };
 type Convo = {
@@ -59,11 +65,17 @@ export function InboxClient({
   members,
   states,
   tags,
+  attrs = [],
+  bubbleOut,
 }: {
   initial: Convo[];
   members: Member[];
   states: State[];
   tags: { id: string; name: string; color: string }[];
+  /** Atributos personalizados del cliente, para la ficha del lead. */
+  attrs?: { id: string; name: string; key: string }[];
+  /** Color de las burbujas que enviamos: lo elige cada cliente. */
+  bubbleOut?: string | null;
 }) {
   const sb = useMemo(() => createClient(), []);
   const [convos, setConvos] = useState<Convo[]>(initial);
@@ -78,7 +90,8 @@ export function InboxClient({
 
   const selectSql =
     "id, channel, status, unread, last_message_at, state_id, assignee_member_id, " +
-    "contact:contacts(id,name,phone,email,channel,tags), state:conversation_states(id,name,color), member:team_members(id,name)";
+    "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
+    "state:conversation_states(id,name,color), member:team_members(id,name)";
 
   const loadConvos = useCallback(async () => {
     const { data } = await sb.from("conversations").select(selectSql).order("last_message_at", { ascending: false });
@@ -170,8 +183,13 @@ export function InboxClient({
 
   return (
     <div className="flow-light flex flex-1 overflow-hidden">
-      {/* ── Lista de conversaciones ── */}
-      <div className="flex w-[330px] flex-none flex-col border-r border-surface-border bg-surface">
+      {/* ── Lista de conversaciones ──
+          En móvil se ve una cosa a la vez: la lista, o la conversación abierta. */}
+      <div
+        className={`w-full flex-none flex-col border-r border-surface-border bg-surface md:flex md:w-[330px] ${
+          sel ? "hidden" : "flex"
+        }`}
+      >
         <div className="border-b border-surface-border p-3">
           <div className="flex items-center gap-2 rounded-xl border border-surface-border bg-surface-raised px-3 py-2">
             <Search className="h-4 w-4 text-muted-2" />
@@ -210,7 +228,7 @@ export function InboxClient({
               >
                 <div className="relative flex-none">
                   <div className="grid h-11 w-11 place-items-center rounded-full bg-gradient-to-br from-pink to-violet font-display text-sm font-bold text-white">
-                    {initials(c.contact?.name)}
+                    {initials(c.contact?.name || c.contact?.wa_name)}
                   </div>
                   <span className="absolute -bottom-0.5 -right-0.5" title={ch.label}>
                     <ChannelBadge channel={c.channel} size={17} />
@@ -218,7 +236,14 @@ export function InboxClient({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-semibold text-white">{c.contact?.name ?? "Contacto"}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="flex-none text-sm leading-none" title="País del lead">
+                        {bandera(c.contact?.country ?? paisDesdeTelefono(c.contact?.phone))}
+                      </span>
+                      <span className="truncate text-sm font-semibold text-white">
+                        {c.contact?.name || c.contact?.wa_name || "Contacto"}
+                      </span>
+                    </span>
                     <span className="flex-none text-[11px] text-muted-2">{ago(c.last_message_at)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -241,7 +266,7 @@ export function InboxClient({
 
       {/* ── Hilo de conversación ── */}
       {!sel ? (
-        <div className="flex flex-1 items-center justify-center bg-[#f4f5fb] text-center">
+        <div className="hidden flex-1 items-center justify-center bg-[#f4f5fb] text-center md:flex">
           <div className="max-w-xs">
             <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-pink/20 to-violet/20 text-2xl">💬</div>
             <h3 className="font-display text-lg font-semibold text-white">Bandeja unificada</h3>
@@ -249,18 +274,28 @@ export function InboxClient({
           </div>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col bg-[#f4f5fb]">
+        <div className="flex min-w-0 flex-1 flex-col bg-[#f4f5fb]">
           {/* Header */}
-          <div className="flex flex-none items-center gap-3 border-b border-surface-border px-4 py-2.5" style={{ backgroundColor: "#ffffff" }}>
+          <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-surface-border px-3 py-2.5 sm:flex-nowrap sm:px-4" style={{ backgroundColor: "#ffffff" }}>
+            {/* Volver a la lista (solo móvil) */}
+            <button
+              onClick={() => setSelId(null)}
+              aria-label="Volver a la lista"
+              className="-ml-1 grid h-9 w-9 flex-none place-items-center rounded-xl text-muted transition hover:text-white md:hidden"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
             <div className="relative flex-none">
-              <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-xs font-bold text-white">{initials(sel.contact?.name)}</div>
+              <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-xs font-bold text-white">{initials(sel.contact?.name || sel.contact?.wa_name)}</div>
               <span className="absolute -bottom-1 -right-1"><ChannelBadge channel={sel.channel} size={15} /></span>
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-white">{sel.contact?.name ?? "Contacto"}</div>
+              <div className="truncate text-sm font-semibold text-white">
+                {sel.contact?.name || sel.contact?.wa_name || "Contacto"}
+              </div>
               <div className="text-[11px] text-muted-2">{(CH[sel.channel] ?? CH.webchat).label} · {sel.contact?.phone ?? "—"}</div>
             </div>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="flex w-full items-center gap-2 overflow-x-auto sm:ml-auto sm:w-auto sm:overflow-visible">
               <button
                 onClick={markUnread}
                 title="Marcar como no leído"
@@ -313,10 +348,10 @@ export function InboxClient({
               return (
                 <div
                   key={m.id}
-                  className={`relative max-w-[65%] px-2.5 pb-1.5 pt-1.5 text-[13.5px] leading-snug shadow-sm ${
+                  className={`relative max-w-[82%] px-2.5 pb-1.5 pt-1.5 text-[13.5px] leading-snug shadow-sm sm:max-w-[65%] ${
                     out ? "self-end rounded-lg rounded-tr-sm text-[#2c2550]" : "self-start rounded-lg rounded-tl-sm text-[#1b1c39]"
                   }`}
-                  style={{ backgroundColor: out ? WA_OUT_BG : WA_IN_BG }}
+                  style={{ backgroundColor: out ? (bubbleOut || WA_OUT_BG) : WA_IN_BG }}
                 >
                   {out && (
                     <div className="mb-0.5 flex items-center gap-1 text-[11px] font-semibold" style={{ color: m.sender === "bot" ? "#8B66FF" : "#FF6FB0" }}>
@@ -357,47 +392,23 @@ export function InboxClient({
         </div>
       )}
 
-      {/* ── Perfil del contacto ── */}
-      {sel && (
-        <div className="hidden w-[300px] flex-none flex-col overflow-auto border-l border-surface-border bg-surface p-4 xl:flex">
-          <div className="flex flex-col items-center border-b border-surface-border pb-4 text-center">
-            <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-lg font-bold text-white">{initials(sel.contact?.name)}</div>
-            <div className="mt-2 font-display text-base font-semibold text-white">{sel.contact?.name ?? "Contacto"}</div>
-            <div className="text-xs text-muted-2">{(CH[sel.channel] ?? CH.webchat).label}</div>
-          </div>
-
-          <div className="space-y-2.5 border-b border-surface-border py-4 text-sm">
-            <div className="flex items-center gap-2.5 text-muted"><Phone className="h-4 w-4 text-muted-2" /> {sel.contact?.phone ?? "—"}</div>
-            <div className="flex items-center gap-2.5 text-muted"><Mail className="h-4 w-4 text-muted-2" /> {sel.contact?.email ?? "—"}</div>
-            <div className="flex items-center gap-2.5 text-muted"><User className="h-4 w-4 text-muted-2" /> {sel.member?.name ?? "Sin asignar"}</div>
-          </div>
-
-          <div className="py-4">
-            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-2"><TagIcon className="h-3.5 w-3.5" /> Etiquetas</div>
-            <div className="flex flex-wrap gap-1.5">
-              {tags.length === 0 && <span className="text-[11px] text-muted-2">Crea etiquetas en Configuración.</span>}
-              {tags.map((t) => {
-                const on = (sel.contact?.tags ?? []).includes(t.name);
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => toggleTag(t.name)}
-                    className={`rounded-full border px-2.5 py-1 text-xs font-medium transition ${on ? "border-transparent text-white" : "border-surface-border bg-surface-raised text-muted hover:text-white"}`}
-                    style={on ? { background: t.color, color: "#fff" } : undefined}
-                  >
-                    {on ? "✓ " : ""}{t.name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="mt-auto rounded-xl border border-surface-border bg-surface-raised p-3">
-            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-2"><Sparkles className="h-3.5 w-3.5 text-violet" /> Resumen IA</div>
-            <p className="text-xs text-muted-2">Disponible cuando conectes Lana AI: un resumen automático de la conversación y el siguiente mejor paso.</p>
-          </div>
+      {/* ── Ficha del lead ── */}
+      {sel?.contact && (
+        <div className="hidden w-[320px] flex-none flex-col overflow-auto border-l border-surface-border bg-surface p-4 xl:flex">
+          <ContactPanel
+            contact={sel.contact as any}
+            canal={(CH[sel.channel] ?? CH.webchat).label}
+            agente={sel.member?.name}
+            tags={tags}
+            attrs={attrs}
+            onPatch={(patch) =>
+              setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, contact: { ...c.contact!, ...patch } as any } : c)))
+            }
+            onToggleTag={toggleTag}
+          />
         </div>
       )}
+
     </div>
   );
 }

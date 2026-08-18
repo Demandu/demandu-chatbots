@@ -242,7 +242,7 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
 
   return (
     <div className="flex flex-col items-center gap-3.5">
-      <div className="flex h-[720px] w-[360px] flex-col overflow-hidden rounded-[38px] border-[10px] border-[#05070a] bg-[#0b141a] shadow-2xl">
+      <div className="flex h-[min(720px,78vh)] w-full max-w-[360px] flex-col overflow-hidden rounded-[38px] border-[10px] border-[#05070a] bg-[#0b141a] shadow-2xl">
         {/* Header */}
         <div className="flex flex-none items-center gap-2.5 bg-[#202c33] px-3.5 py-3">
           <ChevronLeft className="h-5 w-5 text-[#aebac1]" />

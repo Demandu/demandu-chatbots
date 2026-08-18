@@ -55,7 +55,7 @@ export default async function CampaignDetail({ params }: { params: { id: string 
   return (
     <>
       <Topbar crumb={<span className="font-semibold text-white">Campañas / {(campaign as any).name}</span>} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-8 text-ink">
+      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <Link href="/campaigns" className="mb-4 inline-flex items-center gap-1.5 text-sm text-ink-2 hover:text-ink">
           <ArrowLeft className="h-4 w-4" /> Volver a Envíos
         </Link>
@@ -84,8 +84,8 @@ export default async function CampaignDetail({ params }: { params: { id: string 
 
         {/* Lista por destinatario */}
         <h3 className="mb-3 mt-8 font-display text-lg font-semibold text-ink">Detalle por contacto</h3>
-        <div className="overflow-hidden rounded-2xl border border-[#e6e8f2]">
-          <table className="w-full text-left text-sm">
+        <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+          <table className="min-w-[560px] w-full text-left text-sm">
             <thead className="bg-[#f4f5fb] text-xs uppercase tracking-wide text-ink-3">
               <tr>
                 <th className="px-4 py-3">Contacto</th>

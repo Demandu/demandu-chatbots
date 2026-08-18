@@ -20,6 +20,7 @@ import {
   type EdgeTypes,
   type Viewport,
 } from "@xyflow/react";
+import { X } from "lucide-react";
 import { DemanduNodeCard } from "./DemanduNodeCard";
 import { DemanduEdge } from "./DemanduEdge";
 import { ConnectButton } from "./ConnectButton";
@@ -71,6 +72,9 @@ function BuilderInner({
   );
   const [selectedId, setSelectedId] = useState<string | null>(flow.nodes[0]?.id ?? null);
   const [showPreview, setShowPreview] = useState(false);
+  // En pantallas chicas los paneles laterales se abren como cajones
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [save, setSave] = useState<SaveState>("saved");
   const { screenToFlowPosition } = useReactFlow();
   const { catalogs, orgId } = useCatalogs();
@@ -233,19 +237,35 @@ function BuilderInner({
     : { fitView: true };
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <Palette channel={channel} />
+    <div className="relative flex flex-1 overflow-hidden">
+      {/* Componentes: fijo en pantallas grandes */}
+      <div className="hidden xl:flex">
+        <Palette channel={channel} />
+      </div>
 
-      <div className="relative flex-1">
+      <div className="relative min-w-0 flex-1">
         {/* Toolbar */}
-        <div className="absolute left-4 top-4 z-10 flex items-center gap-1 rounded-2xl border border-[#e6e8f2] bg-white/85 p-1.5 shadow-sm backdrop-blur">
+        <div className="absolute left-3 right-3 top-3 z-10 flex flex-wrap items-center gap-1 rounded-2xl border border-[#e6e8f2] bg-white/85 p-1.5 shadow-sm backdrop-blur sm:left-4 sm:top-4 sm:right-auto">
+          {/* Atajos a los paneles cuando la pantalla es chica */}
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white xl:hidden"
+          >
+            ➕ Componentes
+          </button>
+          <button
+            onClick={() => setInspectorOpen(true)}
+            className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white xl:hidden"
+          >
+            ⚙️ Configurar
+          </button>
           <button
             onClick={() => setShowPreview((s) => !s)}
             className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white"
           >
             ▶ Probar flujo
           </button>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted">
+          <div className="hidden items-center gap-1.5 px-3 py-1.5 text-xs text-muted sm:flex">
             <span className={`h-2 w-2 rounded-full ${status.dot}`} />
             {status.text}
           </div>
@@ -265,7 +285,7 @@ function BuilderInner({
           onReconnectEnd={onReconnectEnd}
           onDrop={onDrop}
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
-          onNodeClick={(_, n) => setSelectedId(n.id)}
+          onNodeClick={(_, n) => { setSelectedId(n.id); setInspectorOpen(true); }}
           onPaneClick={() => setSelectedId(null)}
           onMoveEnd={(_, vp) => { viewportRef.current = vp; scheduleSave(); }}
           onNodesDelete={(deleted) => {
@@ -282,6 +302,7 @@ function BuilderInner({
           <Background color="#c4c9d8" gap={26} />
           <Controls />
           <MiniMap
+            className="hidden md:block"
             pannable
             zoomable
             maskColor="rgba(20,22,50,0.08)"
@@ -291,13 +312,64 @@ function BuilderInner({
         </ReactFlow>
 
         {showPreview && (
-          <div className="absolute inset-y-0 right-0 z-20 flex w-[420px] flex-col items-center justify-center border-l border-[#e6e8f2] bg-white/95 p-6 backdrop-blur">
+          <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-[420px] flex-col items-center justify-center border-l border-[#e6e8f2] bg-white/95 p-4 backdrop-blur sm:p-6">
+            <button
+              onClick={() => setShowPreview(false)}
+              aria-label="Cerrar prueba"
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-xl border border-[#e6e8f2] bg-white text-ink-3 shadow-sm"
+            >
+              <X className="h-4 w-4" />
+            </button>
             <Webchat flow={liveFlow} autostart />
           </div>
         )}
       </div>
 
-      <Inspector node={selected} onChange={patchSelected} onDelete={deleteNode} onSetStart={setStartNode} catalogs={catalogs} orgId={orgId} />
+      {/* Configuración: fija en pantallas grandes */}
+      <div className="hidden xl:flex">
+        <Inspector node={selected} onChange={patchSelected} onDelete={deleteNode} onSetStart={setStartNode} catalogs={catalogs} orgId={orgId} />
+      </div>
+
+      {/* Cajones para tablet y móvil */}
+      <Drawer side="left" open={paletteOpen} onClose={() => setPaletteOpen(false)}>
+        <Palette channel={channel} />
+      </Drawer>
+      <Drawer side="right" open={inspectorOpen} onClose={() => setInspectorOpen(false)}>
+        <Inspector node={selected} onChange={patchSelected} onDelete={deleteNode} onSetStart={setStartNode} catalogs={catalogs} orgId={orgId} />
+      </Drawer>
+    </div>
+  );
+}
+
+/**
+ * Panel deslizable para pantallas chicas. En escritorio (xl) nunca se muestra,
+ * porque ahí los paneles ya están fijos a los lados del lienzo.
+ */
+function Drawer({
+  side,
+  open,
+  onClose,
+  children,
+}: {
+  side: "left" | "right";
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-40 xl:hidden">
+      <button aria-label="Cerrar" onClick={onClose} className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div className={`absolute inset-y-0 ${side === "left" ? "left-0" : "right-0"} flex shadow-2xl`}>
+        {children}
+        <button
+          onClick={onClose}
+          aria-label="Cerrar"
+          className={`absolute top-3 ${side === "left" ? "right-2" : "left-2"} grid h-9 w-9 place-items-center rounded-xl text-muted transition hover:text-white`}
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
     </div>
   );
 }

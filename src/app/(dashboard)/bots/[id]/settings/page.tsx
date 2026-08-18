@@ -34,7 +34,7 @@ export default async function BotSettingsPage({ params }: { params: { id: string
   return (
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-8 text-ink">
+      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         <BotNav botId={bot.id} channel={bot.channel} />
         <h2 className="mb-5 font-display text-2xl font-bold text-ink">Ajustes del chatbot</h2>
 

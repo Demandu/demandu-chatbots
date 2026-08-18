@@ -236,3 +236,21 @@ export async function disconnectWhatsapp(_formData: FormData) {
   await createClient().from("whatsapp_channels").delete().eq("org_id", orgId);
   revalidatePath("/settings/integrations");
 }
+
+// ── Apariencia del chat (color de las burbujas que enviamos) ─────────────────
+export async function guardarColorBurbuja(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+
+  // Solo aceptamos un color hex válido: nada de texto libre en el estilo.
+  const raw = s(formData.get("bubble_out"));
+  const color = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : "#e7ddff";
+
+  const supabase = createClient();
+  const { data: org } = await supabase.from("organizations").select("branding").eq("id", orgId).maybeSingle();
+  const branding = { ...(((org as any)?.branding ?? {}) as Record<string, unknown>), bubble_out: color };
+
+  await supabase.from("organizations").update({ branding }).eq("id", orgId);
+  revalidatePath("/settings/chat");
+  revalidatePath("/inbox");
+}

@@ -34,7 +34,7 @@ export function Palette({ channel = "webchat" }: { channel?: BotChannel }) {
   };
 
   return (
-    <div className="w-[230px] overflow-auto border-r border-surface-border bg-surface p-4">
+    <div className="w-[230px] max-w-[80vw] flex-none overflow-auto border-r border-surface-border bg-surface p-4">
       <h4 className="mb-1 font-display text-[13px] font-semibold text-white">Componentes</h4>
       <p className="text-xs text-muted-2">Arrastra un bloque al lienzo</p>
 

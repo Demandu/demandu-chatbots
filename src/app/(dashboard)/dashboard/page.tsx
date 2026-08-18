@@ -56,7 +56,7 @@ export default async function InicioPage() {
   return (
     <>
       <Topbar crumb={<span className="font-semibold text-white">Inicio</span>} />
-      <div className="min-h-full flex-1 overflow-auto bg-canvas p-8 text-ink">
+      <div className="min-h-full flex-1 overflow-auto bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
         {/* Hero con Lana */}
         <div className="mb-7 flex flex-wrap items-center justify-between gap-6 rounded-3xl border border-[#e7e2fb] bg-gradient-to-br from-white to-[#f3efff] p-7">
           <div className="max-w-xl">
