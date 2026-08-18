@@ -18,6 +18,7 @@ export function NotificationsWatcher() {
   const pathname = usePathname();
   const [prefs, setPrefs] = useState<PrefsAviso>(leerPrefs);
   const visto = useRef<number | null>(null); // último `last_message_at` conocido
+  const vistoHandoff = useRef<number | null>(null); // última solicitud de persona
   const tituloOriginal = useRef<string>("");
 
   // Las preferencias pueden cambiar desde la pantalla de Configuración
@@ -45,6 +46,40 @@ export function NotificationsWatcher() {
       .gt("unread", 0)
       .order("last_message_at", { ascending: false })
       .limit(20);
+
+    // Solicitudes de atención humana pendientes (el lead escribió "1", "asesor"…)
+    const { data: pedidos } = await sb
+      .from("conversations")
+      .select("id, handoff_requested_at, contact:contacts(name,wa_name)")
+      .not("handoff_requested_at", "is", null)
+      .order("handoff_requested_at", { ascending: false })
+      .limit(5);
+
+    const solicitud = ((pedidos as any[]) ?? [])[0];
+    const marcaHandoff = solicitud ? new Date(solicitud.handoff_requested_at).getTime() : 0;
+    if (vistoHandoff.current === null) {
+      vistoHandoff.current = marcaHandoff;
+    } else if (marcaHandoff > vistoHandoff.current) {
+      vistoHandoff.current = marcaHandoff;
+      if (debeAvisar(prefs)) {
+        const pide = solicitud.contact?.name || solicitud.contact?.wa_name || "Un cliente";
+        // La solicitud de persona suena SIEMPRE con el tono, aunque el aviso
+        // normal de mensajes esté apagado: es lo más urgente de la bandeja.
+        if (prefs.sonido) reproducirTono(prefs.tono, prefs.volumen);
+        if (prefs.enApp) {
+          lanzarAviso({
+            titulo: "🙋 Tienes una nueva solicitud de chat",
+            cuerpo: `${pide} quiere hablar con una persona.`,
+            href: `/inbox?c=${solicitud.id}`,
+          });
+        }
+        if (prefs.escritorio && document.visibilityState !== "visible") {
+          avisoEscritorio("Nueva solicitud de chat", `${pide} quiere hablar con una persona.`, () =>
+            router.push(`/inbox?c=${solicitud.id}`),
+          );
+        }
+      }
+    }
 
     const filas = (data as any[]) ?? [];
     const pendientes = filas.reduce((n, c) => n + (Number(c.unread) || 0), 0);
@@ -90,11 +125,11 @@ export function NotificationsWatcher() {
     if (prefs.sonido) reproducirTono(prefs.tono, prefs.volumen);
 
     // La tarjeta dentro de la app: es la que se ve mientras estás trabajando.
-    if (prefs.enApp) lanzarAviso({ titulo: quien, cuerpo: adelanto, href: "/inbox" });
+    if (prefs.enApp) lanzarAviso({ titulo: quien, cuerpo: adelanto, href: `/inbox?c=${ultima.id}` });
 
     // El aviso del sistema solo tiene sentido si NO estás mirando la pestaña.
     if (prefs.escritorio && document.visibilityState !== "visible") {
-      avisoEscritorio(quien, adelanto, () => router.push("/inbox"));
+      avisoEscritorio(quien, adelanto, () => router.push(`/inbox?c=${ultima.id}`));
     }
   }, [prefs, router]);
 

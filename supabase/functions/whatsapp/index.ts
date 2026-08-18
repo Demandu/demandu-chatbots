@@ -79,6 +79,38 @@ function paisDesdeTelefono(phone?: string | null): string | null {
   return null;
 }
 
+/**
+ * Atajos del chatbot: palabras que el lead puede escribir en cualquier momento
+ * para reiniciar la conversación o pedir una persona. Se revisan ANTES que el
+ * flujo, así funcionan aunque el bot esté esperando otra respuesta.
+ * (Mismo comportamiento que `src/lib/flow/shortcuts.ts` — si cambias uno, cambia el otro.)
+ */
+const ATAJOS_DEFAULT = {
+  reset: { enabled: true, words: ["0", "menu", "men\u00fa", "reiniciar", "inicio"], reply: "Listo, empezamos de nuevo \ud83d\udd04" },
+  agent: { enabled: true, words: ["1", "asesor", "agente", "humano", "persona"], reply: "Enseguida te atiende una persona del equipo \ud83d\ude4c Dame un momento." },
+  hint: { enabled: true, text: "Escribe *0* para volver al inicio o *1* para hablar con una persona.", onStart: true, onOptions: false },
+};
+function leerAtajos(raw: any) {
+  const a = raw ?? {};
+  return {
+    reset: { ...ATAJOS_DEFAULT.reset, ...(a.reset ?? {}) },
+    agent: { ...ATAJOS_DEFAULT.agent, ...(a.agent ?? {}) },
+    hint: { ...ATAJOS_DEFAULT.hint, ...(a.hint ?? {}) },
+  };
+}
+function normalizarAtajo(t: string) {
+  return String(t ?? "").trim().toLowerCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/[\u00a1!\u00bf?.,;:]+$/g, "").replace(/\s+/g, " ");
+}
+function detectarAtajo(texto: string, atajos: any): "reset" | "agent" | null {
+  const t = normalizarAtajo(texto);
+  if (!t) return null;
+  const coincide = (a: any) => a?.enabled && (a.words ?? []).some((w: string) => w && normalizarAtajo(w) === t);
+  if (coincide(atajos.agent)) return "agent";
+  if (coincide(atajos.reset)) return "reset";
+  return null;
+}
+
 // ---- envío a WhatsApp ----
 async function waPost(pnid: string, token: string, payload: any) {
   const res = await fetch(`${GRAPH}/${pnid}/messages`, {
@@ -276,7 +308,9 @@ async function say(ctx: any, body: string) {
   await ctx.db.from("messages").insert({ conversation_id: ctx.convId, org_id: ctx.orgId, direction: "outbound", sender: "bot", body: text });
 }
 async function sayButtons(ctx: any, body: string, node: any) {
-  const text = interp(body, ctx.vars);
+  let text = interp(body, ctx.vars);
+  const hint = ctx.atajos?.hint;
+  if (hint?.enabled && hint?.onOptions && hint?.text) text = `${text}\n\n${hint.text}`;
   const buttons = node.data.buttons ?? [];
   await sendButtons(ctx.pnid, ctx.token, ctx.to, text || "Elige una opción", buttons);
   await ctx.db.from("messages").insert({ conversation_id: ctx.convId, org_id: ctx.orgId, direction: "outbound", sender: "bot", body: text || "(opciones)", payload: { buttons: buttons.map((b: any) => ({ id: b.id, label: b.label })) } });
@@ -346,7 +380,28 @@ async function handleIncoming(opts: any) {
     flow: opts.flow, pnid: opts.pnid, token: opts.token, to: opts.to,
     orgId: opts.orgId, convId: opts.convId, db: opts.db, vars,
     botId: opts.botId, aiSettings: opts.aiSettings ?? null, lastUserText: opts.visible ?? opts.text ?? "",
+    atajos: opts.atajos ?? leerAtajos(null),
   };
+  // ── Atajos: lo primero que se revisa, pase lo que pase ──────────────────────
+  const atajo = detectarAtajo(opts.visible ?? opts.text ?? "", ctx.atajos);
+  if (atajo === "agent") {
+    await say(ctx, ctx.atajos.agent.reply);
+    await ctx.db.from("conversations").update({
+      status: "assigned",
+      handoff_requested_at: new Date().toISOString(),
+      handoff_reason: "El lead pidió hablar con una persona",
+      unread: 1,
+    }).eq("id", opts.convId);
+    // Se devuelve el estado sin `awaiting`: el bot deja de conducir la charla.
+    return { vars, awaiting: null, atajo: "agent" };
+  }
+  if (atajo === "reset") {
+    await say(ctx, ctx.atajos.reset.reply);
+    const inicio = getStartNode(opts.flow)?.id;
+    const nuevo = await runFrom(inicio, ctx);
+    return { vars, awaiting: nuevo, atajo: "reset" };
+  }
+
   const awaiting = opts.flowState?.awaiting;
   let startId: string | undefined;
   if (awaiting?.nodeId) {
@@ -364,7 +419,15 @@ async function handleIncoming(opts: any) {
     startId = getStartNode(opts.flow)?.id;
   }
   const nextAwait = await runFrom(startId, ctx);
-  return { vars, awaiting: nextAwait };
+
+  // Recordatorio de los atajos: solo la primera vez de la conversación,
+  // para no repetirlo en cada mensaje.
+  const hint = ctx.atajos?.hint;
+  if (hint?.enabled && hint?.onStart && hint?.text && !opts.flowState?.hintEnviado) {
+    await say(ctx, hint.text);
+    return { vars, awaiting: nextAwait, hintEnviado: true };
+  }
+  return { vars, awaiting: nextAwait, hintEnviado: opts.flowState?.hintEnviado ?? false };
 }
 
 // ---- selección de flujo por disparador ----
@@ -518,16 +581,31 @@ Deno.serve(async (req: Request) => {
       }
       await db.from("messages").insert({ conversation_id: conv.id, org_id: cfg.org_id, direction: "inbound", sender: "contact", body: visible });
       await db.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
-      if (cfg.bot_id && conv.status !== "assigned") {
+      // Ajustes del chatbot: personalidad de la IA y atajos (0 / 1, etc.)
+      const { data: botRow } = cfg.bot_id
+        ? await db.from("bots").select("ai, shortcuts").eq("id", cfg.bot_id).maybeSingle()
+        : { data: null };
+      const atajos = leerAtajos((botRow as any)?.shortcuts);
+
+      // Si la conversación ya la lleva una persona, el bot se calla —
+      // PERO "reiniciar" sigue funcionando: es la salida del lead si se atoró.
+      const atajoAhora = detectarAtajo(visible, atajos);
+      const tomadaPorPersona = conv.status === "assigned";
+      if (tomadaPorPersona && atajoAhora === "reset") {
+        await db.from("conversations")
+          .update({ status: "open", handoff_requested_at: null, handoff_reason: null })
+          .eq("id", conv.id);
+        conv.status = "open";
+        conv.flow_state = {};
+      }
+
+      if (cfg.bot_id && (conv.status !== "assigned")) {
         // ¿Lead que regresa? (tiene más de una conversación con nosotros)
         const { count: convCount } = await db
           .from("conversations")
           .select("id", { count: "exact", head: true })
           .eq("contact_id", contact.id);
         const isReturning = (convCount ?? 1) > 1;
-
-        // Ajustes de IA del chatbot (persona, tono, respaldo)
-        const { data: botRow } = await db.from("bots").select("ai").eq("id", cfg.bot_id).maybeSingle();
 
         // Variables listas para usar en cualquier mensaje: {{whatsappName}}, {{nombre}}, {{telefono}}…
         const nombre = (name ?? "").trim();
@@ -555,11 +633,13 @@ Deno.serve(async (req: Request) => {
           const flow = { nodes: graph.nodes ?? [], edges: graph.edges ?? [] };
           if (flow.nodes.length) {
             // Si cambiamos de flujo, ese flujo arranca desde el inicio (sin arrastrar awaiting)
-            const flowState = state.flow_id === chosen.id ? state : { vars: state.vars ?? {} };
+            // Al cambiar de flujo se arranca de cero, pero el recordatorio ya
+            // enviado no se vuelve a mandar.
+            const flowState = state.flow_id === chosen.id ? state : { vars: state.vars ?? {}, hintEnviado: state.hintEnviado };
             const newState = await handleIncoming({
               flow, pnid, token: cfg.access_token, to: from,
               orgId: cfg.org_id, convId: conv.id, db, flowState, text, visible,
-              botId: cfg.bot_id, aiSettings: (botRow as any)?.ai ?? null, baseVars,
+              botId: cfg.bot_id, aiSettings: (botRow as any)?.ai ?? null, baseVars, atajos,
             });
             await db.from("conversations").update({ flow_state: { ...newState, flow_id: chosen.id } }).eq("id", conv.id);
           }

@@ -61,7 +61,7 @@ export async function POST(req: Request) {
 
     const { data: bot, error: botErr } = await admin
       .from("bots")
-      .select("id, org_id, name, channel, widget, ai")
+      .select("id, org_id, name, channel, widget, ai, shortcuts")
       .eq("id", botId)
       .maybeSingle();
 
@@ -163,11 +163,12 @@ export async function POST(req: Request) {
       isStart,
       botId: bot.id,
       aiSettings: (bot as any).ai ?? null,
+      atajos: (bot as any).shortcuts ?? null,
     });
 
     await admin
       .from("conversations")
-      .update({ flow_state: { vars: result.vars, awaiting: result.awaiting, flow_id: chosen.id } })
+      .update({ flow_state: { vars: result.vars, awaiting: result.awaiting, flow_id: chosen.id, hintEnviado: result.hintEnviado } })
       .eq("id", conv.id);
 
     return json({ sessionId, widget, messages: result.out });

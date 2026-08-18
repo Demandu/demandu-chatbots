@@ -1,6 +1,7 @@
 import { getNode, getStartNode, defaultNext, buttonTarget } from "./engine";
 import type { Flow, DemanduNode, ConditionRule, FlowButton } from "./types";
 import { aiAnswer, type AiSettings } from "@/lib/ai/answer";
+import { detectarAtajo, leerAtajos, type Atajos } from "./shortcuts";
 
 /**
  * Motor de conversación para canales que NO envían por una API externa
@@ -208,7 +209,9 @@ export async function runWebFlow(opts: {
   isStart?: boolean;
   botId: string;
   aiSettings?: AiSettings | null;
-}): Promise<{ vars: Record<string, string>; awaiting: Awaiting; out: OutMsg[] }> {
+  /** Atajos configurados en el chatbot (0 = reiniciar, 1 = persona, etc.) */
+  atajos?: any;
+}): Promise<{ vars: Record<string, string>; awaiting: Awaiting; out: OutMsg[]; hintEnviado?: boolean }> {
   const vars: Record<string, string> = { ...(opts.flowState?.vars ?? {}) };
   const ctx: Ctx = {
     flow: opts.flow,
@@ -222,10 +225,36 @@ export async function runWebFlow(opts: {
     lastUserText: opts.isStart ? "" : (opts.text ?? ""),
   };
 
+  const atajos: Atajos = leerAtajos(opts.atajos);
+
+  // ── Atajos: mandan sobre cualquier otra cosa del flujo ──────────────────────
+  // No cortamos aquí: seguimos hasta el bloque que guarda los mensajes en la
+  // Bandeja, para que la respuesta del atajo también quede registrada.
+  const atajo = opts.isStart ? null : detectarAtajo(opts.text ?? "", atajos);
+  if (atajo === "agent") {
+    push(ctx, atajos.agent.reply);
+    await opts.admin
+      .from("conversations")
+      .update({
+        status: "assigned",
+        handoff_requested_at: new Date().toISOString(),
+        handoff_reason: "El lead pidió hablar con una persona",
+        unread: 1,
+      })
+      .eq("id", opts.conversationId);
+  } else if (atajo === "reset") {
+    push(ctx, atajos.reset.reply);
+  }
+
   const awaiting = opts.flowState?.awaiting as Awaiting;
   let startId: string | undefined;
 
-  if (!opts.isStart && awaiting?.nodeId) {
+  if (atajo === "agent") {
+    // El bot deja de conducir: ahora contesta una persona.
+    startId = undefined;
+  } else if (atajo === "reset") {
+    startId = getStartNode(opts.flow)?.id;
+  } else if (!opts.isStart && awaiting?.nodeId) {
     const node = getNode(opts.flow, awaiting.nodeId);
     if (awaiting.type === "question") {
       // Un nodo de IA se queda escuchando: cada pregunta vuelve a entrar en él.
@@ -246,7 +275,14 @@ export async function runWebFlow(opts: {
     startId = getStartNode(opts.flow)?.id;
   }
 
-  const nextAwait = await runFrom(startId, ctx);
+  const nextAwait = atajo === "agent" ? null : await runFrom(startId, ctx);
+
+  // Recordatorio de los atajos: una sola vez por conversación.
+  let hintEnviado = !!opts.flowState?.hintEnviado;
+  if (!hintEnviado && atajos.hint.enabled && atajos.hint.onStart && atajos.hint.text && atajo !== "agent") {
+    push(ctx, atajos.hint.text);
+    hintEnviado = true;
+  }
 
   // Guarda las respuestas del bot en la Bandeja.
   // OJO: `payload` es NOT NULL con default '{}' — nunca mandar null aquí,
@@ -265,5 +301,5 @@ export async function runWebFlow(opts: {
     if (error) console.error("[webchat] no se guardaron los mensajes del bot:", error.message);
   }
 
-  return { vars, awaiting: nextAwait, out: ctx.out };
+  return { vars, awaiting: nextAwait, out: ctx.out, hintEnviado };
 }

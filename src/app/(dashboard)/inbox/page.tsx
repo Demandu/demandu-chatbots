@@ -10,7 +10,7 @@ export default async function InboxPage() {
     sb
       .from("conversations")
       .select(
-        "id, channel, status, unread, last_message_at, state_id, assignee_member_id, " +
+        "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, " +
           "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
           "state:conversation_states(id,name,color), " +
           "member:team_members(id,name)"
@@ -20,7 +20,7 @@ export default async function InboxPage() {
     sb.from("conversation_states").select("id,name,color").order("sort"),
     sb.from("tags").select("id,name,color").order("name"),
     sb.from("custom_attributes").select("id,name,key").eq("visible", true).order("sort"),
-    sb.from("organizations").select("branding").limit(1).maybeSingle(),
+    sb.from("organizations").select("id, branding").limit(1).maybeSingle(),
   ]);
 
   const branding = ((org.data as any)?.branding ?? {}) as { bubble_out?: string };
@@ -35,6 +35,7 @@ export default async function InboxPage() {
         tags={(tg.data as any[]) ?? []}
         attrs={(attr.data as any[]) ?? []}
         bubbleOut={branding.bubble_out ?? null}
+        orgId={(org.data as any)?.id ?? null}
       />
     </>
   );

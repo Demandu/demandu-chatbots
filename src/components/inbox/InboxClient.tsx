@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Smile, Paperclip, ChevronLeft } from "lucide-react";
+import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Smile, Paperclip, ChevronLeft, Hand } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ChannelBadge } from "./ChannelBadge";
 import { ContactPanel } from "./ContactPanel";
 import { ConvoMenu, type AccionChat } from "./ConvoMenu";
+import { TraductorBoton } from "./TraductorBoton";
 import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
 import { paletaChat } from "@/lib/chatColors";
@@ -23,6 +25,8 @@ type Convo = {
   status: string;
   unread: number;
   last_message_at: string;
+  /** Cuándo pidió el lead hablar con una persona (null = no pidió) */
+  handoff_requested_at: string | null;
   state_id: string | null;
   assignee_member_id: string | null;
   contact: Contact | null;
@@ -66,6 +70,7 @@ export function InboxClient({
   tags,
   attrs = [],
   bubbleOut,
+  orgId,
 }: {
   initial: Convo[];
   members: Member[];
@@ -75,18 +80,27 @@ export function InboxClient({
   attrs?: { id: string; name: string; key: string }[];
   /** Color de las burbujas que enviamos: lo elige cada cliente. */
   bubbleOut?: string | null;
+  /** Organización actual, para guardar las notas internas */
+  orgId?: string | null;
 }) {
   const sb = useMemo(() => createClient(), []);
   const [convos, setConvos] = useState<Convo[]>(initial);
-  const [selId, setSelId] = useState<string | null>(initial[0]?.id ?? null);
+  const params = useSearchParams();
+  const pedida = params.get("c");
+  const [selId, setSelId] = useState<string | null>(pedida ?? initial[0]?.id ?? null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
-  const [filter, setFilter] = useState<"todas" | "abiertas" | "cerradas">("todas");
+  const [filter, setFilter] = useState<"todas" | "solicitudes" | "abiertas" | "cerradas">("todas");
   const [q, setQ] = useState("");
   const bodyRef = useRef<HTMLDivElement>(null);
   // Acción destructiva pendiente de confirmar (vaciar o eliminar un chat)
   const [porConfirmar, setPorConfirmar] = useState<{ id: string; accion: "vaciar" | "eliminar"; quien: string } | null>(null);
   const [borrando, setBorrando] = useState(false);
+  // Traductor: idioma elegido y traducciones ya resueltas (id del mensaje → texto)
+  const [idioma, setIdioma] = useState<string | null>(null);
+  const [traducciones, setTraducciones] = useState<Record<string, string>>({});
+  const [traduciendo, setTraduciendo] = useState(false);
+  const [errorTraduccion, setErrorTraduccion] = useState("");
 
   // Toda la paleta del chat sale del color de burbuja que eligió el cliente,
   // así el fondo y los textos siempre contrastan bien.
@@ -95,7 +109,7 @@ export function InboxClient({
   const sel = convos.find((c) => c.id === selId) ?? null;
 
   const selectSql =
-    "id, channel, status, unread, last_message_at, state_id, assignee_member_id, " +
+    "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, " +
     "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
     "state:conversation_states(id,name,color), member:team_members(id,name)";
 
@@ -116,9 +130,21 @@ export function InboxClient({
   useEffect(() => {
     if (!selId) return;
     loadMessages(selId);
-    setConvos((cs) => cs.map((c) => (c.id === selId ? { ...c, unread: 0 } : c)));
-    sb.from("conversations").update({ unread: 0 }).eq("id", selId).then(() => {});
+    // Al abrirla se marca leída y, si el lead había pedido una persona,
+    // la solicitud se da por atendida (deja de sonar en toda la plataforma).
+    setConvos((cs) =>
+      cs.map((c) => (c.id === selId ? { ...c, unread: 0, handoff_requested_at: null } : c)),
+    );
+    sb.from("conversations")
+      .update({ unread: 0, handoff_requested_at: null })
+      .eq("id", selId)
+      .then(() => {});
   }, [selId, loadMessages, sb]);
+
+  // Si llegamos desde un aviso (?c=…), abrimos esa conversación
+  useEffect(() => {
+    if (pedida) setSelId(pedida);
+  }, [pedida]);
 
   // Refresco ligero (simula tiempo real mientras no hay motor en vivo)
   useEffect(() => {
@@ -132,6 +158,46 @@ export function InboxClient({
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  // Al cambiar de conversación se limpia lo traducido (son otros mensajes)
+  useEffect(() => setTraducciones({}), [selId]);
+
+  // Traduce solo lo que todavía no está traducido, así los mensajes nuevos
+  // que van llegando se traducen solos sin repetir trabajo.
+  useEffect(() => {
+    if (!idioma) return;
+    const pendientes = messages.filter((m) => m.body && traducciones[m.id] === undefined);
+    if (!pendientes.length) return;
+
+    let cancelado = false;
+    setTraduciendo(true);
+    fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idioma, textos: pendientes.map((m) => m.body) }),
+    })
+      .then(async (r) => ({ ok: r.ok, j: await r.json() }))
+      .then(({ ok, j }) => {
+        if (cancelado) return;
+        if (!ok) {
+          setErrorTraduccion(j?.error ?? "No se pudo traducir.");
+          setIdioma(null);
+          return;
+        }
+        setErrorTraduccion("");
+        setTraducciones((prev) => {
+          const next = { ...prev };
+          pendientes.forEach((m, i) => { next[m.id] = j.traducciones?.[i] ?? ""; });
+          return next;
+        });
+      })
+      .catch(() => {
+        if (!cancelado) { setErrorTraduccion("No se pudo conectar con el traductor."); setIdioma(null); }
+      })
+      .finally(() => { if (!cancelado) setTraduciendo(false); });
+
+    return () => { cancelado = true; };
+  }, [idioma, messages, traducciones]);
 
   const send = async () => {
     const body = text.trim();
@@ -225,6 +291,7 @@ export function InboxClient({
   };
 
   const filtered = convos.filter((c) => {
+    if (filter === "solicitudes" && !c.handoff_requested_at) return false;
     if (filter === "abiertas" && c.status === "closed") return false;
     if (filter === "cerradas" && c.status !== "closed") return false;
     if (q && !(c.contact?.name ?? "").toLowerCase().includes(q.toLowerCase())) return false;
@@ -251,7 +318,7 @@ export function InboxClient({
             />
           </div>
           <div className="mt-2 flex gap-1">
-            {(["todas", "abiertas", "cerradas"] as const).map((f) => (
+            {(["todas", "solicitudes", "abiertas", "cerradas"] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
@@ -315,11 +382,18 @@ export function InboxClient({
                       <span className="grid h-5 min-w-5 flex-none place-items-center rounded-full bg-pink px-1 text-[10px] font-bold text-white">{c.unread}</span>
                     )}
                   </div>
-                  {c.state && (
-                    <span className="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold" style={{ background: `${c.state.color}22`, color: c.state.color }}>
-                      ● {c.state.name}
-                    </span>
-                  )}
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {c.handoff_requested_at && (
+                      <span className="inline-flex items-center gap-1 rounded bg-pink px-1.5 py-0.5 text-[10px] font-bold text-white">
+                        <Hand className="h-3 w-3" /> Pide persona
+                      </span>
+                    )}
+                    {c.state && (
+                      <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold" style={{ background: `${c.state.color}22`, color: c.state.color }}>
+                        ● {c.state.name}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -359,6 +433,12 @@ export function InboxClient({
               <div className="text-[11px] text-muted-2">{(CH[sel.channel] ?? CH.webchat).label} · {sel.contact?.phone ?? "—"}</div>
             </div>
             <div className="flex w-full items-center gap-2 overflow-x-auto sm:ml-auto sm:w-auto sm:overflow-visible">
+              <TraductorBoton
+                idioma={idioma}
+                cargando={traduciendo}
+                onElegir={(code) => { setErrorTraduccion(""); setTraducciones({}); setIdioma(code); }}
+                onApagar={() => { setIdioma(null); setTraducciones({}); setErrorTraduccion(""); }}
+              />
               <ConvoMenu
                 cerrada={sel.status === "closed"}
                 sinLeer={sel.unread > 0}
@@ -399,6 +479,15 @@ export function InboxClient({
             </div>
           </div>
 
+          {errorTraduccion && (
+            <div className="flex flex-none items-center justify-between gap-3 border-b border-warning/40 bg-warning/10 px-4 py-2 text-xs text-ink-2">
+              <span>{errorTraduccion}</span>
+              <button onClick={() => setErrorTraduccion("")} className="font-semibold text-ink-3 hover:text-ink">
+                Cerrar
+              </button>
+            </div>
+          )}
+
           {/* Mensajes (estilo WhatsApp Web · paleta Demandu) */}
           <div
             ref={bodyRef}
@@ -421,6 +510,18 @@ export function InboxClient({
                     </div>
                   )}
                   <span className="whitespace-pre-wrap break-words align-bottom">{m.body}</span>
+                  {idioma && traducciones[m.id] && (
+                    <span
+                      className="mt-1.5 block whitespace-pre-wrap break-words border-t pt-1.5 text-[12.5px] italic"
+                      style={{
+                        borderColor: out ? `${paleta.textOut}22` : "#00000014",
+                        color: out ? paleta.textOut : paleta.textIn,
+                        opacity: 0.78,
+                      }}
+                    >
+                      {traducciones[m.id]}
+                    </span>
+                  )}
                   <span
                     className="ml-2 inline-flex select-none items-center gap-0.5 align-bottom text-[10px]"
                     style={{ color: out ? paleta.metaOut : "rgba(0,0,0,.42)" }}
@@ -466,6 +567,7 @@ export function InboxClient({
             agente={sel.member?.name}
             tags={tags}
             attrs={attrs}
+            orgId={orgId}
             onPatch={(patch) =>
               setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, contact: { ...c.contact!, ...patch } as any } : c)))
             }

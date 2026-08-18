@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Phone, Mail, User, Building2, Tag as TagIcon, Sparkles, Check, StickyNote } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { bandera, nombrePais, paisDesdeTelefono } from "@/lib/phoneCountry";
+import { NotasPostIt } from "./NotasPostIt";
 
 export type ContactoFicha = {
   id: string;
@@ -86,6 +87,7 @@ export function ContactPanel({
   agente,
   tags,
   attrs = [],
+  orgId,
   onPatch,
   onToggleTag,
 }: {
@@ -94,6 +96,8 @@ export function ContactPanel({
   agente?: string | null;
   tags: { id: string; name: string; color: string }[];
   attrs?: Attr[];
+  /** Necesario para guardar las notas internas con su organización */
+  orgId?: string | null;
   onPatch: (patch: Partial<ContactoFicha>) => void;
   onToggleTag: (name: string) => void;
 }) {
@@ -221,17 +225,21 @@ export function ContactPanel({
         </div>
       </div>
 
-      {/* Notas internas */}
-      <div className="border-t border-surface-border pt-4">
-        <Campo
-          label="Notas internas"
-          icon={<StickyNote className="h-3.5 w-3.5" />}
-          value={contact.notes ?? ""}
-          placeholder="Lo que tu equipo debe saber de este lead…"
-          multiline
-          onSave={(v) => guardar({ notes: v || null })}
-        />
-      </div>
+      {/* Notas internas: post-its con autor y fecha */}
+      {orgId ? (
+        <NotasPostIt contactId={contact.id} orgId={orgId} />
+      ) : (
+        <div className="border-t border-surface-border pt-4">
+          <Campo
+            label="Notas internas"
+            icon={<StickyNote className="h-3.5 w-3.5" />}
+            value={contact.notes ?? ""}
+            placeholder="Lo que tu equipo debe saber de este lead…"
+            multiline
+            onSave={(v) => guardar({ notes: v || null })}
+          />
+        </div>
+      )}
 
       <div className="mt-auto rounded-xl border border-surface-border bg-surface-raised p-3">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-2">

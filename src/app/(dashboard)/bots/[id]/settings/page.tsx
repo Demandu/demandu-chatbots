@@ -5,6 +5,9 @@ import { BotNav } from "@/components/builder/BotNav";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { createClient } from "@/lib/supabase/server";
 import { setBotStatus, deleteBot, renameBot } from "../../actions";
+import { guardarAtajos } from "./actions";
+import { ShortcutsForm } from "@/components/bots/ShortcutsForm";
+import { leerAtajos } from "@/lib/flow/shortcuts";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +41,17 @@ export default async function BotSettingsPage({ params }: { params: { id: string
         <BotNav botId={bot.id} channel={bot.channel} />
         <h2 className="mb-5 font-display text-2xl font-bold text-ink">Ajustes del chatbot</h2>
 
+        {/* Atajos: lo que el cliente final puede escribir en cualquier momento */}
+        <section className="mb-8">
+          <h3 className="font-display text-lg font-semibold text-ink">Atajos para tu cliente</h3>
+          <p className="mb-4 mt-0.5 max-w-2xl text-sm text-ink-2">
+            Palabras o números que tu cliente puede escribir en cualquier momento de la conversación, aunque el bot le
+            esté preguntando otra cosa. Sirven para que nadie se quede atorado.
+          </p>
+          <ShortcutsForm botId={bot.id} inicial={leerAtajos((bot as any).shortcuts)} action={guardarAtajos} />
+        </section>
+
+        <h3 className="mb-3 font-display text-lg font-semibold text-ink">General</h3>
         <div className="max-w-2xl space-y-4">
           {/* Canal */}
           <div className="card-l flex items-center justify-between p-5">
