@@ -1,0 +1,295 @@
+/**
+ * Pruebas de la lógica que decide cómo se comporta la plataforma.
+ * Son funciones puras, así que se prueban sin base de datos ni navegador.
+ *
+ *   node --experimental-strip-types scripts/pruebas/logica.mjs
+ */
+import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
+import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
+import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
+import { paisDesdeTelefono, bandera, nombrePais } from "../../src/lib/phoneCountry.ts";
+import { limpiarAtajo, rellenar, filtrar } from "../../src/lib/quickReplies.ts";
+import { enSilencio, debeAvisar, PREFS_DEFAULT } from "../../src/lib/notifications.ts";
+import {
+  rangoDePreset, agrupacionSugerida, duracion, porcentaje, numero,
+  etiquetaPeriodo, aFechaCorta, deFechaCorta, efectividadAgente,
+} from "../../src/lib/analytics.ts";
+
+// ─── Atajos del chatbot (0 = reiniciar, 1 = persona) ────────────────────────
+describe("Atajos del chatbot", () => {
+  const A = ATAJOS_DEFAULT;
+
+  test("'0' reinicia y '1' pide persona", () => {
+    esperar(detectarAtajo("0", A)).igual("reset");
+    esperar(detectarAtajo("1", A)).igual("agent");
+  });
+
+  test("ignora espacios, mayúsculas, acentos y signos finales", () => {
+    for (const t of ["  0  ", "MENU", "Menú", "menú.", "¡inicio!"]) {
+      esperar(detectarAtajo(t, A)).igual("reset", `falló con ${JSON.stringify(t)}`);
+    }
+    esperar(detectarAtajo("Asesor!", A)).igual("agent");
+  });
+
+  test("NO se activa dentro de una frase — este es el error clásico", () => {
+    for (const t of ["quiero 1 pizza", "son 0 pesos", "reiniciar mi pedido", "el menu del dia", "10", "01"]) {
+      esperar(detectarAtajo(t, A)).igual(null, `${JSON.stringify(t)} no debía activar ningún atajo`);
+    }
+  });
+
+  test("un atajo apagado deja de responder", () => {
+    const apagado = leerAtajos({ reset: { enabled: false } });
+    esperar(detectarAtajo("0", apagado)).igual(null);
+    esperar(detectarAtajo("1", apagado)).igual("agent", "el otro atajo debe seguir vivo");
+  });
+
+  test("el atajo de persona gana si una palabra está en los dos", () => {
+    const chocado = leerAtajos({ reset: { words: ["x"] }, agent: { words: ["x"] } });
+    esperar(detectarAtajo("x", chocado)).igual("agent");
+  });
+
+  test("mensajes vacíos o raros no rompen nada", () => {
+    esperar(detectarAtajo("", A)).igual(null);
+    esperar(detectarAtajo("   ", A)).igual(null);
+    esperar(detectarAtajo(null, A)).igual(null);
+    esperar(normalizar(undefined)).igual("");
+  });
+
+  test("palabras que el cliente agregue funcionan igual", () => {
+    const propio = leerAtajos({ agent: { words: ["quiero hablar con alguien"] } });
+    esperar(detectarAtajo("Quiero hablar con alguien", propio)).igual("agent");
+  });
+});
+
+// ─── Colores del chat ────────────────────────────────────────────────────────
+describe("Paleta del chat (contraste)", () => {
+  const COLORES = [
+    "#e7ddff", "#dcf8c6", "#ffe0ef", "#dbeafe", "#fff3c4", "#e2e8f0",
+    "#d1fae5", "#ffe4d0", "#6e42ff", "#1b1c39", "#000000", "#ffffff",
+    "#f8f8ff", "#25d366", "#ff0000", "#808080", "#f5f5f5", "#fffef5",
+  ];
+
+  test("con cualquier color, la burbuja se distingue del fondo", () => {
+    for (const c of COLORES) {
+      const p = paletaChat(c);
+      const d = Math.abs(claridad(p.out) - claridad(p.canvas));
+      esperar(d).mayorQue(0.03, `${c}: burbuja y fondo casi iguales`);
+    }
+  });
+
+  test("las dos burbujas nunca se confunden entre sí", () => {
+    for (const c of COLORES) {
+      const p = paletaChat(c);
+      const d = Math.abs(claridad(p.out) - claridad(p.in));
+      esperar(d).mayorQue(0.04, `${c}: burbuja propia y la del cliente casi iguales`);
+    }
+  });
+
+  test("el texto siempre se lee sobre su burbuja", () => {
+    for (const c of COLORES) {
+      const p = paletaChat(c);
+      const d = Math.abs(claridad(p.out) - claridad(p.textOut));
+      esperar(d).mayorQue(0.35, `${c}: texto poco legible`);
+    }
+  });
+
+  test("un color inválido no rompe: cae al violeta de Demandu", () => {
+    for (const malo of ["", "rojo", "#zzz", null, undefined, "javascript:alert(1)"]) {
+      const p = paletaChat(malo);
+      esperar(/^#[0-9a-f]{6}$/i.test(p.out)).verdadero(`${malo} produjo "${p.out}"`);
+    }
+    esperar(paletaChat(null).out.toLowerCase()).igual("#e7ddff");
+  });
+});
+
+// ─── País y bandera del lead ─────────────────────────────────────────────────
+describe("País del lead por su teléfono", () => {
+  test("reconoce los países donde venderemos", () => {
+    esperar(paisDesdeTelefono("5215580044107")).igual("MX");
+    esperar(paisDesdeTelefono("+57 300 123 4567")).igual("CO");
+    esperar(paisDesdeTelefono("5491123456789")).igual("AR");
+    esperar(paisDesdeTelefono("34600123456")).igual("ES");
+    esperar(paisDesdeTelefono("13055551234")).igual("US");
+  });
+
+  test("distingue prefijos que comparten inicio (+1 vs +1809)", () => {
+    esperar(paisDesdeTelefono("18095551234")).igual("DO");
+    esperar(paisDesdeTelefono("17875551234")).igual("PR");
+    esperar(paisDesdeTelefono("12125551234")).igual("US");
+  });
+
+  test("sin teléfono no inventa un país", () => {
+    esperar(paisDesdeTelefono("")).igual(null);
+    esperar(paisDesdeTelefono(null)).igual(null);
+    esperar(paisDesdeTelefono("abc")).igual(null);
+  });
+
+  test("la bandera y el nombre salen bien, y no truenan con basura", () => {
+    esperar(bandera("MX")).igual("🇲🇽");
+    esperar(bandera("mx")).igual("🇲🇽");
+    esperar(bandera(null)).igual("🏳️");
+    esperar(bandera("XXXX")).igual("🏳️");
+    esperar(nombrePais("MX")).contiene("xic");
+    esperar(nombrePais(null)).igual("—");
+  });
+});
+
+// ─── Respuestas rápidas ──────────────────────────────────────────────────────
+describe("Respuestas rápidas", () => {
+  test("el atajo queda limpio y usable", () => {
+    esperar(limpiarAtajo("/Gracias")).igual("gracias");
+    esperar(limpiarAtajo("  SALUDO ")).igual("saludo");
+    esperar(limpiarAtajo("envío-1")).igual("envio-1");
+    esperar(limpiarAtajo("a b c")).igual("abc");
+    esperar(limpiarAtajo("///x")).igual("x");
+    esperar(limpiarAtajo("")).igual("");
+  });
+
+  test("las variables se rellenan con los datos del lead", () => {
+    const r = rellenar("Hola {{nombre}}, te escribe {{agente}}.", { nombre: "Ana", agente: "Luis" });
+    esperar(r).igual("Hola Ana, te escribe Luis.");
+  });
+
+  test("si falta un dato, el texto no queda cojo", () => {
+    esperar(rellenar("Hola {{nombre}}, ¿cómo estás?", { nombre: "" })).igual("Hola, ¿cómo estás?");
+    esperar(rellenar("Hola {{nombre}}!", {})).igual("Hola!");
+    esperar(rellenar("{{noExiste}} listo", {})).igual("listo");
+  });
+
+  test("la búsqueda prioriza el atajo sobre el contenido", () => {
+    const lista = [
+      { id: "1", shortcut: "gracias", title: "Agradecer", body: "Mil gracias", category: null, sort: 0, uses: 0 },
+      { id: "2", shortcut: "precio", title: "Cotización", body: "Gracias por preguntar el precio", category: null, sort: 1, uses: 0 },
+    ];
+    esperar(filtrar(lista, "graci").map((r) => r.id)).igual(["1", "2"], "primero el del atajo");
+    esperar(filtrar(lista, "coti").map((r) => r.id)).igual(["2"]);
+    esperar(filtrar(lista, "").length).igual(2, "sin búsqueda, salen todas");
+    esperar(filtrar(lista, "zzz").length).igual(0);
+  });
+});
+
+// ─── Silencio de notificaciones ──────────────────────────────────────────────
+describe("Horario de silencio", () => {
+  const conHorario = (desde, hasta) => ({ ...PREFS_DEFAULT, silencioActivo: true, silencioDesde: desde, silencioHasta: hasta });
+  const alas = (h, m = 0) => { const d = new Date(2026, 0, 15, h, m); return d; };
+
+  test("rango normal (09:00 a 18:00)", () => {
+    const p = conHorario("09:00", "18:00");
+    esperar(enSilencio(p, alas(10))).verdadero();
+    esperar(enSilencio(p, alas(20))).falso();
+    esperar(enSilencio(p, alas(8, 59))).falso();
+  });
+
+  test("rango que cruza la medianoche (20:00 a 08:00) — el caso que se rompe siempre", () => {
+    const p = conHorario("20:00", "08:00");
+    esperar(enSilencio(p, alas(22))).verdadero("22:00 debe estar en silencio");
+    esperar(enSilencio(p, alas(3))).verdadero("03:00 debe estar en silencio");
+    esperar(enSilencio(p, alas(12))).falso("mediodía NO debe estar en silencio");
+    esperar(enSilencio(p, alas(8, 1))).falso();
+  });
+
+  test("apagar los avisos manda sobre todo lo demás", () => {
+    esperar(debeAvisar({ ...PREFS_DEFAULT, activo: false })).falso();
+    esperar(debeAvisar(PREFS_DEFAULT)).verdadero();
+  });
+
+  test("silenciar un rato caduca solo", () => {
+    esperar(enSilencio({ ...PREFS_DEFAULT, silenciarHasta: Date.now() + 60000 })).verdadero();
+    esperar(enSilencio({ ...PREFS_DEFAULT, silenciarHasta: Date.now() - 60000 })).falso();
+  });
+});
+
+// ─── Resultados: fechas y cómo se leen los números ──────────────────────────
+describe("Resultados: rangos de fecha", () => {
+  // Un martes cualquiera a media tarde, para que los cálculos sean predecibles.
+  const AHORA = new Date(2026, 7, 18, 15, 30); // 18 de agosto de 2026
+
+  test("'hoy' cubre el día completo, ni un minuto de mañana", () => {
+    const { desde, hasta } = rangoDePreset("hoy", AHORA);
+    esperar(aFechaCorta(desde)).igual("2026-08-18");
+    esperar(aFechaCorta(hasta)).igual("2026-08-19", "el fin es exclusivo: arranque del día siguiente");
+    esperar(desde.getHours()).igual(0, "empieza a medianoche, no a la hora actual");
+  });
+
+  test("'7 días' incluye hoy y los seis anteriores", () => {
+    const { desde, hasta } = rangoDePreset("7d", AHORA);
+    esperar(aFechaCorta(desde)).igual("2026-08-12");
+    esperar(aFechaCorta(hasta)).igual("2026-08-19");
+    esperar(Math.round((hasta - desde) / 86400000)).igual(7);
+  });
+
+  test("'este mes' arranca el día 1", () => {
+    esperar(aFechaCorta(rangoDePreset("mes", AHORA).desde)).igual("2026-08-01");
+  });
+
+  test("'trimestre' arranca en julio para una fecha de agosto", () => {
+    esperar(aFechaCorta(rangoDePreset("trimestre", AHORA).desde)).igual("2026-07-01");
+  });
+
+  test("'este año' arranca el 1 de enero", () => {
+    esperar(aFechaCorta(rangoDePreset("anio", AHORA).desde)).igual("2026-01-01");
+  });
+
+  test("la agrupación se adapta al largo del rango", () => {
+    // Un año agrupado por día son 365 barras: ilegible en cualquier pantalla.
+    const dias = (n) => ({ desde: new Date(2026, 0, 1), hasta: new Date(2026, 0, 1 + n) });
+    const { desde: d1, hasta: h1 } = dias(7);
+    esperar(agrupacionSugerida(d1, h1)).igual("day");
+    const { desde: d2, hasta: h2 } = dias(120);
+    esperar(agrupacionSugerida(d2, h2)).igual("week");
+    const { desde: d3, hasta: h3 } = dias(700);
+    esperar(agrupacionSugerida(d3, h3)).igual("month");
+    const { desde: d4, hasta: h4 } = dias(2000);
+    esperar(agrupacionSugerida(d4, h4)).igual("quarter");
+  });
+
+  test("una fecha escrita a mano se lee bien, y una basura no rompe nada", () => {
+    esperar(aFechaCorta(deFechaCorta("2026-08-18"))).igual("2026-08-18");
+    // El campo "hasta" guarda el día siguiente, para que el último día entre entero.
+    esperar(aFechaCorta(deFechaCorta("2026-08-18", true))).igual("2026-08-19");
+    esperar(deFechaCorta("18/08/2026")).igual(null);
+    esperar(deFechaCorta("")).igual(null);
+    esperar(deFechaCorta(null)).igual(null);
+  });
+});
+
+describe("Resultados: cómo se leen los números", () => {
+  test("los tiempos de respuesta se dicen en palabras", () => {
+    esperar(duracion(0)).igual("0 s");
+    esperar(duracion(45)).igual("45 s");
+    esperar(duracion(120)).igual("2 min");
+    esperar(duracion(3600)).igual("1 h");
+    esperar(duracion(4800)).igual("1 h 20 min");
+    esperar(duracion(172800)).igual("2 d");
+  });
+
+  test("sin respuestas se muestra un guion, NO cero", () => {
+    // Un "0 s" se leería como "contestamos al instante", que es lo contrario.
+    esperar(duracion(null)).igual("—");
+    esperar(duracion(undefined)).igual("—");
+    esperar(porcentaje(null)).igual("—");
+  });
+
+  test("los porcentajes y los miles se ven como espera un cliente", () => {
+    esperar(porcentaje(66.666, 1)).igual("66.7 %");
+    esperar(porcentaje(0)).igual("0 %");
+    esperar(numero(null)).igual("0");
+    esperar(numero(12345).replace(/\s|,/g, "")).igual("12345");
+  });
+
+  test("las etiquetas del eje cambian según la agrupación", () => {
+    esperar(etiquetaPeriodo("2026-08-18", "day")).igual("18 ago");
+    esperar(etiquetaPeriodo("2026-08-01", "month")).igual("ago 2026");
+    esperar(etiquetaPeriodo("2026-07-01", "quarter")).igual("T3 2026");
+    esperar(etiquetaPeriodo("2026-01-01", "year")).igual("2026");
+    esperar(etiquetaPeriodo("", "day")).igual("", "una fecha vacía no revienta la gráfica");
+  });
+
+  test("la efectividad de un agente sin cierres es '—', no 0 %", () => {
+    esperar(efectividadAgente({ ganadas: 3, perdidas: 1 })).igual(75);
+    esperar(efectividadAgente({ ganadas: 0, perdidas: 2 })).igual(0);
+    esperar(efectividadAgente({ ganadas: 0, perdidas: 0 })).igual(null, "sin cierres no se puede opinar");
+  });
+});
+
+process.exit(await correrPruebas());

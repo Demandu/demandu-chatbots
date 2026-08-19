@@ -30,6 +30,7 @@ type Convo = {
   /** Cuándo pidió el lead hablar con una persona (null = no pidió) */
   handoff_requested_at: string | null;
   state_id: string | null;
+  opportunity_id?: string | null;
   assignee_member_id: string | null;
   contact: Contact | null;
   state: State | null;
@@ -121,7 +122,7 @@ export function InboxClient({
   const sel = convos.find((c) => c.id === selId) ?? null;
 
   const selectSql =
-    "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, " +
+    "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, " +
     "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
     "state:conversation_states(id,name,color), member:team_members(id,name)";
 
@@ -229,6 +230,12 @@ export function InboxClient({
     const st = states.find((s) => s.id === stateId) ?? null;
     setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, state_id: stateId, state: st } : c)));
     await sb.from("conversations").update({ state_id: stateId }).eq("id", sel.id);
+    // La etapa que se ve aquí y la columna del Embudo son la MISMA cosa: si
+    // solo se guardara en la conversación, el agente movería el estado desde
+    // el chat y la tarjeta se quedaría quieta en el tablero.
+    if ((sel as any).opportunity_id) {
+      await sb.from("opportunities").update({ stage_id: stateId }).eq("id", (sel as any).opportunity_id);
+    }
   };
   const setAssignee = async (memberId: string) => {
     if (!sel) return;

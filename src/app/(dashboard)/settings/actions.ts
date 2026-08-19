@@ -98,6 +98,15 @@ export async function deleteLeadGroup(formData: FormData) {
 }
 
 // ── Estados de conversación ──────────────────────────────────────────────────
+// `outcome` es lo que hace posible medir la efectividad de cierre: la
+// plataforma no puede adivinar si "En proceso" es una venta o no, así que lo
+// dice el cliente. La base solo acepta estos tres valores.
+const RESULTADOS = new Set(["abierto", "ganado", "perdido"]);
+function leerResultado(v: FormDataEntryValue | null): string {
+  const r = s(v);
+  return RESULTADOS.has(r) ? r : "abierto";
+}
+
 export async function createState(formData: FormData) {
   const name = s(formData.get("name"));
   const color = s(formData.get("color")) || "#3A85FF";
@@ -106,8 +115,13 @@ export async function createState(formData: FormData) {
   if (!orgId) return;
   await createClient()
     .from("conversation_states")
-    .insert({ org_id: orgId, name, color, is_default: false, sort: 100 });
+    .insert({
+      org_id: orgId, name, color, is_default: false, sort: 100,
+      outcome: leerResultado(formData.get("outcome")),
+      pipeline_id: s(formData.get("pipeline_id")) || null,
+    });
   revalidatePath("/settings/states");
+  revalidatePath("/analytics");
 }
 export async function updateState(formData: FormData) {
   const id = s(formData.get("id"));
@@ -116,9 +130,12 @@ export async function updateState(formData: FormData) {
   if (!id || !name) return;
   await createClient()
     .from("conversation_states")
-    .update({ name, color })
+    .update({ name, color, outcome: leerResultado(formData.get("outcome")) })
     .eq("id", id);
+  revalidatePath("/crm");
   revalidatePath("/settings/states");
+  revalidatePath("/analytics");
+  revalidatePath("/crm");
 }
 export async function deleteState(formData: FormData) {
   await createClient()
@@ -126,6 +143,69 @@ export async function deleteState(formData: FormData) {
     .delete()
     .eq("id", s(formData.get("id")));
   revalidatePath("/settings/states");
+  revalidatePath("/analytics");
+}
+
+// ── Embudos ──────────────────────────────────────────────────────────────────
+// Un embudo agrupa etapas. La mayoría de los clientes va a tener uno solo
+// ("Ventas"); los que venden cosas muy distintas quieren separarlos.
+export async function createPipeline(formData: FormData) {
+  const name = s(formData.get("name"));
+  if (!name) return;
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  const sb = createClient();
+  const { count } = await sb.from("pipelines").select("id", { count: "exact", head: true });
+  const { data: nuevo } = await sb
+    .from("pipelines")
+    .insert({ org_id: orgId, name, is_default: (count ?? 0) === 0, sort: count ?? 0 })
+    .select("id")
+    .single();
+
+  // Un embudo sin etapas no sirve de nada: se estrena con las básicas.
+  if (nuevo?.id) {
+    await sb.from("conversation_states").insert([
+      { org_id: orgId, pipeline_id: nuevo.id, name: "Nuevo",      color: "#3A85FF", sort: 1, outcome: "abierto" },
+      { org_id: orgId, pipeline_id: nuevo.id, name: "Contactado", color: "#6E42FF", sort: 2, outcome: "abierto" },
+      { org_id: orgId, pipeline_id: nuevo.id, name: "Ganada",     color: "#3DDC97", sort: 8, outcome: "ganado" },
+      { org_id: orgId, pipeline_id: nuevo.id, name: "Perdida",    color: "#FF6B6B", sort: 9, outcome: "perdido" },
+    ]);
+  }
+  revalidatePath("/settings/states");
+  revalidatePath("/crm");
+}
+
+export async function updatePipeline(formData: FormData) {
+  const id = s(formData.get("id"));
+  const name = s(formData.get("name"));
+  if (!id || !name) return;
+  const sb = createClient();
+  const orgId = await getCurrentOrgId();
+  const porDefecto = formData.get("is_default") === "on";
+
+  // Solo puede haber uno por defecto: es el que abre la pantalla de Embudo y
+  // al que se enganchan las conversaciones nuevas.
+  if (porDefecto && orgId) {
+    await sb.from("pipelines").update({ is_default: false }).eq("org_id", orgId);
+  }
+  await sb
+    .from("pipelines")
+    .update({ name, auto_create: formData.get("auto_create") === "on", is_default: porDefecto })
+    .eq("id", id);
+  revalidatePath("/settings/states");
+  revalidatePath("/crm");
+}
+
+export async function deletePipeline(formData: FormData) {
+  const id = s(formData.get("id"));
+  if (!id) return;
+  const sb = createClient();
+  const { count } = await sb.from("pipelines").select("id", { count: "exact", head: true });
+  // Nunca dejar al cliente sin ningún embudo: se quedaría sin pantalla.
+  if ((count ?? 0) <= 1) return;
+  await sb.from("pipelines").delete().eq("id", id);
+  revalidatePath("/settings/states");
+  revalidatePath("/crm");
 }
 
 // ── Atributos personalizados ─────────────────────────────────────────────────

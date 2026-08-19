@@ -2,6 +2,7 @@ import { getNode, getStartNode, defaultNext, buttonTarget } from "./engine";
 import type { Flow, DemanduNode, ConditionRule, FlowButton } from "./types";
 import { aiAnswer, type AiSettings } from "@/lib/ai/answer";
 import { detectarAtajo, leerAtajos, type Atajos } from "./shortcuts";
+import { abrirRecorrido, avanzarRecorrido, cerrarRecorrido, type MotivoFin } from "./flowRuns";
 
 /**
  * Motor de conversación para canales que NO envían por una API externa
@@ -23,10 +24,21 @@ interface Ctx {
   botId: string;
   aiSettings: AiSettings | null;
   lastUserText: string;
+  /** Analítica: bloques recorridos en este turno y cómo terminó el recorrido. */
+  pasos: number;
+  ultimoNodo: string | null;
+  finMotivo: MotivoFin | null;
 }
 
 function interp(t: string | undefined, vars: Record<string, string>) {
-  return (t ?? "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_: string, k: string) => vars[k] ?? "");
+  const out = (t ?? "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_: string, k: string) => vars[k] ?? "");
+  // Si una variable vino vacía, no dejamos "¡Hola ! ..." ni dobles espacios.
+  // (Mismo tratamiento que en el motor de WhatsApp.)
+  return out
+    .replace(/([,;:])\s*([!?.…])/g, "$2")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +([,.!?…])/g, "$1")
+    .trim();
 }
 
 /**
@@ -112,6 +124,9 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
   while (current && guard++ < 80) {
     const node = getNode(ctx.flow, current);
     if (!node) break;
+    // Analítica: cada bloque que se pisa cuenta como un paso del recorrido.
+    ctx.pasos++;
+    ctx.ultimoNodo = node.id;
     switch (node.type) {
       case "start":
         current = node.data.to ?? defaultNext(ctx.flow, node);
@@ -132,10 +147,12 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
       case "assign":
         push(ctx, node.data.text ?? "Te comunico con un asesor, un momento 🙌");
         await ctx.admin.from("conversations").update({ status: "assigned" }).eq("id", ctx.conversationId);
+        ctx.finMotivo = "agente";
         return null;
       case "end":
         if (node.data.text) push(ctx, node.data.text);
         await ctx.admin.from("conversations").update({ status: "closed" }).eq("id", ctx.conversationId);
+        ctx.finMotivo = "completado";
         return null;
       case "media":
         if (node.data.mediaUrl) push(ctx, node.data.mediaUrl);
@@ -199,6 +216,27 @@ export function chooseWebFlow(flows: any[], text: string, isReturning: boolean, 
   );
 }
 
+/**
+ * Guarda en la Bandeja lo que contestó el bot.
+ *
+ * OJO: `payload` es NOT NULL con default '{}' — nunca mandar null aquí,
+ * porque invalida el insert completo y el bot "contesta" sin quedar registrado.
+ */
+async function guardarSalida(ctx: Ctx, opts: { admin: any; conversationId: string; orgId: string }) {
+  if (!ctx.out.length) return;
+  const { error } = await opts.admin.from("messages").insert(
+    ctx.out.map((m) => ({
+      conversation_id: opts.conversationId,
+      org_id: opts.orgId,
+      direction: "outbound",
+      sender: "bot",
+      body: m.text,
+      payload: m.buttons ? { buttons: m.buttons } : {},
+    })),
+  );
+  if (error) console.error("[webchat] no se guardaron los mensajes del bot:", error.message);
+}
+
 export async function runWebFlow(opts: {
   flow: Flow;
   orgId: string;
@@ -211,7 +249,16 @@ export async function runWebFlow(opts: {
   aiSettings?: AiSettings | null;
   /** Atajos configurados en el chatbot (0 = reiniciar, 1 = persona, etc.) */
   atajos?: any;
-}): Promise<{ vars: Record<string, string>; awaiting: Awaiting; out: OutMsg[]; hintEnviado?: boolean }> {
+  /** Analítica: nombre del flujo, para que el histórico no quede anónimo. */
+  flowName?: string | null;
+}): Promise<{
+  vars: Record<string, string>;
+  awaiting: Awaiting;
+  out: OutMsg[];
+  hintEnviado?: boolean;
+  /** Recorrido abierto (null si terminó). Se guarda en flow_state. */
+  runId?: string | null;
+}> {
   const vars: Record<string, string> = { ...(opts.flowState?.vars ?? {}) };
   const ctx: Ctx = {
     flow: opts.flow,
@@ -223,7 +270,22 @@ export async function runWebFlow(opts: {
     botId: opts.botId,
     aiSettings: opts.aiSettings ?? null,
     lastUserText: opts.isStart ? "" : (opts.text ?? ""),
+    pasos: 0,
+    ultimoNodo: null,
+    finMotivo: null,
   };
+
+  // Analítica: el recorrido que venía abierto de turnos anteriores.
+  let runId: string | null = (opts.flowState?.run_id as string) ?? null;
+  const abrirNuevo = () =>
+    abrirRecorrido(opts.admin, {
+      orgId: opts.orgId,
+      conversationId: opts.conversationId,
+      botId: opts.botId,
+      flowId: opts.flow.id ?? null,
+      flowName: opts.flowName ?? null,
+      channel: "webchat",
+    });
 
   const atajos: Atajos = leerAtajos(opts.atajos);
 
@@ -242,8 +304,15 @@ export async function runWebFlow(opts: {
         unread: 1,
       })
       .eq("id", opts.conversationId);
+    // Analítica: el recorrido termina aquí, se lo lleva una persona.
+    await cerrarRecorrido(opts.admin, runId, "agente");
+    runId = null;
   } else if (atajo === "reset") {
     push(ctx, atajos.reset.reply);
+    // Analítica: se cierra el recorrido anterior y empieza uno nuevo, para no
+    // contar como "un recorrido larguísimo" lo que en realidad fueron dos.
+    await cerrarRecorrido(opts.admin, runId, "reiniciado");
+    runId = null;
   }
 
   const awaiting = opts.flowState?.awaiting as Awaiting;
@@ -270,36 +339,54 @@ export async function runWebFlow(opts: {
         (b) => b.id === opts.text || (b.label ?? "").toLowerCase() === t,
       );
       startId = btn && node ? buttonTarget(opts.flow, node.id, btn) : node ? defaultNext(opts.flow, node) : undefined;
+
+      // Escribió algo que no era ninguna opción y el bloque no tiene salida
+      // por defecto: antes el bot se quedaba MUDO y el lead quedaba atorado.
+      // Ahora se vuelven a mostrar las opciones.
+      if (!btn && !startId && node) {
+        push(ctx, "No entendí esa respuesta 🤔 Elige una de las opciones:");
+        push(ctx, node.data.text ?? "", node.data.buttons);
+        await guardarSalida(ctx, opts);
+        // El recorrido sigue vivo: el lead está atorado en el mismo bloque.
+        await avanzarRecorrido(opts.admin, runId, 1, node.id);
+        return {
+          vars,
+          awaiting: { nodeId: node.id, type: "buttons" },
+          out: ctx.out,
+          hintEnviado: !!opts.flowState?.hintEnviado,
+          runId,
+        };
+      }
     }
   } else {
     startId = getStartNode(opts.flow)?.id;
   }
 
+  // Analítica: si vamos a recorrer bloques y no hay recorrido abierto, se abre
+  // uno. Cubre tanto el arranque normal como las conversaciones que ya venían
+  // a medias desde antes de que existiera esta medición.
+  if (startId && !runId) runId = await abrirNuevo();
+
   const nextAwait = atajo === "agent" ? null : await runFrom(startId, ctx);
 
   // Recordatorio de los atajos: una sola vez por conversación.
   let hintEnviado = !!opts.flowState?.hintEnviado;
-  if (!hintEnviado && atajos.hint.enabled && atajos.hint.onStart && atajos.hint.text && atajo !== "agent") {
+  if (!hintEnviado && ctx.out.length && atajos.hint.enabled && atajos.hint.onStart && atajos.hint.text && atajo !== "agent") {
     push(ctx, atajos.hint.text);
     hintEnviado = true;
   }
 
-  // Guarda las respuestas del bot en la Bandeja.
-  // OJO: `payload` es NOT NULL con default '{}' — nunca mandar null aquí,
-  // porque invalida el insert completo y el bot "contesta" sin quedar registrado.
-  if (ctx.out.length) {
-    const { error } = await opts.admin.from("messages").insert(
-      ctx.out.map((m) => ({
-        conversation_id: opts.conversationId,
-        org_id: opts.orgId,
-        direction: "outbound",
-        sender: "bot",
-        body: m.text,
-        payload: m.buttons ? { buttons: m.buttons } : {},
-      })),
-    );
-    if (error) console.error("[webchat] no se guardaron los mensajes del bot:", error.message);
+  await guardarSalida(ctx, opts);
+
+  // Analítica: si el bot ya no espera nada, el recorrido terminó.
+  // Sin bloque "Cerrar el flujo" pero habiendo llegado al final del gráfico
+  // también cuenta como completado: el lead sí recorrió el flujo entero.
+  if (runId && nextAwait === null && atajo !== "agent") {
+    await cerrarRecorrido(opts.admin, runId, ctx.finMotivo ?? "completado", ctx.pasos, ctx.ultimoNodo);
+    runId = null;
+  } else if (runId) {
+    await avanzarRecorrido(opts.admin, runId, ctx.pasos, ctx.ultimoNodo);
   }
 
-  return { vars, awaiting: nextAwait, out: ctx.out, hintEnviado };
+  return { vars, awaiting: nextAwait, out: ctx.out, hintEnviado, runId };
 }

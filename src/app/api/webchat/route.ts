@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runWebFlow, chooseWebFlow } from "@/lib/flow/webRuntime";
+import { cerrarRecorrido } from "@/lib/flow/flowRuns";
 import type { Flow } from "@/lib/flow/types";
 
 export const dynamic = "force-dynamic";
@@ -139,7 +140,7 @@ export async function POST(req: Request) {
 
     const { data: flowRows } = await admin
       .from("flows")
-      .select("id, graph, trigger_type, keywords, enabled")
+      .select("id, name, graph, trigger_type, keywords, enabled")
       .eq("bot_id", bot.id);
 
     const flows = (flowRows ?? []).filter((f: any) => f.enabled !== false);
@@ -152,7 +153,14 @@ export async function POST(req: Request) {
     const flow = { id: chosen.id, name: "", nodes: graph.nodes ?? [], edges: graph.edges ?? [] } as Flow;
     if (!flow.nodes.length) return json({ sessionId, widget, messages: [] });
 
-    const flowState = state.flow_id === chosen.id ? state : { vars: state.vars ?? {} };
+    // Analítica: si un disparador movió la charla a otro flujo, el recorrido
+    // anterior no quedó "abandonado": cambió. Se cierra con ese motivo.
+    const mismoFlujo = state.flow_id === chosen.id;
+    if (!mismoFlujo && state.run_id) {
+      await cerrarRecorrido(admin, state.run_id, "cambio");
+    }
+
+    const flowState = mismoFlujo ? state : { vars: state.vars ?? {} };
     const result = await runWebFlow({
       flow,
       orgId: bot.org_id,
@@ -164,11 +172,20 @@ export async function POST(req: Request) {
       botId: bot.id,
       aiSettings: (bot as any).ai ?? null,
       atajos: (bot as any).shortcuts ?? null,
+      flowName: (chosen as any).name ?? null,
     });
 
     await admin
       .from("conversations")
-      .update({ flow_state: { vars: result.vars, awaiting: result.awaiting, flow_id: chosen.id, hintEnviado: result.hintEnviado } })
+      .update({
+        flow_state: {
+          vars: result.vars,
+          awaiting: result.awaiting,
+          flow_id: chosen.id,
+          hintEnviado: result.hintEnviado,
+          run_id: result.runId ?? null,
+        },
+      })
       .eq("id", conv.id);
 
     return json({ sessionId, widget, messages: result.out });

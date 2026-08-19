@@ -65,10 +65,15 @@ export function hasFeature(channel: Channel, key: FeatureKey): boolean {
 // `desc` = frase corta en la paleta (qué hace). `lana` = lo que Lana "dice"
 // como tutorial en texto. Mini-videos por bloque: fase posterior.
 // ---------------------------------------------------------------------------
+// OJO: estas claves DEBEN coincidir una a una con `NODE_META` de
+// `src/lib/flow/types.ts`, que es lo que el cliente arrastra de verdad en el
+// constructor. Si documentamos un bloque que no existe, prometemos algo que no
+// está; si falta uno, ese bloque se queda sin explicación ni tutorial de Lana.
 export type ComponentKey =
-  | "text" | "media" | "buttons" | "list" | "carousel" | "question"
-  | "condition" | "delay" | "ai" | "human" | "assign" | "tag" | "redirect"
-  | "template" | "catalog" | "form" | "location" | "payment" | "end";
+  | "message" | "media" | "question" | "buttons" | "condition" | "ai" | "delay"
+  | "action" | "api" | "calendar" | "tags" | "human" | "assign" | "redirect"
+  | "catalog" | "payment" | "whatsapp_flow" | "template"
+  | "ig_story" | "ig_comment" | "ig_dm" | "fb_comment" | "web_form" | "end";
 
 const ALL: Channel[] = ["whatsapp", "instagram", "messenger", "webchat"];
 
@@ -78,24 +83,29 @@ export const COMPONENTS: Record<ComponentKey, {
   lana: string;
   channels: Channel[];
 }> = {
-  text:      { label: "Mensaje", desc: "Envía un texto a tu cliente.", lana: "Es el bloque más básico: escribe lo que tu chatbot le dirá al cliente. Puedes usar {{nombre}} para saludarlo por su nombre.", channels: ALL },
+  message:   { label: "Mensaje", desc: "Envía un texto a tu cliente.", lana: "Es el bloque más básico: escribe lo que tu chatbot le dirá al cliente. Puedes usar {{nombre}} para saludarlo por su nombre.", channels: ALL },
   media:     { label: "Imagen / archivo", desc: "Manda una foto, video o PDF.", lana: "Sube una imagen, video o documento. Ideal para catálogos, menús o comprobantes.", channels: ALL },
   buttons:   { label: "Botones", desc: "Da opciones para elegir con un toque.", lana: "En vez de que el cliente escriba, le das opciones listas para tocar. En WhatsApp e Instagram puedes poner hasta 3.", channels: ALL },
-  list:      { label: "Lista de opciones", desc: "Un menú desplegable de opciones.", lana: "Un menú con varias opciones agrupadas. Perfecto cuando tienes más de 3 opciones. Funciona en WhatsApp y en tu web.", channels: ["whatsapp", "webchat"] },
-  carousel:  { label: "Carrusel de tarjetas", desc: "Varias tarjetas deslizables con foto.", lana: "Muestra varias tarjetas con foto y botón que el cliente desliza. Genial para productos en Instagram, Messenger o tu web.", channels: ["instagram", "messenger", "webchat"] },
   question:  { label: "Pregunta", desc: "Pide un dato (nombre, correo…) y lo guarda.", lana: "Le preguntas algo al cliente (su nombre, correo, teléfono…) y el chatbot lo guarda para usarlo después.", channels: ALL },
   condition: { label: "Si… entonces", desc: "Toma un camino según la respuesta.", lana: "Hace que la conversación tome distintos caminos según lo que el cliente respondió. Por ejemplo: si dijo 'sí', va por aquí; si no, por allá.", channels: ALL },
   delay:     { label: "Espera", desc: "Pausa unos segundos antes de seguir.", lana: "Agrega una pausa (o el 'escribiendo…') para que la conversación se sienta más natural.", channels: ALL },
   ai:        { label: "Respuesta con IA (Lana)", desc: "Deja que la IA responda con tus datos.", lana: "Yo (Lana) respondo con inteligencia artificial usando la info de tu negocio. Útil para preguntas abiertas que no tienen un guion fijo.", channels: ALL },
   human:     { label: "Pasar a un humano", desc: "Avisa a tu equipo para que conteste.", lana: "Cuando el cliente necesita a una persona, este bloque avisa a tu equipo y les pasa la conversación.", channels: ALL },
   assign:    { label: "Asignar a un agente", desc: "Reparte el chat a un equipo o persona.", lana: "Reparte la conversación entre tu equipo (por turnos, por área u horario) para que nadie quede sin atender.", channels: ALL },
-  tag:       { label: "Etiquetar", desc: "Marca al contacto (ej. 'interesado').", lana: "Le pones una etiqueta al contacto (por ejemplo 'interesado' o 'cliente') para segmentarlo después.", channels: ALL },
+  tags:      { label: "Etiquetar", desc: "Marca al contacto (ej. 'interesado').", lana: "Le pones una etiqueta al contacto (por ejemplo 'interesado' o 'cliente') para segmentarlo después.", channels: ALL },
   redirect:  { label: "Ir a otra conversación", desc: "Salta a otro flujo del chatbot.", lana: "Envía al cliente a otra de tus conversaciones automáticas. Sirve para reutilizar partes sin repetirlas.", channels: ALL },
   template:  { label: "Enviar plantilla de WhatsApp", desc: "Mensaje aprobado por Meta.", lana: "Envía una plantilla aprobada por Meta. Es la única forma de escribirle primero a alguien en WhatsApp fuera de las 24 horas.", channels: ["whatsapp"] },
   catalog:   { label: "Mostrar producto / catálogo", desc: "Vende productos por WhatsApp.", lana: "Muestra productos de tu catálogo directo en el chat para que el cliente compre sin salir de WhatsApp.", channels: ["whatsapp"] },
-  form:      { label: "Formulario (WhatsApp Flow)", desc: "Pide varios datos en una sola pantalla.", lana: "Un formulario nativo de WhatsApp: el cliente llena varios campos en una sola pantalla, sin ir pregunta por pregunta.", channels: ["whatsapp"] },
-  location:  { label: "Pedir ubicación", desc: "Solicita la ubicación del cliente.", lana: "Le pides al cliente que comparta su ubicación. Útil para envíos o para encontrar la sucursal más cercana.", channels: ["whatsapp"] },
+  whatsapp_flow: { label: "Formulario (WhatsApp Flow)", desc: "Pide varios datos en una sola pantalla.", lana: "Un formulario nativo de WhatsApp: el cliente llena varios campos en una sola pantalla, sin ir pregunta por pregunta.", channels: ["whatsapp"] },
   payment:   { label: "Cobro / pago", desc: "Cobra dentro del chat.", lana: "Cobra dentro de WhatsApp con tu pasarela de pago. (En otros canales, más adelante, será con un enlace de pago.)", channels: ["whatsapp"] },
+  action:    { label: "Acción / Webhook", desc: "Avisa a otro sistema tuyo.", lana: "Manda la información a otro programa que uses (tu CRM, tu hoja de cálculo, tu sistema de pedidos). Si no sabes qué poner aquí, pídenos ayuda.", channels: ALL },
+  api:       { label: "Consultar un sistema", desc: "Pregunta a otro sistema y sigue según la respuesta.", lana: "Le pregunta algo a otro sistema tuyo — por ejemplo si hay inventario — y la conversación sigue por un camino u otro según lo que conteste.", channels: ALL },
+  calendar:  { label: "Agendar cita", desc: "Reserva en tu Google Calendar.", lana: "El cliente elige día y hora, y la cita queda en tu Google Calendar. Antes hay que conectar tu cuenta de Google en Configuración.", channels: ALL },
+  ig_story:  { label: "Responder Historia", desc: "Contesta a quien responde tus historias.", lana: "Cuando alguien responde o menciona tu historia de Instagram, el chatbot le contesta solo. Buenísimo para convertir seguidores en clientes.", channels: ["instagram"] },
+  ig_comment:{ label: "Comentarios de Instagram", desc: "Responde comentarios y sigue por privado.", lana: "Cuando alguien comenta tu publicación, el chatbot le responde en el comentario y le abre un mensaje privado para seguir la conversación.", channels: ["instagram"] },
+  ig_dm:     { label: "Mensaje directo de Instagram", desc: "Envía un privado de Instagram.", lana: "Manda un mensaje directo por Instagram. Se usa junto con el bloque de comentarios para pasar de lo público a lo privado.", channels: ["instagram"] },
+  fb_comment:{ label: "Comentarios de Facebook", desc: "Responde comentarios y sigue por Messenger.", lana: "Igual que en Instagram: responde el comentario en tu publicación de Facebook y sigue la charla por Messenger.", channels: ["messenger"] },
+  web_form:  { label: "Formulario en tu sitio", desc: "Pide varios datos en el widget.", lana: "Muestra un formulario dentro del chat de tu sitio web para pedir varios datos de una sola vez.", channels: ["webchat"] },
   end:       { label: "Fin", desc: "Termina la conversación.", lana: "Cierra la conversación automática. Puedes poner un mensaje de despedida.", channels: ALL },
 };
 
@@ -104,6 +114,10 @@ export function componentsFor(channel: Channel): ComponentKey[] {
     COMPONENTS[k].channels.includes(channel)
   );
 }
-export function componentAllowed(channel: Channel, key: ComponentKey): boolean {
-  return COMPONENTS[key].channels.includes(channel);
+/**
+ * Un bloque que ya no existe (por ejemplo, en un flujo guardado hace meses)
+ * devuelve `false` en vez de tumbar la pantalla.
+ */
+export function componentAllowed(channel: Channel, key: string): boolean {
+  return COMPONENTS[key as ComponentKey]?.channels.includes(channel) ?? false;
 }

@@ -57,14 +57,19 @@ export function leerAtajos(raw: any): Atajos {
   };
 }
 
-/** Quita acentos, espacios de sobra y mayúsculas, y también signos sueltos. */
+/**
+ * Quita acentos, mayúsculas, espacios de sobra y signos sueltos.
+ * Los signos se limpian al PRINCIPIO y al final: en español la gente
+ * escribe "¡0!" o "¿1?" y eso debe activar el atajo igual.
+ */
 export function normalizar(t: string): string {
   return String(t ?? "")
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
-    .replace(/[¡!¿?.,;:]+$/g, "")
+    .replace(/^[¡!¿?.,;:\s]+/g, "")
+    .replace(/[¡!¿?.,;:\s]+$/g, "")
     .replace(/\s+/g, " ");
 }
 

@@ -4,10 +4,63 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") ?? "demandu_wa_2026";
 const GRAPH = "https://graph.facebook.com/v20.0";
 
+/**
+ * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
+ * en producción es lo mismo que está en el repo (`GET ?version`).
+ */
+const VERSION_MOTOR = "10";
+
 function admin() {
   return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+// ---- analítica: recorridos de flujo ----
+// Copia en Deno de src/lib/flow/flowRuns.ts. Si cambias los motivos de fin,
+// cámbialos en los dos motores (hay una prueba estática que lo vigila).
+//
+// REGLA: esto es medición, no conversación. Si falla, el bot sigue igual.
+// Por eso todo va en try/catch y nada lanza.
+async function abrirRecorrido(db: any, d: any): Promise<string | null> {
+  try {
+    const { data, error } = await db.from("flow_runs").insert({
+      org_id: d.orgId, conversation_id: d.conversationId, bot_id: d.botId ?? null,
+      flow_id: d.flowId ?? null, flow_name: d.flowName ?? null, channel: d.channel ?? "whatsapp",
+    }).select("id").single();
+    if (error) throw error;
+    return data?.id ?? null;
+  } catch (e) {
+    console.error("[analítica] no se pudo abrir el recorrido:", e);
+    return null;
+  }
+}
+async function avanzarRecorrido(db: any, runId: string | null, pasos: number, ultimoNodo?: string | null) {
+  if (!runId) return;
+  try {
+    const { data } = await db.from("flow_runs").select("steps").eq("id", runId).single();
+    await db.from("flow_runs").update({
+      steps: (data?.steps ?? 0) + Math.max(0, pasos),
+      last_node_id: ultimoNodo ?? null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", runId);
+  } catch (e) {
+    console.error("[analítica] no se pudo avanzar el recorrido:", e);
+  }
+}
+async function cerrarRecorrido(db: any, runId: string | null, motivo: string, pasos = 0, ultimoNodo?: string | null) {
+  if (!runId) return;
+  try {
+    const { data } = await db.from("flow_runs").select("steps").eq("id", runId).single();
+    const ahora = new Date().toISOString();
+    await db.from("flow_runs").update({
+      steps: (data?.steps ?? 0) + Math.max(0, pasos),
+      last_node_id: ultimoNodo ?? null,
+      ended_at: ahora, ended_reason: motivo, updated_at: ahora,
+    }).eq("id", runId).is("ended_at", null);
+  } catch (e) {
+    console.error("[analítica] no se pudo cerrar el recorrido:", e);
+  }
 }
 
 // ---- helpers de flujo ----
@@ -99,8 +152,13 @@ function leerAtajos(raw: any) {
   };
 }
 function normalizarAtajo(t: string) {
+  // Los signos se limpian al principio Y al final: en español se escribe
+  // "\u00a10!" o "\u00bf1?" y eso debe activar el atajo igual.
   return String(t ?? "").trim().toLowerCase().normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "").replace(/[\u00a1!\u00bf?.,;:]+$/g, "").replace(/\s+/g, " ");
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/^[\u00a1!\u00bf?.,;:\s]+/g, "")
+    .replace(/[\u00a1!\u00bf?.,;:\s]+$/g, "")
+    .replace(/\s+/g, " ");
 }
 function detectarAtajo(texto: string, atajos: any): "reset" | "agent" | null {
   const t = normalizarAtajo(texto);
@@ -384,6 +442,9 @@ async function runFrom(startId: string | undefined, ctx: any) {
   while (current && guard++ < 80) {
     const node = getNode(ctx.flow, current);
     if (!node) break;
+    // Analítica: cada bloque que se pisa cuenta como un paso del recorrido.
+    ctx.pasos = (ctx.pasos ?? 0) + 1;
+    ctx.ultimoNodo = node.id;
     switch (node.type) {
       case "start": current = node.data.to ?? defaultNext(ctx.flow, node); break;
       case "question": await say(ctx, node.data.text ?? ""); return { nodeId: node.id, type: "question" };
@@ -425,10 +486,12 @@ async function runFrom(startId: string | undefined, ctx: any) {
       case "human": case "assign":
         await say(ctx, node.data.text ?? "Te comunico con un asesor, un momento 🙌");
         await ctx.db.from("conversations").update({ status: "assigned" }).eq("id", ctx.convId);
+        ctx.finMotivo = "agente";
         return null;
       case "end":
         if (node.data.text) await say(ctx, node.data.text);
         await ctx.db.from("conversations").update({ status: "closed" }).eq("id", ctx.convId);
+        ctx.finMotivo = "completado";
         return null;
       default:
         if (node.data.text) await say(ctx, node.data.text);
@@ -445,7 +508,16 @@ async function handleIncoming(opts: any) {
     orgId: opts.orgId, convId: opts.convId, db: opts.db, vars,
     botId: opts.botId, aiSettings: opts.aiSettings ?? null, lastUserText: opts.visible ?? opts.text ?? "",
     atajos: opts.atajos ?? leerAtajos(null),
+    // Analítica: bloques recorridos en este turno y cómo terminó el recorrido.
+    pasos: 0, ultimoNodo: null as string | null, finMotivo: null as string | null,
   };
+
+  // Analítica: el recorrido que venía abierto de turnos anteriores.
+  let runId: string | null = opts.flowState?.run_id ?? null;
+  const abrirNuevo = () => abrirRecorrido(opts.db, {
+    orgId: opts.orgId, conversationId: opts.convId, botId: opts.botId,
+    flowId: opts.flowId ?? null, flowName: opts.flowName ?? null, channel: "whatsapp",
+  });
   // ── Atajos: lo primero que se revisa, pase lo que pase ──────────────────────
   const atajo = detectarAtajo(opts.visible ?? opts.text ?? "", ctx.atajos);
   if (atajo === "agent") {
@@ -456,14 +528,26 @@ async function handleIncoming(opts: any) {
       handoff_reason: "El lead pidió hablar con una persona",
       unread: 1,
     }).eq("id", opts.convId);
+    // Analítica: el recorrido termina aquí, se lo lleva una persona.
+    await cerrarRecorrido(opts.db, runId, "agente");
     // Se devuelve el estado sin `awaiting`: el bot deja de conducir la charla.
-    return { vars, awaiting: null, atajo: "agent" };
+    return { vars, awaiting: null, atajo: "agent", run_id: null };
   }
   if (atajo === "reset") {
     await say(ctx, ctx.atajos.reset.reply);
+    // Analítica: se cierra el recorrido anterior y empieza uno nuevo, para no
+    // contar como "un recorrido larguísimo" lo que en realidad fueron dos.
+    await cerrarRecorrido(opts.db, runId, "reiniciado");
+    runId = await abrirNuevo();
     const inicio = getStartNode(opts.flow)?.id;
     const nuevo = await runFrom(inicio, ctx);
-    return { vars, awaiting: nuevo, atajo: "reset" };
+    if (runId && nuevo === null) {
+      await cerrarRecorrido(opts.db, runId, ctx.finMotivo ?? "completado", ctx.pasos, ctx.ultimoNodo);
+      runId = null;
+    } else {
+      await avanzarRecorrido(opts.db, runId, ctx.pasos, ctx.ultimoNodo);
+    }
+    return { vars, awaiting: nuevo, atajo: "reset", run_id: runId };
   }
 
   const awaiting = opts.flowState?.awaiting;
@@ -485,22 +569,39 @@ async function handleIncoming(opts: any) {
       if (!btn && !startId && node) {
         await say(ctx, "No entendí esa respuesta 🤔 Elige una de las opciones:");
         await sayButtons(ctx, node.data.text ?? "", node);
-        return { vars, awaiting: { nodeId: node.id, type: "buttons" }, hintEnviado: opts.flowState?.hintEnviado ?? false };
+        // El recorrido sigue vivo: el lead está atorado en el mismo bloque.
+        await avanzarRecorrido(opts.db, runId, 1, node.id);
+        return { vars, awaiting: { nodeId: node.id, type: "buttons" }, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId };
       }
     }
   } else {
     startId = getStartNode(opts.flow)?.id;
   }
+  // Analítica: si vamos a recorrer bloques y no hay recorrido abierto, se abre
+  // uno. Cubre el arranque normal y las conversaciones que ya venían a medias
+  // desde antes de que existiera esta medición.
+  if (startId && !runId) runId = await abrirNuevo();
+
   const nextAwait = await runFrom(startId, ctx);
+
+  // Analítica: si el bot ya no espera nada, el recorrido terminó. Llegar al
+  // final del gráfico sin bloque "Cerrar el flujo" también cuenta como
+  // completado: el lead sí recorrió el flujo entero.
+  if (runId && nextAwait === null) {
+    await cerrarRecorrido(opts.db, runId, ctx.finMotivo ?? "completado", ctx.pasos, ctx.ultimoNodo);
+    runId = null;
+  } else if (runId) {
+    await avanzarRecorrido(opts.db, runId, ctx.pasos, ctx.ultimoNodo);
+  }
 
   // Recordatorio de los atajos: solo la primera vez de la conversación,
   // para no repetirlo en cada mensaje.
   const hint = ctx.atajos?.hint;
   if (hint?.enabled && hint?.onStart && hint?.text && !opts.flowState?.hintEnviado) {
     await say(ctx, hint.text);
-    return { vars, awaiting: nextAwait, hintEnviado: true };
+    return { vars, awaiting: nextAwait, hintEnviado: true, run_id: runId };
   }
-  return { vars, awaiting: nextAwait, hintEnviado: opts.flowState?.hintEnviado ?? false };
+  return { vars, awaiting: nextAwait, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId };
 }
 
 // ---- selección de flujo por disparador ----
@@ -573,6 +674,8 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
   if (req.method === "GET") {
+    // Comprobación de versión: no expone nada, solo dice qué código corre.
+    if (url.searchParams.has("version")) return json({ version: VERSION_MOTOR });
     if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === VERIFY_TOKEN) {
       return new Response(url.searchParams.get("hub.challenge") ?? "", { status: 200 });
     }
@@ -669,6 +772,9 @@ Deno.serve(async (req: Request) => {
           .update({ status: "open", handoff_requested_at: null, handoff_reason: null })
           .eq("id", conv.id);
         conv.status = "open";
+        // Analítica: al vaciar el estado se perdería el recorrido abierto y
+        // quedaría contado como abandonado para siempre. Se cierra antes.
+        await cerrarRecorrido(db, (conv.flow_state as any)?.run_id ?? null, "reiniciado");
         conv.flow_state = {};
       }
 
@@ -695,7 +801,7 @@ Deno.serve(async (req: Request) => {
         // Todos los flujos habilitados del bot y elegir por disparador
         const { data: flowRows } = await db
           .from("flows")
-          .select("id, graph, trigger_type, keywords, enabled")
+          .select("id, name, graph, trigger_type, keywords, enabled")
           .eq("bot_id", cfg.bot_id);
         const flows = (flowRows ?? []).filter((f: any) => f.enabled !== false);
         const state = conv.flow_state ?? {};
@@ -708,11 +814,17 @@ Deno.serve(async (req: Request) => {
             // Si cambiamos de flujo, ese flujo arranca desde el inicio (sin arrastrar awaiting)
             // Al cambiar de flujo se arranca de cero, pero el recordatorio ya
             // enviado no se vuelve a mandar.
-            const flowState = state.flow_id === chosen.id ? state : { vars: state.vars ?? {}, hintEnviado: state.hintEnviado };
+            // Analítica: si un disparador movió la charla a otro flujo, el
+            // recorrido anterior no quedó abandonado: cambió.
+            const mismoFlujo = state.flow_id === chosen.id;
+            if (!mismoFlujo && state.run_id) await cerrarRecorrido(db, state.run_id, "cambio");
+
+            const flowState = mismoFlujo ? state : { vars: state.vars ?? {}, hintEnviado: state.hintEnviado };
             const newState = await handleIncoming({
               flow, pnid, token: cfg.access_token, to: from,
               orgId: cfg.org_id, convId: conv.id, db, flowState, text, visible,
               botId: cfg.bot_id, aiSettings: (botRow as any)?.ai ?? null, baseVars, atajos,
+              flowId: chosen.id, flowName: chosen.name ?? null,
             });
             await db.from("conversations").update({ flow_state: { ...newState, flow_id: chosen.id } }).eq("id", conv.id);
           }

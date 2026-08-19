@@ -10,7 +10,7 @@ export default async function InboxPage() {
     sb
       .from("conversations")
       .select(
-        "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, " +
+        "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, " +
           "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
           "state:conversation_states(id,name,color), " +
           "member:team_members(id,name)"

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot,
+  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ const MAIN = [
   { href: "/dashboard", label: "Inicio", icon: Home },
   { href: "/bots", label: "Chatbots", icon: Bot },
   { href: "/inbox", label: "Conversaciones", icon: MessagesSquare },
+  { href: "/crm", label: "Embudo", icon: KanbanSquare },
   { href: "/contacts", label: "Contactos", icon: Users },
 ];
 

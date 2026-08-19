@@ -13,7 +13,7 @@ const TABS = [
   { href: "/settings/tags", label: "Etiquetas" },
   { href: "/settings/teams", label: "Equipos y miembros" },
   { href: "/settings/lead-groups", label: "Grupos de leads" },
-  { href: "/settings/states", label: "Estados" },
+  { href: "/settings/states", label: "Embudo y etapas" },
   { href: "/settings/hours", label: "Horario laboral" },
   { href: "/settings/integrations", label: "Integraciones" },
 ];
