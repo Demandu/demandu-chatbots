@@ -208,6 +208,40 @@ export async function deletePipeline(formData: FormData) {
   revalidatePath("/crm");
 }
 
+// ── Reparto automático de conversaciones ─────────────────────────────────────
+export async function guardarReparto(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+
+  const entero = (v: FormDataEntryValue | null, min: number, max: number): number | null => {
+    const n = Number(s(v));
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.min(Math.max(Math.round(n), min), max);
+  };
+  const estrategia = s(formData.get("strategy")) === "rueda" ? "rueda" : "menos_carga";
+
+  await createClient()
+    .from("assignment_settings")
+    .upsert(
+      {
+        org_id: orgId,
+        enabled: formData.get("enabled") === "on",
+        strategy: estrategia,
+        solo_en_linea: formData.get("solo_en_linea") === "on",
+        // Vacío = sin tope. No se fuerza un número: obligar a poner uno haría
+        // que un equipo chico dejara de recibir chats sin entender por qué.
+        max_abiertas: entero(formData.get("max_abiertas"), 1, 500),
+        team_id: s(formData.get("team_id")) || null,
+        solo_horario: formData.get("solo_horario") === "on",
+        espera_horas: entero(formData.get("espera_horas"), 1, 168) ?? 24,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "org_id" },
+    );
+  revalidatePath("/settings/assignment");
+  revalidatePath("/inbox");
+}
+
 // ── Atributos personalizados ─────────────────────────────────────────────────
 const ATTR_TYPES = new Set(["string", "number", "float", "email", "phone", "date", "boolean", "list"]);
 const ATTR_PURPOSES = new Set(["chatbot", "api", "agent"]);

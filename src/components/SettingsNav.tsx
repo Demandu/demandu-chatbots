@@ -12,6 +12,7 @@ const TABS = [
   { href: "/settings/attributes", label: "Atributos" },
   { href: "/settings/tags", label: "Etiquetas" },
   { href: "/settings/teams", label: "Equipos y miembros" },
+  { href: "/settings/assignment", label: "Reparto de chats" },
   { href: "/settings/lead-groups", label: "Grupos de leads" },
   { href: "/settings/states", label: "Embudo y etapas" },
   { href: "/settings/hours", label: "Horario laboral" },

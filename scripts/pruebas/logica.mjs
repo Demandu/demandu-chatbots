@@ -14,6 +14,7 @@ import {
   rangoDePreset, agrupacionSugerida, duracion, porcentaje, numero,
   etiquetaPeriodo, aFechaCorta, deFechaCorta, efectividadAgente,
 } from "../../src/lib/analytics.ts";
+import { pareceUnaPregunta, decidirDesvio, puenteDeVuelta } from "../../src/lib/flow/desvio.ts";
 
 // ─── Atajos del chatbot (0 = reiniciar, 1 = persona) ────────────────────────
 describe("Atajos del chatbot", () => {
@@ -289,6 +290,106 @@ describe("Resultados: cómo se leen los números", () => {
     esperar(efectividadAgente({ ganadas: 3, perdidas: 1 })).igual(75);
     esperar(efectividadAgente({ ganadas: 0, perdidas: 2 })).igual(0);
     esperar(efectividadAgente({ ganadas: 0, perdidas: 0 })).igual(null, "sin cierres no se puede opinar");
+  });
+});
+
+// ─── Cuando el cliente se sale del flujo ────────────────────────────────────
+describe("El cliente se sale del flujo", () => {
+  const base = {
+    esperando: null, capturaDato: false, coincidioBoton: false,
+    tieneSalidaPorDefecto: false, flujoTerminado: false, esInicio: false,
+    texto: "hola", iaDeRespaldo: true,
+  };
+
+  test("distingue una pregunta de un dato", () => {
+    // Equivocarse hacia "es pregunta" deja a la persona atorada repitiendo el
+    // mismo paso, así que ante la duda tiene que ganar "es un dato".
+    esperar(pareceUnaPregunta("¿cuánto cuesta?")).verdadero();
+    esperar(pareceUnaPregunta("cuanto cuesta")).verdadero();
+    esperar(pareceUnaPregunta("para que sirves?")).verdadero();
+    esperar(pareceUnaPregunta("tienen envio a domicilio")).verdadero();
+
+    esperar(pareceUnaPregunta("Alex")).falso("un nombre no es pregunta");
+    esperar(pareceUnaPregunta("Ana Sofía Ramírez")).falso();
+    esperar(pareceUnaPregunta("Monterrey")).falso();
+    esperar(pareceUnaPregunta("si")).falso();
+    esperar(pareceUnaPregunta("mi correo es alex@demandu.tech")).falso();
+    esperar(pareceUnaPregunta("")).falso();
+  });
+
+  test("el flujo terminó y la persona sigue escribiendo → contesta la IA", () => {
+    // Es EL fallo que se ve: sin esto el motor reinicia el flujo y el bot
+    // repite el saludo una y otra vez.
+    esperar(decidirDesvio({ ...base, flujoTerminado: true, texto: "para que sirves?" }))
+      .igual("flujo_terminado");
+  });
+
+  test("hay botones y escribió otra cosa → contesta la IA y reofrece", () => {
+    esperar(decidirDesvio({
+      ...base, esperando: { type: "buttons", nodeId: "n2" },
+      coincidioBoton: false, texto: "¿tienen envío?",
+    })).igual("otra_cosa_en_botones");
+  });
+
+  test("si el bloque de botones tiene salida por defecto, manda el flujo", () => {
+    // El cliente ya decidió qué hacer con lo que no coincide: no nos metemos.
+    esperar(decidirDesvio({
+      ...base, esperando: { type: "buttons", nodeId: "n2" },
+      tieneSalidaPorDefecto: true, texto: "cualquier cosa",
+    })).igual(null);
+  });
+
+  test("si tocó una opción válida, el flujo sigue normal", () => {
+    esperar(decidirDesvio({
+      ...base, esperando: { type: "buttons", nodeId: "n2" }, coincidioBoton: true, texto: "Precios",
+    })).igual(null);
+  });
+
+  test("le piden un dato y pregunta → contesta la IA y vuelve a pedirlo", () => {
+    esperar(decidirDesvio({
+      ...base, esperando: { type: "question", nodeId: "n3" },
+      capturaDato: true, texto: "¿cuánto cuesta?",
+    })).igual("pregunta_en_captura");
+  });
+
+  test("le piden un dato y lo da → se guarda, no se desvía", () => {
+    esperar(decidirDesvio({
+      ...base, esperando: { type: "question", nodeId: "n3" },
+      capturaDato: true, texto: "Alex Molina",
+    })).igual(null);
+  });
+
+  test("un bloque de IA ya escucha solo: no se desvía", () => {
+    esperar(decidirDesvio({
+      ...base, esperando: { type: "question", nodeId: "ia" },
+      capturaDato: false, texto: "¿cuánto cuesta?",
+    })).igual(null);
+  });
+
+  test("el primer mensaje siempre lo contesta el flujo", () => {
+    // El saludo es del flujo. Si lo diera la IA, cada conversación empezaría
+    // distinta y el cliente perdería el control de su propio guion.
+    esperar(decidirDesvio({ ...base, esInicio: true, flujoTerminado: true, texto: "hola" }))
+      .igual(null);
+  });
+
+  test("con la IA de respaldo apagada, nunca se desvía", () => {
+    esperar(decidirDesvio({ ...base, iaDeRespaldo: false, flujoTerminado: true, texto: "que precio" }))
+      .igual(null);
+    esperar(decidirDesvio({
+      ...base, iaDeRespaldo: false, esperando: { type: "buttons", nodeId: "n2" }, texto: "otra cosa",
+    })).igual(null);
+  });
+
+  test("un mensaje vacío no despierta a la IA", () => {
+    esperar(decidirDesvio({ ...base, flujoTerminado: true, texto: "   " })).igual(null);
+  });
+
+  test("el puente de vuelta solo aparece cuando hay algo a qué volver", () => {
+    esperar(puenteDeVuelta("otra_cosa_en_botones").length).mayorQue(0);
+    esperar(puenteDeVuelta("pregunta_en_captura").length).mayorQue(0);
+    esperar(puenteDeVuelta("flujo_terminado")).igual("", "ahí no hay nada que retomar");
+    esperar(puenteDeVuelta(null)).igual("");
   });
 });
 

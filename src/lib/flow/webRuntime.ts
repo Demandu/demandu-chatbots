@@ -3,6 +3,7 @@ import type { Flow, DemanduNode, ConditionRule, FlowButton } from "./types";
 import { aiAnswer, type AiSettings } from "@/lib/ai/answer";
 import { detectarAtajo, leerAtajos, type Atajos } from "./shortcuts";
 import { abrirRecorrido, avanzarRecorrido, cerrarRecorrido, type MotivoFin } from "./flowRuns";
+import { decidirDesvio, puenteDeVuelta, type MotivoDesvio } from "./desvio";
 
 /**
  * Motor de conversación para canales que NO envían por una API externa
@@ -115,6 +116,34 @@ async function recentHistory(ctx: Ctx): Promise<{ role: "user" | "assistant"; co
       .map((m) => ({ role: m.direction === "inbound" ? ("user" as const) : ("assistant" as const), content: m.body }));
   } catch {
     return [];
+  }
+}
+
+/**
+ * Contesta con la IA una duda que el flujo no esperaba.
+ * Devuelve el texto, o null si la IA no supo (o no está configurada): en ese
+ * caso el motor sigue con el comportamiento de siempre en vez de soltar dos
+ * mensajes de "no sé" seguidos.
+ */
+async function responderDuda(ctx: Ctx): Promise<string | null> {
+  const settings: AiSettings = { ...(ctx.aiSettings ?? {}) };
+  try {
+    const respuesta = await aiAnswer({
+      admin: ctx.admin,
+      botId: ctx.botId,
+      orgId: ctx.orgId,
+      question: ctx.lastUserText,
+      settings,
+      history: await recentHistory(ctx),
+    });
+    const limpio = (respuesta ?? "").trim();
+    if (!limpio) return null;
+    // Si la IA devolvió su mensaje de respaldo, es que no supo: no aporta.
+    const respaldo = (settings.fallback ?? "").trim();
+    if (respaldo && limpio === respaldo) return null;
+    return limpio;
+  } catch {
+    return null;
   }
 }
 
@@ -249,6 +278,8 @@ export async function runWebFlow(opts: {
   aiSettings?: AiSettings | null;
   /** Atajos configurados en el chatbot (0 = reiniciar, 1 = persona, etc.) */
   atajos?: any;
+  /** Que la IA conteste cuando el cliente se sale del flujo. */
+  iaDeRespaldo?: boolean;
   /** Analítica: nombre del flujo, para que el histórico no quede anónimo. */
   flowName?: string | null;
 }): Promise<{
@@ -258,6 +289,12 @@ export async function runWebFlow(opts: {
   hintEnviado?: boolean;
   /** Recorrido abierto (null si terminó). Se guarda en flow_state. */
   runId?: string | null;
+  /**
+   * El flujo llegó al final y ya no espera nada. Se guarda para que el
+   * siguiente mensaje NO reinicie el flujo desde el saludo: sin esto el bot
+   * repite el mismo mensaje una y otra vez.
+   */
+  terminado?: boolean;
 }> {
   const vars: Record<string, string> = { ...(opts.flowState?.vars ?? {}) };
   const ctx: Ctx = {
@@ -316,6 +353,75 @@ export async function runWebFlow(opts: {
   }
 
   const awaiting = opts.flowState?.awaiting as Awaiting;
+  const nodoEsperado = awaiting?.nodeId ? getNode(opts.flow, awaiting.nodeId) : null;
+  const yaTermino = !!opts.flowState?.terminado;
+
+  // ── ¿El cliente se salió del flujo? ─────────────────────────────────────────
+  // La gente no habla en guiones. Si escribió algo que el flujo no esperaba,
+  // contesta la IA y el flujo NO se mueve: se queda esperando donde estaba,
+  // así que en cuanto responda lo que se le pidió, sigue como si nada.
+  const textoBoton = (opts.text ?? "").toLowerCase();
+  const botonQueCoincide =
+    awaiting?.type === "buttons"
+      ? (nodoEsperado?.data.buttons ?? []).find(
+          (b) => b.id === opts.text || (b.label ?? "").toLowerCase() === textoBoton,
+        )
+      : undefined;
+
+  const desvio: MotivoDesvio =
+    atajo
+      ? null
+      : decidirDesvio({
+          esperando: awaiting,
+          capturaDato: !!nodoEsperado?.data.variable && nodoEsperado?.type !== "ai",
+          coincidioBoton: !!botonQueCoincide,
+          tieneSalidaPorDefecto:
+            awaiting?.type === "buttons" && !!nodoEsperado
+              ? !!defaultNext(opts.flow, nodoEsperado)
+              : false,
+          flujoTerminado: yaTermino,
+          esInicio: !!opts.isStart,
+          texto: opts.text ?? "",
+          iaDeRespaldo: opts.iaDeRespaldo !== false,
+        });
+
+  if (desvio) {
+    const respuesta = await responderDuda(ctx);
+    if (respuesta) {
+      push(ctx, respuesta);
+      const puente = puenteDeVuelta(desvio);
+      if (puente) push(ctx, puente);
+      // Se vuelve a mostrar lo que el flujo estaba pidiendo, para no dejar a
+      // la persona sin saber cómo seguir.
+      if (nodoEsperado && awaiting?.type === "buttons") {
+        push(ctx, nodoEsperado.data.text ?? "", nodoEsperado.data.buttons);
+      } else if (nodoEsperado && awaiting?.type === "question") {
+        push(ctx, nodoEsperado.data.text ?? "");
+      }
+      await guardarSalida(ctx, opts);
+      await avanzarRecorrido(opts.admin, runId, 1, nodoEsperado?.id ?? null);
+      return {
+        vars,
+        awaiting,                       // el flujo NO se mueve
+        out: ctx.out,
+        hintEnviado: !!opts.flowState?.hintEnviado,
+        runId,
+        terminado: yaTermino,
+      };
+    }
+    // La IA no supo. Si el flujo ya había terminado, mejor callar que repetir
+    // el saludo; si estaba esperando algo, cae al comportamiento de siempre.
+    if (desvio === "flujo_terminado") {
+      const respaldo = (ctx.aiSettings?.fallback ?? "").trim();
+      if (respaldo) push(ctx, respaldo);
+      await guardarSalida(ctx, opts);
+      return {
+        vars, awaiting: null, out: ctx.out,
+        hintEnviado: !!opts.flowState?.hintEnviado, runId, terminado: true,
+      };
+    }
+  }
+
   let startId: string | undefined;
 
   if (atajo === "agent") {
@@ -324,7 +430,7 @@ export async function runWebFlow(opts: {
   } else if (atajo === "reset") {
     startId = getStartNode(opts.flow)?.id;
   } else if (!opts.isStart && awaiting?.nodeId) {
-    const node = getNode(opts.flow, awaiting.nodeId);
+    const node = nodoEsperado;
     if (awaiting.type === "question") {
       // Un nodo de IA se queda escuchando: cada pregunta vuelve a entrar en él.
       if (node?.type === "ai") {
@@ -334,15 +440,12 @@ export async function runWebFlow(opts: {
         startId = node ? defaultNext(opts.flow, node) : undefined;
       }
     } else if (awaiting.type === "buttons") {
-      const t = (opts.text ?? "").toLowerCase();
-      const btn = (node?.data.buttons ?? []).find(
-        (b) => b.id === opts.text || (b.label ?? "").toLowerCase() === t,
-      );
+      const btn = botonQueCoincide;
       startId = btn && node ? buttonTarget(opts.flow, node.id, btn) : node ? defaultNext(opts.flow, node) : undefined;
 
       // Escribió algo que no era ninguna opción y el bloque no tiene salida
       // por defecto: antes el bot se quedaba MUDO y el lead quedaba atorado.
-      // Ahora se vuelven a mostrar las opciones.
+      // (Con la IA de respaldo encendida esto casi no se alcanza.)
       if (!btn && !startId && node) {
         push(ctx, "No entendí esa respuesta 🤔 Elige una de las opciones:");
         push(ctx, node.data.text ?? "", node.data.buttons);
@@ -358,6 +461,10 @@ export async function runWebFlow(opts: {
         };
       }
     }
+  } else if (!opts.isStart && yaTermino && opts.iaDeRespaldo !== false) {
+    // El flujo terminó, la IA no supo contestar y no hay nada que esperar:
+    // reiniciarlo repetiría el saludo. Mejor no hacer nada.
+    startId = undefined;
   } else {
     startId = getStartNode(opts.flow)?.id;
   }
@@ -388,5 +495,5 @@ export async function runWebFlow(opts: {
     await avanzarRecorrido(opts.admin, runId, ctx.pasos, ctx.ultimoNodo);
   }
 
-  return { vars, awaiting: nextAwait, out: ctx.out, hintEnviado, runId };
+  return { vars, awaiting: nextAwait, out: ctx.out, hintEnviado, runId, terminado: nextAwait === null };
 }

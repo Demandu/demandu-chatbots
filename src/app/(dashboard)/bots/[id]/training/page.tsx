@@ -5,7 +5,8 @@ import { BotTitle } from "@/components/BotTitle";
 import { BotNav } from "@/components/builder/BotNav";
 import { LanaSays } from "@/components/Lana";
 import { createClient } from "@/lib/supabase/server";
-import { addKnowledge, deleteKnowledge, toggleKnowledge, updateKnowledge, importFromUrl, deleteSource } from "./actions";
+import { addKnowledge, addKnowledgeSimple, deleteKnowledge, toggleKnowledge, updateKnowledge, importFromUrl, deleteSource } from "./actions";
+import { AgregarConocimiento } from "@/components/bots/AgregarConocimiento";
 import { embeddingsConfigured } from "@/lib/ai/ingest";
 import { getStorage, formatBytes } from "@/lib/billing/quota";
 import { getCurrentOrgId } from "@/lib/org";
@@ -178,23 +179,7 @@ export default async function BotTrainingPage({
           <div className="lg:col-span-1">
             <div className="card-l p-5">
               <h3 className="mb-3 font-display text-lg font-semibold text-ink">Agregar información</h3>
-              <form action={addKnowledge} className="space-y-3">
-                <input type="hidden" name="bot_id" value={bot.id} />
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-ink-2">Tema</label>
-                  <input name="title" required className="input-l" placeholder="Horarios de atención" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-ink-2">¿Qué debe saber?</label>
-                  <textarea
-                    name="content"
-                    required
-                    className="input-l min-h-[130px]"
-                    placeholder="Abrimos de lunes a viernes de 9 a 19 h y sábados de 10 a 14 h. Domingos cerrado."
-                  />
-                </div>
-                <button className="btn-primary w-full"><Plus className="h-4 w-4" /> Agregar</button>
-              </form>
+              <AgregarConocimiento botId={bot.id} accion={addKnowledge} />
 
               {list.length === 0 && (
                 <div className="mt-5 border-t border-[#e6e8f2] pt-4">
@@ -229,7 +214,7 @@ export default async function BotTrainingPage({
                 <div className="space-y-2.5">
                   {EJEMPLOS.map((e) => (
                     <form
-                      action={addKnowledge}
+                      action={addKnowledgeSimple}
                       key={e.t}
                       className="flex items-start gap-3 rounded-xl border border-dashed border-[#d7d9e8] bg-[#f9fafd] p-3"
                     >

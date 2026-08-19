@@ -9,29 +9,45 @@ import { fetchPageText } from "@/lib/ai/fromUrl";
 import { ingestText } from "@/lib/ai/ingest";
 import { checkQuota } from "@/lib/billing/quota";
 
-/** Agrega un dato del negocio a la base de conocimiento del chatbot. */
-export async function addKnowledge(formData: FormData) {
+/**
+ * Agrega un dato del negocio a la base de conocimiento del chatbot.
+ *
+ * Devuelve estado (en vez de no devolver nada) para que el formulario pueda
+ * vaciarse y confirmar. Antes los campos se quedaban con lo ya guardado y era
+ * fácil agregar el mismo dato dos veces sin darse cuenta.
+ */
+export async function addKnowledge(
+  _estado: { ok: boolean; mensaje?: string } | undefined,
+  formData: FormData,
+): Promise<{ ok: boolean; mensaje?: string }> {
   const orgId = await getCurrentOrgId();
   const botId = String(formData.get("bot_id") ?? "");
   const title = String(formData.get("title") ?? "").trim();
   const content = String(formData.get("content") ?? "").trim();
-  if (!orgId || !botId || !title || !content) return;
+  if (!orgId || !botId || !title || !content) {
+    return { ok: false, mensaje: "Faltan el tema o el contenido." };
+  }
 
   const supabase = createClient();
   const quota = await checkQuota(supabase, orgId, Buffer.byteLength(content, "utf8"));
-  if (!quota.ok) {
-    redirect(`/bots/${botId}/training?error=${encodeURIComponent(quota.message)}`);
-  }
+  if (!quota.ok) return { ok: false, mensaje: quota.message };
 
-  await supabase.from("bot_knowledge").insert({
+  const { error } = await supabase.from("bot_knowledge").insert({
     org_id: orgId,
     bot_id: botId,
     title,
     content,
     source_type: String(formData.get("source_type") ?? "text"),
   });
+  if (error) return { ok: false, mensaje: "No se pudo guardar. Inténtalo otra vez." };
 
   revalidatePath(`/bots/${botId}/training`);
+  return { ok: true, mensaje: `Listo, tu chatbot ya sabe sobre "${title}".` };
+}
+
+/** Misma alta, para los botones de ejemplo (formulario sin estado). */
+export async function addKnowledgeSimple(formData: FormData) {
+  await addKnowledge(undefined, formData);
 }
 
 /** Lee una página web del cliente y carga su contenido como conocimiento. */

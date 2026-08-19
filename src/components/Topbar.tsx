@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { UserMenu } from "./UserMenu";
 import { MenuButton } from "./Shell";
 import { NotificationBell } from "./notifications/NotificationBell";
+import { Presencia } from "./team/Presencia";
 
 export function Topbar({ crumb, actions }: { crumb?: React.ReactNode; actions?: React.ReactNode }) {
   return (
@@ -11,6 +12,9 @@ export function Topbar({ crumb, actions }: { crumb?: React.ReactNode; actions?: 
       <div className="min-w-0 truncate text-sm text-muted">{crumb}</div>
       <div className="ml-auto flex flex-none items-center gap-2 sm:gap-3.5">
         {actions}
+        {/* Latido de presencia: es lo que hace que el reparto automático sepa
+            quién está de verdad frente a la computadora. */}
+        <Presencia compacto />
         <NotificationBell />
         {/* Crear chatbot: se oculta en pantallas chicas para dejar aire */}
         <Link

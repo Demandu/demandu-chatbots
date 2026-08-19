@@ -116,6 +116,26 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
                   </p>
                 </div>
 
+                <div className="rounded-xl border border-[#e6e8f2] bg-[#f9fafd] p-4">
+                  <label className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      name="fallback_flujo"
+                      defaultChecked={(ai as any).fallback_flujo !== false}
+                      className="mt-1 h-4 w-4 flex-none accent-violet"
+                    />
+                    <span>
+                      <b className="text-ink">Que conteste cuando el cliente se salga del flujo</b>
+                      <span className="mt-0.5 block text-sm leading-relaxed text-ink-2">
+                        La gente no habla en guiones. Con esto encendido, si alguien pregunta algo que
+                        el flujo no esperaba, la IA le responde y <b className="text-ink">el flujo no se
+                        pierde</b>: se queda esperando donde iba y sigue en cuanto la persona conteste
+                        lo que se le pidió. Apagado, el bot dice “no entendí, elige una opción”.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-ink-2">Largo máximo de respuesta (palabras)</label>
                   <input name="maxWords" type="number" min={20} max={300} defaultValue={ai.maxWords} className="input-l w-32" />

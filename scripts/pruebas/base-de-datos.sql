@@ -160,20 +160,38 @@ begin
   r := r || E'\n17. Recorridos de otro cliente visibles ....... ' || case when n=0 then 'OK' else 'FUGA('||n||')' end;
   perform set_config('role','postgres', true);
 
-  -- ── 18. Borrar un cliente no deja restos ──────────────────────────────
+  -- ── 18-20. El contador de "sin leer" ──────────────────────────────────
+  -- Es lo que dispara TODOS los avisos: si no sube, no hay tarjeta, ni sonido,
+  -- ni contador en la pestaña, por muy bien que esté la parte visual.
+  insert into messages (conversation_id, org_id, direction, sender, body)
+    values (conv, org_a,'inbound','contact','oye, sigues ahi?');
+  select unread into n from conversations where id = conv;
+  r := r || E'\n18. Un entrante sube el contador .............. ' || case when n>0 then 'OK('||n||')' else 'FALLO(0)' end;
+
+  insert into messages (conversation_id, org_id, direction, sender, body)
+    values (conv, org_a,'outbound','bot','soy Lana');
+  select unread into n from conversations where id = conv;
+  r := r || E'\n19. Que conteste el BOT no lo marca leido ...... ' || case when n>0 then 'OK' else 'FALLO(se limpio)' end;
+
+  insert into messages (conversation_id, org_id, direction, sender, body)
+    values (conv, org_a,'outbound','agent','aqui estoy');
+  select unread into n from conversations where id = conv;
+  r := r || E'\n20. Que conteste una PERSONA si lo limpia ...... ' || case when n=0 then 'OK' else 'FALLO('||n||')' end;
+
+  -- ── 21. Borrar un cliente no deja restos ──────────────────────────────
   delete from organizations where id = org_a;
   select count(*) into n from bot_knowledge where org_id = org_a;
   select n + (select count(*) from messages where org_id = org_a)
            + (select count(*) from flow_runs where org_id = org_a) into n;
-  r := r || E'\n18. Borrar un cliente no deja restos ........... ' || case when n=0 then 'OK' else 'FALLO('||n||')' end;
+  r := r || E'\n21. Borrar un cliente no deja restos ........... ' || case when n=0 then 'OK' else 'FALLO('||n||')' end;
 
-  -- ── 19-20. Proteccion general ─────────────────────────────────────────
+  -- ── 22-23. Proteccion general ─────────────────────────────────────────
   select coalesce(string_agg(c.relname, ', '), 'ninguna') into v
     from pg_class c
     join pg_namespace ns on ns.oid=c.relnamespace
     join pg_attribute a on a.attrelid=c.oid and a.attname='org_id' and a.attnum>0
    where ns.nspname='public' and c.relkind='r' and not c.relrowsecurity;
-  r := r || E'\n19. Tablas de cliente sin proteccion ........... ' || case when v='ninguna' then 'OK' else 'FALLO: '||v end;
+  r := r || E'\n22. Tablas de cliente sin proteccion ........... ' || case when v='ninguna' then 'OK' else 'FALLO: '||v end;
 
   select coalesce(string_agg(p.proname, ', '), 'ninguna') into v
     from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
@@ -182,9 +200,9 @@ begin
                        'is_platform_admin','auth_org_ids','org_usage','org_storage_used_bytes',
                        'org_storage_limit_bytes','drip_interval','match_bot_knowledge','analytics_overview',
                        'crm_enganchar_conversacion','crm_estado_desde_etapa','crm_registrar_evento',
-                       'crm_board','crm_mover_tarjeta','crm_etapa_a_conversacion')
+                       'crm_board','crm_mover_tarjeta','crm_etapa_a_conversacion','conv_contar_no_leidos')
      and has_function_privilege('anon', p.oid, 'execute');
-  r := r || E'\n20. Funciones internas abiertas a visitantes ... ' || case when v='ninguna' then 'OK' else 'FALLO: '||v end;
+  r := r || E'\n23. Funciones internas abiertas a visitantes ... ' || case when v='ninguna' then 'OK' else 'FALLO: '||v end;
 
   -- Limpieza y salida (el ERROR es a proposito: deshace todo)
   delete from memberships where user_id = usr_a;

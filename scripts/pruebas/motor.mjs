@@ -85,7 +85,7 @@ const FLUJO = {
 };
 
 /** Corre el motor y devuelve los textos que el bot habría enviado. */
-async function correr({ texto = "", estado = {}, isStart = false, atajos = null, flujo = FLUJO } = {}) {
+async function correr({ texto = "", estado = {}, isStart = false, atajos = null, flujo = FLUJO, iaDeRespaldo = true } = {}) {
   const { api, escrituras, tablas } = baseFalsa();
   const r = await runWebFlow({
     flow: flujo,
@@ -99,6 +99,7 @@ async function correr({ texto = "", estado = {}, isStart = false, atajos = null,
     aiSettings: null,
     atajos,
     flowName: flujo.name ?? null,
+    iaDeRespaldo,
   });
   return { ...r, textos: r.out.map((m) => m.text), escrituras, tablas };
 }
@@ -316,6 +317,55 @@ describe("Motor: registro de recorridos", () => {
     });
     esperar(r.out.length).mayorQue(0, "el bot tiene que responder aunque no se pueda medir");
     esperar(r.out[0].text).contiene("Soy Lana");
+  });
+});
+
+// ─── El cliente se sale del flujo (el fallo que se vio en producción) ───────
+describe("Motor: el cliente se sale del flujo", () => {
+  // Flujo de una sola caja, sin salida: exactamente el que tenía el bot web.
+  const SOLO_SALUDO = {
+    id: "f9", name: "Bienvenida",
+    nodes: [{ id: "s1", type: "message", position: { x: 0, y: 0 },
+      data: { label: "Mensaje", text: "¡Hola! 👋 ¿En qué te puedo ayudar?", isStart: true } }],
+    edges: [],
+  };
+
+  testAsync("con el flujo terminado, NO vuelve a soltar el saludo", async () => {
+    // Lo que pasaba: "hola" → saludo; "¿para qué sirves?" → el mismo saludo.
+    // La IA no está configurada en las pruebas, así que lo que se comprueba es
+    // que al menos deje de repetirse.
+    const r = await correr({
+      flujo: SOLO_SALUDO,
+      texto: "para que sirves?",
+      estado: { vars: {}, awaiting: null, terminado: true },
+    });
+    esperar(r.textos.some((t) => t.includes("¿En qué te puedo ayudar?"))).falso(
+      "volvió a mandar el saludo: el bot se repite como perico",
+    );
+  });
+
+  testAsync("el primer mensaje sí lo contesta el flujo", async () => {
+    const r = await correr({ flujo: SOLO_SALUDO, isStart: true });
+    esperar(r.textos.some((t) => t.includes("¿En qué te puedo ayudar?"))).verdadero();
+    esperar(r.terminado).verdadero("el flujo no espera nada: queda marcado como terminado");
+  });
+
+  testAsync("con la IA de respaldo apagada, se conserva el comportamiento viejo", async () => {
+    // Quien ya tenía su flujo armado no debe ver un cambio que no pidió.
+    const r = await correr({
+      flujo: SOLO_SALUDO,
+      texto: "para que sirves?",
+      estado: { vars: {}, awaiting: null, terminado: true },
+      iaDeRespaldo: false,
+    });
+    esperar(r.textos.some((t) => t.includes("¿En qué te puedo ayudar?"))).verdadero(
+      "apagada, el motor debe seguir reiniciando el flujo como antes",
+    );
+  });
+
+  testAsync("responder una opción válida sigue funcionando igual", async () => {
+    const r = await correr({ texto: "b1", estado: { awaiting: { nodeId: "n2", type: "buttons" } } });
+    esperar(r.textos.join(" ")).contiene("$59");
   });
 });
 

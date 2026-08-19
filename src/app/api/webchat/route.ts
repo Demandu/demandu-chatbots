@@ -173,6 +173,8 @@ export async function POST(req: Request) {
       aiSettings: (bot as any).ai ?? null,
       atajos: (bot as any).shortcuts ?? null,
       flowName: (chosen as any).name ?? null,
+      // Encendida salvo que el cliente la apague a propósito.
+      iaDeRespaldo: (bot as any).ai?.fallback_flujo !== false,
     });
 
     await admin
@@ -184,6 +186,9 @@ export async function POST(req: Request) {
           flow_id: chosen.id,
           hintEnviado: result.hintEnviado,
           run_id: result.runId ?? null,
+          // Sin esto, el siguiente mensaje reinicia el flujo y el bot repite
+          // el saludo como perico.
+          terminado: result.terminado ?? false,
         },
       })
       .eq("id", conv.id);
