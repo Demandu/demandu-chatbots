@@ -306,3 +306,26 @@ end $$;
 revoke execute on function public.crm_enganchar_conversacion() from public, anon, authenticated;
 revoke execute on function public.crm_estado_desde_etapa()     from public, anon, authenticated;
 revoke execute on function public.crm_registrar_evento()       from public, anon, authenticated;
+
+-- ── 9. La etapa viaja en LOS DOS SENTIDOS ──────────────────────────────────
+-- Cambiar el estado desde la Bandeja ya movía la tarjeta (lo hace InboxClient).
+-- Faltaba lo contrario: arrastrar la tarjeta dejaba la conversación con su
+-- estado viejo — o sin ninguno — y el equipo veía una cosa en el chat y otra
+-- en el tablero. Va en la base para que valga desde donde sea.
+create or replace function crm_etapa_a_conversacion()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.stage_id is distinct from old.stage_id then
+    update conversations
+       set state_id = new.stage_id
+     where opportunity_id = new.id
+       and state_id is distinct from new.stage_id;
+  end if;
+  return null;
+end $$;
+
+drop trigger if exists opportunities_a_conversacion on opportunities;
+create trigger opportunities_a_conversacion after update on opportunities
+  for each row execute function crm_etapa_a_conversacion();
+
+revoke execute on function public.crm_etapa_a_conversacion() from public, anon, authenticated;

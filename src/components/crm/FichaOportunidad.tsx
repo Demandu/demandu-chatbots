@@ -11,6 +11,14 @@ import {
   vencimiento, nombreTarjeta, CUANDO, fechaDeAtajo,
   type Tarjeta, type Columna,
 } from "@/lib/crm";
+import { aFechaCorta, deFechaCorta } from "@/lib/analytics";
+
+/** Fecha de una tarea en el formato que entiende <input type="date">. */
+function paraCampoFecha(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : aFechaCorta(d);
+}
 
 interface Tarea {
   id: string;
@@ -34,7 +42,7 @@ export function FichaOportunidad({
   columnas: Columna[];
   responsables: { id: string; nombre: string }[];
   orgId: string;
-  onCerrar: () => void;
+  onCerrar: (huboCambios: boolean) => void;
   onCambio: () => void;
 }) {
   const sb = useMemo(() => createClient(), []);
@@ -48,7 +56,19 @@ export function FichaOportunidad({
   const [nuevaTarea, setNuevaTarea] = useState("");
   const [cuando, setCuando] = useState<string>("manana");
   const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
+  // Para no volver a pedir el tablero entero si el cliente solo miró la ficha.
+  const [cambiado, setCambiado] = useState(false);
+
+  const cerrar = () => onCerrar(cambiado);
+
+  /** Confirmación breve: sin botón de guardar, hay que ver que algo pasó. */
+  const confirmar = () => {
+    setCambiado(true);
+    setGuardado(true);
+    setTimeout(() => setGuardado(false), 1600);
+  };
 
   useEffect(() => {
     (async () => {
@@ -66,8 +86,9 @@ export function FichaOportunidad({
     setGuardando(true);
     const { error } = await sb.from("opportunities").update(patch).eq("id", tarjeta.id);
     setGuardando(false);
-    if (error) setAviso("No se pudo guardar.");
-    else setAviso(null);
+    if (error) { setAviso("No se pudo guardar."); return; }
+    setAviso(null);
+    confirmar();
   };
 
   const agregarTarea = async () => {
@@ -89,17 +110,28 @@ export function FichaOportunidad({
       .single();
     if (error) { setAviso("No se pudo agendar la tarea."); return; }
     setTareas((xs) => [data as Tarea, ...xs]);
+    confirmar();
+  };
+
+  /** Editar una tarea ya agendada: el texto o la fecha. */
+  const editarTarea = async (id: string, patch: Partial<Tarea>) => {
+    setTareas((xs) => xs.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+    const { error } = await sb.from("tasks").update(patch).eq("id", id);
+    if (error) { setAviso("No se pudo guardar la tarea."); return; }
+    confirmar();
   };
 
   const marcarHecha = async (id: string, hecha: boolean) => {
     const cuandoIso = hecha ? new Date().toISOString() : null;
     setTareas((xs) => xs.map((x) => (x.id === id ? { ...x, done_at: cuandoIso } : x)));
     await sb.from("tasks").update({ done_at: cuandoIso }).eq("id", id);
+    confirmar();
   };
 
   const borrarTarea = async (id: string) => {
     setTareas((xs) => xs.filter((x) => x.id !== id));
     await sb.from("tasks").delete().eq("id", id);
+    confirmar();
   };
 
   const pendientes = tareas.filter((t) => !t.done_at);
@@ -111,17 +143,23 @@ export function FichaOportunidad({
       <button
         type="button"
         aria-label="Cerrar"
-        onClick={onCerrar}
+        onClick={cerrar}
         className="flex-1 cursor-default bg-[#0a0a28]/40 backdrop-blur-[2px]"
       />
 
       <aside className="flex h-full w-full max-w-md flex-col overflow-y-auto bg-white shadow-[0_0_60px_-10px_rgba(10,10,40,.5)] sm:max-w-[420px]">
         <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-[#e6e8f2] bg-white px-4 py-3">
           <h2 className="min-w-0 flex-1 truncate font-display text-base font-bold text-ink">{nombre}</h2>
-          {guardando && <Loader2 className="h-4 w-4 flex-none animate-spin text-ink-3" />}
+          {guardando ? (
+            <Loader2 className="h-4 w-4 flex-none animate-spin text-ink-3" />
+          ) : guardado ? (
+            <span className="flex flex-none items-center gap-1 text-xs font-semibold text-success">
+              <Check className="h-3.5 w-3.5" /> Guardado
+            </span>
+          ) : null}
           <button
             type="button"
-            onClick={onCerrar}
+            onClick={cerrar}
             className="grid h-8 w-8 flex-none place-items-center rounded-lg text-ink-3 transition hover:bg-[#f4f5fb] hover:text-ink"
           >
             <X className="h-4 w-4" />
@@ -258,17 +296,43 @@ export function FichaOportunidad({
                         {hecha && <Check className="h-3 w-3" />}
                       </button>
                       <div className="min-w-0 flex-1">
-                        <p className={`text-sm ${hecha ? "text-ink-3 line-through" : "text-ink"}`}>{t.title}</p>
+                        {/* El texto y la fecha se editan aquí mismo y se
+                            guardan al salir del campo, igual que el resto de
+                            la ficha. Antes solo se podía marcar o borrar. */}
+                        <input
+                          defaultValue={t.title}
+                          onBlur={(e) => {
+                            const nuevo = e.target.value.trim();
+                            if (nuevo && nuevo !== t.title) editarTarea(t.id, { title: nuevo });
+                            else e.target.value = t.title;
+                          }}
+                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          className={`w-full rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-[#e2e4f0] focus:border-pink focus:outline-none ${
+                            hecha ? "text-ink-3 line-through" : "text-ink"
+                          }`}
+                        />
                         {!hecha && (
-                          <p
-                            className={`flex items-center gap-1 text-[11px] ${
-                              v.estado === "vencida" ? "font-semibold text-[#b02a2e]"
-                              : v.estado === "hoy" ? "font-semibold text-[#8a6400]"
-                              : "text-ink-3"
-                            }`}
-                          >
-                            <CalendarClock className="h-3 w-3" /> {v.texto}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-2 px-1">
+                            <span
+                              className={`flex items-center gap-1 text-[11px] ${
+                                v.estado === "vencida" ? "font-semibold text-[#b02a2e]"
+                                : v.estado === "hoy" ? "font-semibold text-[#8a6400]"
+                                : "text-ink-3"
+                              }`}
+                            >
+                              <CalendarClock className="h-3 w-3" /> {v.texto}
+                            </span>
+                            <input
+                              type="date"
+                              value={paraCampoFecha(t.due_at)}
+                              onChange={(e) => {
+                                const d = deFechaCorta(e.target.value);
+                                if (d) { d.setHours(9, 0, 0, 0); editarTarea(t.id, { due_at: d.toISOString() }); }
+                              }}
+                              className="rounded-md border border-[#e2e4f0] bg-white px-1.5 py-0.5 text-[11px] text-ink-2 focus:border-pink focus:outline-none"
+                              title="Cambiar la fecha"
+                            />
+                          </div>
                         )}
                       </div>
                       <button

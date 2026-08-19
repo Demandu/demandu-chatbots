@@ -182,7 +182,7 @@ begin
                        'is_platform_admin','auth_org_ids','org_usage','org_storage_used_bytes',
                        'org_storage_limit_bytes','drip_interval','match_bot_knowledge','analytics_overview',
                        'crm_enganchar_conversacion','crm_estado_desde_etapa','crm_registrar_evento',
-                       'crm_board','crm_mover_tarjeta')
+                       'crm_board','crm_mover_tarjeta','crm_etapa_a_conversacion')
      and has_function_privilege('anon', p.oid, 'execute');
   r := r || E'\n20. Funciones internas abiertas a visitantes ... ' || case when v='ninguna' then 'OK' else 'FALLO: '||v end;
 

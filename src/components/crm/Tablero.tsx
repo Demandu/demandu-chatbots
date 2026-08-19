@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -49,6 +49,15 @@ export function Tablero({
   const [indicador, setIndicador] = useState<{ col: string; idx: number } | null>(null);
   const debounce = useRef<any>(null);
 
+  // Next guarda la respuesta del servidor unos segundos: al ir a la Bandeja y
+  // volver, el tablero llegaba con las tarjetas donde estaban ANTES de moverlas
+  // y parecía que el cambio no se había guardado (sí se guardaba). Con esto, el
+  // estado de la pantalla sigue a lo que manda el servidor.
+  useEffect(() => {
+    setTablero(inicial);
+    setPipeline(inicial.pipeline_id);
+  }, [inicial]);
+
   // ── Traer el tablero ──────────────────────────────────────────────────────
   const recargar = useCallback(
     async (over: Partial<{ pipeline: string | null; responsable: string; buscar: string }> = {}) => {
@@ -73,6 +82,14 @@ export function Tablero({
     },
     [sb, orgId, pipeline, responsable, buscar],
   );
+
+  // Al volver a esta pestaña se vuelve a pedir el tablero: si alguien del
+  // equipo movió algo mientras tanto, aparece sin tener que recargar.
+  useEffect(() => {
+    const alVolver = () => { if (document.visibilityState === "visible") recargar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => document.removeEventListener("visibilitychange", alVolver);
+  }, [recargar]);
 
   const buscarConEspera = (v: string) => {
     setBuscar(v);
@@ -100,9 +117,13 @@ export function Tablero({
       if (error) {
         setTablero(previo);                       // se deshace: la base manda
         setError("No se pudo mover la tarjeta. Inténtalo otra vez.");
+        return;
       }
+      // La etapa también cambió en la conversación (lo hace la base). Se le
+      // avisa a Next para que la Bandeja y Resultados no queden con lo viejo.
+      router.refresh();
     },
-    [sb, tablero],
+    [sb, tablero, router],
   );
 
   const columnas = tablero.columnas ?? [];
@@ -219,7 +240,11 @@ export function Tablero({
           columnas={columnas}
           responsables={tablero.responsables ?? []}
           orgId={orgId}
-          onCerrar={() => setAbierta(null)}
+          onCerrar={(huboCambios) => {
+            setAbierta(null);
+            // Solo se vuelve a pedir el tablero si de verdad cambió algo.
+            if (huboCambios) { recargar(); router.refresh(); }
+          }}
           onCambio={() => { setAbierta(null); recargar(); router.refresh(); }}
         />
       )}

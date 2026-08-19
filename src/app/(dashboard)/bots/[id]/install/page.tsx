@@ -3,6 +3,8 @@ import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
 import { BotNav } from "@/components/builder/BotNav";
 import { ConnectButton } from "@/components/builder/ConnectButton";
+import { EstadoMeta } from "@/components/integrations/EstadoMeta";
+import { consultarMeta, interpretarEstado } from "@/lib/integrations/metaEstado";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -30,9 +32,18 @@ export default async function BotInstallPage({ params }: { params: { id: string 
   const channel = (bot.channel as string) ?? "webchat";
   const { data: wa } = await supabase
     .from("whatsapp_channels")
-    .select("display_number, phone_number_id")
+    .select("display_number, phone_number_id, waba_id, access_token")
     .eq("bot_id", params.id)
     .maybeSingle();
+
+  // Estado real en Meta. Se consulta en el servidor: el token nunca llega al
+  // navegador. Si Meta no contesta, la pantalla sigue funcionando igual.
+  const diagnostico =
+    channel === "whatsapp" && wa?.phone_number_id && wa?.waba_id && wa?.access_token
+      ? interpretarEstado(
+          await consultarMeta(wa.phone_number_id as string, wa.waba_id as string, wa.access_token as string),
+        )
+      : null;
 
   return (
     <>
@@ -46,13 +57,19 @@ export default async function BotInstallPage({ params }: { params: { id: string 
             : `Conecta ${LABEL[channel]} para que este chatbot reciba y responda mensajes en vivo.`}
         </p>
 
-        <div className="max-w-2xl card-l p-6">
-          <ConnectButton
-            channel={channel as any}
-            botId={bot.id}
-            connected={!!wa}
-            number={(wa as any)?.display_number ?? null}
-          />
+        <div className="flex max-w-2xl flex-col gap-4">
+          {/* El diagnóstico va ARRIBA del botón: si algo está bloqueando los
+              envíos, es lo primero que el cliente necesita ver. */}
+          {diagnostico && <EstadoMeta d={diagnostico} />}
+
+          <div className="card-l p-6">
+            <ConnectButton
+              channel={channel as any}
+              botId={bot.id}
+              connected={!!wa}
+              number={(wa as any)?.display_number ?? null}
+            />
+          </div>
         </div>
       </div>
     </>

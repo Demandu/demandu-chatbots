@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "10";
+const VERSION_MOTOR = "11";
 
 function admin() {
   return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -201,6 +201,17 @@ function motivoMeta(code: number, mensaje: string): string {
 }
 
 type ResultadoEnvio = { ok: boolean; error?: string; code?: number };
+
+/**
+ * El número de pruebas que Meta regala a cada cuenta: +1 555 XXX XXXX.
+ * En ese número NO se puede aprobar el nombre para mostrar, así que la
+ * revisión no termina nunca y el error 131037 manda al cliente a esperar
+ * algo que no va a pasar. Detectarlo cambia por completo el mensaje.
+ */
+function esNumeroDePrueba(numero?: string | null): boolean {
+  const n = String(numero ?? "").replace(/\D/g, "");
+  return /^1555\d{7}$/.test(n);
+}
 
 async function waPost(pnid: string, token: string, payload: any): Promise<ResultadoEnvio> {
   try {
@@ -412,7 +423,17 @@ function evalCondition(flow: any, node: any, vars: Record<string, string>) {
  */
 async function registrar(ctx: any, body: string, envio: ResultadoEnvio, extra: any = {}) {
   const payload: any = { ...extra };
-  if (!envio.ok) payload.no_entregado = { motivo: envio.error ?? "No se pudo enviar", code: envio.code ?? null };
+  if (!envio.ok) {
+    let motivo = envio.error ?? "No se pudo enviar";
+    // El 131037 sobre el número de pruebas no es "espera a que te aprueben":
+    // es "ese número nunca se va a aprobar, da de alta el tuyo".
+    if (envio.code === 131037 && esNumeroDePrueba(ctx.numeroPropio)) {
+      motivo =
+        "Estás usando el número de pruebas de Meta (+1 555), que no permite aprobar un nombre " +
+        "para mostrar. Da de alta tu propio número en Conexión para poder enviar mensajes.";
+    }
+    payload.no_entregado = { motivo, code: envio.code ?? null };
+  }
   await ctx.db.from("messages").insert({
     conversation_id: ctx.convId, org_id: ctx.orgId,
     direction: "outbound", sender: "bot", body, payload,
@@ -508,6 +529,7 @@ async function handleIncoming(opts: any) {
     orgId: opts.orgId, convId: opts.convId, db: opts.db, vars,
     botId: opts.botId, aiSettings: opts.aiSettings ?? null, lastUserText: opts.visible ?? opts.text ?? "",
     atajos: opts.atajos ?? leerAtajos(null),
+    numeroPropio: opts.numeroPropio ?? null,
     // Analítica: bloques recorridos en este turno y cómo terminó el recorrido.
     pasos: 0, ultimoNodo: null as string | null, finMotivo: null as string | null,
   };
@@ -825,6 +847,7 @@ Deno.serve(async (req: Request) => {
               orgId: cfg.org_id, convId: conv.id, db, flowState, text, visible,
               botId: cfg.bot_id, aiSettings: (botRow as any)?.ai ?? null, baseVars, atajos,
               flowId: chosen.id, flowName: chosen.name ?? null,
+              numeroPropio: cfg.display_number ?? null,
             });
             await db.from("conversations").update({ flow_state: { ...newState, flow_id: chosen.id } }).eq("id", conv.id);
           }
