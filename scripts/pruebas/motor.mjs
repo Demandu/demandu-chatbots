@@ -85,7 +85,7 @@ const FLUJO = {
 };
 
 /** Corre el motor y devuelve los textos que el bot habría enviado. */
-async function correr({ texto = "", estado = {}, isStart = false, atajos = null, flujo = FLUJO, iaDeRespaldo = true } = {}) {
+async function correr({ texto = "", estado = {}, isStart = false, atajos = null, flujo = FLUJO, iaDeRespaldo = true, ofreciAgente = false } = {}) {
   const { api, escrituras, tablas } = baseFalsa();
   const r = await runWebFlow({
     flow: flujo,
@@ -100,6 +100,7 @@ async function correr({ texto = "", estado = {}, isStart = false, atajos = null,
     atajos,
     flowName: flujo.name ?? null,
     iaDeRespaldo,
+    ofreciAgente,
   });
   return { ...r, textos: r.out.map((m) => m.text), escrituras, tablas };
 }
@@ -366,6 +367,69 @@ describe("Motor: el cliente se sale del flujo", () => {
   testAsync("responder una opción válida sigue funcionando igual", async () => {
     const r = await correr({ texto: "b1", estado: { awaiting: { nodeId: "n2", type: "buttons" } } });
     esperar(r.textos.join(" ")).contiene("$59");
+  });
+});
+
+
+// ─── Pase a una persona ──────────────────────────────────────────────────────
+describe("Pase a una persona", () => {
+  // Los tres caminos tienen que dejar la conversacion IGUAL, porque de
+  // `handoff_requested_at` dependen el filtro "Solicitudes" de la Bandeja, el
+  // aviso en pantalla y el reparto automatico. Si un camino no lo pone, el bot
+  // dice "te paso con alguien" y nadie se entera nunca.
+
+  /** El ultimo patch que el motor mando a `conversations`. */
+  const ultimoPatch = (r) => {
+    const ups = r.escrituras.conversations.filter((x) => x.__update);
+    return ups.length ? ups[ups.length - 1].__update : null;
+  };
+
+  const FLUJO_HUMANO = {
+    id: "fh", name: "A humano",
+    nodes: [
+      { id: "h1", type: "message", position: { x: 0, y: 0 }, data: { label: "Mensaje", text: "Hola", isStart: true } },
+      { id: "h2", type: "human", position: { x: 0, y: 1 }, data: { label: "Transferir", text: "Te comunico con un asesor" } },
+    ],
+    edges: [{ id: "eh", source: "h1", target: "h2" }],
+  };
+
+  testAsync("camino 1: el bloque del flujo pide persona", async () => {
+    const r = await correr({ isStart: true, flujo: FLUJO_HUMANO });
+    const p = ultimoPatch(r);
+    esperar(p?.status).igual("assigned");
+    esperar(!!p?.handoff_requested_at).verdadero(
+      "sin handoff_requested_at nadie recibe el aviso ni entra al reparto",
+    );
+    esperar(!!p?.handoff_reason).verdadero("la Bandeja muestra el motivo al agente");
+  });
+
+  testAsync("camino 2: el cliente escribe el atajo", async () => {
+    const r = await correr({ texto: "1" });
+    const p = ultimoPatch(r);
+    esperar(p?.status).igual("assigned");
+    esperar(!!p?.handoff_requested_at).verdadero();
+  });
+
+  testAsync("camino 3: la IA no supo y el cliente acepta con un 'si'", async () => {
+    const r = await correr({ texto: "si", ofreciAgente: true });
+    const p = ultimoPatch(r);
+    esperar(p?.status).igual("assigned", "la oferta era humo: el cliente aceptaba y no pasaba nada");
+    esperar(!!p?.handoff_requested_at).verdadero();
+  });
+
+  testAsync("un 'si' SIN oferta previa no pasa a una persona", async () => {
+    // Si no, cualquier pregunta de si/no del flujo secuestraria la conversacion.
+    const r = await correr({ texto: "si", ofreciAgente: false });
+    const p = ultimoPatch(r);
+    esperar(p?.status === "assigned").falso("un si normal del flujo no debe llamar a un humano");
+  });
+
+  testAsync("el atajo ya no baja el contador de no leidos", async () => {
+    // Ponia `unread: 1` a mano, asi que una conversacion con 5 sin leer se
+    // quedaba en 1 y el aviso se perdia. Ahora lo lleva la base.
+    const r = await correr({ texto: "1" });
+    const p = ultimoPatch(r);
+    esperar(p && "unread" in p).falso("el motor no debe tocar `unread`");
   });
 });
 

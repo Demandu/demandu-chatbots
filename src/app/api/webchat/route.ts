@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runWebFlow, chooseWebFlow } from "@/lib/flow/webRuntime";
@@ -25,6 +26,27 @@ function json(body: unknown, status = 200) {
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS });
+}
+
+/**
+ * Nombre para un visitante web que todavía no dijo quién es.
+ *
+ * Antes todos se llamaban igual: "Visitante web". En la Bandeja y en el Embudo
+ * aparecían tres renglones idénticos y el agente no tenía forma de saber cuál
+ * era cuál. Ahora cada sesión trae un código corto y estable —"Visitante 4F2A"—
+ * derivado de su propio identificador, así que se pueden nombrar en voz alta,
+ * buscar y distinguir de un vistazo.
+ *
+ * Se usa md5 para que el mismo código se pueda calcular igual desde SQL cuando
+ * haya que rellenar contactos viejos.
+ */
+function nombreDeVisitante(sessionId: string): string {
+  try {
+    const hex = createHash("md5").update(String(sessionId)).digest("hex");
+    return `Visitante ${hex.slice(-4).toUpperCase()}`;
+  } catch {
+    return "Visitante web";
+  }
 }
 
 const DEFAULT_WIDGET = {
@@ -74,15 +96,45 @@ export async function POST(req: Request) {
 
     const widget = { ...DEFAULT_WIDGET, ...((bot.widget as any) ?? {}) };
 
-    // Contacto anónimo del navegador (identificado por su sessionId)
-    const { data: contact } = await admin
+    // Contacto anónimo del navegador (identificado por su sessionId).
+    //
+    // NO se usa `upsert`: escribía el nombre en CADA mensaje, así que si un
+    // agente rebautizaba el contacto a "Juan Pérez", el siguiente mensaje del
+    // cliente lo devolvía a "Visitante web". El nombre se pone al crearlo y
+    // desde ahí manda quien lo edite.
+    let { data: contact } = await admin
       .from("contacts")
-      .upsert(
-        { org_id: bot.org_id, channel: "webchat", external_id: sessionId, name: "Visitante web" },
-        { onConflict: "org_id,channel,external_id" },
-      )
       .select("id")
-      .single();
+      .eq("org_id", bot.org_id)
+      .eq("channel", "webchat")
+      .eq("external_id", sessionId)
+      .maybeSingle();
+
+    if (!contact) {
+      const ins = await admin
+        .from("contacts")
+        .insert({
+          org_id: bot.org_id,
+          channel: "webchat",
+          external_id: sessionId,
+          name: nombreDeVisitante(sessionId),
+        })
+        .select("id")
+        .maybeSingle();
+      contact = ins.data;
+
+      // Dos mensajes casi a la vez pueden intentar crearlo los dos; el segundo
+      // choca con el índice único. No es un error: el contacto ya existe.
+      if (!contact) {
+        ({ data: contact } = await admin
+          .from("contacts")
+          .select("id")
+          .eq("org_id", bot.org_id)
+          .eq("channel", "webchat")
+          .eq("external_id", sessionId)
+          .maybeSingle());
+      }
+    }
 
     if (!contact) return json({ error: "contact_error" }, 500);
 
@@ -177,7 +229,19 @@ export async function POST(req: Request) {
       // interruptor general: si la IA está apagada, tampoco hay desvío.
       iaDeRespaldo:
         (bot as any).ai?.enabled !== false && (bot as any).ai?.fallback_flujo !== false,
+      // En el turno anterior el bot dijo "no sé, ¿te paso con una persona?".
+      ofreciAgente: state.ofreciAgente === true,
     });
+
+    // ¿El bot acaba de decir "no sé" y ofrecer una persona? El mensaje de
+    // respaldo lo escribe el cliente en su configuración, así que no se puede
+    // reconocer por el texto: se compara con el que él mismo puso. Si el
+    // siguiente mensaje es un "sí", el motor hace el pase.
+    // Se recalcula en cada turno, así que se apaga solo en cuanto el bot
+    // contesta cualquier otra cosa.
+    const respaldo = String((bot as any).ai?.fallback ?? "").trim();
+    const ofreciAgente =
+      respaldo.length > 0 && result.out.some((m: any) => String(m?.text ?? "").trim() === respaldo);
 
     await admin
       .from("conversations")
@@ -188,6 +252,7 @@ export async function POST(req: Request) {
           flow_id: chosen.id,
           hintEnviado: result.hintEnviado,
           run_id: result.runId ?? null,
+          ofreciAgente,
           // Sin esto, el siguiente mensaje reinicia el flujo y el bot repite
           // el saludo como perico.
           terminado: result.terminado ?? false,

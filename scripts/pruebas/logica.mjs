@@ -14,7 +14,7 @@ import {
   rangoDePreset, agrupacionSugerida, duracion, porcentaje, numero,
   etiquetaPeriodo, aFechaCorta, deFechaCorta, efectividadAgente,
 } from "../../src/lib/analytics.ts";
-import { pareceUnaPregunta, decidirDesvio, puenteDeVuelta } from "../../src/lib/flow/desvio.ts";
+import { pareceUnaPregunta, decidirDesvio, puenteDeVuelta, esAfirmacion } from "../../src/lib/flow/desvio.ts";
 
 // ─── Atajos del chatbot (0 = reiniciar, 1 = persona) ────────────────────────
 describe("Atajos del chatbot", () => {
@@ -390,6 +390,40 @@ describe("El cliente se sale del flujo", () => {
     esperar(puenteDeVuelta("pregunta_en_captura").length).mayorQue(0);
     esperar(puenteDeVuelta("flujo_terminado")).igual("", "ahí no hay nada que retomar");
     esperar(puenteDeVuelta(null)).igual("");
+  });
+});
+
+
+// --- Aceptar la oferta de pasar con una persona ------------------------------
+describe("Decir que si a hablar con una persona", () => {
+  // Solo se consulta en el turno siguiente a que el bot ofrezca. Aun asi tiene
+  // que ser estrecho: un falso positivo saca al cliente del flujo y lo manda a
+  // una cola humana que quiza no hay quien atienda.
+
+  test("las formas normales de decir que si", () => {
+    for (const t of ["si", "sí", "Sí", "SI", "claro", "ok", "va", "dale",
+                     "por favor", "porfa", "sí, por favor", "adelante", "yes"]) {
+      esperar(esAfirmacion(t)).verdadero(`"${t}" deberia contar como si`);
+    }
+  });
+
+  test("un no nunca cuenta como si", () => {
+    for (const t of ["no", "no gracias", "ahorita no", "nel"]) {
+      esperar(esAfirmacion(t)).falso(`"${t}" no puede pasar a un humano`);
+    }
+  });
+
+  test("una frase larga que empieza con si NO cuenta", () => {
+    // "si, pero antes dime el precio" es otra pregunta, no un si a un humano:
+    // la tiene que seguir contestando la IA.
+    esperar(esAfirmacion("si pero antes dime el precio")).falso();
+    esperar(esAfirmacion("claro, cuanto cuesta el plan grande")).falso();
+  });
+
+  test("un dato cualquiera no cuenta como si", () => {
+    for (const t of ["Juan", "Monterrey", "5512345678", "", "   "]) {
+      esperar(esAfirmacion(t)).falso(`"${t}" no es una aceptacion`);
+    }
   });
 });
 

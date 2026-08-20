@@ -107,7 +107,10 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
               <div className="space-y-4">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-ink-2">¿Quién es tu asistente?</label>
-                  <textarea name="persona" defaultValue={ai.persona} className="input-l min-h-[80px]" />
+                  {/* Un prompt de personalidad real ocupa varios párrafos. Con
+                      80px se veían dos líneas y media y el texto quedaba
+                      cortado a media palabra, como si se hubiera perdido. */}
+                  <textarea name="persona" defaultValue={ai.persona} className="input-l min-h-[190px]" />
                   <p className="mt-1 text-[11px] text-ink-3">
                     Ej: “Eres Sofía, asistente de Pastelería La Dulce. Ayudas con pedidos y dudas de productos.”
                   </p>

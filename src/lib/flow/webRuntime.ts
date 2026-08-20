@@ -3,7 +3,7 @@ import type { Flow, DemanduNode, ConditionRule, FlowButton } from "./types";
 import { aiAnswer, type AiSettings } from "@/lib/ai/answer";
 import { detectarAtajo, leerAtajos, type Atajos } from "./shortcuts";
 import { abrirRecorrido, avanzarRecorrido, cerrarRecorrido, type MotivoFin } from "./flowRuns";
-import { decidirDesvio, puenteDeVuelta, type MotivoDesvio } from "./desvio";
+import { decidirDesvio, puenteDeVuelta, esAfirmacion, type MotivoDesvio } from "./desvio";
 
 /**
  * Motor de conversación para canales que NO envían por una API externa
@@ -175,7 +175,18 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
       case "human":
       case "assign":
         push(ctx, node.data.text ?? "Te comunico con un asesor, un momento 🙌");
-        await ctx.admin.from("conversations").update({ status: "assigned" }).eq("id", ctx.conversationId);
+        // `handoff_requested_at` no es decorativo: de él dependen el filtro
+        // "Solicitudes" de la Bandeja, el aviso en pantalla y el reparto
+        // automático. Sin él, el flujo decía "te comunico con un asesor" y
+        // NADIE se enteraba — la conversación se quedaba esperando en silencio.
+        await ctx.admin
+          .from("conversations")
+          .update({
+            status: "assigned",
+            handoff_requested_at: new Date().toISOString(),
+            handoff_reason: "El flujo lo mandó con una persona",
+          })
+          .eq("id", ctx.conversationId);
         ctx.finMotivo = "agente";
         return null;
       case "end":
@@ -280,6 +291,11 @@ export async function runWebFlow(opts: {
   atajos?: any;
   /** Que la IA conteste cuando el cliente se sale del flujo. */
   iaDeRespaldo?: boolean;
+  /**
+   * En el turno anterior el bot ofreció pasar con una persona (porque la IA no
+   * supo). Si ahora el cliente dice que sí, se hace el pase.
+   */
+  ofreciAgente?: boolean;
   /** Analítica: nombre del flujo, para que el histórico no quede anónimo. */
   flowName?: string | null;
 }): Promise<{
@@ -329,7 +345,17 @@ export async function runWebFlow(opts: {
   // ── Atajos: mandan sobre cualquier otra cosa del flujo ──────────────────────
   // No cortamos aquí: seguimos hasta el bloque que guarda los mensajes en la
   // Bandeja, para que la respuesta del atajo también quede registrada.
-  const atajo = opts.isStart ? null : detectarAtajo(opts.text ?? "", atajos);
+  const atajoDetectado = opts.isStart ? null : detectarAtajo(opts.text ?? "", atajos);
+
+  // El turno anterior el bot dijo "no sé, ¿te paso con una persona?" y ahora
+  // contesta que sí. Sin esto, la oferta era humo: el cliente aceptaba y no
+  // pasaba nada. "sí" no puede ser un atajo global — secuestraría cualquier
+  // pregunta de sí/no del flujo — así que solo cuenta en este turno.
+  const aceptoLaOferta =
+    !opts.isStart && !!opts.ofreciAgente && !atajoDetectado && esAfirmacion(opts.text ?? "");
+
+  const atajo: "agent" | "reset" | null = aceptoLaOferta ? "agent" : atajoDetectado;
+
   if (atajo === "agent") {
     push(ctx, atajos.agent.reply);
     await opts.admin
@@ -337,8 +363,12 @@ export async function runWebFlow(opts: {
       .update({
         status: "assigned",
         handoff_requested_at: new Date().toISOString(),
-        handoff_reason: "El lead pidió hablar con una persona",
-        unread: 1,
+        handoff_reason: aceptoLaOferta
+          ? "La IA no supo y el lead aceptó pasar con una persona"
+          : "El lead pidió hablar con una persona",
+        // Ya NO se fuerza `unread: 1`. Lo lleva el disparador de la base al
+        // insertar cada mensaje; ponerlo aquí BAJABA el contador cuando había
+        // varios mensajes sin leer, y el aviso se perdía.
       })
       .eq("id", opts.conversationId);
     // Analítica: el recorrido termina aquí, se lo lleva una persona.

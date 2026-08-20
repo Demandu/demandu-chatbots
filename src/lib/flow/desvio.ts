@@ -74,6 +74,36 @@ export function pareceUnaPregunta(texto: string): boolean {
   return ARRANQUES.some((a) => t === a || t.startsWith(a + " "));
 }
 
+/**
+ * Formas de decir que sí, para cuando el bot acaba de ofrecer pasar con una
+ * persona.
+ *
+ * EL PROBLEMA QUE RESUELVE: cuando la IA no sabe algo, el bot dice "esa no me
+ * la sé 🙈 ¿Quieres que te comunique con una persona del equipo?". El cliente
+ * contesta "sí"… y no pasaba absolutamente nada. La palabra "sí" no está entre
+ * los atajos (y no puede estarlo: secuestraría cualquier pregunta de sí/no del
+ * flujo). Por eso esto solo se consulta en el turno siguiente a la oferta.
+ */
+const AFIRMACIONES = new Set([
+  "si", "sí", "s", "claro", "ok", "okay", "oki", "va", "vale", "sale", "dale",
+  "porfa", "por favor", "porfavor", "obvio", "simon", "andale", "orale",
+  "si porfa", "si por favor", "claro que si", "me gustaria", "quiero",
+  "si quiero", "adelante", "hazlo", "yes", "yep", "sure",
+]);
+
+/**
+ * ¿Está aceptando la oferta de pasar con una persona?
+ *
+ * Conservador a propósito: solo frases cortas y claras. Si alguien contesta
+ * "sí, pero antes dime el precio", eso NO es un sí a hablar con un humano —
+ * es otra pregunta, y debe seguir contestándola la IA.
+ */
+export function esAfirmacion(texto: string): boolean {
+  const t = normalizar(texto).replace(/[.!¡?¿,]/g, "").trim();
+  if (!t || t.split(" ").length > 3) return false;
+  return AFIRMACIONES.has(t);
+}
+
 export interface EstadoDelTurno {
   /** Qué está esperando el flujo, si algo. */
   esperando: { type: "question" | "buttons"; nodeId: string } | null;
