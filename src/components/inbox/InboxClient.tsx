@@ -99,6 +99,14 @@ export function InboxClient({
   const pedida = params.get("c");
   const [selId, setSelId] = useState<string | null>(pedida ?? initial[0]?.id ?? null);
   const [messages, setMessages] = useState<Message[]>([]);
+  // Solo para la apertura de una conversación. Sin esto el panel se queda en
+  // blanco varios segundos y parece una conversación rota o un error.
+  // Arranca encendido si ya hay una conversación seleccionada: los efectos
+  // corren después del primer pintado, así que empezar apagado enseñaría un
+  // parpadeo de "todavía no hay mensajes" antes de siquiera pedirlos.
+  const [cargandoMsgs, setCargandoMsgs] = useState<boolean>(Boolean(pedida ?? initial[0]?.id));
+  // Cuál conversación se está esperando, para descartar respuestas atrasadas.
+  const convoPedidaRef = useRef<string | null>(null);
   const [text, setText] = useState("");
   const [filter, setFilter] = useState<"todas" | "solicitudes" | "abiertas" | "cerradas">("todas");
   const [q, setQ] = useState("");
@@ -131,10 +139,28 @@ export function InboxClient({
     if (data) setConvos(data as any);
   }, [sb]);
 
+  /**
+   * Trae los mensajes de una conversación.
+   *
+   * `inicial` distingue abrir una conversación de el refresco de cada 6 s. Solo
+   * la apertura enciende el esqueleto: si lo encendiera también el refresco,
+   * la charla parpadearía cada 6 segundos.
+   */
   const loadMessages = useCallback(
-    async (id: string) => {
-      const { data } = await sb.from("messages").select("id,direction,sender,body,created_at,payload").eq("conversation_id", id).order("created_at");
-      setMessages((data as any) ?? []);
+    async (id: string, inicial = false) => {
+      if (inicial) setCargandoMsgs(true);
+      try {
+        const { data } = await sb.from("messages").select("id,direction,sender,body,created_at,payload").eq("conversation_id", id).order("created_at");
+        // Si mientras tanto el agente ya se cambió a otra conversación, esta
+        // respuesta llegó tarde: pintarla mostraría los mensajes de quien no es.
+        if (convoPedidaRef.current !== id) return;
+        setMessages((data as any) ?? []);
+      } finally {
+        // En `finally` para que un fallo de red no deje el esqueleto girando
+        // para siempre. Y solo si sigue siendo la conversación vigente: una
+        // respuesta atrasada no debe apagar el esqueleto de la nueva.
+        if (inicial && convoPedidaRef.current === id) setCargandoMsgs(false);
+      }
     },
     [sb]
   );
@@ -142,7 +168,11 @@ export function InboxClient({
   // Al seleccionar: carga mensajes y marca como leído
   useEffect(() => {
     if (!selId) return;
-    loadMessages(selId);
+    // Se vacía primero: si no, durante un instante se ven los mensajes de la
+    // conversación anterior debajo del nombre de la nueva.
+    setMessages([]);
+    convoPedidaRef.current = selId;
+    loadMessages(selId, true);
     // Al abrirla se marca leída y, si el lead había pedido una persona,
     // la solicitud se da por atendida (deja de sonar en toda la plataforma).
     setConvos((cs) =>
@@ -560,6 +590,13 @@ export function InboxClient({
             className="flex flex-1 flex-col gap-1.5 overflow-y-auto px-[8%] py-4"
             style={{ backgroundColor: paleta.canvas, backgroundImage: paleta.doodle }}
           >
+            {cargandoMsgs && !messages.length && <EsqueletoMensajes />}
+            {!cargandoMsgs && !messages.length && (
+              <div className="m-auto text-center text-[13px] text-ink-3">
+                Todavía no hay mensajes en esta conversación.
+              </div>
+            )}
+
             {messages.map((m) => {
               const out = m.direction === "outbound";
               return (
@@ -687,6 +724,34 @@ export function InboxClient({
         onConfirmar={confirmarAccion}
         onCancelar={() => setPorConfirmar(null)}
       />
+    </div>
+  );
+}
+
+/**
+ * Esqueleto de la charla mientras cargan los mensajes.
+ *
+ * Existe porque el panel se quedaba en blanco varios segundos al abrir una
+ * conversación y se leía como "esta conversación está vacía" o "se rompió".
+ * Imita la forma real —burbujas alternadas de anchos distintos— para que el
+ * ojo entienda que viene una charla, no un error.
+ */
+function EsqueletoMensajes() {
+  const formas = [
+    { out: false, ancho: "58%" },
+    { out: true, ancho: "44%" },
+    { out: false, ancho: "70%" },
+    { out: true, ancho: "52%" },
+  ];
+  return (
+    <div className="flex flex-col gap-1.5" aria-label="Cargando mensajes" aria-busy="true">
+      {formas.map((f, i) => (
+        <div
+          key={i}
+          className={`h-9 animate-pulse rounded-lg bg-white/60 ${f.out ? "self-end" : "self-start"}`}
+          style={{ width: f.ancho, animationDelay: `${i * 90}ms` }}
+        />
+      ))}
     </div>
   );
 }
