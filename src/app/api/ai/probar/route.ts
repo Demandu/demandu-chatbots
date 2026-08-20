@@ -45,6 +45,9 @@ export async function POST(req: Request) {
       question: q,
       settings: ((bot as any).ai as any) ?? null,
       logUsage: false, // una prueba desde el panel no se le cobra al cliente
+      // Quien prueba aquí es el dueño del negocio: si algo está roto tiene que
+      // verlo, no recibir el "esa no me la sé" que ve un cliente.
+      diagnostico: true,
     });
 
     return NextResponse.json({ respuesta, disponible: true });

@@ -12,7 +12,16 @@
 import { embedQuery } from "./ingest";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-latest";
+
+/**
+ * Modelo por defecto. Se puede cambiar sin tocar código con ANTHROPIC_MODEL.
+ *
+ * OJO AL CAMBIARLO: si el nombre no existe, la API devuelve error y el bot
+ * contesta el mensaje de respaldo ("esa no me la sé") — se ve idéntico a que
+ * la IA no supiera. Pasó con `claude-3-5-haiku-latest`, que quedó retirado.
+ * El mismo nombre vive también en la función de WhatsApp (supabase/functions).
+ */
+const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
 
 export type AiSettings = {
   enabled?: boolean;
@@ -122,6 +131,9 @@ function buildSystem(ai: Required<AiSettings>, knowledge: { title: string; conte
     `- Si la respuesta no está en esa información, responde exactamente: "${ai.fallback}"`,
     "- Responde en el mismo idioma en que te escriba el cliente.",
     "- No menciones que existe una 'información del negocio' ni cites los números entre corchetes.",
+    // El widget y WhatsApp muestran texto plano: los asteriscos de markdown
+    // salen literales y se ven como un error. Mejor pedirlo que limpiarlo.
+    "- Escribe en texto plano. Nada de markdown: sin **negritas**, sin # títulos, sin viñetas con guiones.",
   ].join("\n");
 }
 
@@ -138,13 +150,21 @@ export async function aiAnswer(opts: {
   history?: { role: "user" | "assistant"; content: string }[];
   /** Las pruebas desde el panel no se cobran: pasan `logUsage: false`. */
   logUsage?: boolean;
+  /**
+   * Solo para la prueba del panel, que ve el dueño del negocio.
+   * Cuando la API falla, en vez del mensaje de respaldo devuelve el motivo
+   * real. Sin esto, una llave vencida o un modelo retirado se ven exactamente
+   * igual que "no tengo esa información" y nadie se entera de que está roto.
+   * NUNCA se activa en una conversación con un cliente.
+   */
+  diagnostico?: boolean;
 }): Promise<string> {
   const ai: Required<AiSettings> = { ...AI_DEFAULTS, ...(opts.settings ?? {}) };
 
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
     console.warn("[ai] ANTHROPIC_API_KEY no configurada — usando respuesta de respaldo");
-    return ai.fallback;
+    return opts.diagnostico ? "⚠️ Falta configurar la llave de IA en el servidor." : ai.fallback;
   }
 
   // El conocimiento SIEMPRE se acota a la organización y al chatbot.
@@ -174,7 +194,7 @@ export async function aiAnswer(opts: {
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.error("[ai] error de la API:", res.status, detail.slice(0, 200));
-      return ai.fallback;
+      return opts.diagnostico ? explicarFallo(res.status, detail) : ai.fallback;
     }
 
     const j = await res.json();
@@ -200,6 +220,32 @@ export async function aiAnswer(opts: {
     return text || ai.fallback;
   } catch (e: any) {
     console.error("[ai] fallo de red:", e?.message ?? e);
-    return ai.fallback;
+    return opts.diagnostico
+      ? "⚠️ No se pudo conectar con el servicio de IA. Vuelve a intentar en un minuto."
+      : ai.fallback;
   }
+}
+
+/**
+ * Traduce el error de la API a algo que el dueño del negocio pueda accionar.
+ * Solo se muestra en la prueba del panel, nunca a un cliente final.
+ */
+function explicarFallo(status: number, detail: string): string {
+  const d = (detail ?? "").toLowerCase();
+  if (status === 401 || status === 403) {
+    return "⚠️ La llave de IA no es válida o fue revocada. Genera una nueva y vuelve a guardarla.";
+  }
+  if (status === 400 && (d.includes("model") || d.includes("not_found"))) {
+    return "⚠️ El modelo de IA configurado ya no existe. Hay que actualizarlo (variable ANTHROPIC_MODEL).";
+  }
+  if (status === 404) {
+    return "⚠️ El modelo de IA configurado ya no existe. Hay que actualizarlo (variable ANTHROPIC_MODEL).";
+  }
+  if (status === 429) {
+    return "⚠️ Se alcanzó el límite de la cuenta de IA. Revisa el saldo o espera unos minutos.";
+  }
+  if (status >= 500) {
+    return "⚠️ El servicio de IA está fallando ahora mismo. No es tu configuración; intenta más tarde.";
+  }
+  return `⚠️ La IA respondió con un error (${status}). Revisa la configuración de la llave.`;
 }

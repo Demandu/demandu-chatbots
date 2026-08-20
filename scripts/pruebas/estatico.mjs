@@ -254,4 +254,54 @@ describe("Motor de WhatsApp desplegado", () => {
   });
 });
 
+// ─── Modelo de IA ────────────────────────────────────────────────────────────
+describe("Modelo de IA", () => {
+  // POR QUÉ EXISTE ESTA PRUEBA: cuando el nombre del modelo caduca, la API
+  // devuelve error, el código cae al mensaje de respaldo y el bot contesta
+  // "esa no me la sé" — idéntico a no tener la respuesta. Pasó de verdad con
+  // `claude-3-5-haiku-latest` y costó una tarde encontrarlo, porque todo lo
+  // demás (llave, despliegue, conocimiento) estaba bien.
+  const RETIRADOS = [/claude-3-5-/, /claude-3-opus/, /claude-2/, /claude-instant/];
+
+  const modeloDe = (texto) =>
+    texto.match(/ANTHROPIC_MODEL"?\)?\s*(?:\|\||\?\?)\s*"([^"]+)"/)?.[1] ?? null;
+
+  const web = fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8");
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  test("los dos motores usan el mismo modelo", () => {
+    const a = modeloDe(web);
+    const b = modeloDe(wa);
+    esperar(!!a).verdadero("no encontré el modelo por defecto en answer.ts");
+    esperar(b).igual(a, "WhatsApp y el canal web contestarían con modelos distintos");
+  });
+
+  test("el modelo no es uno retirado", () => {
+    for (const [archivo, texto] of [["answer.ts", web], ["whatsapp/index.ts", wa]]) {
+      const m = modeloDe(texto) ?? "";
+      const malo = RETIRADOS.find((r) => r.test(m));
+      esperar(!malo).verdadero(`${archivo} apunta a un modelo retirado: ${m}`);
+    }
+  });
+
+  test("la prueba del panel muestra el error real, no el mensaje de respaldo", () => {
+    // Sin esto, el dueño del negocio no puede distinguir "no lo sé" de
+    // "la llave está vencida", que es exactamente lo que nos pasó.
+    const ruta = fs.readFileSync(path.join(SRC, "app/api/ai/probar/route.ts"), "utf8");
+    esperar(ruta.includes("diagnostico: true")).verdadero(
+      "/api/ai/probar debe pedir diagnóstico para que los fallos se vean",
+    );
+    esperar(web.includes("opts.diagnostico")).verdadero("aiAnswer ignora la opción de diagnóstico");
+  });
+
+  test("el diagnóstico nunca se enciende en una conversación con un cliente", () => {
+    // Un cliente final jamás debe ver "la llave no es válida".
+    for (const rel of ["lib/flow/webRuntime.ts"]) {
+      const t = fs.readFileSync(path.join(SRC, rel), "utf8");
+      esperar(t.includes("diagnostico")).falso(`${rel} no debe pedir diagnóstico`);
+    }
+    esperar(wa.includes("diagnostico")).falso("el motor de WhatsApp no debe pedir diagnóstico");
+  });
+});
+
 process.exit(await correrPruebas());

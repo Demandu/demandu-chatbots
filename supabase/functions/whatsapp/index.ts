@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "11";
+const VERSION_MOTOR = "12";
 
 function admin() {
   return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -344,6 +344,8 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
     `- Si la respuesta no está en esa información, responde exactamente: "${ai.fallback}"`,
     "- Responde en el mismo idioma en que te escriba el cliente.",
     "- No menciones que existe una 'información del negocio' ni cites los números entre corchetes.",
+    // Igual que en src/lib/ai/answer.ts: WhatsApp no entiende markdown.
+    "- Escribe en texto plano. Nada de markdown: sin **negritas**, sin # títulos, sin viñetas con guiones.",
   ].join("\n");
 
   // Últimos mensajes, para que la IA tenga hilo
@@ -362,7 +364,9 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
-        model: Deno.env.get("ANTHROPIC_MODEL") ?? "claude-3-5-haiku-latest",
+        // Debe coincidir con src/lib/ai/answer.ts. Si el nombre no existe, la
+        // API falla y el bot contesta "esa no me la sé" sin que se note.
+        model: Deno.env.get("ANTHROPIC_MODEL") ?? "claude-haiku-4-5",
         max_tokens: 400,
         system,
         messages: [...history, { role: "user", content: pregunta }],
