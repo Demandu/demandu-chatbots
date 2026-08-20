@@ -247,7 +247,11 @@ export default async function ResultadosPage({
                 etiqueta: b.nombre,
                 valor: b.conversaciones,
                 color: COLOR_CANAL[b.canal] ?? "#6E42FF",
-                nota: `${NOMBRE_CANAL[b.canal] ?? b.canal} · ${numero(b.mensajes)} mensajes`,
+                // El renglón "Sin chatbot asignado" no tiene canal: existe para
+                // que los totales cuadren, no para señalar a un chatbot.
+                nota: b.canal
+                  ? `${NOMBRE_CANAL[b.canal] ?? b.canal} · ${numero(b.mensajes)} mensajes`
+                  : `${numero(b.mensajes)} mensajes · entraron antes de quedar ligadas a un chatbot`,
               }))}
             />
           </Tarjeta>

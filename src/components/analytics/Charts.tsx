@@ -124,13 +124,20 @@ export function GraficaTiempo({
         })}
 
         {/* Eje de fechas */}
-        {datos.map((d, i) =>
-          i % saltoX === 0 || i === datos.length - 1 ? (
-            <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize={11} fill="#9498b8">
+        {datos.map((d, i) => {
+          if (!(i % saltoX === 0 || i === datos.length - 1)) return null;
+          // La última etiqueta cae justo en el borde derecho del SVG: centrada,
+          // la mitad se sale y se ve recortada ("19 ag" en vez de "19 ago").
+          // Se ancla al borde en los extremos y se centra en el resto.
+          const ultima = i === datos.length - 1;
+          const primera = i === 0;
+          const anclaje = datos.length === 1 ? "middle" : ultima ? "end" : primera ? "start" : "middle";
+          return (
+            <text key={i} x={x(i)} y={H - 8} textAnchor={anclaje} fontSize={11} fill="#9498b8">
               {etiquetaPeriodo(d.periodo, agrupacion)}
             </text>
-          ) : null,
-        )}
+          );
+        })}
 
         {/* Zonas invisibles para el globito de datos */}
         {datos.map((d, i) => (
@@ -209,7 +216,13 @@ export function BarrasHorizontales({
           <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#eef0f7]">
             <div
               className="h-full rounded-full transition-[width] duration-500"
-              style={{ width: `${Math.max(2, (f.valor / max) * 100)}%`, background: f.color ?? "#6E42FF" }}
+              // Cero se dibuja como cero. El mínimo del 2 % existe para que un
+              // valor chico no desaparezca, pero aplicado a un 0 pintaba una
+              // barrita que hacía pensar que el chatbot sí había atendido algo.
+              style={{
+                width: f.valor > 0 ? `${Math.max(2, (f.valor / max) * 100)}%` : "0%",
+                background: f.color ?? "#6E42FF",
+              }}
             />
           </div>
           {f.nota ? <div className="mt-1 text-xs text-ink-3">{f.nota}</div> : null}
