@@ -33,6 +33,9 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
 
   const ai = { ...AI_DEFAULTS, ...(((bot as any).ai as any) ?? {}) };
   const lista = aiConfigured();
+  // El interruptor de ESTE chatbot. Desde que corta de verdad, apagado
+  // significa que no contesta ni gasta — hay que verlo sin buscarlo.
+  const apagada = ai.enabled === false;
 
   return (
     <>
@@ -53,16 +56,22 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
 
         {/* Estado */}
         <div className="mb-6 grid gap-3 sm:grid-cols-2">
-          <div className={`card-l flex items-center gap-3 p-4 ${lista ? "" : "border-warning/50 bg-warning/5"}`}>
-            <span className={`grid h-10 w-10 flex-none place-items-center rounded-xl ${lista ? "bg-success/15 text-[#0f9d63]" : "bg-warning/20 text-[#a06a00]"}`}>
+          {/* Dos cosas distintas: que la IA exista en la cuenta, y que ESTE
+              chatbot la tenga encendida. Antes solo se veía la primera. */}
+          <div className={`card-l flex items-center gap-3 p-4 ${lista && !apagada ? "" : "border-warning/50 bg-warning/5"}`}>
+            <span className={`grid h-10 w-10 flex-none place-items-center rounded-xl ${lista && !apagada ? "bg-success/15 text-[#0f9d63]" : "bg-warning/20 text-[#a06a00]"}`}>
               <Sparkles className="h-5 w-5" />
             </span>
             <div>
-              <div className="text-sm font-semibold text-ink">{lista ? "IA disponible" : "IA no disponible aún"}</div>
+              <div className="text-sm font-semibold text-ink">
+                {!lista ? "IA no disponible aún" : apagada ? "IA apagada en este chatbot" : "IA disponible"}
+              </div>
               <div className="text-xs text-ink-3">
-                {lista
-                  ? "Ya está lista. No tienes que contratar ni configurar nada más."
-                  : "Todavía no está activa en tu cuenta. Escríbenos y la encendemos. Mientras tanto, tu chatbot usa el mensaje de respaldo."}
+                {!lista
+                  ? "Todavía no está activa en tu cuenta. Escríbenos y la encendemos. Mientras tanto, tu chatbot usa el mensaje de respaldo."
+                  : apagada
+                    ? "No va a contestar con IA ni te va a consumir nada. Enciéndela abajo, en «Responder con IA»."
+                    : "Ya está lista. No tienes que contratar ni configurar nada más."}
               </div>
             </div>
           </div>
@@ -88,9 +97,11 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
               <label className="mb-4 flex cursor-pointer items-center justify-between rounded-xl border border-[#e6e8f2] bg-[#f9fafd] px-4 py-3">
                 <span>
                   <span className="block text-sm font-semibold text-ink">Responder con IA</span>
-                  <span className="block text-xs text-ink-3">Se usa en los bloques “Respuesta con IA” de tus conversaciones.</span>
+                  <span className="block text-xs text-ink-3">
+                    Apagado, tu chatbot solo sigue el guión y contesta el mensaje de respaldo. No consume IA.
+                  </span>
                 </span>
-                <input type="checkbox" name="enabled" defaultChecked={!!ai.enabled} className="h-5 w-5 accent-pink" />
+                <input type="checkbox" name="enabled" defaultChecked={ai.enabled !== false} className="h-5 w-5 accent-pink" />
               </label>
 
               <div className="space-y-4">

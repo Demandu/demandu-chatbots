@@ -32,7 +32,11 @@ export type AiSettings = {
 };
 
 export const AI_DEFAULTS: Required<AiSettings> = {
-  enabled: false,
+  // ENCENDIDA salvo que el cliente la apague a propósito. Un chatbot nuevo
+  // nace con un bloque "Respuesta con IA" en su flujo de bienvenida; si el
+  // valor por defecto fuera `false`, ese bloque estaría muerto el primer día
+  // y el cliente pensaría que la plataforma no sirve.
+  enabled: true,
   persona: "Eres Lana, la asistente virtual del negocio. Ayudas a los clientes con amabilidad y vas al grano.",
   style: "Cercano y profesional. Tutea al cliente.",
   fallback: "Esa no me la sé todavía 🙈 ¿Quieres que te comunique con una persona del equipo?",
@@ -160,6 +164,20 @@ export async function aiAnswer(opts: {
   diagnostico?: boolean;
 }): Promise<string> {
   const ai: Required<AiSettings> = { ...AI_DEFAULTS, ...(opts.settings ?? {}) };
+
+  // EL INTERRUPTOR, y este es el único lugar donde se revisa. Todo lo que
+  // consume IA pasa por aquí — el bloque "Respuesta con IA" del flujo, el
+  // desvío cuando el cliente se sale del guion, y la prueba del panel — así
+  // que un solo `if` cubre los dos canales sin poder desincronizarse.
+  //
+  // Apagada NO se llama a la API: no se gasta ni se registra consumo. Ese es
+  // el punto — antes el interruptor se guardaba pero nadie lo leía, y un
+  // cliente que la apagaba seguía gastando IA sin saberlo.
+  if (ai.enabled === false) {
+    return opts.diagnostico
+      ? "⚠️ La IA está apagada para este chatbot. Enciéndela con el interruptor «Responder con IA»."
+      : ai.fallback;
+  }
 
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {

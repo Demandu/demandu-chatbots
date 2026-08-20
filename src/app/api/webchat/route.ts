@@ -173,8 +173,10 @@ export async function POST(req: Request) {
       aiSettings: (bot as any).ai ?? null,
       atajos: (bot as any).shortcuts ?? null,
       flowName: (chosen as any).name ?? null,
-      // Encendida salvo que el cliente la apague a propósito.
-      iaDeRespaldo: (bot as any).ai?.fallback_flujo !== false,
+      // Encendida salvo que el cliente la apague a propósito. Manda el
+      // interruptor general: si la IA está apagada, tampoco hay desvío.
+      iaDeRespaldo:
+        (bot as any).ai?.enabled !== false && (bot as any).ai?.fallback_flujo !== false,
     });
 
     await admin

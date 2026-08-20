@@ -294,6 +294,29 @@ describe("Modelo de IA", () => {
     esperar(web.includes("opts.diagnostico")).verdadero("aiAnswer ignora la opción de diagnóstico");
   });
 
+  test("el interruptor corta también en el motor de WhatsApp", () => {
+    // El comportamiento se prueba de verdad en negocio.mjs, pero solo contra
+    // el motor web. El de WhatsApp es una copia en Deno que no se puede
+    // importar desde aquí, así que al menos se vigila que tenga el candado.
+    esperar(/enabled\s*===\s*false/.test(wa)).verdadero(
+      "responderConIA no corta cuando la IA está apagada: cobraría IA que el cliente apagó",
+    );
+    esperar(/enabled:\s*true/.test(wa)).verdadero(
+      "AI_DEFAULTS de WhatsApp debe nacer encendida, igual que el canal web",
+    );
+  });
+
+  test("apagar la IA apaga también el desvío del flujo", () => {
+    // El desvío llama a la IA. Si el interruptor general no lo cubriera, un
+    // cliente que apaga la IA seguiría gastándola cada vez que alguien se
+    // sale del guion.
+    const ruta = fs.readFileSync(path.join(SRC, "app/api/webchat/route.ts"), "utf8");
+    const linea = ruta.slice(ruta.indexOf("iaDeRespaldo:"), ruta.indexOf("iaDeRespaldo:") + 200);
+    esperar(linea.includes("enabled")).verdadero(
+      "iaDeRespaldo no mira el interruptor general",
+    );
+  });
+
   test("el diagnóstico nunca se enciende en una conversación con un cliente", () => {
     // Un cliente final jamás debe ver "la llave no es válida".
     for (const rel of ["lib/flow/webRuntime.ts"]) {

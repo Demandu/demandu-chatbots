@@ -7,7 +7,8 @@
  *
  *   node --experimental-strip-types scripts/pruebas/correr.mjs scripts/pruebas/negocio.mjs
  */
-import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
+import { describe, test, testAsync, esperar, correrPruebas } from "./_runner.mjs";
+import { aiAnswer, AI_DEFAULTS } from "../../src/lib/ai/answer.ts";
 import {
   FEATURES, COMPONENTS, featuresFor, hasFeature, componentsFor, componentAllowed, channelOf, CHANNEL_META,
 } from "../../src/lib/channels.ts";
@@ -189,6 +190,97 @@ describe("Coherencia general", () => {
   test("todo bloque declara al menos un canal", () => {
     const huerfanos = Object.entries(COMPONENTS).filter(([, v]) => !v.channels?.length).map(([k]) => k);
     esperar(huerfanos).igual([], "bloques que no aparecerían en ninguna paleta");
+  });
+});
+
+// ─── El interruptor «Responder con IA» ───────────────────────────────────────
+describe("Interruptor de IA", () => {
+  // POR QUÉ: durante meses el interruptor se guardaba en `bots.ai.enabled` y
+  // ningún motor lo leía. Un cliente que apagaba la IA seguía consumiéndola.
+  // Estas pruebas comprueban el COMPORTAMIENTO, no que exista el `if`.
+
+  /** Cliente de base falso: solo registra lo que se intenta insertar. */
+  function baseFalsa() {
+    const insertados = [];
+    return {
+      insertados,
+      from() {
+        return {
+          insert: async (fila) => { insertados.push(fila); return { data: null, error: null }; },
+          select() { return this; },
+          eq() { return this; },
+          order() { return this; },
+          limit: async () => ({ data: [], error: null }),
+          textSearch() { return this; },
+        };
+      },
+      rpc: async () => ({ data: null, error: null }),
+    };
+  }
+
+  /** Corre `aiAnswer` contando cuántas veces se llamó a la API de verdad. */
+  async function correr(settings) {
+    const fetchReal = globalThis.fetch;
+    const llaveReal = process.env.ANTHROPIC_API_KEY;
+    let llamadas = 0;
+    // Con llave puesta: si el candado NO estuviera, esto llamaría a la API.
+    process.env.ANTHROPIC_API_KEY = "sk-ant-de-mentiras";
+    globalThis.fetch = async () => {
+      llamadas++;
+      return { ok: true, json: async () => ({ content: [{ type: "text", text: "respuesta de la IA" }] }) };
+    };
+    try {
+      const db = baseFalsa();
+      const texto = await aiAnswer({
+        admin: db, botId: "bot-1", orgId: "org-1", question: "¿cuánto cuesta?", settings,
+      });
+      return { texto, llamadas, insertados: db.insertados };
+    } finally {
+      globalThis.fetch = fetchReal;
+      if (llaveReal === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = llaveReal;
+    }
+  }
+
+  testAsync("apagada: no llama a la API y contesta el mensaje de respaldo", async () => {
+    const r = await correr({ enabled: false, fallback: "Ahorita no puedo, ¿te paso con alguien?" });
+    esperar(r.llamadas).igual(0, "se llamó a la API con la IA apagada: eso es gasto que el cliente no autorizó");
+    esperar(r.texto).igual("Ahorita no puedo, ¿te paso con alguien?");
+  });
+
+  testAsync("apagada: no registra consumo", async () => {
+    // Si registrara, el cliente vería en su factura IA que apagó.
+    const r = await correr({ enabled: false });
+    esperar(r.insertados.length).igual(0, "se registró consumo de IA estando apagada");
+  });
+
+  testAsync("encendida: sí contesta con la IA", async () => {
+    const r = await correr({ enabled: true });
+    esperar(r.llamadas).igual(1);
+    esperar(r.texto).igual("respuesta de la IA");
+  });
+
+  testAsync("sin decir nada: cuenta como ENCENDIDA", async () => {
+    // Un chatbot nuevo nace con un bloque de IA en su flujo de bienvenida.
+    // Si el valor por defecto fuera "apagada", nacería roto.
+    const r = await correr({});
+    esperar(r.llamadas).igual(1, "un chatbot sin configurar debería responder con IA");
+    esperar(AI_DEFAULTS.enabled).verdadero("el valor por defecto debe ser encendida");
+  });
+
+  testAsync("la prueba del panel dice que está apagada, no 'no me la sé'", async () => {
+    // Sin esto, el dueño cree que la IA está rota cuando la apagó él mismo.
+    const fetchReal = globalThis.fetch;
+    globalThis.fetch = async () => { throw new Error("no debería llamarse"); };
+    try {
+      const texto = await aiAnswer({
+        admin: baseFalsa(), botId: "bot-1", orgId: "org-1", question: "hola",
+        settings: { enabled: false }, diagnostico: true,
+      });
+      esperar(texto.includes("apagada")).verdadero(`el diagnóstico no explica el motivo: ${texto}`);
+    } finally {
+      globalThis.fetch = fetchReal;
+    }
   });
 });
 

@@ -267,6 +267,8 @@ function sendMedia(
 
 // ---- IA (mismo comportamiento que en el canal web) ----
 const AI_DEFAULTS = {
+  // Igual que en src/lib/ai/answer.ts: encendida salvo que la apaguen.
+  enabled: true,
   persona: "Eres Lana, la asistente virtual del negocio. Ayudas a los clientes con amabilidad y vas al grano.",
   style: "Cercano y profesional. Tutea al cliente.",
   fallback: "Esa no me la sé todavía 🙈 ¿Quieres que te comunique con una persona del equipo?",
@@ -322,6 +324,10 @@ async function buscarConocimiento(db: any, orgId: string, botId: string, pregunt
 async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string) {
   const ai = { ...AI_DEFAULTS, ...(ctx.aiSettings ?? {}) };
   if (promptDelNodo) ai.persona = promptDelNodo;
+
+  // El interruptor «Responder con IA». Mismo comportamiento que el canal web:
+  // apagada no se llama a la API, no se gasta y no se registra consumo.
+  if (ai.enabled === false) return ai.fallback;
 
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) return ai.fallback;
