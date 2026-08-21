@@ -137,14 +137,24 @@
    * Dos respuestas pueden llegar desordenadas (el sondeo y el envio van por
    * separado). Si una vieja pisara a una nueva, el siguiente sondeo volveria a
    * traer mensajes ya pintados y el visitante los veria DUPLICADOS.
+   *
+   * SE COMPARAN FECHAS, NO TEXTO. La base devuelve
+   * "2026-08-21T03:21:11.469294+00:00" y JavaScript genera
+   * "2026-08-21T03:21:11.469Z": comparando como texto, la "Z" gana contra
+   * cualquier digito, asi que la marca se quedaba clavada en una hora falsa y
+   * cada sondeo repetia los mismos mensajes cada 4 segundos.
    */
   function avanzar(marca) {
     if (!marca) return;
-    if (!desde || String(marca) > String(desde)) desde = String(marca);
+    var nueva = Date.parse(marca);
+    if (isNaN(nueva)) return;
+    var actual = desde ? Date.parse(desde) : NaN;
+    if (isNaN(actual) || nueva > actual) desde = String(marca);
   }
   /** Ya se le avisó de que lo atiende una persona (para no repetirlo). */
   var avisadoAsesor = false;
   var sondeo = null;
+  var sondeando = false;
 
   /**
    * Pregunta al servidor si hay mensajes nuevos.
@@ -154,7 +164,10 @@
    * el widget acababa de prometerle que "un asesor continuara contigo por aqui".
    */
   function preguntar() {
-    if (busy || document.hidden) return;
+    // `sondeando` evita que dos vueltas se solapen: si una tarda mas de 4 s,
+    // las dos irian con la MISMA marca y traerian el mismo mensaje dos veces.
+    if (busy || sondeando || document.hidden) return;
+    sondeando = true;
     fetch(API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -167,7 +180,8 @@
         (data.messages || []).forEach(function (m) { if (m.text) bubble(m.text, false); });
         if (data.handedOff) avisarAsesor();
       })
-      .catch(function () { /* si falla una vuelta, se reintenta en la siguiente */ });
+      .catch(function () { /* si falla una vuelta, se reintenta en la siguiente */ })
+      .then(function () { sondeando = false; });
   }
 
   function avisarAsesor() {

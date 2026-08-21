@@ -164,9 +164,12 @@ export async function POST(req: Request) {
         .order("created_at", { ascending: true })
         .limit(30);
       // Sin marca previa no se devuelve el historial entero: el visitante ya lo
-      // tiene pintado en pantalla y lo vería duplicado.
+      // tiene pintado en pantalla y lo vería duplicado. Se le entrega la marca
+      // que sale de la PROPIA base, no un `now()` de este servidor: si los dos
+      // relojes van desfasados aunque sea un instante, un mensaje escrito justo
+      // en medio se perdería para siempre.
       if (desdeCliente) q = q.gt("created_at", desdeCliente);
-      else return json({ ...vacio, desde: new Date().toISOString() });
+      else return json({ ...vacio, desde: await marcaActual(admin, cv.id) });
 
       const { data: nuevos } = await q;
       const filas = ((nuevos as any[]) ?? []).filter((m) => (m.body ?? "").trim());

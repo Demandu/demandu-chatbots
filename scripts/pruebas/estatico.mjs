@@ -282,10 +282,39 @@ describe("Lo que escribe el agente llega al chat web", () => {
     esperar(bloque.includes("external_id")).verdadero("sin filtro por la sesión del visitante");
   });
 
-  test("la marca de lectura solo avanza", () => {
-    // Dos respuestas desordenadas podrían hacerla retroceder, y el sondeo
-    // repetiría mensajes ya pintados.
-    esperar(wid.includes("function avanzar")).verdadero("la marca podría retroceder y duplicar mensajes");
+  test("la marca de lectura solo avanza, comparando FECHAS y no texto", () => {
+    // ESTE ES EL BUG QUE DUPLICABA MENSAJES, y la primera prueba que escribí
+    // no lo habría atrapado porque solo comprobaba que la función existiera.
+    //
+    // La base devuelve "2026-08-21T03:21:11.469294+00:00" y JavaScript genera
+    // "2026-08-21T03:21:11.469Z". Comparados como TEXTO, la "Z" gana contra
+    // cualquier dígito, así que la marca se clavaba en una hora falsa y cada
+    // sondeo repetía los mismos mensajes cada 4 segundos, para siempre.
+    esperar(wid.includes("function avanzar")).verdadero("no hay guardia de la marca");
+    esperar(wid.includes("Date.parse")).verdadero(
+      "la marca se compara como texto: dos formatos ISO distintos la congelan",
+    );
+
+    // Y se comprueba la comparación de verdad, con los dos formatos reales.
+    const dePg = "2026-08-21T03:21:11.469294+00:00";
+    const deJs = "2026-08-21T03:21:11.469Z";
+    esperar(dePg > deJs).falso("como texto, el de la base parece MENOR — de ahí venía el fallo");
+    esperar(Date.parse(dePg) >= Date.parse(deJs)).verdadero("como fecha, el orden sí es el correcto");
+  });
+
+  test("dos sondeos no se solapan", () => {
+    // Si una vuelta tarda más que el intervalo, dos peticiones salen con la
+    // MISMA marca y traen el mismo mensaje dos veces.
+    esperar(wid.includes("sondeando")).verdadero("faltan las riendas para que no se solapen");
+  });
+
+  test("la marca sale de la base, no del reloj del servidor", () => {
+    // Con los relojes desfasados un instante, un mensaje escrito justo en medio
+    // se perdería para siempre.
+    const bloque = ruta.slice(ruta.indexOf("if (esSondeo)"), ruta.indexOf("// Contacto anónimo"));
+    esperar(/desde:\s*await marcaActual/.test(bloque)).verdadero(
+      "el sondeo se inventa la marca con `new Date()` en vez de leerla de la base",
+    );
   });
 });
 
