@@ -3,7 +3,20 @@
  * Sin dependencias externas: quita scripts, estilos y etiquetas a mano.
  */
 
-const MAX_BYTES = 2_000_000; // 2 MB de HTML es más que suficiente
+/**
+ * Cuánto HTML se lee como máximo.
+ *
+ * ANTES ERAN 2 MB Y RECHAZABA SITIOS NORMALES. El error decía "la página es
+ * demasiado pesada", que suena a culpa del cliente cuando no lo es: las webs
+ * hechas con Framer, Webflow o Next incrustan megas de código y datos dentro
+ * del propio HTML. De todo eso, el TEXTO son cuatro pantallas.
+ *
+ * Además el tope estaba puesto en el sitio equivocado. Lo que hay que limitar
+ * no es lo que se descarga, sino lo que se GUARDA — que es lo que ocupa espacio
+ * del plan del cliente y lo que la IA tiene que leer en cada respuesta.
+ */
+const MAX_HTML = 12_000_000;   // 12 MB de HTML: cabe cualquier web de negocio
+const MAX_TEXTO = 120_000;     // ~20.000 palabras de texto ya limpio
 
 function decodeEntities(s: string) {
   return s
@@ -110,8 +123,10 @@ export async function fetchPageText(rawUrl: string): Promise<UrlResult> {
       return { ok: false, error: "Esa dirección no es una página de texto (parece un archivo o una imagen)." };
     }
 
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength > MAX_BYTES) return { ok: false, error: "La página es demasiado pesada." };
+    // Se lee de a poco y se corta al llegar al tope, en vez de tragarse la
+    // respuesta entera para luego rechazarla. Una web de 40 MB ya no tumba
+    // nada: se leen los primeros 12 y con eso sobra para sacar el texto.
+    const buf = await leerHasta(res, MAX_HTML);
 
     // La codificación sale de la cabecera; si no la declara, utf-8. Sin esto,
     // una página en latin-1 entra con los acentos rotos y el chatbot repite la
@@ -124,7 +139,16 @@ export async function fetchPageText(rawUrl: string): Promise<UrlResult> {
       html = new TextDecoder("utf-8").decode(buf);
     }
 
-    const { title, text } = htmlToText(html);
+    const { title, text: crudo } = htmlToText(cerrarEtiquetasAbiertas(html));
+
+    // Se recorta el TEXTO, no la descarga: es lo que ocupa espacio del plan y
+    // lo que la IA tiene que leer en cada respuesta. Se corta en un salto de
+    // línea para no dejar una frase por la mitad.
+    let text = crudo;
+    if (text.length > MAX_TEXTO) {
+      const corte = text.lastIndexOf("\n", MAX_TEXTO);
+      text = text.slice(0, corte > MAX_TEXTO * 0.8 ? corte : MAX_TEXTO);
+    }
 
     // Un muro anti-bots devuelve HTML con texto, así que pasa el filtro de
     // longitud y entraría como "conocimiento del negocio". Sería peor que
@@ -166,4 +190,58 @@ function esMuroDeSeguridad(title: string, text: string): boolean {
   // Los muros son páginas CORTAS: un sitio de verdad que mencione Cloudflare en
   // su blog no debe confundirse con uno bloqueado.
   return text.length < 1200 && señales.some((s) => t.includes(s));
+}
+
+/**
+ * Lee el cuerpo de la respuesta hasta un tope, sin cargarlo entero en memoria.
+ *
+ * `arrayBuffer()` se traga TODO antes de que podamos decidir nada: con una web
+ * de 40 MB eso es 40 MB en el servidor por cada clic del cliente. Aquí se corta
+ * en cuanto hay suficiente.
+ */
+async function leerHasta(res: Response, tope: number): Promise<Uint8Array> {
+  const reader = res.body?.getReader();
+  if (!reader) return new Uint8Array(await res.arrayBuffer());
+
+  const trozos: Uint8Array[] = [];
+  let total = 0;
+  while (total < tope) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    trozos.push(value);
+    total += value.byteLength;
+  }
+  // Se suelta la conexión: si no, queda abierta esperando el resto del sitio.
+  try { await reader.cancel(); } catch { /* ya estaba cerrada */ }
+
+  const out = new Uint8Array(Math.min(total, tope));
+  let i = 0;
+  for (const t of trozos) {
+    if (i >= out.length) break;
+    const cabe = Math.min(t.byteLength, out.length - i);
+    out.set(t.subarray(0, cabe), i);
+    i += cabe;
+  }
+  return out;
+}
+
+/**
+ * Si el HTML se cortó a media etiqueta `<script>` o `<style>`, se tira desde ahí.
+ *
+ * POR QUÉ: la limpieza busca `<script>…</script>`. Sin el cierre no encuentra la
+ * pareja y TODO el código se cuela como si fuera texto del negocio. El chatbot
+ * acabaría citándole JavaScript a un cliente que preguntó por precios.
+ */
+export function cerrarEtiquetasAbiertas(html: string): string {
+  let out = html;
+  for (const etiqueta of ["script", "style", "noscript"]) {
+    const abre = (out.match(new RegExp(`<${etiqueta}[\\s>]`, "gi")) ?? []).length;
+    const cierra = (out.match(new RegExp(`</${etiqueta}>`, "gi")) ?? []).length;
+    if (abre > cierra) {
+      const ultimo = out.toLowerCase().lastIndexOf(`<${etiqueta}`);
+      if (ultimo > 0) out = out.slice(0, ultimo);
+    }
+  }
+  return out;
 }

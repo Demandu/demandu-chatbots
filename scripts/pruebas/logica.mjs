@@ -15,7 +15,7 @@ import {
   etiquetaPeriodo, aFechaCorta, deFechaCorta, efectividadAgente,
 } from "../../src/lib/analytics.ts";
 import { pareceUnaPregunta, decidirDesvio, puenteDeVuelta, esAfirmacion } from "../../src/lib/flow/desvio.ts";
-import { htmlToText } from "../../src/lib/ai/fromUrl.ts";
+import { htmlToText, cerrarEtiquetasAbiertas } from "../../src/lib/ai/fromUrl.ts";
 
 // ─── Atajos del chatbot (0 = reiniciar, 1 = persona) ────────────────────────
 describe("Atajos del chatbot", () => {
@@ -454,6 +454,23 @@ describe("Leer una pagina web", () => {
     const { text } = htmlToText("<body><p>Caf&eacute; &amp; t&eacute; &#8212; 100&nbsp;g</p></body>");
     esperar(text.includes("&amp;")).falso("el cliente veria los codigos en crudo");
     esperar(text.includes("&nbsp;")).falso();
+  });
+
+  test("un HTML cortado a media etiqueta no cuela codigo como texto", () => {
+    // Al leer solo los primeros megas, el corte puede caer dentro de un
+    // <script>. Sin cierre, la limpieza no encuentra la pareja y TODO el
+    // codigo entraria como "informacion del negocio": el chatbot acabaria
+    // citandole JavaScript a un cliente que pregunto por precios.
+    const cortado = "<body><p>Precios: $499</p><script>var config={apiKey:'secreto'};function x(){";
+    const { text } = htmlToText(cerrarEtiquetasAbiertas(cortado));
+    esperar(text.includes("$499")).verdadero("el texto bueno debe conservarse");
+    esperar(text.includes("apiKey")).falso("el codigo no puede entrar al conocimiento");
+    esperar(text.includes("function x")).falso();
+  });
+
+  test("un HTML completo no se toca", () => {
+    const entero = "<body><p>Hola</p><script>var a=1;</script><p>Adios</p></body>";
+    esperar(cerrarEtiquetasAbiertas(entero)).igual(entero, "no debe recortar lo que esta bien");
   });
 
   test("no se pierde la separacion entre bloques", () => {
