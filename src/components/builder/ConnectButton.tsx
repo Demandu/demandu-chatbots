@@ -27,7 +27,11 @@ export function ConnectButton({
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://demandu-chatbots.netlify.app";
+  // En el navegador se toma el dominio real desde el que está entrando el
+  // cliente, que es lo correcto: si mañana la plataforma vive en otro dominio,
+  // el código que copia el cliente lo sigue solo. El valor de abajo es solo
+  // para el primer pintado en el servidor, antes de que exista `window`.
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://platform.demandu.tech";
   const snippet = `<script>
   (function(d){
     var s = d.createElement('script');
