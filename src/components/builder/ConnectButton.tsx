@@ -69,11 +69,11 @@ export function ConnectButton({
       {open && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={() => setOpen(false)}>
           <div
-            className="w-full max-w-lg rounded-2xl border border-[#e6e8f2] bg-white p-6 text-ink shadow-card"
+            className="w-full max-w-lg rounded-2xl border border-linea bg-tarjeta p-6 text-ink shadow-card"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center gap-3">
-              <span className="grid h-10 w-10 place-items-center rounded-xl border border-[#e6e8f2] bg-white">
+              <span className="grid h-10 w-10 place-items-center rounded-xl border border-linea bg-tarjeta">
                 <ChannelIcon channel={channel} className="h-6 w-6" />
               </span>
               <h3 className="flex-1 font-display text-lg font-semibold text-ink">Conectar {LABEL[channel]}</h3>

@@ -35,12 +35,12 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
   return (
     <div>
       {searchParams?.pago === "ok" && (
-        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
+        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
           ✅ ¡Listo! Tu compra se registró. Tus nuevos límites ya están activos.
         </div>
       )}
       {searchParams?.pago === "cancelado" && (
-        <div className="mb-4 rounded-xl border border-[#e6e8f2] bg-[#f4f5fb] px-4 py-2.5 text-sm text-ink-2">
+        <div className="mb-4 rounded-xl border border-linea bg-suave px-4 py-2.5 text-sm text-ink-2">
           Cancelaste el pago. No se te cobró nada.
         </div>
       )}
@@ -62,7 +62,7 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
           <h3 className="mb-3 font-display text-base font-semibold text-ink">Complementos activos</h3>
           <div className="space-y-2">
             {contratados.map((a, i) => (
-              <div key={i} className="flex items-center justify-between rounded-xl bg-[#f4f5fb] px-3.5 py-2.5">
+              <div key={i} className="flex items-center justify-between rounded-xl bg-suave px-3.5 py-2.5">
                 <span className="text-sm text-ink">
                   {a.name}
                   {a.quantity > 1 && <b className="text-ink"> × {a.quantity}</b>}
@@ -117,7 +117,7 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
                 ))}
               </ul>
 
-              <div className="mt-4 rounded-lg bg-[#f4f5fb] px-3 py-2 text-[11px] text-ink-2">
+              <div className="mt-4 rounded-lg bg-suave px-3 py-2 text-[11px] text-ink-2">
                 Mensajes adicionales: <b className="text-ink">{usd(p.extra_1k_messages_price)}</b> por cada 1,000
               </div>
 

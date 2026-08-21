@@ -245,7 +245,7 @@ function BuilderInner({
 
       <div className="relative min-w-0 flex-1">
         {/* Toolbar */}
-        <div className="absolute left-3 right-3 top-3 z-10 flex flex-wrap items-center gap-1 rounded-2xl border border-[#e6e8f2] bg-white/85 p-1.5 shadow-sm backdrop-blur sm:left-4 sm:top-4 sm:right-auto">
+        <div className="absolute left-3 right-3 top-3 z-10 flex flex-wrap items-center gap-1 rounded-2xl border border-linea bg-white/85 p-1.5 shadow-sm backdrop-blur sm:left-4 sm:top-4 sm:right-auto">
           {/* Atajos a los paneles cuando la pantalla es chica */}
           <button
             onClick={() => setPaletteOpen(true)}
@@ -312,11 +312,11 @@ function BuilderInner({
         </ReactFlow>
 
         {showPreview && (
-          <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-[420px] flex-col items-center justify-center border-l border-[#e6e8f2] bg-white/95 p-4 backdrop-blur sm:p-6">
+          <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-[420px] flex-col items-center justify-center border-l border-linea bg-white/95 p-4 backdrop-blur sm:p-6">
             <button
               onClick={() => setShowPreview(false)}
               aria-label="Cerrar prueba"
-              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-xl border border-[#e6e8f2] bg-white text-ink-3 shadow-sm"
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-xl border border-linea bg-tarjeta text-ink-3 shadow-sm"
             >
               <X className="h-4 w-4" />
             </button>

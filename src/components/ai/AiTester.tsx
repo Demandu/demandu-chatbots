@@ -51,7 +51,7 @@ export function AiTester({ botId }: { botId: string }) {
         Escribe como si fueras tu cliente. Responde con lo que cargaste en Entrenamiento — nada más.
       </p>
 
-      <div className="mt-3 max-h-[260px] space-y-2.5 overflow-y-auto rounded-xl bg-[#f4f5fb] p-3">
+      <div className="mt-3 max-h-[260px] space-y-2.5 overflow-y-auto rounded-xl bg-suave p-3">
         {turnos.length === 0 && (
           <div className="space-y-2 py-2">
             <p className="text-center text-[11px] text-ink-3">Prueba con una de estas:</p>
@@ -61,7 +61,7 @@ export function AiTester({ botId }: { botId: string }) {
                   key={e}
                   type="button"
                   onClick={() => preguntar(e)}
-                  className="rounded-full border border-[#e2e4f0] bg-white px-3 py-1.5 text-xs text-ink-2 transition hover:border-pink hover:text-ink"
+                  className="rounded-full border border-linea-2 bg-tarjeta px-3 py-1.5 text-xs text-ink-2 transition hover:border-pink hover:text-ink"
                 >
                   {e}
                 </button>
@@ -77,7 +77,7 @@ export function AiTester({ botId }: { botId: string }) {
             </div>
             <div className="flex items-end gap-2">
               <LanaAvatar size={26} />
-              <div className="max-w-[85%] rounded-xl rounded-bl-sm bg-white px-3 py-2 text-[12.5px] text-ink shadow-sm">
+              <div className="max-w-[85%] rounded-xl rounded-bl-sm bg-tarjeta px-3 py-2 text-[12.5px] text-ink shadow-sm">
                 {t.lana === null ? (
                   <span className="flex items-center gap-1.5 text-ink-3">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Pensando…

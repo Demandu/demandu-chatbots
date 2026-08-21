@@ -13,11 +13,11 @@ const RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3
 function label(status: string) {
   switch (status) {
     case "replied": return { t: "Respondió", c: "bg-pink/15 text-pink" };
-    case "read": return { t: "Leído (sin responder)", c: "bg-success/15 text-[#0f9d63]" };
+    case "read": return { t: "Leído (sin responder)", c: "bg-success/15 text-exito" };
     case "delivered": return { t: "Entregado (no leído)", c: "bg-sky-500/15 text-sky-600" };
-    case "sent": return { t: "Enviado", c: "bg-[#f1f2f9] text-ink-2" };
+    case "sent": return { t: "Enviado", c: "bg-suave text-ink-2" };
     case "failed": return { t: "Falló", c: "bg-danger/15 text-danger" };
-    default: return { t: "En cola", c: "bg-[#f1f2f9] text-ink-3" };
+    default: return { t: "En cola", c: "bg-suave text-ink-3" };
   }
 }
 
@@ -71,7 +71,7 @@ export default async function CampaignDetail({ params }: { params: { id: string 
           {[
             { k: "Enviados", v: funnel.sent, c: "text-ink" },
             { k: "Entregados", v: funnel.delivered, c: "text-sky-600", p: pctOf(funnel.delivered) },
-            { k: "Leídos", v: funnel.read, c: "text-[#0f9d63]", p: pctOf(funnel.read) },
+            { k: "Leídos", v: funnel.read, c: "text-exito", p: pctOf(funnel.read) },
             { k: "Respondieron", v: funnel.replied, c: "text-pink", p: pctOf(funnel.replied) },
           ].map((m) => (
             <div key={m.k} className="card-l p-4 text-center">
@@ -84,9 +84,9 @@ export default async function CampaignDetail({ params }: { params: { id: string 
 
         {/* Lista por destinatario */}
         <h3 className="mb-3 mt-8 font-display text-lg font-semibold text-ink">Detalle por contacto</h3>
-        <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+        <div className="overflow-x-auto rounded-2xl border border-linea">
           <table className="min-w-[560px] w-full text-left text-sm">
-            <thead className="bg-[#f4f5fb] text-xs uppercase tracking-wide text-ink-3">
+            <thead className="bg-suave text-xs uppercase tracking-wide text-ink-3">
               <tr>
                 <th className="px-4 py-3">Contacto</th>
                 <th className="px-4 py-3">Estado</th>
@@ -99,7 +99,7 @@ export default async function CampaignDetail({ params }: { params: { id: string 
               {sorted.map((r) => {
                 const l = label(r.status);
                 return (
-                  <tr key={r.id} className="border-t border-[#e6e8f2] bg-white">
+                  <tr key={r.id} className="border-t border-linea bg-tarjeta">
                     <td className="px-4 py-3">
                       <div className="font-medium text-ink">{r.name || r.phone}</div>
                       <div className="text-xs text-ink-3">{r.phone}</div>

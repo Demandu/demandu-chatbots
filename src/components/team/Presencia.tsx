@@ -79,7 +79,7 @@ export function Presencia({ compacto = false }: { compacto?: boolean }) {
         <Loader2 className="h-3.5 w-3.5 animate-spin text-muted" />
       ) : (
         <Circle
-          className={`h-2.5 w-2.5 ${disponible ? "fill-success text-success" : "fill-[#8a8db0] text-[#8a8db0]"}`}
+          className={`h-2.5 w-2.5 ${disponible ? "fill-success text-success" : "fill-[#8a8db0] text-ink-3"}`}
         />
       )}
       <span className={disponible ? "text-white" : "text-muted"}>

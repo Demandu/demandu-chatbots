@@ -99,7 +99,7 @@ export default async function ResultadosPage({
       valor: numero(r.totales.a_humano),
       pie: `${porcentaje(r.totales.a_humano_pct, 1)} de las conversaciones`,
       icono: UserRound,
-      tinte: "bg-warning/15 text-[#a97c00]",
+      tinte: "bg-warning/15 text-aviso",
     },
     {
       titulo: "Tarda en contestar",
@@ -109,7 +109,7 @@ export default async function ResultadosPage({
           ? `mediana de ${numero(r.respuesta.respuestas)} respuestas del equipo`
           : "todavía nadie del equipo ha contestado",
       icono: Timer,
-      tinte: "bg-success/15 text-[#137a52]",
+      tinte: "bg-success/15 text-exito",
     },
     {
       titulo: "Efectividad de cierre",
@@ -149,7 +149,7 @@ export default async function ResultadosPage({
             href="/crm"
             className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-warning/40 bg-warning/10 p-4 transition hover:border-warning"
           >
-            <CalendarClock className="h-5 w-5 flex-none text-[#8a6400]" />
+            <CalendarClock className="h-5 w-5 flex-none text-aviso" />
             <p className="min-w-0 flex-1 text-sm leading-relaxed text-ink-2">
               {r.seguimiento.sin_proximo_paso > 0 && (
                 <>
@@ -401,7 +401,7 @@ function Tarjeta({ titulo, sub, children }: { titulo: string; sub?: string; chil
 
 function Aviso({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex gap-3 rounded-xl border border-[#e2e4f0] bg-[#f7f8fd] p-4 text-sm leading-relaxed text-ink-2">
+    <div className="flex gap-3 rounded-xl border border-linea-2 bg-tarjeta-2 p-4 text-sm leading-relaxed text-ink-2">
       <Info className="mt-0.5 h-4 w-4 flex-none text-violet" />
       <div>{children}</div>
     </div>
@@ -415,9 +415,9 @@ function Pastilla({ valor }: { valor: number | null | undefined }) {
   }
   const v = Number(valor);
   const tono =
-    v >= 60 ? "bg-success/15 text-[#137a52]"
-    : v >= 30 ? "bg-warning/20 text-[#8a6400]"
-    : "bg-danger/12 text-[#b02a2e]";
+    v >= 60 ? "bg-success/15 text-exito"
+    : v >= 30 ? "bg-warning/20 text-aviso"
+    : "bg-danger/12 text-alerta";
   return (
     <span className={`inline-block rounded-lg px-2 py-0.5 text-xs font-semibold ${tono}`}>
       {Math.round(v)} %
@@ -434,7 +434,7 @@ function Tabla({ columnas, filas }: { columnas: string[]; filas: React.ReactNode
             {columnas.map((c, i) => (
               <th
                 key={c}
-                className={`border-b border-[#eceef6] pb-2 text-xs font-semibold uppercase tracking-wide text-ink-3 ${
+                className={`border-b border-linea pb-2 text-xs font-semibold uppercase tracking-wide text-ink-3 ${
                   i === 0 ? "text-left" : "text-right"
                 }`}
               >

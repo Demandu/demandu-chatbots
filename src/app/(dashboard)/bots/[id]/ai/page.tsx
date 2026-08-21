@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { LanaSays } from "@/components/Lana";
 import { AiTester } from "@/components/ai/AiTester";
 import { createClient } from "@/lib/supabase/server";
@@ -41,8 +40,6 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
-
         <h2 className="mb-1 font-display text-2xl font-bold text-ink">Lana IA</h2>
         <p className="mb-5 text-sm text-ink-2">
           Dale personalidad a tu chatbot y deja que conteste con inteligencia cuando el guión no alcance.
@@ -59,7 +56,7 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
           {/* Dos cosas distintas: que la IA exista en la cuenta, y que ESTE
               chatbot la tenga encendida. Antes solo se veía la primera. */}
           <div className={`card-l flex items-center gap-3 p-4 ${lista && !apagada ? "" : "border-warning/50 bg-warning/5"}`}>
-            <span className={`grid h-10 w-10 flex-none place-items-center rounded-xl ${lista && !apagada ? "bg-success/15 text-[#0f9d63]" : "bg-warning/20 text-[#a06a00]"}`}>
+            <span className={`grid h-10 w-10 flex-none place-items-center rounded-xl ${lista && !apagada ? "bg-success/15 text-exito" : "bg-warning/20 text-aviso"}`}>
               <Sparkles className="h-5 w-5" />
             </span>
             <div>
@@ -94,7 +91,7 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
 
           <div className="lg:col-span-2">
             <div className="card-l p-5">
-              <label className="mb-4 flex cursor-pointer items-center justify-between rounded-xl border border-[#e6e8f2] bg-[#f9fafd] px-4 py-3">
+              <label className="mb-4 flex cursor-pointer items-center justify-between rounded-xl border border-linea bg-tarjeta-2 px-4 py-3">
                 <span>
                   <span className="block text-sm font-semibold text-ink">Responder con IA</span>
                   <span className="block text-xs text-ink-3">
@@ -130,7 +127,7 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
                   </p>
                 </div>
 
-                <div className="rounded-xl border border-[#e6e8f2] bg-[#f9fafd] p-4">
+                <div className="rounded-xl border border-linea bg-tarjeta-2 p-4">
                   <label className="flex items-start gap-3">
                     <input
                       type="checkbox"

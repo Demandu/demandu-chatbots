@@ -101,7 +101,7 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
       <input type="hidden" name="ids" value={Array.from(sel).join(",")} />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="flex w-full max-w-sm items-center gap-2 rounded-xl border border-[#e2e4f0] bg-white px-3 py-2">
+        <div className="flex w-full max-w-sm items-center gap-2 rounded-xl border border-linea-2 bg-tarjeta px-3 py-2">
           <Search className="h-4 w-4 text-ink-3" />
           <input
             value={q}
@@ -116,7 +116,7 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
         {aviso && (
           <span
             className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium ${
-              aviso.ok ? "bg-success/15 text-[#0f9d63]" : "bg-danger/10 text-danger"
+              aviso.ok ? "bg-success/15 text-exito" : "bg-danger/10 text-danger"
             }`}
           >
             {aviso.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
@@ -126,13 +126,13 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-[#d7d9e8] px-4 py-8 text-center text-sm text-ink-3">
+        <p className="rounded-xl border border-dashed border-linea px-4 py-8 text-center text-sm text-ink-3">
           {contacts.length === 0 ? "Aún no tienes contactos. Agrega el primero arriba." : "Sin resultados."}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+        <div className="overflow-x-auto rounded-2xl border border-linea">
           <table className="w-full min-w-[640px] text-sm">
-            <thead className="bg-[#f4f5fb] text-left text-[11px] font-bold uppercase tracking-wide text-ink-3">
+            <thead className="bg-suave text-left text-[11px] font-bold uppercase tracking-wide text-ink-3">
               <tr>
                 <th className="w-10 px-3 py-3">
                   <input
@@ -151,12 +151,12 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
                 <th className="w-14 px-3 py-3 text-right">Borrar</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#e6e8f2]">
+            <tbody className="divide-y divide-linea">
               {filtered.map((c) => {
                 const marcado = sel.has(c.id);
                 const iso = c.country ?? paisDesdeTelefono(c.phone);
                 return (
-                  <tr key={c.id} className={marcado ? "bg-pink/5" : "bg-white"}>
+                  <tr key={c.id} className={marcado ? "bg-pink/5" : "bg-tarjeta"}>
                     <td className="px-3 py-3">
                       <input
                         type="checkbox"
@@ -198,7 +198,7 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
                           <span className="text-ink-3">—</span>
                         ) : (
                           (c.tags ?? []).map((t) => (
-                            <span key={t} className="rounded-full bg-[#f1f2f9] px-2 py-0.5 text-[11px] text-ink-2">
+                            <span key={t} className="rounded-full bg-suave px-2 py-0.5 text-[11px] text-ink-2">
                               {t}
                             </span>
                           ))

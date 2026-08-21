@@ -26,7 +26,7 @@ export default async function ContactsPage() {
         <h2 className="font-display text-2xl font-bold text-ink">Contactos</h2>
         <p className="mb-6 mt-1 text-ink-2">Toda tu base de contactos en un solo lugar.</p>
 
-        <form action={createContact} className="mb-6 flex flex-wrap items-end gap-3 rounded-2xl border border-[#e6e8f2] bg-white p-4">
+        <form action={createContact} className="mb-6 flex flex-wrap items-end gap-3 rounded-2xl border border-linea bg-tarjeta p-4">
           <div className="min-w-[160px] flex-1">
             <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre</label>
             <input name="name" required placeholder="Nombre del contacto" className="input-l" />

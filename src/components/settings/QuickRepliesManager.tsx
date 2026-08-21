@@ -72,7 +72,7 @@ export function QuickRepliesManager({
       {aviso && (
         <div
           className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium ${
-            aviso.ok ? "bg-success/15 text-[#0f9d63]" : "bg-danger/10 text-danger"
+            aviso.ok ? "bg-success/15 text-exito" : "bg-danger/10 text-danger"
           }`}
         >
           {aviso.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
@@ -109,7 +109,7 @@ export function QuickRepliesManager({
           </div>
           <div className="min-w-[150px]">
             <label className="mb-1 block text-xs font-semibold text-ink-2">Atajo</label>
-            <div className="flex items-center gap-1 rounded-xl border border-[#e2e4f0] bg-white px-2.5">
+            <div className="flex items-center gap-1 rounded-xl border border-linea-2 bg-tarjeta px-2.5">
               <span className="font-mono text-sm font-bold text-violet">/</span>
               <input
                 name="shortcut"
@@ -154,7 +154,7 @@ export function QuickRepliesManager({
                 type="button"
                 title={v.etiqueta}
                 onClick={() => insertarVariable(v.clave)}
-                className="rounded-lg border border-[#e2e4f0] bg-white px-2 py-1 font-mono text-[11px] text-ink-2 transition hover:border-violet hover:text-ink"
+                className="rounded-lg border border-linea-2 bg-tarjeta px-2 py-1 font-mono text-[11px] text-ink-2 transition hover:border-violet hover:text-ink"
               >
                 {`{{${v.clave}}}`}
               </button>
@@ -175,7 +175,7 @@ export function QuickRepliesManager({
         </h3>
 
         {iniciales.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-[#d7d9e8] px-4 py-8 text-center">
+          <div className="rounded-xl border border-dashed border-linea px-4 py-8 text-center">
             <Zap className="mx-auto mb-2 h-6 w-6 text-ink-3" />
             <p className="text-sm text-ink-2">Todavía no tienes respuestas rápidas.</p>
             <p className="mt-1 text-xs text-ink-3">
@@ -198,7 +198,7 @@ export function QuickRepliesManager({
                       type="button"
                       onClick={() => editar(r)}
                       aria-label="Editar"
-                      className="grid h-8 w-8 place-items-center rounded-lg text-ink-3 transition hover:bg-[#f1f2f9] hover:text-ink"
+                      className="grid h-8 w-8 place-items-center rounded-lg text-ink-3 transition hover:bg-suave hover:text-ink"
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
@@ -217,7 +217,7 @@ export function QuickRepliesManager({
 
                 <div className="mt-2.5 flex items-center gap-2 text-[11px] text-ink-3">
                   {r.category && (
-                    <span className="rounded-full bg-[#f1f2f9] px-2 py-0.5 font-medium">{r.category}</span>
+                    <span className="rounded-full bg-suave px-2 py-0.5 font-medium">{r.category}</span>
                   )}
                   <span>Usada {r.uses} {r.uses === 1 ? "vez" : "veces"}</span>
                 </div>

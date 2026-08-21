@@ -29,7 +29,7 @@ export function ChannelIcon({ channel, className }: { channel: string; className
 export function ChannelBadge({ channel, size = 16 }: { channel: string; size?: number }) {
   return (
     <span
-      className="grid place-items-center rounded-full bg-white ring-1 ring-black/5"
+      className="grid place-items-center rounded-full bg-tarjeta ring-1 ring-black/5"
       style={{ width: size, height: size }}
     >
       <ChannelIcon channel={channel} className="h-[72%] w-[72%]" />

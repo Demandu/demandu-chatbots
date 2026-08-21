@@ -82,8 +82,8 @@ export function GraficaTiempo({
         {/* Rejilla y escala */}
         {lineas.map((ly, i) => (
           <g key={i}>
-            <line x1={M.izquierda} x2={W - M.derecha} y1={ly} y2={ly} stroke="#e9ebf4" strokeWidth={1} />
-            <text x={M.izquierda - 8} y={ly + 4} textAnchor="end" fontSize={11} fill="#9498b8">
+            <line x1={M.izquierda} x2={W - M.derecha} y1={ly} y2={ly} stroke="var(--linea)" strokeWidth={1} />
+            <text x={M.izquierda - 8} y={ly + 4} textAnchor="end" fontSize={11} fill="var(--ink-3)">
               {numero(Math.round(techo * (1 - i * 0.5)))}
             </text>
           </g>
@@ -114,7 +114,7 @@ export function GraficaTiempo({
                   cx={x(i)}
                   cy={y(d[s.clave])}
                   r={encima === i ? 4.5 : datos.length > 40 ? 0 : 2.5}
-                  fill="#fff"
+                  fill="var(--tarjeta)"
                   stroke={s.color}
                   strokeWidth={2}
                 />
@@ -133,7 +133,7 @@ export function GraficaTiempo({
           const primera = i === 0;
           const anclaje = datos.length === 1 ? "middle" : ultima ? "end" : primera ? "start" : "middle";
           return (
-            <text key={i} x={x(i)} y={H - 8} textAnchor={anclaje} fontSize={11} fill="#9498b8">
+            <text key={i} x={x(i)} y={H - 8} textAnchor={anclaje} fontSize={11} fill="var(--ink-3)">
               {etiquetaPeriodo(d.periodo, agrupacion)}
             </text>
           );
@@ -155,14 +155,14 @@ export function GraficaTiempo({
         {encima !== null && (
           <line
             x1={x(encima)} x2={x(encima)} y1={M.arriba} y2={M.arriba + altoUtil}
-            stroke="#c9cce0" strokeWidth={1} strokeDasharray="3 3"
+            stroke="var(--linea-fuerte)" strokeWidth={1} strokeDasharray="3 3"
           />
         )}
       </svg>
 
       {encima !== null && (
         <div
-          className="pointer-events-none absolute z-10 rounded-xl border border-[#e6e8f2] bg-white px-3 py-2 text-xs shadow-[0_10px_30px_-10px_rgba(20,20,60,.3)]"
+          className="pointer-events-none absolute z-10 rounded-xl border border-linea bg-tarjeta px-3 py-2 text-xs shadow-[0_10px_30px_-10px_rgba(20,20,60,.3)]"
           style={{
             left: Math.min(Math.max(0, x(encima) - 70), Math.max(0, W - 150)),
             top: 4,
@@ -213,7 +213,7 @@ export function BarrasHorizontales({
               {sufijo ? <span className="ml-1 text-xs font-normal text-ink-3">{sufijo}</span> : null}
             </span>
           </div>
-          <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#eef0f7]">
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-suave-2">
             <div
               className="h-full rounded-full transition-[width] duration-500"
               // Cero se dibuja como cero. El mínimo del 2 % existe para que un
@@ -272,12 +272,12 @@ export function Dona({
             );
           })}
         {centro && (
-          <text x={R} y={R - 2} textAnchor="middle" fontSize={tamano * 0.19} fontWeight={700} fill="#1b1c39">
+          <text x={R} y={R - 2} textAnchor="middle" fontSize={tamano * 0.19} fontWeight={700} fill="var(--ink)">
             {centro}
           </text>
         )}
         {subcentro && (
-          <text x={R} y={R + tamano * 0.13} textAnchor="middle" fontSize={11} fill="#9498b8">
+          <text x={R} y={R + tamano * 0.13} textAnchor="middle" fontSize={11} fill="var(--ink-3)">
             {subcentro}
           </text>
         )}
@@ -324,7 +324,7 @@ export function ColumnasHora({ datos }: { datos: { hora: number; entrantes: numb
 
 export function SinDatos({ texto }: { texto: string }) {
   return (
-    <div className="grid min-h-[120px] place-items-center rounded-xl border border-dashed border-[#e2e4f0] p-6 text-center text-sm text-ink-3">
+    <div className="grid min-h-[120px] place-items-center rounded-xl border border-dashed border-linea-2 p-6 text-center text-sm text-ink-3">
       {texto}
     </div>
   );

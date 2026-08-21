@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { LanaSays } from "@/components/Lana";
 import { createClient } from "@/lib/supabase/server";
 import { addKnowledge, addKnowledgeSimple, deleteKnowledge, toggleKnowledge, updateKnowledge, importFromUrl, deleteSource } from "./actions";
@@ -69,8 +68,6 @@ export default async function BotTrainingPage({
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
-
         <h2 className="mb-1 font-display text-2xl font-bold text-ink">Entrenamiento</h2>
         <p className="mb-5 text-sm text-ink-2">
           Todo lo que tu chatbot sabe de tu negocio: precios, horarios, servicios, políticas. Entre más le cuentes,
@@ -83,7 +80,7 @@ export default async function BotTrainingPage({
           invento. Si algo no está aquí, lo digo y ofrezco pasar la conversación a una persona.
         </LanaSays>
 
-        <p className="mb-4 inline-flex items-center gap-1.5 rounded-lg bg-[#f1f2f9] px-3 py-1.5 text-[11px] text-ink-2">
+        <p className="mb-4 inline-flex items-center gap-1.5 rounded-lg bg-suave px-3 py-1.5 text-[11px] text-ink-2">
           <span className={`h-1.5 w-1.5 rounded-full ${semantica ? "bg-success" : "bg-warning"}`} />
           {semantica
             ? "Búsqueda por significado activa: entiende preguntas aunque estén escritas con otras palabras."
@@ -114,7 +111,7 @@ export default async function BotTrainingPage({
                 Sin espacio — libera información o amplía tu plan.
               </span>
             ) : storage.nearLimit ? (
-              <span className="font-semibold text-[#a06a00]">Te queda poco espacio ({formatBytes(storage.remainingBytes)}).</span>
+              <span className="font-semibold text-aviso">Te queda poco espacio ({formatBytes(storage.remainingBytes)}).</span>
             ) : (
               <Link href="/settings/plan" className="font-semibold text-pink hover:underline">Ver plan y ampliar espacio →</Link>
             )}
@@ -123,7 +120,7 @@ export default async function BotTrainingPage({
 
         {/* Avisos de importación */}
         {searchParams?.imported && (
-          <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
+          <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
             ✅ Listo: se cargaron {searchParams.imported} fragmentos de información desde la página.
           </div>
         )}
@@ -154,11 +151,11 @@ export default async function BotTrainingPage({
           </form>
 
           {listaFuentes.length > 0 && (
-            <div className="mt-4 border-t border-[#e6e8f2] pt-3">
+            <div className="mt-4 border-t border-linea pt-3">
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Fuentes cargadas</p>
               <div className="space-y-1.5">
                 {listaFuentes.map((f) => (
-                  <div key={f.nombre} className="flex items-center gap-2 rounded-lg bg-[#f4f5fb] px-3 py-2">
+                  <div key={f.nombre} className="flex items-center gap-2 rounded-lg bg-suave px-3 py-2">
                     <Globe className="h-3.5 w-3.5 flex-none text-ink-3" />
                     <span className="min-w-0 flex-1 truncate text-xs text-ink">{f.nombre}</span>
                     <span className="flex-none text-[11px] text-ink-3">{f.trozos} fragmentos</span>
@@ -182,7 +179,7 @@ export default async function BotTrainingPage({
               <AgregarConocimiento botId={bot.id} accion={addKnowledge} />
 
               {list.length === 0 && (
-                <div className="mt-5 border-t border-[#e6e8f2] pt-4">
+                <div className="mt-5 border-t border-linea pt-4">
                   <p className="mb-2 text-xs font-semibold text-ink-2">¿No sabes por dónde empezar?</p>
                   <p className="text-[11px] text-ink-3">
                     Lo más útil suele ser: <b className="text-ink-2">horarios</b>, <b className="text-ink-2">precios</b>,{" "}
@@ -216,7 +213,7 @@ export default async function BotTrainingPage({
                     <form
                       action={addKnowledgeSimple}
                       key={e.t}
-                      className="flex items-start gap-3 rounded-xl border border-dashed border-[#d7d9e8] bg-[#f9fafd] p-3"
+                      className="flex items-start gap-3 rounded-xl border border-dashed border-linea bg-tarjeta-2 p-3"
                     >
                       <input type="hidden" name="bot_id" value={bot.id} />
                       <input type="hidden" name="title" value={e.t} />
@@ -242,7 +239,7 @@ export default async function BotTrainingPage({
                           <div className="flex items-center gap-2">
                             <h4 className="font-semibold text-ink">{k.title}</h4>
                             {!k.enabled && (
-                              <span className="rounded-md bg-[#f1f2f9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">
+                              <span className="rounded-md bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">
                                 Desactivado
                               </span>
                             )}
@@ -253,7 +250,7 @@ export default async function BotTrainingPage({
                       </summary>
 
                       {/* Edición en línea */}
-                      <form action={updateKnowledge} className="mt-3 space-y-2 border-t border-[#e6e8f2] pt-3">
+                      <form action={updateKnowledge} className="mt-3 space-y-2 border-t border-linea pt-3">
                         <input type="hidden" name="id" value={k.id} />
                         <input type="hidden" name="bot_id" value={bot.id} />
                         <div>
@@ -275,7 +272,7 @@ export default async function BotTrainingPage({
                       </form>
                     </details>
 
-                    <div className="mt-3 flex items-center justify-end gap-2 border-t border-[#e6e8f2] pt-2.5">
+                    <div className="mt-3 flex items-center justify-end gap-2 border-t border-linea pt-2.5">
                       <form action={toggleKnowledge}>
                         <input type="hidden" name="id" value={k.id} />
                         <input type="hidden" name="bot_id" value={bot.id} />

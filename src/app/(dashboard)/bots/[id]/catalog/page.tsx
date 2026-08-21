@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { LanaSays } from "@/components/Lana";
 import { createClient } from "@/lib/supabase/server";
 import { channelOf } from "@/lib/channels";
@@ -48,8 +47,6 @@ export default async function BotCatalogPage({ params }: { params: { id: string 
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
-
         <h2 className="mb-1 font-display text-2xl font-bold text-ink">Catálogo de productos</h2>
         <p className="mb-5 text-sm text-ink-2">
           Tus productos, para que el chatbot los muestre y tus clientes compren sin salir de WhatsApp.
@@ -145,9 +142,9 @@ export default async function BotCatalogPage({ params }: { params: { id: string 
                     <div className="flex gap-3">
                       {p.image_url ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
-                        <img src={p.image_url} alt={p.name} className="h-16 w-16 flex-none rounded-xl border border-[#e6e8f2] object-cover" />
+                        <img src={p.image_url} alt={p.name} className="h-16 w-16 flex-none rounded-xl border border-linea object-cover" />
                       ) : (
-                        <div className="grid h-16 w-16 flex-none place-items-center rounded-xl bg-[#f1f2f9] text-ink-3">
+                        <div className="grid h-16 w-16 flex-none place-items-center rounded-xl bg-suave text-ink-3">
                           <ShoppingBag className="h-6 w-6" />
                         </div>
                       )}
@@ -158,7 +155,7 @@ export default async function BotCatalogPage({ params }: { params: { id: string 
                       </div>
                     </div>
                     {p.description && <p className="mt-2 line-clamp-2 text-xs text-ink-2">{p.description}</p>}
-                    <div className="mt-3 flex items-center justify-between border-t border-[#e6e8f2] pt-2.5">
+                    <div className="mt-3 flex items-center justify-between border-t border-linea pt-2.5">
                       <form action={toggleProduct}>
                         <input type="hidden" name="id" value={p.id} />
                         <input type="hidden" name="bot_id" value={bot.id} />

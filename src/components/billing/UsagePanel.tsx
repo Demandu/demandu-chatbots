@@ -14,8 +14,8 @@ const TINTS: Record<string, string> = {
   messages: "bg-sky-500/15 text-sky-600",
   ai: "bg-pink/15 text-pink",
   storage: "bg-violet/15 text-violet",
-  agents: "bg-success/15 text-[#0f9d63]",
-  bots: "bg-warning/20 text-[#a06a00]",
+  agents: "bg-success/15 text-exito",
+  bots: "bg-warning/20 text-aviso",
 };
 
 function periodo(u: Usage) {
@@ -65,7 +65,7 @@ export function UsagePanel({ usage, compact = false }: { usage: Usage; compact?:
           const Icon = ICONS[m.key] ?? MessageSquare;
           const sinLimite = m.limit <= 0;
           return (
-            <div key={m.key} className="rounded-xl border border-[#e6e8f2] bg-[#f9fafd] p-3.5" title={m.help}>
+            <div key={m.key} className="rounded-xl border border-linea bg-tarjeta-2 p-3.5" title={m.help}>
               <div className="mb-2 flex items-center gap-2">
                 <span className={`grid h-7 w-7 flex-none place-items-center rounded-lg ${TINTS[m.key] ?? ""}`}>
                   <Icon className="h-3.5 w-3.5" />
@@ -86,7 +86,7 @@ export function UsagePanel({ usage, compact = false }: { usage: Usage; compact?:
                 <div className="mt-2 text-[11px] text-ink-3">Sin límite</div>
               ) : (
                 <>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#e6e8f2]">
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-suave-2">
                     <span
                       className={`block h-full rounded-full transition-all ${
                         m.over ? "bg-danger" : m.near ? "bg-warning" : "bg-demandu-gradient"

@@ -15,7 +15,7 @@ function Switch({
   titulo: string; detalle?: string; valor: boolean; onChange: (v: boolean) => void; icono?: React.ReactNode;
 }) {
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-[#e6e8f2] bg-white px-4 py-3">
+    <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-linea bg-tarjeta px-4 py-3">
       <span className="flex min-w-0 items-start gap-3">
         {icono && <span className="mt-0.5 flex-none text-ink-3">{icono}</span>}
         <span className="min-w-0">
@@ -28,7 +28,7 @@ function Switch({
         className={`relative h-6 w-11 flex-none rounded-full transition ${valor ? "bg-demandu-gradient" : "bg-[#d7d9e8]"}`}
       >
         <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${valor ? "left-[22px]" : "left-0.5"}`}
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-tarjeta shadow transition-all ${valor ? "left-[22px]" : "left-0.5"}`}
         />
       </span>
       <input type="checkbox" checked={valor} onChange={(e) => onChange(e.target.checked)} className="sr-only" />
@@ -84,7 +84,7 @@ export function NotificationsSettings() {
   return (
     <div className="max-w-2xl space-y-5">
       {aviso && (
-        <div className="inline-flex items-center gap-1.5 rounded-lg bg-success/15 px-3 py-1.5 text-sm font-medium text-[#0f9d63]">
+        <div className="inline-flex items-center gap-1.5 rounded-lg bg-success/15 px-3 py-1.5 text-sm font-medium text-exito">
           <CheckCircle2 className="h-4 w-4" /> {aviso}
         </div>
       )}
@@ -97,9 +97,9 @@ export function NotificationsSettings() {
       >
         <span className="flex-none">
           {!p.activo || silenciadoAhora ? (
-            <BellOff className="h-5 w-5 text-[#a06a00]" />
+            <BellOff className="h-5 w-5 text-aviso" />
           ) : (
-            <Bell className="h-5 w-5 text-[#0f9d63]" />
+            <Bell className="h-5 w-5 text-exito" />
           )}
         </span>
         <div className="text-sm text-ink">
@@ -144,7 +144,7 @@ export function NotificationsSettings() {
         />
 
         {p.sonido && (
-          <div className="rounded-xl border border-[#e6e8f2] bg-white p-4">
+          <div className="rounded-xl border border-linea bg-tarjeta p-4">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">Tono</p>
             <div className="flex flex-wrap gap-2">
               {TONOS_DISPONIBLES.map((t) => (
@@ -153,7 +153,7 @@ export function NotificationsSettings() {
                   type="button"
                   onClick={() => { set({ tono: t.id as Tono }); reproducirTono(t.id as Tono, p.volumen); }}
                   className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm transition ${
-                    p.tono === t.id ? "border-violet bg-violet/10 font-semibold text-ink" : "border-[#e2e4f0] text-ink-2 hover:border-pink"
+                    p.tono === t.id ? "border-violet bg-violet/10 font-semibold text-ink" : "border-linea-2 text-ink-2 hover:border-pink"
                   }`}
                 >
                   <Play className="h-3.5 w-3.5" /> {t.nombre}
@@ -198,7 +198,7 @@ export function NotificationsSettings() {
         />
         {permiso === "denied" && (
           <div className="flex items-start gap-2 rounded-xl border border-warning/50 bg-warning/10 px-4 py-3 text-xs text-ink-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-[#a06a00]" />
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-aviso" />
             <span>
               Tu navegador tiene bloqueadas las notificaciones para este sitio. Búscalo en el candado de la barra de
               direcciones y permítelas para poder activarlo.
@@ -224,7 +224,7 @@ export function NotificationsSettings() {
         />
 
         {/* Silencio */}
-        <div className="rounded-xl border border-[#e6e8f2] bg-white p-4">
+        <div className="rounded-xl border border-linea bg-tarjeta p-4">
           <div className="mb-2 flex items-center gap-2">
             <Moon className="h-4 w-4 text-ink-3" />
             <span className="text-sm font-semibold text-ink">Silenciar un rato</span>
@@ -242,7 +242,7 @@ export function NotificationsSettings() {
             ))}
           </div>
 
-          <div className="mt-4 border-t border-[#eef0f7] pt-4">
+          <div className="mt-4 border-t border-linea pt-4">
             <Switch
               titulo="Horario de silencio"
               detalle="No avisar dentro de este rango, todos los días."
@@ -275,7 +275,7 @@ export function NotificationsSettings() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-[#e6e8f2] bg-white p-4">
+      <div className="rounded-xl border border-linea bg-tarjeta p-4">
         <div className="mb-1 text-sm font-semibold text-ink">¿Funciona?</div>
         <p className="mb-3 text-xs text-ink-3">
           Lanza un aviso de prueba con tu configuración actual, tal cual lo verías al llegar un mensaje real.

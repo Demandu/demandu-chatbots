@@ -25,12 +25,12 @@ function Palabras({
   };
 
   return (
-    <div className="rounded-xl border border-[#e2e4f0] bg-white p-2">
+    <div className="rounded-xl border border-linea-2 bg-tarjeta p-2">
       <div className="flex flex-wrap gap-1.5">
         {valores.map((v) => (
           <span
             key={v}
-            className="inline-flex items-center gap-1 rounded-lg bg-[#f1f2f9] px-2 py-1 text-sm font-medium text-ink"
+            className="inline-flex items-center gap-1 rounded-lg bg-suave px-2 py-1 text-sm font-medium text-ink"
           >
             {v}
             <button
@@ -186,7 +186,7 @@ export function ShortcutsForm({
       <div className="card-l p-5">
         <label className="mb-3 flex cursor-pointer items-start justify-between gap-4">
           <span className="flex items-start gap-3">
-            <span className="mt-0.5 grid h-9 w-9 flex-none place-items-center rounded-xl bg-warning/20 text-[#a06a00]">
+            <span className="mt-0.5 grid h-9 w-9 flex-none place-items-center rounded-xl bg-warning/20 text-aviso">
               <Info className="h-4 w-4" />
             </span>
             <span>
@@ -239,13 +239,13 @@ export function ShortcutsForm({
       </div>
 
       {/* Vista previa */}
-      <div className="rounded-2xl border border-[#e6e8f2] bg-[#f4f5fb] p-4">
+      <div className="rounded-2xl border border-linea bg-suave p-4">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Así lo verá tu cliente</p>
         <div className="space-y-1.5">
           <div className="ml-auto w-fit max-w-[80%] rounded-xl rounded-br-sm bg-demandu-gradient px-3 py-2 text-[12.5px] text-white">
             {a.agent.words[0] || "1"}
           </div>
-          <div className="w-fit max-w-[80%] rounded-xl rounded-bl-sm bg-white px-3 py-2 text-[12.5px] text-ink shadow-sm">
+          <div className="w-fit max-w-[80%] rounded-xl rounded-bl-sm bg-tarjeta px-3 py-2 text-[12.5px] text-ink shadow-sm">
             {a.agent.reply}
           </div>
         </div>
@@ -263,7 +263,7 @@ export function ShortcutsForm({
         {estado.mensaje && (
           <span
             className={`inline-flex items-center gap-1.5 text-sm font-medium ${
-              estado.ok ? "text-[#0f9d63]" : "text-danger"
+              estado.ok ? "text-exito" : "text-danger"
             }`}
           >
             {estado.ok && <CheckCircle2 className="h-4 w-4" />} {estado.mensaje}

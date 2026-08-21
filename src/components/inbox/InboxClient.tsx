@@ -567,7 +567,7 @@ export function InboxClient({
       ) : (
         <div className="flex min-w-0 flex-1 flex-col" style={{ backgroundColor: paleta.canvas }}>
           {/* Header */}
-          <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-surface-border px-3 py-2.5 sm:flex-nowrap sm:px-4" style={{ backgroundColor: "#ffffff" }}>
+          <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-surface-border px-3 py-2.5 sm:flex-nowrap sm:px-4" style={{ backgroundColor: "var(--tarjeta)" }}>
             {/* Volver a la lista (solo móvil) */}
             <button
               onClick={() => setSelId(null)}
@@ -726,7 +726,7 @@ export function InboxClient({
           )}
 
           {/* Composer (estilo WhatsApp Web · Demandu) */}
-          <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "#ffffff" }}>
+          <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "var(--tarjeta)" }}>
             <Smile className="mb-2 h-6 w-6 flex-none text-muted-2" />
             <Paperclip className="mb-2 h-5 w-5 flex-none text-muted-2" />
             <RespuestasRapidas

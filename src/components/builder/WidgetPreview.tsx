@@ -40,7 +40,7 @@ export function WidgetPreview({
                 name="color"
                 value={v.color}
                 onChange={set("color")}
-                className="h-11 w-16 cursor-pointer rounded-lg border border-[#e2e4f0] bg-white"
+                className="h-11 w-16 cursor-pointer rounded-lg border border-linea-2 bg-white"
               />
             </div>
             <div className="flex-1">
@@ -77,13 +77,13 @@ export function WidgetPreview({
       {/* Vista previa */}
       <div>
         <h3 className="mb-3 font-display text-lg font-semibold text-ink">Así se verá en tu sitio</h3>
-        <div className="relative h-[430px] overflow-hidden rounded-2xl border border-[#e6e8f2] bg-[#eef0f7]">
+        <div className="relative h-[430px] overflow-hidden rounded-2xl border border-linea bg-suave-2">
           {/* barra de navegador simulada */}
-          <div className="flex items-center gap-1.5 border-b border-[#e6e8f2] bg-white px-3 py-2">
+          <div className="flex items-center gap-1.5 border-b border-linea bg-white px-3 py-2">
             <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
-            <span className="ml-2 h-4 flex-1 rounded bg-[#f1f2f9]" />
+            <span className="ml-2 h-4 flex-1 rounded bg-suave" />
           </div>
 
           <div
@@ -95,7 +95,7 @@ export function WidgetPreview({
               <div className="text-sm font-bold">{v.title || "¿Podemos ayudarte?"}</div>
               {v.subtitle && <div className="text-[11px] opacity-90">{v.subtitle}</div>}
             </div>
-            <div className="space-y-2 bg-[#f4f5fb] p-3">
+            <div className="space-y-2 bg-suave p-3">
               <div className="max-w-[85%] rounded-xl rounded-bl-sm bg-white px-3 py-2 text-[12px] text-ink shadow-sm">
                 {v.greeting || "¡Hola! 👋 ¿En qué te puedo ayudar?"}
               </div>
@@ -103,8 +103,8 @@ export function WidgetPreview({
                 Quiero información
               </div>
             </div>
-            <div className="flex items-center gap-2 border-t border-[#e6e8f2] p-2">
-              <div className="flex-1 rounded-full border border-[#e2e4f0] px-3 py-1.5 text-[11px] text-ink-3">Escribe tu mensaje…</div>
+            <div className="flex items-center gap-2 border-t border-linea p-2">
+              <div className="flex-1 rounded-full border border-linea-2 px-3 py-1.5 text-[11px] text-ink-3">Escribe tu mensaje…</div>
               <span className="grid h-7 w-7 place-items-center rounded-full text-white" style={{ background: v.color }}>
                 <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 11 18-6-6 18-3.5-7.5L3 11Z" /></svg>
               </span>

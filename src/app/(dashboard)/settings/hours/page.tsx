@@ -45,7 +45,7 @@ export default async function HoursPage({
   return (
     <form action={updateBusinessHours} className="max-w-xl">
       {saved && (
-        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
+        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
           ✓ Horario laboral guardado.
         </div>
       )}
@@ -58,7 +58,7 @@ export default async function HoursPage({
         </select>
       </div>
 
-      <div className="card-l divide-y divide-[#e6e8f2]">
+      <div className="card-l divide-y divide-linea">
         {DAYS.map((d) => {
           const day = bh?.[d.key] ?? { enabled: false, open: "09:00", close: "18:00" };
           return (
@@ -68,9 +68,9 @@ export default async function HoursPage({
                 {d.label}
               </label>
               <div className="flex items-center gap-2 text-sm text-ink-2">
-                <input type="time" name={`${d.key}_open`} defaultValue={day.open ?? "09:00"} className="rounded-lg border border-[#e2e4f0] bg-white px-2.5 py-1.5 text-ink focus:outline-none" />
+                <input type="time" name={`${d.key}_open`} defaultValue={day.open ?? "09:00"} className="rounded-lg border border-linea-2 bg-tarjeta px-2.5 py-1.5 text-ink focus:outline-none" />
                 <span>a</span>
-                <input type="time" name={`${d.key}_close`} defaultValue={day.close ?? "18:00"} className="rounded-lg border border-[#e2e4f0] bg-white px-2.5 py-1.5 text-ink focus:outline-none" />
+                <input type="time" name={`${d.key}_close`} defaultValue={day.close ?? "18:00"} className="rounded-lg border border-linea-2 bg-tarjeta px-2.5 py-1.5 text-ink focus:outline-none" />
               </div>
             </div>
           );

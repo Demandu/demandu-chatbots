@@ -96,12 +96,12 @@ export function AddonCart({ addons, pagosActivos }: { addons: Addon[]; pagosActi
                       <Plus className="h-3.5 w-3.5" /> Agregar
                     </button>
                   ) : (
-                    <div className="flex items-center gap-1.5 rounded-lg border border-[#e2e4f0] bg-white p-1">
-                      <button onClick={() => set(a.code, qty - 1)} className="grid h-6 w-6 place-items-center rounded text-ink-2 hover:bg-[#f1f2f9]" aria-label="Quitar uno">
+                    <div className="flex items-center gap-1.5 rounded-lg border border-linea-2 bg-tarjeta p-1">
+                      <button onClick={() => set(a.code, qty - 1)} className="grid h-6 w-6 place-items-center rounded text-ink-2 hover:bg-suave" aria-label="Quitar uno">
                         <Minus className="h-3.5 w-3.5" />
                       </button>
                       <span className="min-w-[22px] text-center text-sm font-bold text-ink">{qty}</span>
-                      <button onClick={() => set(a.code, qty + 1)} className="grid h-6 w-6 place-items-center rounded text-ink-2 hover:bg-[#f1f2f9]" aria-label="Agregar uno">
+                      <button onClick={() => set(a.code, qty + 1)} className="grid h-6 w-6 place-items-center rounded text-ink-2 hover:bg-suave" aria-label="Agregar uno">
                         <Plus className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -122,14 +122,14 @@ export function AddonCart({ addons, pagosActivos }: { addons: Addon[]; pagosActi
           </div>
 
           {vacio ? (
-            <p className="rounded-xl border border-dashed border-[#d7d9e8] px-3 py-6 text-center text-xs text-ink-3">
+            <p className="rounded-xl border border-dashed border-linea px-3 py-6 text-center text-xs text-ink-3">
               Elige lo que necesitas y aparecerá aquí.
             </p>
           ) : (
             <>
               <div className="space-y-2">
                 {lineas.map((l) => (
-                  <div key={l.code} className="flex items-start justify-between gap-2 rounded-lg bg-[#f4f5fb] px-3 py-2">
+                  <div key={l.code} className="flex items-start justify-between gap-2 rounded-lg bg-suave px-3 py-2">
                     <div className="min-w-0">
                       <div className="truncate text-[13px] font-medium text-ink">{l.name}</div>
                       <div className="text-[11px] text-ink-3">
@@ -141,7 +141,7 @@ export function AddonCart({ addons, pagosActivos }: { addons: Addon[]; pagosActi
                 ))}
               </div>
 
-              <div className="mt-4 space-y-1.5 border-t border-[#e6e8f2] pt-3">
+              <div className="mt-4 space-y-1.5 border-t border-linea pt-3">
                 {mensual > 0 && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-ink-2">Cada mes</span>

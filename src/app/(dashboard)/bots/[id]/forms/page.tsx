@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { LanaSays } from "@/components/Lana";
 import { createClient } from "@/lib/supabase/server";
 import { channelOf } from "@/lib/channels";
@@ -12,9 +11,9 @@ import { ClipboardList, RefreshCw, Copy } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 const STATUS_BADGE: Record<string, string> = {
-  PUBLISHED: "bg-success/15 text-[#0f9d63]",
-  DRAFT: "bg-warning/20 text-[#a06a00]",
-  DEPRECATED: "bg-[#f1f2f9] text-ink-3",
+  PUBLISHED: "bg-success/15 text-exito",
+  DRAFT: "bg-warning/20 text-aviso",
+  DEPRECATED: "bg-suave text-ink-3",
   BLOCKED: "bg-danger/15 text-danger",
   THROTTLED: "bg-danger/15 text-danger",
 };
@@ -60,8 +59,6 @@ export default async function BotFormsPage({
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
-
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-display text-2xl font-bold text-ink">Formularios</h2>
@@ -92,7 +89,7 @@ export default async function BotFormsPage({
           </div>
         )}
         {searchParams?.synced === "1" && (
-          <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
+          <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
             ✅ Formularios sincronizados.
           </div>
         )}
@@ -127,12 +124,12 @@ export default async function BotFormsPage({
                       </div>
                     </div>
                   </div>
-                  <span className={`flex-none rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_BADGE[f.status] ?? "bg-[#f1f2f9] text-ink-3"}`}>
+                  <span className={`flex-none rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_BADGE[f.status] ?? "bg-suave text-ink-3"}`}>
                     {STATUS_LABEL[f.status] ?? f.status}
                   </span>
                 </div>
 
-                <div className="mt-3 rounded-lg bg-[#f4f5fb] px-2.5 py-2">
+                <div className="mt-3 rounded-lg bg-suave px-2.5 py-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">ID para el bloque</div>
                   <div className="flex items-center gap-1.5">
                     <code className="truncate font-mono text-xs text-ink">{f.meta_flow_id}</code>
@@ -140,7 +137,7 @@ export default async function BotFormsPage({
                   </div>
                 </div>
 
-                <div className="mt-3 flex justify-end border-t border-[#e6e8f2] pt-2.5">
+                <div className="mt-3 flex justify-end border-t border-linea pt-2.5">
                   <form action={removeForm}>
                     <input type="hidden" name="id" value={f.id} />
                     <input type="hidden" name="bot_id" value={bot.id} />

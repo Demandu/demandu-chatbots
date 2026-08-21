@@ -41,13 +41,13 @@ export default async function AttributesPage() {
       <AttributeForm />
 
       {attrs.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-[#d7d9e8] px-4 py-6 text-center text-sm text-ink-3">
+        <p className="rounded-xl border border-dashed border-linea px-4 py-6 text-center text-sm text-ink-3">
           Aún no tienes atributos. Crea el primero arriba.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+        <div className="overflow-x-auto rounded-2xl border border-linea">
           <table className="min-w-[560px] w-full text-sm">
-            <thead className="bg-[#f4f5fb] text-left text-[11px] font-bold uppercase tracking-wide text-ink-3">
+            <thead className="bg-suave text-left text-[11px] font-bold uppercase tracking-wide text-ink-3">
               <tr>
                 <th className="px-4 py-3">Nombre</th>
                 <th className="px-4 py-3">Clave</th>
@@ -57,14 +57,14 @@ export default async function AttributesPage() {
                 <th className="px-4 py-3 text-right">Acción</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#e6e8f2]">
+            <tbody className="divide-y divide-linea">
               {attrs.map((a) => (
-                <tr key={a.id} className="bg-white">
+                <tr key={a.id} className="bg-tarjeta">
                   <td className="px-4 py-3 font-medium text-ink">{a.name}</td>
                   <td className="px-4 py-3 font-mono text-xs text-ink-2">{a.key}</td>
                   <td className="px-4 py-3 text-ink-2">{TYPE_LABEL[a.type] ?? a.type}</td>
                   <td className="px-4 py-3">
-                    <span className="rounded-md bg-[#f1f2f9] px-2 py-0.5 text-[11px] text-ink-2">
+                    <span className="rounded-md bg-suave px-2 py-0.5 text-[11px] text-ink-2">
                       {PURPOSE_LABEL[a.purpose] ?? a.purpose}
                     </span>
                   </td>
@@ -76,7 +76,7 @@ export default async function AttributesPage() {
                         title={a.visible ? "Visible en el perfil del contacto" : "Oculto"}
                         className={`h-5 w-9 rounded-full p-0.5 transition ${a.visible ? "bg-gradient-to-r from-pink to-violet" : "bg-[#d5d8e8]"}`}
                       >
-                        <span className={`block h-4 w-4 rounded-full bg-white shadow transition-all ${a.visible ? "translate-x-4" : ""}`} />
+                        <span className={`block h-4 w-4 rounded-full bg-tarjeta shadow transition-all ${a.visible ? "translate-x-4" : ""}`} />
                       </button>
                     </form>
                   </td>

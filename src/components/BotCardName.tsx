@@ -44,7 +44,7 @@ export function BotCardName({ botId, initialName }: { botId: string; initialName
             if (e.key === "Enter") save();
             if (e.key === "Escape") cancel();
           }}
-          className="min-w-0 flex-1 rounded-md border border-pink bg-white px-2 py-1 font-display text-lg font-semibold text-ink focus:outline-none"
+          className="min-w-0 flex-1 rounded-md border border-pink bg-tarjeta px-2 py-1 font-display text-lg font-semibold text-ink focus:outline-none"
         />
         <button onClick={save} disabled={saving} title="Guardar" className="flex-none text-success hover:opacity-80">
           <Check className="h-4 w-4" />

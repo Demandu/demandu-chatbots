@@ -23,7 +23,7 @@ export function EstadoMeta({ d }: { d: Diagnostico }) {
       </header>
 
       {!!d.quePuedoHacer?.length && (
-        <div className="mt-4 rounded-xl border border-[#e6e8f2] bg-white p-4">
+        <div className="mt-4 rounded-xl border border-linea bg-tarjeta p-4">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-3">
             <ListChecks className="h-3.5 w-3.5" /> Qué hacer
           </p>
@@ -58,6 +58,6 @@ export function EstadoMeta({ d }: { d: Diagnostico }) {
 function Icono({ nivel, pequeno = false }: { nivel: Nivel; pequeno?: boolean }) {
   const c = pequeno ? "h-4 w-4 mt-0.5 flex-none" : "h-5 w-5 mt-0.5 flex-none";
   if (nivel === "ok") return <CheckCircle2 className={`${c} text-success`} />;
-  if (nivel === "aviso") return <AlertTriangle className={`${c} text-[#a97c00]`} />;
+  if (nivel === "aviso") return <AlertTriangle className={`${c} text-aviso`} />;
   return <XCircle className={`${c} text-danger`} />;
 }

@@ -5,7 +5,6 @@ import { BotTitle } from "@/components/BotTitle";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { createFlow, deleteFlow } from "../actions";
-import { BotNav } from "@/components/builder/BotNav";
 import { FlowToggle } from "@/components/builder/FlowToggle";
 import { LanaSays } from "@/components/Lana";
 import { Plus, Pencil, MessageSquareText } from "lucide-react";
@@ -13,7 +12,7 @@ import { Plus, Pencil, MessageSquareText } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 const TRIGGER_META: Record<string, { label: string; badge: string; desc: string }> = {
-  welcome: { label: "Bienvenida / inicio", badge: "bg-success/15 text-[#0f9d63]", desc: "Se activa cuando alguien te escribe por primera vez." },
+  welcome: { label: "Bienvenida / inicio", badge: "bg-success/15 text-exito", desc: "Se activa cuando alguien te escribe por primera vez." },
   keyword: { label: "Palabras clave", badge: "bg-sky-500/15 text-sky-600", desc: "Se activa cuando el cliente escribe alguna de las palabras." },
   returning: { label: "Leads que regresan", badge: "bg-pink/15 text-pink", desc: "Se activa cuando un cliente que ya te había escrito vuelve." },
 };
@@ -50,7 +49,6 @@ export default async function BotPage({ params }: { params: { id: string } }) {
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
         <div className="mb-1 flex items-center gap-2">
           <h2 className="font-display text-2xl font-bold text-ink">Conversaciones automáticas</h2>
         </div>
@@ -85,7 +83,7 @@ export default async function BotPage({ params }: { params: { id: string } }) {
                             <FlowToggle flowId={f.id} enabled={f.enabled !== false} />
                             <h3 className="font-display text-lg font-semibold text-ink">{f.name}</h3>
                             <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${meta.badge}`}>{meta.label}</span>
-                            {!f.enabled && <span className="rounded-md bg-[#f1f2f9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Pausado</span>}
+                            {!f.enabled && <span className="rounded-md bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Pausado</span>}
                           </div>
                           {f.trigger_type === "keyword" && (
                             <p className="mt-1 text-xs text-ink-3">

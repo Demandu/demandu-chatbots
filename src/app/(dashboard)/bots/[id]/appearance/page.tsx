@@ -1,7 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { LanaSays } from "@/components/Lana";
 import { WidgetPreview } from "@/components/builder/WidgetPreview";
 import { createClient } from "@/lib/supabase/server";
@@ -39,8 +38,6 @@ export default async function BotAppearancePage({ params }: { params: { id: stri
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
-
         <h2 className="mb-1 font-display text-2xl font-bold text-ink">Apariencia</h2>
         <p className="mb-5 text-sm text-ink-2">
           Cómo se ve la burbuja de chat en tu página: colores, textos y de qué lado aparece.

@@ -41,7 +41,7 @@ export default async function RepartoPage() {
       </div>
 
       {/* Quién está ahora */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#e6e8f2] bg-white p-4">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-linea bg-tarjeta p-4">
         <Users className="h-4 w-4 flex-none text-violet" />
         <span className="text-sm text-ink-2">
           <b className="text-ink">{disponiblesAhora}</b> de {gente.length} en línea ahora mismo
@@ -50,7 +50,7 @@ export default async function RepartoPage() {
           {gente.map((m) => (
             <span
               key={m.id}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#eceef6] px-2 py-1 text-xs"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-linea px-2 py-1 text-xs"
               title={
                 enLinea(m) ? "En línea" : m.available ? "Disponible, pero sin la app abierta" : "Marcado como ausente"
               }
@@ -69,7 +69,7 @@ export default async function RepartoPage() {
         </div>
       </div>
 
-      <form action={guardarReparto} className="flex flex-col gap-5 rounded-2xl border border-[#e6e8f2] bg-white p-5">
+      <form action={guardarReparto} className="flex flex-col gap-5 rounded-2xl border border-linea bg-tarjeta p-5">
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -85,10 +85,10 @@ export default async function RepartoPage() {
           </span>
         </label>
 
-        <div className="border-t border-[#eceef6] pt-5">
+        <div className="border-t border-linea pt-5">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">¿A quién le toca?</p>
           <div className="flex flex-col gap-2">
-            <label className="flex items-start gap-3 rounded-xl border border-[#e6e8f2] p-3">
+            <label className="flex items-start gap-3 rounded-xl border border-linea p-3">
               <input
                 type="radio" name="strategy" value="menos_carga"
                 defaultChecked={(s.strategy ?? "menos_carga") === "menos_carga"}
@@ -101,7 +101,7 @@ export default async function RepartoPage() {
                 </span>
               </span>
             </label>
-            <label className="flex items-start gap-3 rounded-xl border border-[#e6e8f2] p-3">
+            <label className="flex items-start gap-3 rounded-xl border border-linea p-3">
               <input
                 type="radio" name="strategy" value="rueda"
                 defaultChecked={s.strategy === "rueda"}
@@ -117,7 +117,7 @@ export default async function RepartoPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 border-t border-[#eceef6] pt-5">
+        <div className="flex flex-col gap-4 border-t border-linea pt-5">
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-3">Con quién sí</p>
 
           <label className="flex items-start gap-3">
@@ -167,7 +167,7 @@ export default async function RepartoPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 border-t border-[#eceef6] pt-5">
+        <div className="flex flex-col gap-4 border-t border-linea pt-5">
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-3">Cuándo</p>
 
           <label className="flex items-start gap-3">
@@ -205,7 +205,7 @@ export default async function RepartoPage() {
           </label>
         </div>
 
-        <div className="flex items-center gap-3 border-t border-[#eceef6] pt-5">
+        <div className="flex items-center gap-3 border-t border-linea pt-5">
           <button className="btn-primary">Guardar</button>
           <span className="text-xs text-ink-3">
             <Clock className="mr-1 inline h-3 w-3" />
@@ -214,7 +214,7 @@ export default async function RepartoPage() {
         </div>
       </form>
 
-      <div className="flex gap-3 rounded-xl border border-[#e2e4f0] bg-[#f7f8fd] p-4 text-sm leading-relaxed text-ink-2">
+      <div className="flex gap-3 rounded-xl border border-linea-2 bg-tarjeta-2 p-4 text-sm leading-relaxed text-ink-2">
         <Info className="mt-0.5 h-4 w-4 flex-none text-violet" />
         <div>
           <b className="text-ink">Si nadie cumple, no se asigna a la fuerza.</b> La conversación

@@ -36,7 +36,7 @@ export default async function EmbudoPage() {
         </div>
 
         {vacio && (
-          <div className="mb-5 flex gap-3 rounded-2xl border border-[#e2e4f0] bg-white p-5">
+          <div className="mb-5 flex gap-3 rounded-2xl border border-linea-2 bg-tarjeta p-5">
             <span className="grid h-11 w-11 flex-none place-items-center rounded-2xl bg-violet/12 text-violet">
               <KanbanSquare className="h-5 w-5" />
             </span>

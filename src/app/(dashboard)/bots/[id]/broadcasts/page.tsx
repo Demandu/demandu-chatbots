@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { createClient } from "@/lib/supabase/server";
 import { sendCampaign } from "../../../campaigns/actions";
 import { channelOf } from "@/lib/channels";
@@ -71,7 +70,6 @@ export default async function BotBroadcastsPage({
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
         <h2 className="mb-1 font-display text-2xl font-bold text-ink">Envíos masivos</h2>
         <p className="mb-5 text-sm text-ink-2">Envía plantillas aprobadas a tus contactos desde este chatbot y mide entrega, lectura y respuesta.</p>
 
@@ -132,10 +130,10 @@ export default async function BotBroadcastsPage({
                         {[
                           { k: "Enviados", v: s.sent, c: "text-ink" },
                           { k: "Entregados", v: s.delivered, c: "text-sky-600", p: pct(s.delivered, s.sent) },
-                          { k: "Leídos", v: s.read, c: "text-[#0f9d63]", p: pct(s.read, s.sent) },
+                          { k: "Leídos", v: s.read, c: "text-exito", p: pct(s.read, s.sent) },
                           { k: "Respondieron", v: s.replied, c: "text-pink", p: pct(s.replied, s.sent) },
                         ].map((m) => (
-                          <div key={m.k} className="rounded-xl bg-[#f1f2f9] py-2">
+                          <div key={m.k} className="rounded-xl bg-suave py-2">
                             <div className={`text-lg font-bold ${m.c}`}>{m.v}</div>
                             <div className="text-[10px] uppercase tracking-wide text-ink-3">{m.k}{m.p ? ` · ${m.p}` : ""}</div>
                           </div>

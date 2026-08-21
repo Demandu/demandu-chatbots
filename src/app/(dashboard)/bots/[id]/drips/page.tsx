@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { LanaSays } from "@/components/Lana";
 import { createClient } from "@/lib/supabase/server";
 import { channelOf } from "@/lib/channels";
@@ -77,8 +76,6 @@ export default async function BotDripsPage({ params }: { params: { id: string } 
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
-
         <h2 className="mb-1 font-display text-2xl font-bold text-ink">Seguimientos automáticos</h2>
         <p className="mb-5 text-sm text-ink-2">
           Una secuencia de mensajes que se envían solos con el tiempo. Ideal para no perder al cliente que no contestó.
@@ -155,7 +152,7 @@ export default async function BotDripsPage({ params }: { params: { id: string } 
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <h3 className="font-display text-lg font-semibold text-ink">{d.name}</h3>
-                            <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${d.enabled ? "bg-success/15 text-[#0f9d63]" : "bg-[#f1f2f9] text-ink-3"}`}>
+                            <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${d.enabled ? "bg-success/15 text-exito" : "bg-suave text-ink-3"}`}>
                               {d.enabled ? "Activo" : "Pausado"}
                             </span>
                           </div>
@@ -184,13 +181,13 @@ export default async function BotDripsPage({ params }: { params: { id: string } 
 
                       {/* Pasos */}
                       {mySteps.length === 0 ? (
-                        <p className="mb-3 rounded-xl border border-dashed border-[#d7d9e8] px-3 py-3 text-xs text-ink-3">
+                        <p className="mb-3 rounded-xl border border-dashed border-linea px-3 py-3 text-xs text-ink-3">
                           Este seguimiento aún no tiene mensajes. Agrega el primero abajo 👇
                         </p>
                       ) : (
                         <ol className="mb-3 space-y-2">
                           {mySteps.map((s) => (
-                            <li key={s.id} className="flex items-center gap-3 rounded-xl border border-[#e6e8f2] bg-[#f9fafd] px-3 py-2.5">
+                            <li key={s.id} className="flex items-center gap-3 rounded-xl border border-linea bg-tarjeta-2 px-3 py-2.5">
                               <span className="grid h-7 w-7 flex-none place-items-center rounded-full bg-demandu-gradient text-[11px] font-bold text-white">
                                 {s.position}
                               </span>
@@ -209,7 +206,7 @@ export default async function BotDripsPage({ params }: { params: { id: string } 
                       )}
 
                       {/* Agregar paso */}
-                      <form action={addDripStep} className="flex flex-wrap items-end gap-2 border-t border-[#e6e8f2] pt-3">
+                      <form action={addDripStep} className="flex flex-wrap items-end gap-2 border-t border-linea pt-3">
                         <input type="hidden" name="bot_id" value={bot.id} />
                         <input type="hidden" name="drip_id" value={d.id} />
                         <div className="min-w-[180px] flex-1">

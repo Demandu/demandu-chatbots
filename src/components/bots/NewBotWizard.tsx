@@ -89,7 +89,7 @@ export function NewBotWizard({ initialChannel }: { initialChannel?: string }) {
             <div key={s} className="flex flex-1 items-center last:flex-none">
               <div className="flex items-center gap-2">
                 <span className={`grid h-8 w-8 flex-none place-items-center rounded-full text-sm font-bold ${
-                  done ? "bg-demandu-gradient text-white" : now ? "border-2 border-pink text-ink shadow-[0_0_0_4px_rgba(246,74,151,0.12)]" : "border-2 border-[#e2e4f0] text-ink-3"
+                  done ? "bg-demandu-gradient text-white" : now ? "border-2 border-pink text-ink shadow-[0_0_0_4px_rgba(246,74,151,0.12)]" : "border-2 border-linea-2 text-ink-3"
                 }`}>
                   {done ? <Check className="h-4 w-4" /> : n}
                 </span>

@@ -9,7 +9,7 @@ export default async function LeadGroupsPage() {
 
   return (
     <div>
-      <form action={createLeadGroup} className="mb-6 rounded-2xl border border-[#e6e8f2] bg-white p-4">
+      <form action={createLeadGroup} className="mb-6 rounded-2xl border border-linea bg-tarjeta p-4">
         <div className="flex items-end gap-3">
           <div className="flex-1">
             <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre del grupo</label>
@@ -17,7 +17,7 @@ export default async function LeadGroupsPage() {
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-ink-2">Color</label>
-            <input type="color" name="color" defaultValue="#6E42FF" className="h-11 w-14 cursor-pointer rounded-lg border border-[#e2e4f0] bg-white" />
+            <input type="color" name="color" defaultValue="#6E42FF" className="h-11 w-14 cursor-pointer rounded-lg border border-linea-2 bg-tarjeta" />
           </div>
         </div>
         <div className="mt-3 flex items-end gap-3">
@@ -31,7 +31,7 @@ export default async function LeadGroupsPage() {
 
       <div className="grid gap-2.5 sm:grid-cols-2">
         {groups.map((g) => (
-          <div key={g.id} className="flex items-start gap-3 rounded-xl border border-[#e6e8f2] bg-white p-3.5">
+          <div key={g.id} className="flex items-start gap-3 rounded-xl border border-linea bg-tarjeta p-3.5">
             <span className="mt-1 h-3 w-3 flex-none rounded-full" style={{ background: g.color }} />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-ink">{g.name}</div>

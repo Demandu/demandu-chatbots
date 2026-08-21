@@ -18,7 +18,7 @@ export default async function TeamsPage() {
       {/* Equipos */}
       <section>
         <h3 className="mb-3 font-display text-base font-semibold text-ink">Equipos</h3>
-        <form action={createTeam} className="mb-4 flex items-end gap-3 rounded-2xl border border-[#e6e8f2] bg-white p-4">
+        <form action={createTeam} className="mb-4 flex items-end gap-3 rounded-2xl border border-linea bg-tarjeta p-4">
           <div className="flex-1">
             <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre del equipo</label>
             <input name="name" required placeholder="Ventas" className="input-l" />
@@ -27,7 +27,7 @@ export default async function TeamsPage() {
         </form>
         <div className="flex flex-wrap gap-2">
           {teams.map((t) => (
-            <div key={t.id} className="flex items-center gap-2 rounded-full border border-[#e6e8f2] bg-white px-3 py-1.5">
+            <div key={t.id} className="flex items-center gap-2 rounded-full border border-linea bg-tarjeta px-3 py-1.5">
               <span className="text-sm text-ink">👥 {t.name}</span>
               <form action={deleteTeam}>
                 <input type="hidden" name="id" value={t.id} />
@@ -42,7 +42,7 @@ export default async function TeamsPage() {
       {/* Miembros */}
       <section>
         <h3 className="mb-3 font-display text-base font-semibold text-ink">Miembros</h3>
-        <form action={createMember} className="mb-4 rounded-2xl border border-[#e6e8f2] bg-white p-4">
+        <form action={createMember} className="mb-4 rounded-2xl border border-linea bg-tarjeta p-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre</label>
@@ -71,9 +71,9 @@ export default async function TeamsPage() {
           </div>
         </form>
 
-        <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+        <div className="overflow-x-auto rounded-2xl border border-linea">
           <table className="min-w-[560px] w-full text-sm">
-            <thead className="bg-[#f4f5fb] text-xs text-ink-3">
+            <thead className="bg-suave text-xs text-ink-3">
               <tr>
                 <th className="px-4 py-2.5 text-left font-semibold">Nombre</th>
                 <th className="px-4 py-2.5 text-left font-semibold">Email</th>
@@ -84,7 +84,7 @@ export default async function TeamsPage() {
             </thead>
             <tbody>
               {members.map((m) => (
-                <tr key={m.id} className="border-t border-[#e6e8f2] bg-white">
+                <tr key={m.id} className="border-t border-linea bg-tarjeta">
                   <td className="px-4 py-2.5 font-medium text-ink">{m.name}</td>
                   <td className="px-4 py-2.5 text-ink-2">{m.email || "—"}</td>
                   <td className="px-4 py-2.5 text-ink-2">{m.phone || "—"}</td>

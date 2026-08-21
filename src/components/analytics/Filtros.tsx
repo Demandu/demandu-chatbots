@@ -111,7 +111,7 @@ export function Filtros({
             className={
               preset === p.key
                 ? "rounded-xl bg-demandu-gradient px-3.5 py-2 text-sm font-semibold text-white"
-                : "rounded-xl border border-[#e2e4f0] bg-white px-3.5 py-2 text-sm font-medium text-[#2c2e43] transition hover:border-[#c9cce0]"
+                : "rounded-xl border border-linea-2 bg-tarjeta px-3.5 py-2 text-sm font-medium text-ink transition hover:border-linea-fuerte"
             }
           >
             {p.label}
@@ -122,7 +122,7 @@ export function Filtros({
 
       {/* Rango a mano */}
       {preset === "personalizado" && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#e6e8f2] bg-white p-3">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-linea bg-tarjeta p-3">
           <CalendarDays className="h-4 w-4 text-ink-3" />
           <label className="text-sm text-ink-2" htmlFor="f-desde">Del</label>
           <input

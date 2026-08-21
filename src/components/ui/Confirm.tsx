@@ -43,7 +43,7 @@ export function Confirm({
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-md rounded-2xl border border-[#e6e8f2] bg-white p-5 shadow-2xl"
+        className="relative w-full max-w-md rounded-2xl border border-linea bg-tarjeta p-5 shadow-2xl"
       >
         <button
           type="button"

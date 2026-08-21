@@ -4,6 +4,7 @@ import { UserMenu } from "./UserMenu";
 import { MenuButton } from "./Shell";
 import { NotificationBell } from "./notifications/NotificationBell";
 import { Presencia } from "./team/Presencia";
+import { SelectorDeTema } from "./Tema";
 
 export function Topbar({ crumb, actions }: { crumb?: React.ReactNode; actions?: React.ReactNode }) {
   return (
@@ -15,6 +16,11 @@ export function Topbar({ crumb, actions }: { crumb?: React.ReactNode; actions?: 
         {/* Latido de presencia: es lo que hace que el reparto automático sepa
             quién está de verdad frente a la computadora. */}
         <Presencia compacto />
+        {/* Claro / oscuro / automático. Se esconde en pantallas chicas: ahí el
+            sistema ya decide y la barra necesita el aire. */}
+        <div className="hidden md:block">
+          <SelectorDeTema />
+        </div>
         <NotificationBell />
         {/* Crear chatbot: se oculta en pantallas chicas para dejar aire */}
         <Link

@@ -9,21 +9,21 @@ export default async function TagsPage() {
 
   return (
     <div>
-      <form action={createTag} className="mb-6 flex items-end gap-3 rounded-2xl border border-[#e6e8f2] bg-white p-4">
+      <form action={createTag} className="mb-6 flex items-end gap-3 rounded-2xl border border-linea bg-tarjeta p-4">
         <div className="flex-1">
           <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre de la etiqueta</label>
           <input name="name" required placeholder="lead-caliente" className="input-l" />
         </div>
         <div>
           <label className="mb-1.5 block text-xs font-semibold text-ink-2">Color</label>
-          <input type="color" name="color" defaultValue="#F64A97" className="h-11 w-14 cursor-pointer rounded-lg border border-[#e2e4f0] bg-white" />
+          <input type="color" name="color" defaultValue="#F64A97" className="h-11 w-14 cursor-pointer rounded-lg border border-linea-2 bg-tarjeta" />
         </div>
         <button className="btn-primary">Crear etiqueta</button>
       </form>
 
       <div className="flex flex-wrap gap-2">
         {tags.map((t) => (
-          <div key={t.id} className="flex items-center gap-2 rounded-full border border-[#e6e8f2] bg-white px-3 py-1.5">
+          <div key={t.id} className="flex items-center gap-2 rounded-full border border-linea bg-tarjeta px-3 py-1.5">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: t.color }} />
             <span className="text-sm text-ink">{t.name}</span>
             <form action={deleteTag}>

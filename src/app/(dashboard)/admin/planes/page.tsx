@@ -50,7 +50,7 @@ export default async function AdminPlanesPage({
           </div>
         )}
         {searchParams?.creado && (
-          <div className="mb-5 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
+          <div className="mb-5 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
             ✅ Plan creado y registrado en Stripe. Ya se puede cobrar.
           </div>
         )}
@@ -152,16 +152,16 @@ export default async function AdminPlanesPage({
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-display font-semibold text-ink">{p.name}</span>
                           {!p.active && (
-                            <span className="rounded-md bg-[#f1f2f9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">
+                            <span className="rounded-md bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">
                               Archivado
                             </span>
                           )}
                           {p.stripe_price_id ? (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#0f9d63]">
+                            <span className="inline-flex items-center gap-1 rounded-md bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-exito">
                               <CheckCircle2 className="h-3 w-3" /> En Stripe
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-warning/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#a06a00]">
+                            <span className="inline-flex items-center gap-1 rounded-md bg-warning/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-aviso">
                               <AlertTriangle className="h-3 w-3" /> Sin registrar
                             </span>
                           )}

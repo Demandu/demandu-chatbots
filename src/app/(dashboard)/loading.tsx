@@ -19,7 +19,7 @@ export default function Cargando() {
       {/* Título */}
       <div className="mb-6 space-y-2.5">
         <div className="h-7 w-52 animate-pulse rounded-lg bg-[#e6e8f2]" />
-        <div className="h-4 w-80 max-w-full animate-pulse rounded bg-[#eef0f7]" />
+        <div className="h-4 w-80 max-w-full animate-pulse rounded bg-suave-2" />
       </div>
 
       {/* Fila de tarjetas: sirve igual para Resultados, Embudo o Contactos */}
@@ -27,14 +27,14 @@ export default function Cargando() {
         {[0, 1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-24 animate-pulse rounded-2xl border border-[#e6e8f2] bg-white"
+            className="h-24 animate-pulse rounded-2xl border border-linea bg-tarjeta"
             style={{ animationDelay: `${i * 80}ms` }}
           />
         ))}
       </div>
 
       {/* Bloque grande de contenido */}
-      <div className="h-64 animate-pulse rounded-2xl border border-[#e6e8f2] bg-white" style={{ animationDelay: "320ms" }} />
+      <div className="h-64 animate-pulse rounded-2xl border border-linea bg-tarjeta" style={{ animationDelay: "320ms" }} />
 
       <Respira />
     </div>

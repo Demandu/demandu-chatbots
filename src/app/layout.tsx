@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Sora, Inter } from "next/font/google";
 import "@xyflow/react/dist/style.css";
 import "./globals.css";
+import { GUION_ANTI_PARPADEO } from "@/lib/tema";
 
 const sora = Sora({
   subsets: ["latin"],
@@ -34,7 +35,13 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="es" className={`${sora.variable} ${inter.variable}`}>
+    <html lang="es" className={`${sora.variable} ${inter.variable}`} suppressHydrationWarning>
+      <head>
+        {/* Antes de pintar NADA: si el tema guardado es oscuro, se marca ya.
+            Si esto corriera con React, el navegador pintaría claro primero y
+            se vería un fogonazo blanco en cada carga. */}
+        <script dangerouslySetInnerHTML={{ __html: GUION_ANTI_PARPADEO }} />
+      </head>
       <body>{children}</body>
     </html>
   );

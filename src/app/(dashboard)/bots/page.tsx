@@ -69,7 +69,7 @@ export default async function BotsPage() {
                   <ChannelIcon channel={c.channel} className="h-8 w-8" />
                 </span>
                 {count(c.channel) > 0 && (
-                  <span className="rounded-full bg-[#f1f2f9] px-2.5 py-1 text-xs font-bold text-ink-2">{count(c.channel)}</span>
+                  <span className="rounded-full bg-suave px-2.5 py-1 text-xs font-bold text-ink-2">{count(c.channel)}</span>
                 )}
               </div>
               <div>
@@ -105,19 +105,19 @@ export default async function BotsPage() {
                     <ChannelIcon channel={c.channel} className="h-4 w-4" />
                   </span>
                   <h3 className="font-display text-lg font-semibold text-ink">{c.label}</h3>
-                  <span className="rounded-full bg-[#f1f2f9] px-2 py-0.5 text-xs font-bold text-ink-2">{count(c.channel)}</span>
+                  <span className="rounded-full bg-suave px-2 py-0.5 text-xs font-bold text-ink-2">{count(c.channel)}</span>
                 </div>
                 <div className="grid max-w-6xl grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
                   {byChannel[c.channel].map((b) => (
                     <div key={b.id} className="card-l group relative p-5 transition hover:border-pink">
                       <div className="mb-3 flex items-center justify-between pr-6">
-                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#f1f2f9] px-2.5 py-1 text-xs font-semibold text-ink-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-suave px-2.5 py-1 text-xs font-semibold text-ink-2">
                           <ChannelIcon channel={b.channel ?? "webchat"} className="h-3.5 w-3.5" />
                           {CHANNEL_LABEL[b.channel ?? "webchat"] ?? "Sitio web"}
                         </span>
                         <span
                           className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
-                            b.status === "published" ? "bg-success/15 text-success" : "bg-warning/20 text-[#a06a00]"
+                            b.status === "published" ? "bg-success/15 text-success" : "bg-warning/20 text-aviso"
                           }`}
                         >
                           {b.status === "published" ? "Publicado" : "Borrador"}
@@ -142,11 +142,11 @@ export default async function BotsPage() {
         {/* Importar (discreto, para quien migra desde otra herramienta) */}
         <details className="mt-10 max-w-xl text-sm">
           <summary className="cursor-pointer text-ink-3 transition hover:text-ink-2">¿Migras desde otra herramienta? Importar un chatbot (.json)</summary>
-          <form action={importBot} className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-[#d7d9e8] bg-white p-3">
-            <select name="channel" defaultValue="whatsapp" title="Canal del chatbot importado" className="rounded-lg border border-[#e2e4f0] bg-white px-2 py-1.5 text-xs font-semibold text-ink">
+          <form action={importBot} className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-linea bg-tarjeta p-3">
+            <select name="channel" defaultValue="whatsapp" title="Canal del chatbot importado" className="rounded-lg border border-linea-2 bg-tarjeta px-2 py-1.5 text-xs font-semibold text-ink">
               {CHANNEL_CARDS.map((c) => (<option key={c.channel} value={c.channel}>{c.label}</option>))}
             </select>
-            <input type="file" name="file" accept="application/json,.json" required className="max-w-[160px] text-xs text-ink-3 file:mr-2 file:rounded-lg file:border-0 file:bg-[#f1f2f9] file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-ink" />
+            <input type="file" name="file" accept="application/json,.json" required className="max-w-[160px] text-xs text-ink-3 file:mr-2 file:rounded-lg file:border-0 file:bg-suave file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-ink" />
             <button className="btn-soft"><Upload className="h-4 w-4" /> Importar</button>
           </form>
         </details>

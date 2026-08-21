@@ -1015,7 +1015,7 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
         onClick={(e) => { e.preventDefault(); onChange(!checked); }}
         className={`relative h-5 w-9 flex-none rounded-full transition ${checked ? "bg-gradient-to-r from-pink to-violet" : "bg-surface-border"}`}
       >
-        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? "left-[18px]" : "left-0.5"}`} />
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-tarjeta transition-all ${checked ? "left-[18px]" : "left-0.5"}`} />
       </span>
     </label>
   );

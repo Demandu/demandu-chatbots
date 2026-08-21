@@ -41,7 +41,7 @@ export default async function EmbudosPage() {
   return (
     <div className="flex flex-col gap-8">
       {/* ── Por qué importa ─────────────────────────────────────────────── */}
-      <div className="flex gap-3 rounded-xl border border-[#e2e4f0] bg-[#f7f8fd] p-4 text-sm leading-relaxed text-ink-2">
+      <div className="flex gap-3 rounded-xl border border-linea-2 bg-tarjeta-2 p-4 text-sm leading-relaxed text-ink-2">
         <Trophy className="mt-0.5 h-4 w-4 flex-none text-violet" />
         <div>
           <b className="text-ink">Marca cuáles etapas son cierre.</b> La plataforma no puede
@@ -49,7 +49,7 @@ export default async function EmbudosPage() {
           y cuáles <b>se perdió</b>, y la efectividad de cierre aparece sola en Resultados — por
           equipo y por persona.
           {marcados === 0 && (
-            <span className="mt-1.5 block font-semibold text-[#a97c00]">
+            <span className="mt-1.5 block font-semibold text-aviso">
               Todavía no marcaste ninguna, así que ese número sale vacío.
             </span>
           )}
@@ -68,7 +68,7 @@ export default async function EmbudosPage() {
           {embudos.map((p) => (
             <div
               key={p.id}
-              className="flex flex-wrap items-center gap-2.5 rounded-xl border border-[#e6e8f2] bg-white px-3 py-2.5"
+              className="flex flex-wrap items-center gap-2.5 rounded-xl border border-linea bg-tarjeta px-3 py-2.5"
             >
               <form action={updatePipeline} className="flex flex-1 flex-wrap items-center gap-2.5">
                 <input type="hidden" name="id" value={p.id} />
@@ -76,7 +76,7 @@ export default async function EmbudosPage() {
                 <input
                   name="name"
                   defaultValue={p.name}
-                  className="min-w-[120px] flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm font-medium text-ink hover:border-[#e2e4f0] focus:border-pink focus:outline-none"
+                  className="min-w-[120px] flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm font-medium text-ink hover:border-linea-2 focus:border-pink focus:outline-none"
                 />
                 <label className="flex items-center gap-1.5 text-xs text-ink-2" title="El tablero que se abre por defecto y al que llegan las conversaciones nuevas">
                   <input type="checkbox" name="is_default" defaultChecked={p.is_default} className="accent-violet" />
@@ -132,7 +132,7 @@ export default async function EmbudosPage() {
               {suyas.map((st) => (
                 <div
                   key={st.id}
-                  className="flex flex-wrap items-center gap-2 rounded-xl border border-[#e6e8f2] bg-white px-3 py-2"
+                  className="flex flex-wrap items-center gap-2 rounded-xl border border-linea bg-tarjeta px-3 py-2"
                 >
                   <form action={updateState} className="flex flex-1 flex-wrap items-center gap-2.5">
                     <input type="hidden" name="id" value={st.id} />
@@ -140,18 +140,18 @@ export default async function EmbudosPage() {
                       type="color"
                       name="color"
                       defaultValue={st.color}
-                      className="h-8 w-9 flex-none cursor-pointer rounded-md border border-[#e2e4f0] bg-white"
+                      className="h-8 w-9 flex-none cursor-pointer rounded-md border border-linea-2 bg-tarjeta"
                       title="Color"
                     />
                     <input
                       name="name"
                       defaultValue={st.name}
-                      className="min-w-[110px] flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm font-medium text-ink hover:border-[#e2e4f0] focus:border-pink focus:outline-none"
+                      className="min-w-[110px] flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm font-medium text-ink hover:border-linea-2 focus:border-pink focus:outline-none"
                     />
                     <select
                       name="outcome"
                       defaultValue={st.outcome ?? "abierto"}
-                      className="rounded-lg border border-[#e2e4f0] bg-white px-2 py-1.5 text-xs text-ink focus:border-pink focus:outline-none"
+                      className="rounded-lg border border-linea-2 bg-tarjeta px-2 py-1.5 text-xs text-ink focus:border-pink focus:outline-none"
                       title="Qué significa esta etapa para la efectividad de cierre"
                     >
                       {RESULTADOS.map((r) => (
@@ -169,7 +169,7 @@ export default async function EmbudosPage() {
                 </div>
               ))}
               {!suyas.length && (
-                <p className="rounded-xl border border-dashed border-[#e2e4f0] p-4 text-center text-sm text-ink-3">
+                <p className="rounded-xl border border-dashed border-linea-2 p-4 text-center text-sm text-ink-3">
                   Este embudo no tiene etapas todavía.
                 </p>
               )}
@@ -187,7 +187,7 @@ export default async function EmbudosPage() {
                   type="color"
                   name="color"
                   defaultValue="#3A85FF"
-                  className="h-11 w-14 cursor-pointer rounded-lg border border-[#e2e4f0] bg-white"
+                  className="h-11 w-14 cursor-pointer rounded-lg border border-linea-2 bg-tarjeta"
                 />
               </div>
               <div>

@@ -5,6 +5,71 @@
 :root {
   --background: #0a0a28;
   --foreground: #edeeff;
+
+  /* ===========================================================================
+     LOS COLORES DEL ÁREA DE CONTENIDO
+     ---------------------------------------------------------------------------
+     El menú y la barra superior SIEMPRE son azul oscuro, en los dos temas: son
+     la marca. Lo que cambia entre claro y oscuro es la zona de trabajo.
+
+     Antes cada componente llevaba su color escrito a mano — 492 veces, 101
+     colores distintos. Eso hacía imposible un modo oscuro: habría que recordar
+     los 492 sitios, y la primera pantalla nueva se olvidaría de la mitad.
+
+     Ahora el componente pide "el fondo de una tarjeta" o "una línea" y el tema
+     decide qué valor es. Pantalla nueva = sale bien en los dos modos sin
+     pensarlo. Y cambiar el azul de la marca se hace aquí, una vez.
+     =========================================================================== */
+
+  --canvas: #eaecf4;        /* fondo de la zona de trabajo */
+  --tarjeta: #ffffff;       /* tarjetas, paneles, cajas de texto */
+  --tarjeta-2: #f9fafd;     /* tarjeta hundida, dentro de otra */
+  --suave: #f1f2f9;         /* fondos sutiles: chips, cabeceras de tabla */
+  --suave-2: #eef0f7;       /* el mismo, un punto más marcado (hover) */
+  --linea: #e6e8f2;         /* bordes y separadores */
+  --linea-2: #e2e4f0;       /* borde de campos de formulario */
+  --linea-fuerte: #c9cce0;  /* borde al pasar el cursor */
+
+  --ink: #1b1c39;           /* texto principal */
+  --ink-2: #585b80;         /* texto secundario */
+  --ink-3: #9498b8;         /* texto de apoyo, marcadores de posición */
+
+  /* Estados. Llevan su propio valor por tema porque un verde que se lee bien
+     sobre blanco queda apagado sobre azul oscuro, y al revés. */
+  --exito: #0f9d63;
+  --exito-fondo: rgba(61, 220, 151, 0.15);
+  --aviso: #a06a00;
+  --aviso-fondo: rgba(255, 200, 87, 0.2);
+  --alerta: #b02a2e;
+  --alerta-fondo: rgba(255, 90, 95, 0.12);
+}
+
+/* ---------------------------------------------------------------------------
+   MODO OSCURO — el azul de la marca en toda la pantalla.
+   Los valores no se inventaron: salen del Design System que ya usaban el menú
+   y la barra superior (`surface`, `surface-raised`, `surface-card`,
+   `surface-border`), así que el conjunto se ve de una pieza.
+   --------------------------------------------------------------------------- */
+.dark {
+  --canvas: #0a0a28;
+  --tarjeta: #14153a;
+  --tarjeta-2: #171838;
+  --suave: #1b1c42;
+  --suave-2: #232551;
+  --linea: #2a2c55;
+  --linea-2: #2a2c55;
+  --linea-fuerte: #3b3d6e;
+
+  --ink: #edeeff;
+  --ink-2: #9a9cc7;
+  --ink-3: #6e70a0;
+
+  --exito: #3ddc97;
+  --exito-fondo: rgba(61, 220, 151, 0.14);
+  --aviso: #ffc857;
+  --aviso-fondo: rgba(255, 200, 87, 0.14);
+  --alerta: #ff8b8f;
+  --alerta-fondo: rgba(255, 90, 95, 0.14);
 }
 
 @layer base {
@@ -41,37 +106,63 @@
     @apply rounded-2xl border border-surface-border bg-surface-card;
   }
 
-  /* --- Tema CLARO para el área de contenido (chrome/barras siguen oscuras) --- */
+  /* --- Área de contenido. Los valores salen del tema, no van escritos aquí. --- */
   .card-l {
-    @apply rounded-2xl border border-[#e6e8f2] bg-white;
+    @apply rounded-2xl;
+    border: 1px solid var(--linea);
+    background-color: var(--tarjeta);
   }
   .input-l {
-    @apply w-full rounded-xl border border-[#e2e4f0] bg-white px-3.5 py-2.5 text-sm
-      text-[#1b1c39] placeholder:text-[#9498b8] focus:border-pink focus:outline-none;
+    @apply w-full rounded-xl px-3.5 py-2.5 text-sm focus:border-pink focus:outline-none;
+    border: 1px solid var(--linea-2);
+    background-color: var(--tarjeta);
+    color: var(--ink);
   }
+  .input-l::placeholder { color: var(--ink-3); }
   .btn-soft {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-[#e2e4f0]
-      bg-white px-4 py-2.5 text-sm font-medium text-[#2c2e43] transition hover:border-[#c9cce0];
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition;
+    border: 1px solid var(--linea-2);
+    background-color: var(--tarjeta);
+    color: var(--ink);
   }
+  .btn-soft:hover { border-color: var(--linea-fuerte); }
 }
 
 @layer utilities {
-  .bg-canvas { background-color: #eaecf4; }
-  .text-ink { color: #1b1c39; }
-  .text-ink-2 { color: #585b80; }
-  .text-ink-3 { color: #9498b8; }
+  .bg-canvas   { background-color: var(--canvas); }
+  .bg-tarjeta  { background-color: var(--tarjeta); }
+  .bg-tarjeta-2{ background-color: var(--tarjeta-2); }
+  .bg-suave    { background-color: var(--suave); }
+  .bg-suave-2  { background-color: var(--suave-2); }
+  .hover\:bg-suave-2:hover { background-color: var(--suave-2); }
+
+  .border-linea        { border-color: var(--linea); }
+  .border-linea-2      { border-color: var(--linea-2); }
+  .hover\:border-linea-fuerte:hover { border-color: var(--linea-fuerte); }
+  .divide-linea > * + * { border-color: var(--linea); }
+
+  .text-ink   { color: var(--ink); }
+  .text-ink-2 { color: var(--ink-2); }
+  .text-ink-3 { color: var(--ink-3); }
+
+  .text-exito  { color: var(--exito); }
+  .bg-exito-suave { background-color: var(--exito-fondo); }
+  .text-aviso  { color: var(--aviso); }
+  .bg-aviso-suave { background-color: var(--aviso-fondo); }
+  .text-alerta { color: var(--alerta); }
+  .bg-alerta-suave { background-color: var(--alerta-fondo); }
 }
 
-/* React Flow — lienzo claro (chrome oscuro + canvas gris claro) */
-.react-flow__background { background-color: #edeff5; }
+/* React Flow — el lienzo del constructor, también por tema */
+.react-flow__background { background-color: var(--canvas); }
 .react-flow__edge-path { stroke: #6E42FF; stroke-width: 2.5; }
-.react-flow__handle { background: #ffffff; border: 2px solid #6e42ff; width: 11px; height: 11px; }
+.react-flow__handle { background: var(--tarjeta); border: 2px solid #6e42ff; width: 11px; height: 11px; }
 .react-flow__controls { border-radius: 10px; overflow: hidden; box-shadow: 0 6px 20px -8px rgba(0,0,0,.25); }
 .react-flow__controls-button {
-  background: #ffffff; border-bottom: 1px solid #e6e8f0; color: #55597a;
+  background: var(--tarjeta); border-bottom: 1px solid var(--linea); color: var(--ink-2);
 }
-.react-flow__controls-button:hover { background: #f1f2f8; }
-.react-flow__controls-button svg { fill: #55597a; }
+.react-flow__controls-button:hover { background: var(--suave-2); }
+.react-flow__controls-button svg { fill: var(--ink-2); }
 .react-flow__attribution { display: none; }
 
 /* Custom muted utility mapping */
@@ -84,19 +175,19 @@
    (que usan las clases oscuras compartidas) sin editar cada componente.
    Las barras siguen oscuras fuera de este contenedor.
    =========================================================================== */
-.flow-light .bg-surface { background-color: #ffffff; }
-.flow-light .bg-surface-raised { background-color: #f4f5fb; }
-.flow-light .bg-surface-card { background-color: #ffffff; }
-.flow-light .border-surface-border { border-color: #e6e8f2; }
-.flow-light .text-white { color: #1b1c39; }
-.flow-light .text-muted { color: #585b80; }
-.flow-light .text-muted-2 { color: #8a8db0; }
+.flow-light .bg-surface { background-color: var(--tarjeta); }
+.flow-light .bg-surface-raised { background-color: var(--suave); }
+.flow-light .bg-surface-card { background-color: var(--tarjeta); }
+.flow-light .border-surface-border { border-color: var(--linea); }
+.flow-light .text-white { color: var(--ink); }
+.flow-light .text-muted { color: var(--ink-2); }
+.flow-light .text-muted-2 { color: var(--ink-3); }
 .flow-light .input {
-  background-color: #ffffff; border-color: #e2e4f0; color: #1b1c39;
+  background-color: var(--tarjeta); border-color: var(--linea-2); color: var(--ink);
 }
-.flow-light .input::placeholder { color: #9498b8; }
+.flow-light .input::placeholder { color: var(--ink-3); }
 .flow-light .btn-ghost {
-  background-color: #ffffff; border-color: #e2e4f0; color: #2c2e43;
+  background-color: var(--tarjeta); border-color: var(--linea-2); color: var(--ink);
 }
 .flow-light .shadow-card { box-shadow: 0 12px 40px -12px rgba(20,20,60,.18); }
 /* Los elementos con degradado o color de marca conservan texto blanco
@@ -114,11 +205,11 @@
    Sin esto, `hover:text-white` pone texto BLANCO sobre fondo claro y el botón
    desaparece al pasar el cursor; y `hover:bg-surface-raised` traía el gris
    oscuro del tema original. Aquí se traducen a sus equivalentes claros. */
-.flow-light .hover\:text-white:hover { color: #1b1c39; }
-.flow-light .focus-within\:text-white:focus-within { color: #1b1c39; }
-.flow-light .hover\:bg-surface-raised:hover { background-color: #eef0f7; }
-.flow-light .hover\:bg-surface:hover { background-color: #f4f5fb; }
-.flow-light .hover\:bg-surface-card:hover { background-color: #ffffff; }
+.flow-light .hover\:text-white:hover { color: var(--ink); }
+.flow-light .focus-within\:text-white:focus-within { color: var(--ink); }
+.flow-light .hover\:bg-surface-raised:hover { background-color: var(--suave-2); }
+.flow-light .hover\:bg-surface:hover { background-color: var(--suave); }
+.flow-light .hover\:bg-surface-card:hover { background-color: var(--tarjeta); }
 
 /* Excepción: sobre fondos de marca el blanco SÍ contrasta, así que se queda. */
 .flow-light .bg-demandu-gradient.hover\:text-white:hover,

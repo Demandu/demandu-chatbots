@@ -36,7 +36,7 @@ export default async function IntegrationsPage({
       </div>
 
       {connected && (
-        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">
+        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
           ✅ Google Calendar se conectó correctamente.
         </div>
       )}
@@ -49,16 +49,16 @@ export default async function IntegrationsPage({
       )}
 
       {/* Tarjeta Google Calendar */}
-      <div className="rounded-2xl border border-[#e6e8f2] bg-white p-5">
+      <div className="rounded-2xl border border-linea bg-tarjeta p-5">
         <div className="flex items-start gap-4">
-          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-[#e6e8f2] bg-white text-2xl">📅</span>
+          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-linea bg-tarjeta text-2xl">📅</span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h3 className="font-display text-base font-semibold text-ink">Google Calendar</h3>
               {google ? (
-                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#0f9d63]">Conectado</span>
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-exito">Conectado</span>
               ) : (
-                <span className="rounded-full bg-[#f1f2f9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Sin conectar</span>
+                <span className="rounded-full bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Sin conectar</span>
               )}
             </div>
             <p className="mt-1 text-xs text-ink-3">
@@ -91,18 +91,18 @@ export default async function IntegrationsPage({
       </div>
 
       {/* ── WhatsApp Cloud API ── */}
-      <div className="mt-4 rounded-2xl border border-[#e6e8f2] bg-white p-5">
+      <div className="mt-4 rounded-2xl border border-linea bg-tarjeta p-5">
         <div className="flex items-start gap-4">
-          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-[#e6e8f2] bg-white">
+          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-linea bg-tarjeta">
             <ChannelIcon channel="whatsapp" className="h-7 w-7" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h3 className="font-display text-base font-semibold text-ink">WhatsApp Cloud API</h3>
               {wa ? (
-                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#0f9d63]">Conectado</span>
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-exito">Conectado</span>
               ) : (
-                <span className="rounded-full bg-[#f1f2f9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Sin conectar</span>
+                <span className="rounded-full bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Sin conectar</span>
               )}
             </div>
             <p className="mt-1 text-xs text-ink-3">Recibe y responde mensajes de WhatsApp en vivo con tu chatbot y tu Bandeja. Conéctalo con un clic — nosotros configuramos todo lo demás por ti.</p>

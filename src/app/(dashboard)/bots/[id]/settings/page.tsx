@@ -1,7 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { createClient } from "@/lib/supabase/server";
 import { setBotStatus, deleteBot, renameBot } from "../../actions";
@@ -38,7 +37,6 @@ export default async function BotSettingsPage({ params }: { params: { id: string
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
         <h2 className="mb-5 font-display text-2xl font-bold text-ink">Ajustes del chatbot</h2>
 
         {/* Atajos: lo que el cliente final puede escribir en cualquier momento */}
@@ -59,7 +57,7 @@ export default async function BotSettingsPage({ params }: { params: { id: string
               <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">Canal</div>
               <div className="mt-1 font-semibold text-ink">{CHANNEL_LABEL[channel] ?? "Sitio web"}</div>
             </div>
-            <span className="grid h-10 w-10 place-items-center rounded-xl border border-[#e6e8f2] bg-white">
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-linea bg-tarjeta">
               <ChannelIcon channel={channel} className="h-6 w-6" />
             </span>
           </div>
@@ -79,7 +77,7 @@ export default async function BotSettingsPage({ params }: { params: { id: string
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">Estado</div>
               <div className="mt-1">
-                <span className={`rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${published ? "bg-success/15 text-[#0f9d63]" : "bg-warning/20 text-[#a06a00]"}`}>
+                <span className={`rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${published ? "bg-success/15 text-exito" : "bg-warning/20 text-aviso"}`}>
                   {published ? "Publicado" : "Borrador"}
                 </span>
               </div>

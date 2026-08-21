@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
-import { BotNav } from "@/components/builder/BotNav";
 import { createClient } from "@/lib/supabase/server";
 import { syncTemplates } from "../../../campaigns/actions";
 import { channelOf } from "@/lib/channels";
@@ -11,11 +10,11 @@ import { RefreshCw, Megaphone } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 const STATUS_BADGE: Record<string, string> = {
-  APPROVED: "bg-success/15 text-[#0f9d63]",
-  PENDING: "bg-warning/20 text-[#a06a00]",
+  APPROVED: "bg-success/15 text-exito",
+  PENDING: "bg-warning/20 text-aviso",
   REJECTED: "bg-danger/15 text-danger",
-  PAUSED: "bg-[#f1f2f9] text-ink-3",
-  DISABLED: "bg-[#f1f2f9] text-ink-3",
+  PAUSED: "bg-suave text-ink-3",
+  DISABLED: "bg-suave text-ink-3",
 };
 
 export default async function BotTemplatesPage({
@@ -51,8 +50,6 @@ export default async function BotTemplatesPage({
     <>
       <Topbar crumb={<BotTitle botId={bot.id} initialName={bot.name} />} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
-        <BotNav botId={bot.id} channel={bot.channel} />
-
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h2 className="font-display text-2xl font-bold text-ink">Plantillas de mensajes</h2>
@@ -72,7 +69,7 @@ export default async function BotTemplatesPage({
           </div>
         )}
         {searchParams?.synced === "1" && (
-          <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-[#0f9d63]">✅ Plantillas sincronizadas.</div>
+          <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">✅ Plantillas sincronizadas.</div>
         )}
 
         {!connected && (
@@ -87,9 +84,9 @@ export default async function BotTemplatesPage({
             <p className="text-sm text-ink-2">Sin plantillas aún. Dale a <b className="text-ink">Sincronizar con Meta</b>.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-[#e6e8f2]">
+          <div className="overflow-x-auto rounded-2xl border border-linea">
             <table className="min-w-[560px] w-full text-left text-sm">
-              <thead className="bg-[#f4f5fb] text-xs uppercase tracking-wide text-ink-3">
+              <thead className="bg-suave text-xs uppercase tracking-wide text-ink-3">
                 <tr>
                   <th className="px-4 py-3">Nombre</th>
                   <th className="px-4 py-3">Idioma</th>
@@ -100,7 +97,7 @@ export default async function BotTemplatesPage({
               </thead>
               <tbody>
                 {tpls.map((t) => (
-                  <tr key={t.id} className="border-t border-[#e6e8f2] bg-white">
+                  <tr key={t.id} className="border-t border-linea bg-tarjeta">
                     <td className="px-4 py-3">
                       <div className="font-semibold text-ink">{t.name}</div>
                       <div className="max-w-md truncate text-xs text-ink-3">{t.body}</div>

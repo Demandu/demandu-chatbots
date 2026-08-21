@@ -147,8 +147,8 @@ export function FichaOportunidad({
         className="flex-1 cursor-default bg-[#0a0a28]/40 backdrop-blur-[2px]"
       />
 
-      <aside className="flex h-full w-full max-w-md flex-col overflow-y-auto bg-white shadow-[0_0_60px_-10px_rgba(10,10,40,.5)] sm:max-w-[420px]">
-        <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-[#e6e8f2] bg-white px-4 py-3">
+      <aside className="flex h-full w-full max-w-md flex-col overflow-y-auto bg-tarjeta shadow-[0_0_60px_-10px_rgba(10,10,40,.5)] sm:max-w-[420px]">
+        <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-linea bg-tarjeta px-4 py-3">
           <h2 className="min-w-0 flex-1 truncate font-display text-base font-bold text-ink">{nombre}</h2>
           {guardando ? (
             <Loader2 className="h-4 w-4 flex-none animate-spin text-ink-3" />
@@ -160,7 +160,7 @@ export function FichaOportunidad({
           <button
             type="button"
             onClick={cerrar}
-            className="grid h-8 w-8 flex-none place-items-center rounded-lg text-ink-3 transition hover:bg-[#f4f5fb] hover:text-ink"
+            className="grid h-8 w-8 flex-none place-items-center rounded-lg text-ink-3 transition hover:bg-suave hover:text-ink"
           >
             <X className="h-4 w-4" />
           </button>
@@ -231,13 +231,13 @@ export function FichaOportunidad({
             <div className="mb-2 flex items-baseline justify-between">
               <h3 className="font-display text-sm font-semibold text-ink">Próximos pasos</h3>
               {!pendientes.length && (
-                <span className="rounded-lg bg-warning/20 px-2 py-0.5 text-[11px] font-semibold text-[#8a6400]">
+                <span className="rounded-lg bg-warning/20 px-2 py-0.5 text-[11px] font-semibold text-aviso">
                   Sin próximo paso
                 </span>
               )}
             </div>
 
-            <div className="mb-3 rounded-xl border border-[#e6e8f2] p-2.5">
+            <div className="mb-3 rounded-xl border border-linea p-2.5">
               <input
                 className="input-l mb-2"
                 placeholder="Llamar para confirmar la cotización…"
@@ -254,7 +254,7 @@ export function FichaOportunidad({
                     className={
                       cuando === c.key
                         ? "rounded-lg bg-violet px-2.5 py-1 text-xs font-semibold text-white"
-                        : "rounded-lg border border-[#e2e4f0] px-2.5 py-1 text-xs text-ink-2 transition hover:border-[#c9cce0]"
+                        : "rounded-lg border border-linea-2 px-2.5 py-1 text-xs text-ink-2 transition hover:border-linea-fuerte"
                     }
                   >
                     {c.label}
@@ -283,13 +283,13 @@ export function FichaOportunidad({
                   return (
                     <li
                       key={t.id}
-                      className="group flex items-start gap-2 rounded-xl border border-[#eceef6] px-2.5 py-2"
+                      className="group flex items-start gap-2 rounded-xl border border-linea px-2.5 py-2"
                     >
                       <button
                         type="button"
                         onClick={() => marcarHecha(t.id, !hecha)}
                         className={`mt-0.5 grid h-4 w-4 flex-none place-items-center rounded border transition ${
-                          hecha ? "border-success bg-success text-white" : "border-[#c9cce0] hover:border-violet"
+                          hecha ? "border-success bg-success text-white" : "border-linea-fuerte hover:border-violet"
                         }`}
                         title={hecha ? "Marcar como pendiente" : "Marcar como hecha"}
                       >
@@ -307,7 +307,7 @@ export function FichaOportunidad({
                             else e.target.value = t.title;
                           }}
                           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                          className={`w-full rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-[#e2e4f0] focus:border-pink focus:outline-none ${
+                          className={`w-full rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-linea-2 focus:border-pink focus:outline-none ${
                             hecha ? "text-ink-3 line-through" : "text-ink"
                           }`}
                         />
@@ -315,8 +315,8 @@ export function FichaOportunidad({
                           <div className="flex flex-wrap items-center gap-2 px-1">
                             <span
                               className={`flex items-center gap-1 text-[11px] ${
-                                v.estado === "vencida" ? "font-semibold text-[#b02a2e]"
-                                : v.estado === "hoy" ? "font-semibold text-[#8a6400]"
+                                v.estado === "vencida" ? "font-semibold text-alerta"
+                                : v.estado === "hoy" ? "font-semibold text-aviso"
                                 : "text-ink-3"
                               }`}
                             >
@@ -329,7 +329,7 @@ export function FichaOportunidad({
                                 const d = deFechaCorta(e.target.value);
                                 if (d) { d.setHours(9, 0, 0, 0); editarTarea(t.id, { due_at: d.toISOString() }); }
                               }}
-                              className="rounded-md border border-[#e2e4f0] bg-white px-1.5 py-0.5 text-[11px] text-ink-2 focus:border-pink focus:outline-none"
+                              className="rounded-md border border-linea-2 bg-tarjeta px-1.5 py-0.5 text-[11px] text-ink-2 focus:border-pink focus:outline-none"
                               title="Cambiar la fecha"
                             />
                           </div>
@@ -353,7 +353,7 @@ export function FichaOportunidad({
           {/* Quién es */}
           <section>
             <h3 className="mb-2 font-display text-sm font-semibold text-ink">Contacto</h3>
-            <dl className="flex flex-col gap-1.5 rounded-xl border border-[#e6e8f2] p-3 text-sm">
+            <dl className="flex flex-col gap-1.5 rounded-xl border border-linea p-3 text-sm">
               <Dato k="Nombre" v={tarjeta.contacto || tarjeta.wa_name} />
               <Dato k="Teléfono" v={tarjeta.telefono} />
               <Dato k="Correo" v={tarjeta.email} />
@@ -374,14 +374,14 @@ export function FichaOportunidad({
           </section>
 
           {/* Eliminar */}
-          <section className="border-t border-[#eceef6] pt-4">
+          <section className="border-t border-linea pt-4">
             <button
               type="button"
               onClick={async () => {
                 await sb.from("opportunities").delete().eq("id", tarjeta.id);
                 onCambio();
               }}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#e2e4f0] px-3 py-2 text-sm text-ink-2 transition hover:border-danger hover:text-danger"
+              className="inline-flex items-center gap-2 rounded-xl border border-linea-2 px-3 py-2 text-sm text-ink-2 transition hover:border-danger hover:text-danger"
             >
               <Trash2 className="h-4 w-4" /> Eliminar del embudo
             </button>

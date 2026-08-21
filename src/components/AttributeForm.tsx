@@ -47,7 +47,7 @@ export function AttributeForm() {
         setName(""); setKey(""); setKeyEdited(false); setPurpose("chatbot");
         formRef.current?.reset();
       }}
-      className="mb-6 rounded-2xl border border-[#e6e8f2] bg-white p-4"
+      className="mb-6 rounded-2xl border border-linea bg-tarjeta p-4"
     >
       <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
         <div>
@@ -91,7 +91,7 @@ export function AttributeForm() {
               className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${
                 purpose === p.value
                   ? "border-pink bg-pink/10 text-pink"
-                  : "border-[#e2e4f0] bg-[#f4f5fb] text-ink-2 hover:text-ink"
+                  : "border-linea-2 bg-suave text-ink-2 hover:text-ink"
               }`}
             >
               {p.label}

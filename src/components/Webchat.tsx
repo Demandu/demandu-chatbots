@@ -246,7 +246,7 @@ export function Webchat({ flow, autostart = false }: { flow: Flow; autostart?: b
         {/* Header */}
         <div className="flex flex-none items-center gap-2.5 bg-[#202c33] px-3.5 py-3">
           <ChevronLeft className="h-5 w-5 text-[#aebac1]" />
-          <div className="grid h-10 w-10 place-items-center rounded-full bg-white p-1.5">
+          <div className="grid h-10 w-10 place-items-center rounded-full bg-tarjeta p-1.5">
             <LogoMark className="h-full w-full" />
           </div>
           <div className="leading-tight">

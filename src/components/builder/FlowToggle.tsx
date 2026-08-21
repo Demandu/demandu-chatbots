@@ -31,7 +31,7 @@ export function FlowToggle({ flowId, enabled }: { flowId: string; enabled: boole
       title={on ? "Activo — clic para pausar" : "Pausado — clic para activar"}
       className={`relative inline-flex h-5 w-9 flex-none items-center rounded-full transition ${on ? "bg-success" : "bg-surface-border"} ${busy ? "opacity-60" : ""}`}
     >
-      <span className={`absolute h-4 w-4 rounded-full bg-white shadow transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
+      <span className={`absolute h-4 w-4 rounded-full bg-tarjeta shadow transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
     </button>
   );
 }

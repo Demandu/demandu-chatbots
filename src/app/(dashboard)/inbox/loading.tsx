@@ -43,12 +43,12 @@ export default function CargandoBandeja() {
           ))}
         </div>
         {/* Mismo guiño que en el resto del panel: solo asoma si de verdad tarda. */}
-        <p className="pb-3 select-none text-center text-sm text-[#6b6f8a] [animation:respira_.5s_ease-out_.9s_both]">
+        <p className="pb-3 select-none text-center text-sm text-ink-2 [animation:respira_.5s_ease-out_.9s_both]">
           inhala, exhala 😮‍💨
         </p>
         <style>{`@keyframes respira { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }`}</style>
 
-        <div className="h-[62px] flex-none bg-white" />
+        <div className="h-[62px] flex-none bg-tarjeta" />
       </div>
     </div>
   );

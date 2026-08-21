@@ -199,7 +199,7 @@ export function Tablero({
 
       {/* ── Columnas ───────────────────────────────────────────────────── */}
       {!columnas.length ? (
-        <div className="grid place-items-center rounded-2xl border border-dashed border-[#e2e4f0] bg-white p-10 text-center">
+        <div className="grid place-items-center rounded-2xl border border-dashed border-linea-2 bg-tarjeta p-10 text-center">
           <p className="text-sm text-ink-2">
             Este embudo todavía no tiene etapas.{" "}
             <Link href="/settings/states" className="font-semibold text-violet underline">
@@ -272,30 +272,30 @@ function ColumnaTablero({
 
   return (
     <section
-      className="flex h-full w-[290px] flex-none flex-col rounded-2xl border border-[#e6e8f2] bg-[#f7f8fd]"
+      className="flex h-full w-[290px] flex-none flex-col rounded-2xl border border-linea bg-tarjeta-2"
       onDragOver={(e) => { e.preventDefault(); onSobre(tarjetas.length); }}
       onDragLeave={onSalir}
       onDrop={(e) => { e.preventDefault(); onSoltar(indicador ?? tarjetas.length); }}
     >
-      <header className="flex items-center gap-2 border-b border-[#e6e8f2] px-3.5 py-3">
+      <header className="flex items-center gap-2 border-b border-linea px-3.5 py-3">
         <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: columna.color || "#6E42FF" }} />
         <h3 className="min-w-0 truncate text-sm font-semibold text-ink">{columna.nombre}</h3>
         {columna.tipo !== "abierto" && (
           <span
             className={`flex-none rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase ${
-              columna.tipo === "ganado" ? "bg-success/15 text-[#137a52]" : "bg-danger/12 text-[#b02a2e]"
+              columna.tipo === "ganado" ? "bg-success/15 text-exito" : "bg-danger/12 text-alerta"
             }`}
           >
             {columna.tipo === "ganado" ? "Ganada" : "Perdida"}
           </span>
         )}
-        <span className="ml-auto flex-none rounded-lg bg-white px-2 py-0.5 text-xs font-semibold text-ink-2">
+        <span className="ml-auto flex-none rounded-lg bg-tarjeta px-2 py-0.5 text-xs font-semibold text-ink-2">
           {columna.total ?? 0}
         </span>
       </header>
 
       {!!columna.importe && (
-        <div className="border-b border-[#eceef6] px-3.5 py-1.5 text-xs font-semibold text-violet">
+        <div className="border-b border-linea px-3.5 py-1.5 text-xs font-semibold text-violet">
           {dinero(columna.importe)}
         </div>
       )}
@@ -362,7 +362,7 @@ function TarjetaCrm({
         const caja = e.currentTarget.getBoundingClientRect();
         onSobre(e.clientY > caja.top + caja.height / 2);
       }}
-      className="group mb-2 cursor-grab rounded-xl border border-[#e6e8f2] bg-white p-3 transition hover:border-violet/50 hover:shadow-[0_6px_20px_-10px_rgba(20,20,60,.35)] active:cursor-grabbing"
+      className="group mb-2 cursor-grab rounded-xl border border-linea bg-tarjeta p-3 transition hover:border-violet/50 hover:shadow-[0_6px_20px_-10px_rgba(20,20,60,.35)] active:cursor-grabbing"
     >
       <button type="button" onClick={() => onAbrir(t)} className="block w-full text-left">
         <div className="flex items-start gap-2">
@@ -384,7 +384,7 @@ function TarjetaCrm({
         {av && (
           <p
             className={`mt-2 flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-semibold ${
-              av.tono === "rojo" ? "bg-danger/10 text-[#b02a2e]" : "bg-warning/20 text-[#8a6400]"
+              av.tono === "rojo" ? "bg-danger/10 text-alerta" : "bg-warning/20 text-aviso"
             }`}
           >
             {av.tono === "rojo" ? <AlertTriangle className="h-3 w-3" /> : <CalendarClock className="h-3 w-3" />}
@@ -413,7 +413,7 @@ function TarjetaCrm({
         {t.conversation_id && (
           <Link
             href={`/inbox?c=${t.conversation_id}`}
-            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-ink-2 transition hover:bg-[#f4f5fb] hover:text-ink"
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-ink-2 transition hover:bg-suave hover:text-ink"
           >
             <MessageSquare className="h-3 w-3" /> Abrir chat
           </Link>
@@ -422,7 +422,7 @@ function TarjetaCrm({
           <button
             type="button"
             onClick={() => setMenu((v) => !v)}
-            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-ink-2 transition hover:bg-[#f4f5fb] hover:text-ink"
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-ink-2 transition hover:bg-suave hover:text-ink"
             title="Mover a otra etapa"
           >
             <MoveRight className="h-3 w-3" /> Mover
@@ -436,14 +436,14 @@ function TarjetaCrm({
                 className="fixed inset-0 z-20 cursor-default"
                 onClick={() => setMenu(false)}
               />
-              <div className="absolute bottom-full right-0 z-30 mb-1 w-52 overflow-hidden rounded-xl border border-[#e6e8f2] bg-white py-1 shadow-[0_12px_40px_-12px_rgba(20,20,60,.3)]">
+              <div className="absolute bottom-full right-0 z-30 mb-1 w-52 overflow-hidden rounded-xl border border-linea bg-tarjeta py-1 shadow-[0_12px_40px_-12px_rgba(20,20,60,.3)]">
                 {columnas.map((c) => (
                   <button
                     key={c.id}
                     type="button"
                     disabled={c.id === columnaActual}
                     onClick={() => { setMenu(false); onMoverA(t.id, c.id); }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink transition hover:bg-[#f4f5fb] disabled:cursor-default disabled:opacity-40"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink transition hover:bg-suave disabled:cursor-default disabled:opacity-40"
                   >
                     <span className="h-2 w-2 flex-none rounded-full" style={{ background: c.color || "#6E42FF" }} />
                     <span className="truncate">{c.nombre}</span>
@@ -468,11 +468,11 @@ function Chip({
   tono?: "neutro" | "violeta" | "verde" | "rojo" | "ambar";
 }) {
   const tonos: Record<string, string> = {
-    neutro: "bg-white text-ink border-[#e6e8f2]",
+    neutro: "bg-tarjeta text-ink border-linea",
     violeta: "bg-violet/10 text-violet border-violet/20",
-    verde: "bg-success/12 text-[#137a52] border-success/25",
-    rojo: "bg-danger/10 text-[#b02a2e] border-danger/25",
-    ambar: "bg-warning/18 text-[#8a6400] border-warning/35",
+    verde: "bg-success/12 text-exito border-success/25",
+    rojo: "bg-danger/10 text-alerta border-danger/25",
+    ambar: "bg-warning/18 text-aviso border-warning/35",
   };
   return (
     <span className={`inline-flex items-baseline gap-1.5 rounded-xl border px-3 py-1.5 ${tonos[tono]}`}>
