@@ -147,7 +147,7 @@ export async function POST(req: Request) {
 
       const { data: cv } = await admin
         .from("conversations")
-        .select("id, status")
+        .select("id, status, agent_typing_at")
         .eq("org_id", bot.org_id)
         .eq("contact_id", c.id)
         .eq("channel", "webchat")
@@ -155,6 +155,13 @@ export async function POST(req: Request) {
         .limit(1)
         .maybeSingle();
       if (!cv) return json(vacio);
+
+      // Los tres puntos. La Bandeja refresca la marca cada 3 s mientras el
+      // agente teclea; se da por vigente 8 s para que no parpadeen entre pulsa
+      // y pulsa, pero se apaguen solos si el agente se levanta de la silla.
+      const tecleando =
+        !!(cv as any).agent_typing_at &&
+        Date.now() - new Date((cv as any).agent_typing_at).getTime() < 8000;
 
       let q = admin
         .from("messages")
@@ -169,7 +176,7 @@ export async function POST(req: Request) {
       // relojes van desfasados aunque sea un instante, un mensaje escrito justo
       // en medio se perdería para siempre.
       if (desdeCliente) q = q.gt("created_at", desdeCliente);
-      else return json({ ...vacio, desde: await marcaActual(admin, cv.id) });
+      else return json({ ...vacio, desde: await marcaActual(admin, cv.id), escribiendo: tecleando });
 
       const { data: nuevos } = await q;
       const filas = ((nuevos as any[]) ?? []).filter((m) => (m.body ?? "").trim());
@@ -180,6 +187,8 @@ export async function POST(req: Request) {
         messages: filas.map((m) => ({ text: m.body })),
         desde: filas.length ? filas[filas.length - 1].created_at : desdeCliente,
         handedOff: cv.status === "assigned",
+        // Si acaban de llegar mensajes, ya no está escribiendo: los mandó.
+        escribiendo: filas.length ? false : tecleando,
       });
     }
 

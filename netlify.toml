@@ -9,3 +9,12 @@
 [dev]
   command = "npm run dev"
   port = 3000
+
+# El widget vive en el sitio de CADA cliente. Si el navegador se lo queda en
+# caché, un arreglo nuestro puede tardar días en llegarles — y mientras tanto
+# nos reportan bugs ya resueltos. Con esto el navegador pregunta siempre si hay
+# versión nueva (respuesta de unos bytes si no la hay).
+[[headers]]
+  for = "/widget.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

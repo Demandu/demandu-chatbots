@@ -108,6 +108,8 @@ export function InboxClient({
   // Cuál conversación se está esperando, para descartar respuestas atrasadas.
   const convoPedidaRef = useRef<string | null>(null);
   const [text, setText] = useState("");
+  // Si el envío falla, el agente tiene que enterarse: antes fallaba en silencio.
+  const [errorEnvio, setErrorEnvio] = useState("");
   const [filter, setFilter] = useState<"todas" | "solicitudes" | "abiertas" | "cerradas">("todas");
   const [q, setQ] = useState("");
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -248,6 +250,26 @@ export function InboxClient({
     return () => { cancelado = true; };
   }, [idioma, messages, traducciones]);
 
+  /**
+   * Avisa al visitante de que hay alguien escribiéndole.
+   *
+   * Se manda como mucho una vez cada 3 s aunque el agente teclee sin parar: si
+   * no, sería una escritura en la base por cada letra. El widget considera que
+   * sigue escribiendo mientras la marca tenga menos de 8 segundos, así que con
+   * refrescarla cada 3 basta para que los puntos no parpadeen.
+   */
+  const ultimoAviso = useRef(0);
+  const avisarQueEscribo = useCallback(() => {
+    if (!selId) return;
+    const ahora = Date.now();
+    if (ahora - ultimoAviso.current < 3000) return;
+    ultimoAviso.current = ahora;
+    sb.from("conversations")
+      .update({ agent_typing_at: new Date().toISOString() })
+      .eq("id", selId)
+      .then(() => {});
+  }, [sb, selId]);
+
   const send = async () => {
     const body = text.trim();
     if (!body || !sel) return;
@@ -256,7 +278,33 @@ export function InboxClient({
     setMessages((m) => [...m, optimistic]);
     const orgRes = await sb.from("conversations").select("org_id").eq("id", sel.id).maybeSingle();
     const org_id = (orgRes.data as any)?.org_id;
-    await sb.from("messages").insert({ conversation_id: sel.id, org_id, direction: "outbound", sender: "agent", body });
+
+    // Se pide de vuelta el renglón recién guardado para CAMBIAR la burbuja
+    // provisional por la de verdad, conservando su sitio.
+    //
+    // Antes no se hacía, y la burbuja provisional vivía hasta el refresco de
+    // cada 6 s. Entonces la lista entera se reemplazaba por lo que había en la
+    // base: la burbuja con id `tmp-…` desaparecía y volvía a aparecer con otro
+    // id. Para React son dos elementos distintos, así que la desmontaba y la
+    // montaba otra vez — ese es el parpadeo de "desaparece y vuelve".
+    const ins = await sb
+      .from("messages")
+      .insert({ conversation_id: sel.id, org_id, direction: "outbound", sender: "agent", body })
+      .select("id,direction,sender,body,created_at,payload")
+      .maybeSingle();
+
+    if (ins.data) {
+      setMessages((m) => m.map((x) => (x.id === optimistic.id ? (ins.data as any) : x)));
+    } else {
+      // No se guardó. Antes esto pasaba en SILENCIO: el agente veía su mensaje
+      // en pantalla y se iba tan tranquilo, convencido de haber contestado.
+      console.error("[bandeja] no se pudo enviar el mensaje:", ins.error?.message);
+      setMessages((m) => m.filter((x) => x.id !== optimistic.id));
+      setText(body);
+      setErrorEnvio("No se pudo enviar. Revisa tu conexión e inténtalo otra vez.");
+      return;
+    }
+    setErrorEnvio("");
     // Contestar SÍ es atender: aquí se cierra la solicitud de persona, no al
     // abrir la conversación. Así una petición sigue en "Solicitudes" hasta que
     // alguien de verdad le responda al cliente.
@@ -669,6 +717,14 @@ export function InboxClient({
             })}
           </div>
 
+          {/* Si el envío falló, decirlo. El texto se devuelve a la caja para
+              que el agente solo tenga que volver a darle a Enviar. */}
+          {errorEnvio && (
+            <div className="flex-none bg-danger/10 px-4 py-2 text-xs font-semibold text-danger">
+              {errorEnvio}
+            </div>
+          )}
+
           {/* Composer (estilo WhatsApp Web · Demandu) */}
           <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "#ffffff" }}>
             <Smile className="mb-2 h-6 w-6 flex-none text-muted-2" />
@@ -684,7 +740,7 @@ export function InboxClient({
             <textarea
               ref={cajaTexto}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => { setText(e.target.value); avisarQueEscribo(); }}
               onKeyDown={(e) => {
                 // Con el selector abierto, Enter elige la respuesta (no envía).
                 if (rapidasAbierto && ["Enter", "Tab", "ArrowUp", "ArrowDown", "Escape"].includes(e.key)) return;

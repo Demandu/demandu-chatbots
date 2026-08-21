@@ -178,6 +178,10 @@
         if (!data) return;
         avanzar(data.desde);
         (data.messages || []).forEach(function (m) { if (m.text) bubble(m.text, false); });
+        // Los tres puntos mientras una PERSONA escribe. Sin esto el visitante
+        // ve silencio: el bot contestaba al instante y un humano tarda medio
+        // minuto, asi que parece que lo dejaron plantado.
+        if (!busy) typing(!!data.escribiendo);
         if (data.handedOff) avisarAsesor();
       })
       .catch(function () { /* si falla una vuelta, se reintenta en la siguiente */ })
