@@ -14,7 +14,6 @@ export default async function RespuestasRapidasPage() {
   return (
     <div>
       <div className="mb-5">
-        <h2 className="font-display text-lg font-semibold text-ink">Respuestas rápidas</h2>
         <p className="text-xs text-ink-3">
           Mensajes que escribes una vez y reutilizas siempre. En el chat, toca el rayo ⚡ o escribe{" "}
           <b className="text-ink-2">/</b> y elige la que necesites.

@@ -46,7 +46,6 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
       )}
 
       <div className="mb-5">
-        <h2 className="font-display text-lg font-semibold text-ink">Tu plan y consumo</h2>
         <p className="text-xs text-ink-3">
           Todo lo que llevas usado este mes y qué obtienes si amplías. Sin sorpresas al facturar.
         </p>
