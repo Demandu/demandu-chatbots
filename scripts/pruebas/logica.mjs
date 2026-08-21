@@ -15,6 +15,7 @@ import {
   etiquetaPeriodo, aFechaCorta, deFechaCorta, efectividadAgente,
 } from "../../src/lib/analytics.ts";
 import { pareceUnaPregunta, decidirDesvio, puenteDeVuelta, esAfirmacion } from "../../src/lib/flow/desvio.ts";
+import { htmlToText } from "../../src/lib/ai/fromUrl.ts";
 
 // ─── Atajos del chatbot (0 = reiniciar, 1 = persona) ────────────────────────
 describe("Atajos del chatbot", () => {
@@ -424,6 +425,41 @@ describe("Decir que si a hablar con una persona", () => {
     for (const t of ["Juan", "Monterrey", "5512345678", "", "   "]) {
       esperar(esAfirmacion(t)).falso(`"${t}" no es una aceptacion`);
     }
+  });
+});
+
+
+// --- Aprender del sitio web del cliente ------------------------------------
+describe("Leer una pagina web", () => {
+  test("saca el texto y descarta lo que no se lee", () => {
+    const html = `<html><head><title>Precios | La Dulce</title>
+      <style>.x{color:red}</style><script>var a=1;</script></head>
+      <body><nav>Inicio Productos</nav>
+      <h1>Nuestros precios</h1>
+      <p>Pastel chico $499.</p><ul><li>Cupcakes $180</li></ul>
+      <footer>Aviso legal</footer></body></html>`;
+    const { title, text } = htmlToText(html);
+    esperar(title).igual("Precios | La Dulce");
+    esperar(text.includes("Nuestros precios")).verdadero();
+    esperar(text.includes("$499")).verdadero();
+    esperar(text.includes("Cupcakes")).verdadero();
+    // Guiones, estilos y menus no son informacion del negocio: ensucian el RAG.
+    esperar(text.includes("var a=1")).falso("el codigo no puede entrar al conocimiento");
+    esperar(text.includes("color:red")).falso("los estilos tampoco");
+    esperar(text.includes("Inicio Productos")).falso("el menu de navegacion tampoco");
+  });
+
+  test("las entidades HTML se convierten a texto de verdad", () => {
+    // Si no, el chatbot le contesta al cliente "Env&iacute;o &amp; entrega".
+    const { text } = htmlToText("<body><p>Caf&eacute; &amp; t&eacute; &#8212; 100&nbsp;g</p></body>");
+    esperar(text.includes("&amp;")).falso("el cliente veria los codigos en crudo");
+    esperar(text.includes("&nbsp;")).falso();
+  });
+
+  test("no se pierde la separacion entre bloques", () => {
+    // Sin saltos, "Horario9 a 18Telefono" queda pegado y la IA lo lee mal.
+    const { text } = htmlToText("<body><p>Horario</p><p>9 a 18</p><p>Telefono</p></body>");
+    esperar(text.split("\n").length).mayorQue(2, "los parrafos deben quedar separados");
   });
 });
 

@@ -64,7 +64,7 @@ export function BotNav({
       {/* ── Escritorio: columna ─────────────────────────────────────────── */}
       <nav
         aria-label="Secciones del chatbot"
-        className="hidden w-[212px] flex-none flex-col gap-0.5 overflow-y-auto border-r border-surface-border bg-surface/40 p-3 lg:flex"
+        className="hidden w-[236px] flex-none flex-col gap-0.5 overflow-y-auto border-r border-surface-border bg-surface/40 p-3 lg:flex"
       >
         <Link
           href="/bots"
@@ -84,14 +84,14 @@ export function BotNav({
             key={t.href}
             href={t.href}
             aria-current={t.active ? "page" : undefined}
-            className={`flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition ${
+            className={`flex items-start gap-2.5 rounded-xl px-3 py-2 text-sm font-medium leading-tight transition ${
               t.active
                 ? "border border-pink/35 bg-gradient-to-r from-pink/20 to-violet/20 text-white"
                 : "border border-transparent text-muted hover:bg-surface-raised hover:text-white"
             }`}
           >
-            <t.icon className={`h-4 w-4 flex-none ${t.active ? "text-pink" : ""}`} />
-            <span className="truncate">{t.label}</span>
+            <t.icon className={`mt-0.5 h-4 w-4 flex-none ${t.active ? "text-pink" : ""}`} />
+            <span className="min-w-0">{t.label}</span>
           </Link>
         ))}
       </nav>

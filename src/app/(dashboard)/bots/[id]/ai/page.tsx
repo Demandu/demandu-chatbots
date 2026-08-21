@@ -91,14 +91,14 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
 
           <div className="lg:col-span-2">
             <div className="card-l p-5">
-              <label className="mb-4 flex cursor-pointer items-center justify-between rounded-xl border border-linea bg-tarjeta-2 px-4 py-3">
-                <span>
+              <label className="mb-4 flex cursor-pointer items-center gap-4 rounded-xl border border-linea bg-tarjeta-2 px-4 py-3">
+                <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-ink">Responder con IA</span>
                   <span className="block text-xs text-ink-3">
                     Apagado, tu chatbot solo sigue el guión y contesta el mensaje de respaldo. No consume IA.
                   </span>
                 </span>
-                <input type="checkbox" name="enabled" defaultChecked={ai.enabled !== false} className="h-5 w-5 accent-pink" />
+                <input type="checkbox" name="enabled" defaultChecked={ai.enabled !== false} className="h-5 w-5 flex-none accent-pink" />
               </label>
 
               <div className="space-y-4">
