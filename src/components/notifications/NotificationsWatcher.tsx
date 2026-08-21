@@ -7,6 +7,7 @@ import {
   EVENTO_PREFS, avisoEscritorio, debeAvisar, leerPrefs, reproducirTono, type PrefsAviso,
 } from "@/lib/notifications";
 import { lanzarAviso } from "./Toasts";
+import { anunciarPendientes } from "@/lib/pendientes";
 
 /**
  * Vigila mensajes nuevos en toda la plataforma (no solo en la Bandeja) y avisa
@@ -20,6 +21,29 @@ export function NotificationsWatcher() {
   const visto = useRef<number | null>(null); // último `last_message_at` conocido
   const vistoHandoff = useRef<number | null>(null); // última solicitud de persona
   const tituloOriginal = useRef<string>("");
+  // Quién soy dentro del equipo, para "avisarme solo de las mías".
+  // `undefined` = todavía no se sabe; `null` = no soy un agente del equipo.
+  const [miMemberId, setMiMemberId] = useState<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try {
+        const sb = createClient();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) { if (vivo) setMiMemberId(null); return; }
+        const { data } = await sb
+          .from("team_members")
+          .select("id")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (vivo) setMiMemberId((data as any)?.id ?? null);
+      } catch {
+        if (vivo) setMiMemberId(null);
+      }
+    })();
+    return () => { vivo = false; };
+  }, []);
 
   // Las preferencias pueden cambiar desde la pantalla de Configuración
   useEffect(() => {
@@ -47,13 +71,19 @@ export function NotificationsWatcher() {
       .order("last_message_at", { ascending: false })
       .limit(20);
 
-    // Solicitudes de atención humana pendientes (el lead escribió "1", "asesor"…)
+    // Solicitudes de atención humana pendientes (el lead escribió "1", "asesor",
+    // el flujo lo mandó con una persona, o aceptó cuando la IA no supo).
     const { data: pedidos } = await sb
       .from("conversations")
       .select("id, handoff_requested_at, contact:contacts(name,wa_name)")
       .not("handoff_requested_at", "is", null)
       .order("handoff_requested_at", { ascending: false })
-      .limit(5);
+      .limit(50);
+
+    // El contador del menú. Va SIEMPRE, aunque los avisos estén apagados o sea
+    // horario de silencio: es un dato, no una interrupción. Y sobre todo,
+    // sobrevive a recargar la página — el aviso emergente no.
+    anunciarPendientes(((pedidos as any[]) ?? []).length);
 
     const solicitud = ((pedidos as any[]) ?? [])[0];
     const marcaHandoff = solicitud ? new Date(solicitud.handoff_requested_at).getTime() : 0;
@@ -103,7 +133,14 @@ export function NotificationsWatcher() {
     visto.current = marca;
 
     if (!debeAvisar(prefs)) return;
-    if (prefs.soloMias && !ultima.assignee_member_id) return;
+    // "Solo las mías" quiere decir MÍAS, no "de alguien". Antes bastaba con que
+    // la conversación tuviera cualquier dueño, así que con la opción encendida
+    // seguían llegando avisos de los chats de los compañeros — justo lo que se
+    // pedía evitar. Sin saber quién soy, es más honesto no filtrar que filtrar
+    // mal, así que solo se aplica cuando se pudo averiguar.
+    if (prefs.soloMias && miMemberId !== undefined) {
+      if (!ultima.assignee_member_id || ultima.assignee_member_id !== miMemberId) return;
+    }
 
     const quien = ultima.contact?.name || ultima.contact?.wa_name || "Un cliente";
 
@@ -131,7 +168,7 @@ export function NotificationsWatcher() {
     if (prefs.escritorio && document.visibilityState !== "visible") {
       avisoEscritorio(quien, adelanto, () => router.push(`/inbox?c=${ultima.id}`));
     }
-  }, [prefs, router]);
+  }, [prefs, router, miMemberId]);
 
   useEffect(() => {
     revisar();

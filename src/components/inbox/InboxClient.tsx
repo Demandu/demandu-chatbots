@@ -173,13 +173,19 @@ export function InboxClient({
     setMessages([]);
     convoPedidaRef.current = selId;
     loadMessages(selId, true);
-    // Al abrirla se marca leída y, si el lead había pedido una persona,
-    // la solicitud se da por atendida (deja de sonar en toda la plataforma).
-    setConvos((cs) =>
-      cs.map((c) => (c.id === selId ? { ...c, unread: 0, handoff_requested_at: null } : c)),
-    );
+    // Abrirla marca los mensajes como leídos. NADA MÁS.
+    //
+    // Antes también borraba `handoff_requested_at`, y eso destruía la solicitud
+    // de atención humana con solo asomarse. Peor: la Bandeja abre sola la
+    // conversación más reciente, así que la petición se borraba al entrar a la
+    // pantalla, sin que nadie hiciera clic ni atendiera a nadie. La solicitud
+    // desaparecía de "Solicitudes" para todo el equipo.
+    //
+    // Una solicitud se da por atendida cuando el agente CONTESTA (ver `send`),
+    // no cuando alguien la ve de pasada.
+    setConvos((cs) => cs.map((c) => (c.id === selId ? { ...c, unread: 0 } : c)));
     sb.from("conversations")
-      .update({ unread: 0, handoff_requested_at: null })
+      .update({ unread: 0 })
       .eq("id", selId)
       .then(() => {});
   }, [selId, loadMessages, sb]);
@@ -251,7 +257,14 @@ export function InboxClient({
     const orgRes = await sb.from("conversations").select("org_id").eq("id", sel.id).maybeSingle();
     const org_id = (orgRes.data as any)?.org_id;
     await sb.from("messages").insert({ conversation_id: sel.id, org_id, direction: "outbound", sender: "agent", body });
-    await sb.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", sel.id);
+    // Contestar SÍ es atender: aquí se cierra la solicitud de persona, no al
+    // abrir la conversación. Así una petición sigue en "Solicitudes" hasta que
+    // alguien de verdad le responda al cliente.
+    await sb
+      .from("conversations")
+      .update({ last_message_at: new Date().toISOString(), handoff_requested_at: null })
+      .eq("id", sel.id);
+    setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, handoff_requested_at: null } : c)));
     loadConvos();
   };
 
@@ -373,6 +386,9 @@ export function InboxClient({
     [sel, sb],
   );
 
+  // Se cuenta sobre la lista que ya tenemos, sin pedirle nada más a la base.
+  const pendientes = convos.filter((c) => !!c.handoff_requested_at).length;
+
   const filtered = convos.filter((c) => {
     if (filter === "solicitudes" && !c.handoff_requested_at) return false;
     if (filter === "abiertas" && c.status === "closed") return false;
@@ -410,6 +426,13 @@ export function InboxClient({
                 }`}
               >
                 {f}
+                {/* El número junto a "solicitudes": si hay gente esperando, que
+                    se vea sin tener que entrar a buscarla. */}
+                {f === "solicitudes" && pendientes > 0 && (
+                  <span className="ml-1 rounded-full bg-pink px-1.5 text-[10px] font-bold text-white">
+                    {pendientes}
+                  </span>
+                )}
               </button>
             ))}
           </div>

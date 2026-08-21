@@ -254,6 +254,38 @@ describe("Motor de WhatsApp desplegado", () => {
   });
 });
 
+// ─── Solicitudes de atención humana ──────────────────────────────────────────
+describe("La solicitud de persona no se borra sola", () => {
+  const inbox = fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8");
+
+  test("abrir una conversación NO cancela la solicitud", () => {
+    // Lo hacía, y era destructivo: la Bandeja abre sola la conversación más
+    // reciente, así que la petición se borraba con solo entrar a la pantalla,
+    // sin que nadie atendiera a nadie. Desaparecía de "Solicitudes" para todo
+    // el equipo y el cliente se quedaba esperando.
+    esperar(/unread:\s*0,\s*handoff_requested_at:\s*null/.test(inbox)).falso(
+      "marcar como leído no puede cancelar la solicitud de atención humana",
+    );
+  });
+
+  test("contestar SÍ la da por atendida", () => {
+    const send = inbox.slice(inbox.indexOf("const send ="));
+    const cuerpo = send.slice(0, send.indexOf("\n  };"));
+    esperar(cuerpo.includes("handoff_requested_at: null")).verdadero(
+      "al responder al cliente, la solicitud debe cerrarse",
+    );
+  });
+
+  test("hay un contador que sobrevive a recargar la página", () => {
+    // El aviso emergente es un parpadeo: si el agente estaba en otra pestaña o
+    // recargó, la solicitud quedaba invisible.
+    const side = fs.readFileSync(path.join(SRC, "components/Sidebar.tsx"), "utf8");
+    esperar(side.includes("usePendientes")).verdadero("el menú no muestra cuánta gente espera");
+    const watcher = fs.readFileSync(path.join(SRC, "components/notifications/NotificationsWatcher.tsx"), "utf8");
+    esperar(watcher.includes("anunciarPendientes")).verdadero("nadie publica el número de pendientes");
+  });
+});
+
 // ─── Modelo de IA ────────────────────────────────────────────────────────────
 describe("Modelo de IA", () => {
   // POR QUÉ EXISTE ESTA PRUEBA: cuando el nombre del modelo caduca, la API

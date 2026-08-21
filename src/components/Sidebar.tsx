@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
+import { usePendientes } from "@/lib/pendientes";
 
 // Lenguaje simple para gente no técnica. Cada opción dice en humano qué es.
 // "Envíos masivos" (solo WhatsApp) NO va aquí: vive dentro de cada chatbot.
@@ -27,9 +28,14 @@ const CONFIG = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  // Gente esperando a que alguien del equipo le conteste. Va aquí y no solo en
+  // un aviso emergente porque el aviso se lo lleva el viento: si el agente
+  // estaba en otra pestaña o recargó, la solicitud quedaba invisible.
+  const pendientes = usePendientes();
 
   const Item = ({ href, label, icon: Icon }: (typeof MAIN)[number]) => {
     const active = pathname === href || pathname.startsWith(href + "/");
+    const aviso = href === "/inbox" ? pendientes : 0;
     return (
       <Link
         href={href}
@@ -42,6 +48,14 @@ export function Sidebar() {
       >
         <Icon className={cn("h-5 w-5", active && "text-pink")} />
         {label}
+        {aviso > 0 && (
+          <span
+            className="ml-auto grid h-5 min-w-[20px] animate-pulse place-items-center rounded-full bg-pink px-1.5 text-[11px] font-bold text-white"
+            title={`${aviso} ${aviso === 1 ? "persona espera" : "personas esperan"} a que les contesten`}
+          >
+            {aviso > 9 ? "9+" : aviso}
+          </span>
+        )}
       </Link>
     );
   };
