@@ -254,6 +254,41 @@ describe("Motor de WhatsApp desplegado", () => {
   });
 });
 
+// ─── El agente le escribe al visitante web ───────────────────────────────────
+describe("Lo que escribe el agente llega al chat web", () => {
+  // EL BUG: el widget solo hablaba cuando le hablaban. Devolvía la respuesta
+  // del bot de ESE turno y nada más. Cuando un agente tomaba la conversación y
+  // escribía desde la Bandeja, el mensaje NUNCA llegaba al visitante — al que
+  // además se le acababa de prometer "un asesor continuará contigo por aquí".
+  const wid = fs.readFileSync(path.join(RAIZ, "public/widget.js"), "utf8");
+  const ruta = fs.readFileSync(path.join(SRC, "app/api/webchat/route.ts"), "utf8");
+
+  test("el widget pregunta por mensajes nuevos", () => {
+    esperar(wid.includes("poll: true")).verdadero("el widget no sondea: el agente hablaría solo");
+    esperar(/setInterval\(\s*preguntar/.test(wid)).verdadero("no hay sondeo periódico");
+  });
+
+  test("el sondeo NO devuelve lo que escribió el propio visitante", () => {
+    // Si devolviera los entrantes, el visitante vería sus propios mensajes
+    // repetidos como si se los mandara el negocio.
+    const bloque = ruta.slice(ruta.indexOf("if (esSondeo)"), ruta.indexOf("// Contacto anónimo"));
+    esperar(bloque.includes('"outbound"')).verdadero("el sondeo debe filtrar solo mensajes salientes");
+  });
+
+  test("el sondeo está acotado a la organización y a la sesión", () => {
+    // Aislamiento entre clientes: es un endpoint PÚBLICO, sin sesión.
+    const bloque = ruta.slice(ruta.indexOf("if (esSondeo)"), ruta.indexOf("// Contacto anónimo"));
+    esperar(bloque.includes("bot.org_id")).verdadero("sin filtro de organización");
+    esperar(bloque.includes("external_id")).verdadero("sin filtro por la sesión del visitante");
+  });
+
+  test("la marca de lectura solo avanza", () => {
+    // Dos respuestas desordenadas podrían hacerla retroceder, y el sondeo
+    // repetiría mensajes ya pintados.
+    esperar(wid.includes("function avanzar")).verdadero("la marca podría retroceder y duplicar mensajes");
+  });
+});
+
 // ─── Solicitudes de atención humana ──────────────────────────────────────────
 describe("La solicitud de persona no se borra sola", () => {
   const inbox = fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8");

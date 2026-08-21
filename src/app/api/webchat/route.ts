@@ -49,6 +49,29 @@ function nombreDeVisitante(sessionId: string): string {
   }
 }
 
+/**
+ * Hasta qué momento el visitante ya tiene todo pintado en pantalla.
+ *
+ * El sondeo pide "lo salido DESPUÉS de esta marca", así que se toma la fecha
+ * del último mensaje saliente ya guardado. Sin esto, el widget repetiría los
+ * mensajes que el bot acaba de contestar en este mismo turno.
+ */
+async function marcaActual(admin: any, conversationId: string): Promise<string> {
+  try {
+    const { data } = await admin
+      .from("messages")
+      .select("created_at")
+      .eq("conversation_id", conversationId)
+      .eq("direction", "outbound")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return (data as any)?.created_at ?? new Date().toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
 const DEFAULT_WIDGET = {
   color: "#6E42FF",
   position: "right",
@@ -77,6 +100,9 @@ export async function POST(req: Request) {
     const sessionId = String(body?.sessionId ?? "");
     const text = String(body?.text ?? "");
     const isStart = !!body?.start;
+    /** Sondeo: el visitante no escribió nada, solo pregunta si le contestaron. */
+    const esSondeo = !!body?.poll;
+    const desdeCliente = String(body?.desde ?? "");
 
     if (!botId || !sessionId) return json({ error: "missing_params" }, 400);
 
@@ -95,6 +121,64 @@ export async function POST(req: Request) {
     if (!bot || bot.channel !== "webchat") return json({ error: "bot_not_found" }, 404);
 
     const widget = { ...DEFAULT_WIDGET, ...((bot.widget as any) ?? {}) };
+
+    // ── Sondeo ────────────────────────────────────────────────────────────────
+    //
+    // POR QUÉ EXISTE: el widget solo hablaba cuando le hablaban. Devolvía lo que
+    // contestaba el bot en ESE mismo turno y nada más. Así que cuando un agente
+    // tomaba la conversación y escribía desde la Bandeja, el mensaje NUNCA le
+    // llegaba al visitante — que además acababa de leer "un asesor continuará
+    // contigo por aquí". El pase a humano quedaba roto de este lado.
+    //
+    // No crea nada: si el visitante todavía no ha escrito, no hay contacto ni
+    // conversación que inventar. Y solo devuelve mensajes SALIENTES de SU propia
+    // conversación, nunca lo que él mismo escribió ni nada de otra sesión.
+    if (esSondeo) {
+      const vacio = { sessionId, widget, messages: [], desde: desdeCliente };
+
+      const { data: c } = await admin
+        .from("contacts")
+        .select("id")
+        .eq("org_id", bot.org_id)
+        .eq("channel", "webchat")
+        .eq("external_id", sessionId)
+        .maybeSingle();
+      if (!c) return json(vacio);
+
+      const { data: cv } = await admin
+        .from("conversations")
+        .select("id, status")
+        .eq("org_id", bot.org_id)
+        .eq("contact_id", c.id)
+        .eq("channel", "webchat")
+        .order("last_message_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!cv) return json(vacio);
+
+      let q = admin
+        .from("messages")
+        .select("id, body, created_at")
+        .eq("conversation_id", cv.id)
+        .eq("direction", "outbound")
+        .order("created_at", { ascending: true })
+        .limit(30);
+      // Sin marca previa no se devuelve el historial entero: el visitante ya lo
+      // tiene pintado en pantalla y lo vería duplicado.
+      if (desdeCliente) q = q.gt("created_at", desdeCliente);
+      else return json({ ...vacio, desde: new Date().toISOString() });
+
+      const { data: nuevos } = await q;
+      const filas = ((nuevos as any[]) ?? []).filter((m) => (m.body ?? "").trim());
+
+      return json({
+        sessionId,
+        widget,
+        messages: filas.map((m) => ({ text: m.body })),
+        desde: filas.length ? filas[filas.length - 1].created_at : desdeCliente,
+        handedOff: cv.status === "assigned",
+      });
+    }
 
     // Contacto anónimo del navegador (identificado por su sessionId).
     //
@@ -180,7 +264,7 @@ export async function POST(req: Request) {
 
     // Si un humano tomó el chat, el bot no interrumpe
     if (conv.status === "assigned") {
-      return json({ sessionId, widget, messages: [], handedOff: true });
+      return json({ sessionId, widget, messages: [], handedOff: true, desde: await marcaActual(admin, conv.id) });
     }
 
     // ¿Visitante que regresa?
@@ -199,11 +283,11 @@ export async function POST(req: Request) {
     const state = (conv.flow_state as any) ?? {};
     const chosen = chooseWebFlow(flows, text, isReturning, state);
 
-    if (!chosen) return json({ sessionId, widget, messages: [] });
+    if (!chosen) return json({ sessionId, widget, messages: [], desde: await marcaActual(admin, conv.id) });
 
     const graph = (chosen.graph as any) ?? { nodes: [], edges: [] };
     const flow = { id: chosen.id, name: "", nodes: graph.nodes ?? [], edges: graph.edges ?? [] } as Flow;
-    if (!flow.nodes.length) return json({ sessionId, widget, messages: [] });
+    if (!flow.nodes.length) return json({ sessionId, widget, messages: [], desde: await marcaActual(admin, conv.id) });
 
     // Analítica: si un disparador movió la charla a otro flujo, el recorrido
     // anterior no quedó "abandonado": cambió. Se cierra con ese motivo.
@@ -260,7 +344,9 @@ export async function POST(req: Request) {
       })
       .eq("id", conv.id);
 
-    return json({ sessionId, widget, messages: result.out });
+    // La marca va DESPUES de guardar la respuesta del bot, para que el sondeo
+    // no la devuelva otra vez: el widget ya la pinto en este mismo turno.
+    return json({ sessionId, widget, messages: result.out, desde: await marcaActual(admin, conv.id) });
   } catch (e: any) {
     console.error("[webchat]", e?.message ?? e);
     return json({ error: "server_error", detail: e?.message ?? "desconocido" }, 500);

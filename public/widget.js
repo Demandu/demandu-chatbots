@@ -128,16 +128,75 @@
 
   var started = false;
   var busy = false;
+  /** Hasta donde el visitante ya tiene todo pintado. Lo manda el servidor. */
+  var desde = "";
+
+  /**
+   * La marca solo avanza, nunca retrocede.
+   *
+   * Dos respuestas pueden llegar desordenadas (el sondeo y el envio van por
+   * separado). Si una vieja pisara a una nueva, el siguiente sondeo volveria a
+   * traer mensajes ya pintados y el visitante los veria DUPLICADOS.
+   */
+  function avanzar(marca) {
+    if (!marca) return;
+    if (!desde || String(marca) > String(desde)) desde = String(marca);
+  }
+  /** Ya se le avisó de que lo atiende una persona (para no repetirlo). */
+  var avisadoAsesor = false;
+  var sondeo = null;
+
+  /**
+   * Pregunta al servidor si hay mensajes nuevos.
+   *
+   * POR QUE EXISTE: sin esto el widget solo hablaba cuando le hablaban, asi que
+   * lo que escribia un agente desde la Bandeja NUNCA llegaba al visitante — y
+   * el widget acababa de prometerle que "un asesor continuara contigo por aqui".
+   */
+  function preguntar() {
+    if (busy || document.hidden) return;
+    fetch(API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ botId: BOT_ID, sessionId: sessionId, poll: true, desde: desde }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data) return;
+        avanzar(data.desde);
+        (data.messages || []).forEach(function (m) { if (m.text) bubble(m.text, false); });
+        if (data.handedOff) avisarAsesor();
+      })
+      .catch(function () { /* si falla una vuelta, se reintenta en la siguiente */ });
+  }
+
+  function avisarAsesor() {
+    if (avisadoAsesor) return;
+    avisadoAsesor = true;
+    bubble("Un asesor continuará contigo por aquí.", false);
+  }
+
+  function arrancarSondeo() {
+    if (sondeo) return;
+    // Cada 4 s mientras el chat esta abierto. Se para al cerrarlo para no
+    // molestar al sitio del cliente con peticiones que nadie va a leer.
+    sondeo = setInterval(preguntar, 4000);
+  }
+  function pararSondeo() {
+    if (sondeo) { clearInterval(sondeo); sondeo = null; }
+  }
 
   function open() {
     q(".panel").classList.add("open");
     q(".launcher").style.display = "none";
     if (!started) { started = true; post({ start: true }); }
+    arrancarSondeo();
     setTimeout(function () { var i = q(".foot input"); if (i) i.focus(); }, 60);
   }
   function close() {
     q(".panel").classList.remove("open");
     q(".launcher").style.display = "";
+    pararSondeo();
   }
 
   function bubble(text, mine) {
@@ -213,13 +272,15 @@
           cfg = Object.assign(cfg, data.widget);
           if (changed) style.textContent = css();
         }
+        if (data) avanzar(data.desde);
         var msgs = (data && data.messages) || [];
         if (payload.start && !msgs.length && cfg.greeting) bubble(cfg.greeting, false);
         msgs.forEach(function (m) {
           if (m.text) bubble(m.text, false);
           if (m.buttons && m.buttons.length) options(m.buttons);
         });
-        if (data && data.handedOff) bubble("Un asesor continuará contigo por aquí.", false);
+        // Se avisa UNA vez, no en cada mensaje que mande el visitante.
+        if (data && data.handedOff) avisarAsesor();
       })
       .catch(function () {
         typing(false);
