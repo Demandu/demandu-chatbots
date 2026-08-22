@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "13";
+const VERSION_MOTOR = "14";
 
 function admin() {
   return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -167,6 +167,41 @@ function detectarAtajo(texto: string, atajos: any): "reset" | "agent" | null {
   if (coincide(atajos.agent)) return "agent";
   if (coincide(atajos.reset)) return "reset";
   return null;
+}
+
+/**
+ * Formas de decir que sí.
+ *
+ * EL FALLO QUE ARREGLA: cuando la IA no sabe algo, el bot dice "esa no me la sé
+ * 🙈 ¿Quieres que te comunique con una persona del equipo?". El cliente
+ * contestaba "sí"… y no pasaba absolutamente nada. Nadie se enteraba.
+ *
+ * "sí" NO puede ser un atajo global: secuestraría cualquier pregunta de sí/no
+ * del flujo ("¿Confirmas tu cita?" → "sí" → te paso con un asesor). Por eso
+ * solo cuenta en el turno siguiente a la oferta, y solo entonces.
+ *
+ * Copia en Deno de `src/lib/flow/desvio.ts`. Si cambias una lista, cambia la
+ * otra: el canal web y WhatsApp tienen que entender lo mismo.
+ */
+const AFIRMACIONES = new Set([
+  "si", "sí", "s", "claro", "ok", "okay", "oki", "va", "vale", "sale", "dale",
+  "porfa", "por favor", "porfavor", "obvio", "simon", "andale", "orale",
+  "si porfa", "si por favor", "claro que si", "me gustaria", "quiero",
+  "si quiero", "adelante", "hazlo", "yes", "yep", "sure",
+]);
+
+/**
+ * ¿Está aceptando la oferta de pasar con una persona?
+ *
+ * Conservador a propósito: solo frases cortas y claras. "sí, pero antes dime el
+ * precio" NO es un sí a hablar con un humano — es otra pregunta, y la sigue
+ * contestando la IA.
+ */
+function esAfirmacion(texto: string): boolean {
+  const t = normalizarAtajo(texto).replace(/[.!¡?¿,]/g, "").trim();
+  if (!t || t.split(" ").length > 3) return false;
+  // `normalizarAtajo` ya quitó los acentos, así que "sí" llega como "si".
+  return AFIRMACIONES.has(t);
 }
 
 // ---- envío a WhatsApp ----
@@ -640,13 +675,25 @@ async function runFrom(startId: string | undefined, ctx: any) {
           return { nodeId: node.id, type: "question" };
         }
         const respuesta = await responderConIA(ctx, ctx.lastUserText, node.data.systemPrompt);
+        // Si lo que salió es el mensaje de respaldo, acabamos de OFRECER pasar
+        // con una persona. Se apunta para entender el "sí" del turno siguiente.
+        const respaldo = { ...AI_DEFAULTS, ...(ctx.aiSettings ?? {}) }.fallback;
+        ctx.ofreciAgente = respuesta === respaldo;
         await say(ctx, respuesta);
         return { nodeId: node.id, type: "question" };
       }
 
       case "human": case "assign":
         await say(ctx, node.data.text ?? "Te comunico con un asesor, un momento 🙌");
-        await ctx.db.from("conversations").update({ status: "assigned" }).eq("id", ctx.convId);
+        // `handoff_requested_at` NO es decorativo: de él dependen el filtro
+        // "Solicitudes" de la Bandeja, el aviso en pantalla y el reparto
+        // automático. Sin él, el bot decía "te comunico con un asesor" y NADIE
+        // se enteraba: la conversación se quedaba esperando en silencio.
+        await ctx.db.from("conversations").update({
+          status: "assigned",
+          handoff_requested_at: new Date().toISOString(),
+          handoff_reason: "El flujo lo mandó con una persona",
+        }).eq("id", ctx.convId);
         ctx.finMotivo = "agente";
         return null;
       case "end":
@@ -672,6 +719,9 @@ async function handleIncoming(opts: any) {
     numeroPropio: opts.numeroPropio ?? null,
     // Analítica: bloques recorridos en este turno y cómo terminó el recorrido.
     pasos: 0, ultimoNodo: null as string | null, finMotivo: null as string | null,
+    // ¿En este turno el bot ofreció pasar con una persona? Lo sabrá el turno
+    // siguiente, para entender un "sí" suelto.
+    ofreciAgente: false,
   };
 
   // Analítica: el recorrido que venía abierto de turnos anteriores.
@@ -681,19 +731,34 @@ async function handleIncoming(opts: any) {
     flowId: opts.flowId ?? null, flowName: opts.flowName ?? null, channel: "whatsapp",
   });
   // ── Atajos: lo primero que se revisa, pase lo que pase ──────────────────────
-  const atajo = detectarAtajo(opts.visible ?? opts.text ?? "", ctx.atajos);
+  const dicho = opts.visible ?? opts.text ?? "";
+  const atajoDetectado = detectarAtajo(dicho, ctx.atajos);
+
+  // El turno anterior el bot dijo "no sé, ¿te paso con una persona?" y ahora
+  // contesta que sí. Sin esto la oferta era humo: el cliente aceptaba, no
+  // pasaba nada, y nadie del equipo se enteraba de que lo estaban esperando.
+  const aceptoLaOferta =
+    !atajoDetectado && !!opts.flowState?.ofreciAgente && esAfirmacion(dicho);
+
+  const atajo: "agent" | "reset" | null = aceptoLaOferta ? "agent" : atajoDetectado;
+
   if (atajo === "agent") {
     await say(ctx, ctx.atajos.agent.reply);
     await ctx.db.from("conversations").update({
       status: "assigned",
       handoff_requested_at: new Date().toISOString(),
-      handoff_reason: "El lead pidió hablar con una persona",
-      unread: 1,
+      handoff_reason: aceptoLaOferta
+        ? "La IA no supo y el lead aceptó pasar con una persona"
+        : "El lead pidió hablar con una persona",
+      // NO se fuerza `unread: 1`: lo lleva el disparador de la base al insertar
+      // cada mensaje. Ponerlo aquí BAJABA el contador cuando había varios sin
+      // leer, y entonces el aviso se perdía — justo lo contrario de lo que se
+      // buscaba. (Mismo arreglo que ya tenía el canal web.)
     }).eq("id", opts.convId);
     // Analítica: el recorrido termina aquí, se lo lleva una persona.
     await cerrarRecorrido(opts.db, runId, "agente");
     // Se devuelve el estado sin `awaiting`: el bot deja de conducir la charla.
-    return { vars, awaiting: null, atajo: "agent", run_id: null };
+    return { vars, awaiting: null, atajo: "agent", run_id: null, ofreciAgente: false };
   }
   if (atajo === "reset") {
     await say(ctx, ctx.atajos.reset.reply);
@@ -709,7 +774,7 @@ async function handleIncoming(opts: any) {
     } else {
       await avanzarRecorrido(opts.db, runId, ctx.pasos, ctx.ultimoNodo);
     }
-    return { vars, awaiting: nuevo, atajo: "reset", run_id: runId };
+    return { vars, awaiting: nuevo, atajo: "reset", run_id: runId, ofreciAgente: ctx.ofreciAgente };
   }
 
   const awaiting = opts.flowState?.awaiting;
@@ -733,7 +798,7 @@ async function handleIncoming(opts: any) {
         await sayButtons(ctx, node.data.text ?? "", node);
         // El recorrido sigue vivo: el lead está atorado en el mismo bloque.
         await avanzarRecorrido(opts.db, runId, 1, node.id);
-        return { vars, awaiting: { nodeId: node.id, type: "buttons" }, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId };
+        return { vars, awaiting: { nodeId: node.id, type: "buttons" }, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId, ofreciAgente: ctx.ofreciAgente };
       }
     }
   } else {
@@ -761,9 +826,9 @@ async function handleIncoming(opts: any) {
   const hint = ctx.atajos?.hint;
   if (hint?.enabled && hint?.onStart && hint?.text && !opts.flowState?.hintEnviado) {
     await say(ctx, hint.text);
-    return { vars, awaiting: nextAwait, hintEnviado: true, run_id: runId };
+    return { vars, awaiting: nextAwait, hintEnviado: true, run_id: runId, ofreciAgente: ctx.ofreciAgente };
   }
-  return { vars, awaiting: nextAwait, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId };
+  return { vars, awaiting: nextAwait, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId, ofreciAgente: ctx.ofreciAgente };
 }
 
 // ---- selección de flujo por disparador ----

@@ -42,7 +42,12 @@ export async function syncTemplates(formData: FormData) {
 
   let errParam = "";
   try {
-    const res = await fetch(`${GRAPH}/${ch.waba_id}/message_templates?limit=200&access_token=${ch.access_token}`);
+    // Se piden los campos a mano: por defecto Meta NO devuelve `rejected_reason`
+    // ni `quality_score`, y sin ellos el cliente ve un "Rechazada" mudo.
+    const campos = "id,name,language,category,status,components,rejected_reason,quality_score";
+    const res = await fetch(
+      `${GRAPH}/${ch.waba_id}/message_templates?limit=200&fields=${campos}&access_token=${ch.access_token}`,
+    );
     const j = await res.json();
     if (!res.ok || !Array.isArray(j?.data)) {
       errParam = j?.error?.message ?? "meta_error";
@@ -62,6 +67,8 @@ export async function syncTemplates(formData: FormData) {
             body,
             components: t.components ?? null,
             variables,
+            rejected_reason: t.rejected_reason ?? null,
+            quality: t?.quality_score?.score ?? null,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "bot_id,name,language" },
