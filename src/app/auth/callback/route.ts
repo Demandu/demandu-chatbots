@@ -36,9 +36,18 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL("/login?error=Servidor%20sin%20configurar.", url.origin));
   }
 
+  // A dónde va después de entrar. Lo usa la invitación al equipo, que necesita
+  // llevar a la persona a ponerse una contraseña en vez de al panel.
+  //
+  // SOLO SE ACEPTAN RUTAS DE ESTA MISMA APP: si se admitiera cualquier valor,
+  // bastaría con mandarle a alguien un enlace con `next=https://sitio-falso` y
+  // acabaría, ya con sesión iniciada, en una pantalla que imita a Demandu.
+  const pedido = url.searchParams.get("next") ?? "";
+  const destino = pedido.startsWith("/") && !pedido.startsWith("//") ? pedido : "/dashboard";
+
   // La respuesta se crea ANTES de hablar con Supabase porque es donde se van a
   // escribir las cookies de sesión.
-  const respuesta = NextResponse.redirect(new URL("/dashboard", url.origin));
+  const respuesta = NextResponse.redirect(new URL(destino, url.origin));
   const almacen = cookies();
 
   const supabase = createServerClient(

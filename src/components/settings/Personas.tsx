@@ -9,7 +9,7 @@ import {
   type ClavePermiso,
   type Rol,
 } from "@/lib/permisos";
-import { guardarAcceso, borrarPersona } from "@/app/(dashboard)/settings/teams/actions";
+import { guardarAcceso, borrarPersona, invitarPersona } from "@/app/(dashboard)/settings/teams/actions";
 
 export type Persona = {
   id: string;
@@ -110,17 +110,19 @@ function FichaDePersona({
           </button>
         )}
 
-        {persona.tiene_acceso && !persona.es_dueno && !persona.es_tu_cuenta && (
+        {!persona.es_dueno && !persona.es_tu_cuenta && (
           <button
             onClick={() => setAbierta((v) => !v)}
             className="rounded-lg border border-linea px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-suave-2"
           >
-            {abierta ? "Cerrar" : "Permisos"}
+            {abierta ? "Cerrar" : persona.tiene_acceso ? "Permisos" : "Dar acceso"}
           </button>
         )}
       </div>
 
-      {abierta && persona.tiene_acceso && <EditorDePermisos persona={persona} />}
+      {abierta && (
+        <EditorDePermisos persona={persona} modo={persona.tiene_acceso ? "editar" : "invitar"} />
+      )}
     </div>
   );
 }
@@ -151,10 +153,26 @@ function Etiqueta({ persona }: { persona: Persona }) {
 
 /* ────────────────────────────────────────────────────────────────────────── */
 
-function EditorDePermisos({ persona }: { persona: Persona }) {
-  const [rol, setRol] = useState<Rol>((persona.rol as Rol) ?? "viewer");
+/**
+ * El rol y las doce casillas.
+ *
+ * SIRVE PARA LAS DOS COSAS —editar a quien ya entra e invitar a quien todavía
+ * no— porque la decisión es idéntica: qué rol tiene y qué puede tocar. Tenerlo
+ * dos veces garantizaría que un día se cambien las casillas en un sitio y en el
+ * otro no.
+ */
+function EditorDePermisos({
+  persona,
+  modo,
+}: {
+  persona: Persona;
+  modo: "editar" | "invitar";
+}) {
+  const invitando = modo === "invitar";
+  const [rol, setRol] = useState<Rol>((persona.rol as Rol) ?? "agent");
+  const [correo, setCorreo] = useState(persona.correo ?? "");
   const [marcados, setMarcados] = useState<Set<ClavePermiso>>(
-    () => resolverPermisos(persona.rol, persona.permisos),
+    () => resolverPermisos(persona.rol ?? "agent", persona.permisos),
   );
   const [guardando, empezar] = useTransition();
   const [aviso, setAviso] = useState<{ ok: boolean; texto: string } | null>(null);
@@ -182,16 +200,42 @@ function EditorDePermisos({ persona }: { persona: Persona }) {
 
   const guardar = () =>
     empezar(async () => {
-      const r = await guardarAcceso({ persona: persona.id, rol, permisos: [...marcados] });
+      const r = invitando
+        ? await invitarPersona({ persona: persona.id, correo, rol, permisos: [...marcados] })
+        : await guardarAcceso({ persona: persona.id, rol, permisos: [...marcados] });
+
       setAviso(
         r.ok
-          ? { ok: true, texto: "Guardado. Lo verá en su siguiente pantalla." }
+          ? {
+              ok: true,
+              texto: invitando
+                ? `Invitación enviada a ${correo}. Entrará en cuanto ponga su contraseña.`
+                : "Guardado. Lo verá en su siguiente pantalla.",
+            }
           : { ok: false, texto: r.error ?? "No se pudo guardar." },
       );
     });
 
   return (
     <div className="border-t border-linea p-4">
+      {invitando && (
+        <div className="mb-4 max-w-sm">
+          <label className="mb-1.5 block text-xs font-semibold text-ink-2">
+            Correo al que se manda la invitación
+          </label>
+          <input
+            type="email"
+            value={correo}
+            onChange={(e) => setCorreo(e.target.value)}
+            className="input-l"
+            placeholder="ana@empresa.com"
+          />
+          <p className="mt-1.5 text-[11px] text-ink-3">
+            Recibirá un enlace para poner <b>su propia</b> contraseña. Ni tú ni nadie la va a ver.
+          </p>
+        </div>
+      )}
+
       <div className="mb-4 max-w-sm">
         <label className="mb-1.5 block text-xs font-semibold text-ink-2">Rol</label>
         <select value={rol} onChange={(e) => cambiarRol(e.target.value as Rol)} className="input-l">
@@ -243,8 +287,18 @@ function EditorDePermisos({ persona }: { persona: Persona }) {
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <button onClick={guardar} disabled={guardando} className="btn-primary">
-          {guardando ? "Guardando…" : "Guardar permisos"}
+        <button
+          onClick={guardar}
+          disabled={guardando || (invitando && !correo.includes("@"))}
+          className="btn-primary disabled:opacity-60"
+        >
+          {guardando
+            ? invitando
+              ? "Enviando…"
+              : "Guardando…"
+            : invitando
+              ? "Enviar invitación"
+              : "Guardar permisos"}
         </button>
         {aviso && (
           <span className={`text-sm ${aviso.ok ? "text-success" : "text-danger"}`}>{aviso.texto}</span>
