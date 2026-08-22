@@ -6,6 +6,7 @@ import { WhatsAppConnect } from "@/components/integrations/WhatsAppConnect";
 import { GoogleCalendarLogo } from "@/components/integrations/Logos";
 import { Catalogo } from "@/components/integrations/Catalogo";
 import { LlavesApi, type LlaveFila } from "@/components/integrations/LlavesApi";
+import { SheetsConfig, type ConfigSheets } from "@/components/integrations/SheetsConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -16,13 +17,15 @@ export default async function IntegrationsPage({
 }) {
   const orgId = await getCurrentOrgId();
   const sb = createClient();
-  const [{ data }, { data: wa }, { data: bots }, { data: intereses }, { data: llaves }] = await Promise.all([
+  const [{ data }, { data: wa }, { data: bots }, { data: intereses }, { data: llaves }, { data: sheets }] = await Promise.all([
     sb.from("integrations").select("provider, account_email, data, created_at").eq("org_id", orgId ?? "").eq("provider", "google_calendar").maybeSingle(),
     sb.from("whatsapp_channels").select("*").eq("org_id", orgId ?? "").maybeSingle(),
     sb.from("bots").select("id,name,channel").order("created_at", { ascending: false }),
     sb.from("interes_integraciones").select("proveedor").eq("org_id", orgId ?? ""),
     sb.from("api_keys").select("id, nombre, prefijo, created_at, ultimo_uso, revocada_at")
       .eq("org_id", orgId ?? "").order("created_at", { ascending: false }),
+    sb.from("sheets_config").select("hoja_id, hoja_nombre, activo, ultimo_error")
+      .eq("org_id", orgId ?? "").maybeSingle(),
   ]);
 
   const google = data as any | null;
@@ -104,6 +107,10 @@ export default async function IntegrationsPage({
             )}
           </div>
         </div>
+      </div>
+
+      <div className="mt-4">
+        <SheetsConfig config={(sheets as ConfigSheets) ?? null} googleConectado={!!google} />
       </div>
 
       <div className="mt-4">

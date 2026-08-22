@@ -7,6 +7,16 @@ export const GOOGLE_SCOPES = [
   "openid",
   "email",
   "https://www.googleapis.com/auth/calendar",
+  // Hojas de cálculo. SOLO `drive.file`, y es una decisión deliberada.
+  //
+  // La API de Sheets acepta este permiso y la propia documentación de Google lo
+  // marca como NO SENSIBLE y recomendado, mientras que `spreadsheets` es
+  // sensible. La diferencia no es burocrática: es lo que el cliente lee en la
+  // pantalla de Google al conectar. Con `spreadsheets` leería «ver, editar y
+  // eliminar TODAS tus hojas de cálculo»; con esto, «solo los archivos que uses
+  // con esta app». Pedir de menos aquí no nos cuesta ninguna función —las hojas
+  // que creamos nosotros quedan cubiertas— y le ahorra al cliente el susto.
+  "https://www.googleapis.com/auth/drive.file",
 ].join(" ");
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
