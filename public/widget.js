@@ -74,6 +74,9 @@
       ".close:hover{opacity:1}" +
       ".body{flex:1;overflow-y:auto;padding:16px;background:#f4f5fb;display:flex;flex-direction:column;gap:8px}" +
       ".msg{max-width:82%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-wrap;word-wrap:break-word}" +
+      ".adj{display:block;margin-top:6px}" +
+      ".adj-img{max-width:100%;max-height:220px;border-radius:10px;display:block}" +
+      ".adj-file{padding:8px 10px;border-radius:10px;background:rgba(0,0,0,.07);text-decoration:none;color:inherit;font-size:13px}" +
       ".bot{align-self:flex-start;background:#fff;color:#1b1c39;border-bottom-left-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.06)}" +
       ".me{align-self:flex-end;color:#fff;border-bottom-right-radius:4px;background:" + cfg.color + "}" +
       ".opts{display:flex;flex-wrap:wrap;gap:6px;align-self:flex-start;max-width:90%}" +
@@ -177,7 +180,7 @@
       .then(function (data) {
         if (!data) return;
         avanzar(data.desde);
-        (data.messages || []).forEach(function (m) { if (m.text) bubble(m.text, false); });
+        (data.messages || []).forEach(function (m) { if (m.text || m.adjunto) bubble(m.text, false, m.adjunto); });
         // Los tres puntos mientras una PERSONA escribe. Sin esto el visitante
         // ve silencio: el bot contestaba al instante y un humano tarda medio
         // minuto, asi que parece que lo dejaron plantado.
@@ -217,10 +220,42 @@
     pararSondeo();
   }
 
-  function bubble(text, mine) {
+  function bubble(text, mine, adjunto) {
     var d = document.createElement("div");
     d.className = "msg " + (mine ? "me" : "bot");
-    d.textContent = text;
+
+    // El texto SIEMPRE con textContent, nunca con innerHTML: lo que escribe un
+    // agente acaba dentro de la página de un cliente, y ahí no puede entrar
+    // marcado que el navegador ejecute.
+    if (text && !(adjunto && text === adjunto.nombre)) {
+      var t = document.createElement("span");
+      t.textContent = text;
+      d.appendChild(t);
+    }
+
+    // Las imágenes se ven; el resto se descarga. En atención a clientes la
+    // mayoría de lo que se manda son fotos, y obligar a abrir una pestaña por
+    // cada una haría el chat incómodo.
+    if (adjunto && adjunto.url) {
+      var esImagen = (adjunto.tipo || "").indexOf("image/") === 0;
+      var a = document.createElement("a");
+      a.href = adjunto.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "adj";
+      if (esImagen) {
+        var img = document.createElement("img");
+        img.src = adjunto.url;
+        img.alt = adjunto.nombre || "";
+        img.className = "adj-img";
+        a.appendChild(img);
+      } else {
+        a.className = "adj adj-file";
+        a.textContent = "\uD83D\uDCCE " + (adjunto.nombre || "archivo");
+      }
+      d.appendChild(a);
+    }
+
     q(".body").appendChild(d);
     scroll();
   }
@@ -294,7 +329,7 @@
         var msgs = (data && data.messages) || [];
         if (payload.start && !msgs.length && cfg.greeting) bubble(cfg.greeting, false);
         msgs.forEach(function (m) {
-          if (m.text) bubble(m.text, false);
+          if (m.text || m.adjunto) bubble(m.text, false, m.adjunto);
           if (m.buttons && m.buttons.length) options(m.buttons);
         });
         // Se avisa UNA vez, no en cada mensaje que mande el visitante.

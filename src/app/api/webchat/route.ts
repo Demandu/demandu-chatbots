@@ -165,7 +165,7 @@ export async function POST(req: Request) {
 
       let q = admin
         .from("messages")
-        .select("id, body, created_at")
+        .select("id, body, created_at, payload")
         .eq("conversation_id", cv.id)
         .eq("direction", "outbound")
         .order("created_at", { ascending: true })
@@ -179,12 +179,28 @@ export async function POST(req: Request) {
       else return json({ ...vacio, desde: await marcaActual(admin, cv.id), escribiendo: tecleando });
 
       const { data: nuevos } = await q;
-      const filas = ((nuevos as any[]) ?? []).filter((m) => (m.body ?? "").trim());
+      // Un mensaje vale si trae texto O si trae archivo: antes solo se miraba
+      // el texto, así que un adjunto sin comentario no llegaba nunca.
+      const filas = ((nuevos as any[]) ?? []).filter(
+        (m) => (m.body ?? "").trim() || m.payload?.adjunto?.url,
+      );
 
       return json({
         sessionId,
         widget,
-        messages: filas.map((m) => ({ text: m.body })),
+        // SE MANDA EL ADJUNTO Y NADA MÁS DEL `payload`. Ahí dentro también vive
+        // lo que el agente escribió antes de traducir, y eso es información
+        // interna del equipo: al visitante no le corresponde verla.
+        messages: filas.map((m) => ({
+          text: m.body,
+          adjunto: m.payload?.adjunto
+            ? {
+                url: m.payload.adjunto.url,
+                nombre: m.payload.adjunto.nombre,
+                tipo: m.payload.adjunto.tipo,
+              }
+            : undefined,
+        })),
         desde: filas.length ? filas[filas.length - 1].created_at : desdeCliente,
         handedOff: cv.status === "assigned",
         // Si acaban de llegar mensajes, ya no está escribiendo: los mandó.

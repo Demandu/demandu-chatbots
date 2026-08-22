@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Smile, Paperclip, ChevronLeft, Hand, AlertTriangle } from "lucide-react";
+import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Paperclip, ChevronLeft, Hand, AlertTriangle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ChannelBadge } from "./ChannelBadge";
@@ -10,6 +10,8 @@ import { ConvoMenu, type AccionChat } from "./ConvoMenu";
 import { TraductorBoton } from "./TraductorBoton";
 import { RespuestasRapidas } from "./RespuestasRapidas";
 import { ResponderEnIdioma } from "./ResponderEnIdioma";
+import { EmojiPicker } from "./EmojiPicker";
+import { VistaAdjunto, TOPE_BYTES, pesoLegible, type Adjunto } from "./Adjunto";
 import { rellenar, type RespuestaRapida } from "@/lib/quickReplies";
 import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
@@ -52,6 +54,8 @@ type Message = {
      */
     original?: string;
     idioma?: string;
+    /** Archivo enviado con el mensaje (imagen, PDF, lo que sea). */
+    adjunto?: Adjunto;
   } | null;
 };
 
@@ -144,6 +148,9 @@ export function InboxClient({
   // Si el idioma lo eligió el agente, no se le dice "detectado por sus
   // mensajes": sería mentirle sobre de dónde salió el dato.
   const [idiomaAMano, setIdiomaAMano] = useState(false);
+  // Adjuntos: subida en curso y si hay algo arrastrándose por encima del chat.
+  const [subiendo, setSubiendo] = useState<string | null>(null);
+  const [arrastrando, setArrastrando] = useState(false);
   // Respuestas rápidas: se abren con el botón ⚡ o escribiendo "/" al inicio
   const [rapidasAbierto, setRapidasAbierto] = useState(false);
   const cajaTexto = useRef<HTMLTextAreaElement>(null);
@@ -356,6 +363,96 @@ export function InboxClient({
       .eq("id", selId)
       .then(() => {});
   }, [sb, selId]);
+
+  /** Mete un emoji donde está el cursor, no al final. */
+  const insertarEmoji = (emoji: string) => {
+    const caja = cajaTexto.current;
+    if (!caja) { setText((t) => t + emoji); return; }
+    const ini = caja.selectionStart ?? text.length;
+    const fin = caja.selectionEnd ?? text.length;
+    const nuevo = text.slice(0, ini) + emoji + text.slice(fin);
+    setText(nuevo);
+    // El cursor tiene que quedar DESPUÉS del emoji, si no cada uno siguiente se
+    // metería delante del anterior y saldrían al revés.
+    requestAnimationFrame(() => {
+      caja.focus();
+      const pos = ini + emoji.length;
+      caja.setSelectionRange(pos, pos);
+    });
+  };
+
+  /**
+   * Sube un archivo y lo manda como mensaje.
+   *
+   * VA AL MISMO DEPÓSITO `media` QUE YA USA EL CONSTRUCTOR, con su propia
+   * carpeta por organización y conversación. Reaprovecharlo evita inventar un
+   * segundo sistema de archivos con sus propios permisos que mantener.
+   *
+   * El archivo se sube ANTES de crear el mensaje: si se creara primero, un
+   * fallo de subida dejaría en la conversación una burbuja apuntando a un
+   * archivo que no existe, y eso no hay forma de arreglarlo después.
+   */
+  const subirAdjunto = async (file: File) => {
+    if (!sel || !file) return;
+    setErrorEnvio("");
+
+    if (file.size > TOPE_BYTES) {
+      setErrorEnvio(`«${file.name}» pesa ${pesoLegible(file.size)}. El máximo son 25 MB.`);
+      return;
+    }
+
+    setSubiendo(file.name);
+    try {
+      const limpio = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
+      const ruta = `inbox/${orgId ?? "org"}/${sel.id}/${Date.now()}-${limpio}`;
+
+      const { error: errSubida } = await sb.storage
+        .from("media")
+        .upload(ruta, file, { cacheControl: "3600", upsert: false });
+      if (errSubida) throw new Error(errSubida.message);
+
+      const { data: pub } = sb.storage.from("media").getPublicUrl(ruta);
+      const adjunto: Adjunto = {
+        url: pub.publicUrl,
+        nombre: file.name,
+        tipo: file.type || "application/octet-stream",
+        bytes: file.size,
+      };
+
+      const orgRes = await sb.from("conversations").select("org_id").eq("id", sel.id).maybeSingle();
+      const org_id = (orgRes.data as any)?.org_id;
+
+      const ins = await sb
+        .from("messages")
+        .insert({
+          conversation_id: sel.id,
+          org_id,
+          direction: "outbound",
+          sender: "agent",
+          // El cuerpo lleva el nombre del archivo para que la lista de
+          // conversaciones y las notificaciones digan algo, no un hueco.
+          body: file.name,
+          payload: { adjunto },
+        })
+        .select("id,direction,sender,body,created_at,payload")
+        .maybeSingle();
+
+      if (!ins.data) throw new Error(ins.error?.message ?? "no se guardó el mensaje");
+
+      setMessages((m) => [...m, ins.data as any]);
+      await sb
+        .from("conversations")
+        .update({ last_message_at: new Date().toISOString(), handoff_requested_at: null })
+        .eq("id", sel.id);
+      setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, handoff_requested_at: null } : c)));
+      loadConvos();
+    } catch (e: any) {
+      console.error("[bandeja] no se pudo adjuntar:", e?.message);
+      setErrorEnvio("No se pudo enviar el archivo. Inténtalo otra vez.");
+    } finally {
+      setSubiendo(null);
+    }
+  };
 
   const send = async () => {
     const escrito = text.trim();
@@ -763,9 +860,30 @@ export function InboxClient({
           {/* Mensajes (estilo WhatsApp Web · paleta Demandu) */}
           <div
             ref={bodyRef}
-            className="flex flex-1 flex-col gap-1.5 overflow-y-auto px-[8%] py-4"
+            className="relative flex flex-1 flex-col gap-1.5 overflow-y-auto px-[8%] py-4"
             style={{ backgroundColor: paleta.canvas, backgroundImage: paleta.doodle }}
+            // Arrastrar un archivo sobre la conversación lo envía. Es el gesto
+            // que la gente intenta por instinto antes de buscar el clip.
+            onDragOver={(e) => { e.preventDefault(); if (!arrastrando) setArrastrando(true); }}
+            onDragLeave={(e) => {
+              // Solo cuando el puntero sale DE VERDAD del área: sin esto, pasar
+              // por encima de cada burbuja apagaría y encendería el aviso.
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setArrastrando(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setArrastrando(false);
+              const f = e.dataTransfer.files?.[0];
+              if (f) subirAdjunto(f);
+            }}
           >
+            {arrastrando && (
+              <div className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-violet bg-violet/15 backdrop-blur-[1px]">
+                <p className="rounded-xl bg-surface px-4 py-2 text-sm font-semibold text-white shadow-lg">
+                  Suéltalo para enviarlo
+                </p>
+              </div>
+            )}
             {cargandoMsgs && !messages.length && <EsqueletoMensajes />}
             {!cargandoMsgs && !messages.length && (
               <div className="m-auto text-center text-[13px] text-ink-3">
@@ -788,7 +906,14 @@ export function InboxClient({
                       {m.sender === "bot" ? <><Bot className="h-3 w-3" /> Lana</> : <><User className="h-3 w-3" /> Agente</>}
                     </div>
                   )}
-                  <span className="whitespace-pre-wrap break-words align-bottom">{m.body}</span>
+                  {/* Con archivo, el nombre ya sale dentro de la tarjeta del
+                      adjunto: repetirlo arriba sería decir dos veces lo mismo. */}
+                  {!(m.payload?.adjunto && m.body === m.payload.adjunto.nombre) && (
+                    <span className="whitespace-pre-wrap break-words align-bottom">{m.body}</span>
+                  )}
+                  {m.payload?.adjunto && (
+                    <VistaAdjunto adjunto={m.payload.adjunto} oscuro={out} />
+                  )}
                   {/* Si el mensaje salió traducido, se enseña lo que el agente
                       escribió de verdad. Sin esto, el equipo leería después una
                       conversación en un idioma que quizá nadie de la casa habla
@@ -868,8 +993,32 @@ export function InboxClient({
 
           {/* Composer (estilo WhatsApp Web · Demandu) */}
           <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "var(--tarjeta)" }}>
-            <Smile className="mb-2 h-6 w-6 flex-none text-muted-2" />
-            <Paperclip className="mb-2 h-5 w-5 flex-none text-muted-2" />
+            <EmojiPicker onElegir={insertarEmoji} />
+
+            {/* Adjuntar. Es una etiqueta con un campo de archivo escondido y no
+                un botón que lo abre por código: así funciona el teclado, el
+                lector de pantalla y el navegador no bloquea el diálogo. */}
+            <label
+              title="Adjuntar archivo"
+              className="mb-1 grid h-8 w-8 flex-none cursor-pointer place-items-center rounded-lg text-muted-2 transition hover:text-white"
+            >
+              <input
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  // Se limpia el valor para que elegir DOS VECES el mismo
+                  // archivo vuelva a disparar el evento.
+                  e.target.value = "";
+                  if (f) subirAdjunto(f);
+                }}
+              />
+              {subiendo ? (
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              ) : (
+                <Paperclip className="h-5 w-5" />
+              )}
+            </label>
             <RespuestasRapidas
               respuestas={quickReplies}
               abierto={rapidasAbierto}
