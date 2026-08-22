@@ -5,6 +5,7 @@ import { FlowBuilder } from "@/components/builder/FlowBuilder";
 import { sampleFlow } from "@/lib/flow/sample";
 import { createClient } from "@/lib/supabase/server";
 import { setFlowTrigger } from "../../../actions";
+import { DisparadorSocial } from "@/components/builder/DisparadorSocial";
 import { ArrowLeft } from "lucide-react";
 import type { Flow } from "@/lib/flow/types";
 
@@ -77,6 +78,13 @@ export default async function FlowBuilderPage({ params }: { params: { id: string
           <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-muted-2">Palabras clave (coma) — solo para "Palabras clave"</label>
           <input name="keywords" defaultValue={keywords} placeholder="precio, cotización, soporte" className="input h-8 py-1 text-sm" />
         </div>
+        <DisparadorSocial
+          canal={(bot.channel as any) ?? "webchat"}
+          origen={(flowRow.origen as string) ?? "dm"}
+          publicacion={(flowRow.publicacion as string) ?? null}
+          respuestaPublica={(flowRow.respuesta_publica as string) ?? null}
+          unaPorPersona={flowRow.una_por_persona !== false}
+        />
         <label className="flex items-center gap-1.5 pb-1.5 text-xs text-muted">
           <input type="checkbox" name="enabled" value="on" defaultChecked={flowRow.enabled !== false} className="h-3.5 w-3.5 accent-pink" />
           Activo

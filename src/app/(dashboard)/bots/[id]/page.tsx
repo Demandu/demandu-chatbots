@@ -8,6 +8,7 @@ import { createFlow, deleteFlow } from "../actions";
 import { FlowToggle } from "@/components/builder/FlowToggle";
 import { LanaSays } from "@/components/Lana";
 import { Plus, Pencil, MessageSquareText } from "lucide-react";
+import { infoOrigen } from "@/lib/flow/origenes";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export default async function BotPage({ params }: { params: { id: string } }) {
   if (!bot) notFound();
 
   const [{ data: flows }, { data: wa }] = await Promise.all([
-    supabase.from("flows").select("id, name, trigger_type, keywords, enabled, updated_at").eq("bot_id", params.id),
+    supabase.from("flows").select("id, name, trigger_type, keywords, enabled, updated_at, origen, publicacion").eq("bot_id", params.id),
     supabase.from("whatsapp_channels").select(WA_SELECT).eq("bot_id", params.id).maybeSingle(),
   ]);
 
@@ -85,6 +86,12 @@ export default async function BotPage({ params }: { params: { id: string } }) {
                             <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${meta.badge}`}>{meta.label}</span>
                             {!f.enabled && <span className="rounded-md bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Pausado</span>}
                           </div>
+                          {f.origen && f.origen !== "dm" && (
+                            <p className="mt-1 text-xs text-ink-3">
+                              Escucha en: <b className="text-ink-2">{infoOrigen(f.origen).label}</b>
+                              {f.publicacion ? <> · publicación <code className="text-[11px]">{f.publicacion}</code></> : <> · todas las publicaciones</>}
+                            </p>
+                          )}
                           {f.trigger_type === "keyword" && (
                             <p className="mt-1 text-xs text-ink-3">
                               Palabras: {f.keywords?.length ? f.keywords.map((k: string) => `"${k}"`).join(", ") : <span className="text-[#b8860b]">sin palabras aún</span>}

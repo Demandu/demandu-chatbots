@@ -182,6 +182,24 @@ export async function setWelcomeMessage(flowId: string, text: string) {
 // ─────────────── Flujos dentro de un bot (con disparador) ───────────────
 
 const TRIGGERS = new Set(["welcome", "keyword", "returning"]);
+const ORIGENES_VALIDOS = new Set(["dm", "post", "reel", "story_reply", "story_mention"]);
+
+/** Lee del formulario los campos del disparador social, ya saneados. */
+function leerOrigen(formData: FormData) {
+  const bruto = String(formData.get("origen") ?? "dm");
+  const origen = ORIGENES_VALIDOS.has(bruto) ? bruto : "dm";
+  // Fuera de los comentarios, publicación y respuesta pública no significan
+  // nada: guardarlas dejaría datos sueltos que confunden al leer la fila.
+  const enComentario = origen === "post" || origen === "reel";
+  return {
+    origen,
+    publicacion: enComentario ? String(formData.get("publicacion") ?? "").trim() || null : null,
+    respuesta_publica: enComentario ? String(formData.get("respuesta_publica") ?? "").trim() || null : null,
+    // Una casilla SIN marcar no manda nada en el formulario. Comprobando que
+    // valga "si" —en vez de que no valga "no"— desmarcarla funciona de verdad.
+    una_por_persona: enComentario ? formData.get("una_por_persona") === "si" : true,
+  };
+}
 function defaultFlowName(t: string) {
   return t === "keyword" ? "Palabras clave" : t === "returning" ? "Leads que regresan" : "Bienvenida";
 }
@@ -209,7 +227,7 @@ export async function createFlow(formData: FormData) {
 
   const { data: flow } = await supabase
     .from("flows")
-    .insert({ bot_id: botId, org_id: orgId, graph: seed, is_live: true, version: 1, name, trigger_type, keywords, enabled: true })
+    .insert({ bot_id: botId, org_id: orgId, graph: seed, is_live: true, version: 1, name, trigger_type, keywords, enabled: true, ...leerOrigen(formData) })
     .select("id")
     .single();
   if (!flow) return;
@@ -247,7 +265,7 @@ export async function setFlowTrigger(formData: FormData) {
   const keywords = parseKeywords(String(formData.get("keywords") ?? ""));
   const enabled = formData.get("enabled") === "on";
 
-  const patch: Record<string, unknown> = { trigger_type, keywords, enabled };
+  const patch: Record<string, unknown> = { trigger_type, keywords, enabled, ...leerOrigen(formData) };
   if (name) patch.name = name;
   await createClient().from("flows").update(patch).eq("id", id);
   revalidatePath(`/bots/${botId}`);
