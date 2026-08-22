@@ -3,6 +3,7 @@ import { getCurrentOrgId } from "@/lib/org";
 import { disconnectIntegration, disconnectWhatsapp } from "../actions";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { WhatsAppConnect } from "@/components/integrations/WhatsAppConnect";
+import { GoogleCalendarLogo } from "@/components/integrations/Logos";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,9 @@ export default async function IntegrationsPage({
       {/* Tarjeta Google Calendar */}
       <div className="rounded-2xl border border-linea bg-tarjeta p-5">
         <div className="flex items-start gap-4">
-          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-linea bg-tarjeta text-2xl">📅</span>
+          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-linea bg-tarjeta p-2">
+            <GoogleCalendarLogo className="h-full w-full" />
+          </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h3 className="font-display text-base font-semibold text-ink">Google Calendar</h3>
