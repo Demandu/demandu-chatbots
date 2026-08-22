@@ -8,7 +8,78 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "14";
+const VERSION_MOTOR = "15";
+
+/**
+ * Diagnóstico de la IA del motor.
+ *
+ * POR QUÉ EXISTE: `responderConIA` convierte CUALQUIER fallo en el mensaje de
+ * respaldo ("esa no me la sé"). Eso está bien para el cliente final —nunca ve
+ * un error— pero para nosotros significa que un modelo retirado, una llave mal
+ * pegada y una pregunta que de verdad no está en el conocimiento se ven
+ * EXACTAMENTE IGUAL. Ya nos costó una noche entera en agosto.
+ *
+ * Esto lo separa en un solo viaje: dice si la llave está, si trae espacios de
+ * más (el fallo más común al pegarla), qué modelo se está usando y qué
+ * contesta Anthropic de verdad.
+ *
+ * NUNCA devuelve la llave ni parte de ella. Solo si existe y cuánto mide.
+ * Va detrás del mismo token del webhook para que no lo pueda llamar cualquiera.
+ */
+async function diagnosticoIA() {
+  const cruda = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
+  const key = cruda.trim();
+  const modeloVar = Deno.env.get("ANTHROPIC_MODEL");
+  const modelo = modeloVar ?? "claude-haiku-4-5";
+
+  const fuera: any = {
+    version: VERSION_MOTOR,
+    llave: key ? "presente" : "AUSENTE",
+    largo_de_la_llave: key.length,
+    // Pegar la llave con un espacio o un salto de línea al final la rompe, y
+    // en el panel no se ve. Es el fallo más común y el más difícil de mirar.
+    tiene_espacios_de_mas: cruda !== key,
+    modelo,
+    modelo_viene_de: modeloVar ? "la variable ANTHROPIC_MODEL" : "el valor por defecto del motor",
+  };
+
+  if (!key) {
+    fuera.veredicto = "No hay ANTHROPIC_API_KEY en los secretos de esta función. La IA nunca se llama.";
+    return fuera;
+  }
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: modelo, max_tokens: 1, messages: [{ role: "user", content: "hola" }] }),
+    });
+    const cuerpo = await res.text().catch(() => "");
+    if (res.ok) {
+      fuera.anthropic = { ok: true, status: res.status };
+      fuera.veredicto = "La IA funciona. Si el bot sigue diciendo «esa no me la sé», es que de verdad no está en el conocimiento del chatbot.";
+      return fuera;
+    }
+    let tipo = "", mensaje = "";
+    try {
+      const j = JSON.parse(cuerpo);
+      tipo = j?.error?.type ?? "";
+      mensaje = j?.error?.message ?? "";
+    } catch { mensaje = cuerpo.slice(0, 200); }
+    fuera.anthropic = { ok: false, status: res.status, tipo, mensaje: mensaje.slice(0, 300) };
+    fuera.veredicto =
+      res.status === 401 ? "La llave no es válida. Hay que generar una nueva en console.anthropic.com y volver a pegarla."
+      : res.status === 404 ? `El modelo «${modelo}» no existe o ya no está disponible. Borra la variable ANTHROPIC_MODEL para usar el que trae el motor.`
+      : res.status === 400 ? `Anthropic rechazó la petición. Casi siempre es el nombre del modelo: «${modelo}».`
+      : res.status === 429 ? "Se acabó el crédito o el límite de la cuenta de Anthropic."
+      : "Anthropic contestó con un error. El detalle está arriba.";
+    return fuera;
+  } catch (e) {
+    fuera.anthropic = { ok: false, error_de_red: String(e).slice(0, 200) };
+    fuera.veredicto = "No se pudo ni conectar con Anthropic desde la función.";
+    return fuera;
+  }
+}
 
 function admin() {
   return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -903,6 +974,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === "GET") {
     // Comprobación de versión: no expone nada, solo dice qué código corre.
     if (url.searchParams.has("version")) return json({ version: VERSION_MOTOR });
+    // Diagnóstico de la IA. Detrás del token del webhook: no es para clientes.
+    if (url.searchParams.get("diag") === VERIFY_TOKEN) return json(await diagnosticoIA());
     if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === VERIFY_TOKEN) {
       return new Response(url.searchParams.get("hub.challenge") ?? "", { status: 200 });
     }
