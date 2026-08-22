@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "12";
+const VERSION_MOTOR = "13";
 
 function admin() {
   return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -247,22 +247,148 @@ function sendButtons(pnid: string, token: string, to: string, body: string, butt
   return waPost(pnid, token, { to, type: "interactive", interactive: { type: "list", body: { text: (body || "Elige una opción").slice(0, 1024) }, action: { button: "Ver opciones", sections: [{ title: "Opciones", rows: opts.map((b) => ({ id: b.id, title: (b.label || "Opción").slice(0, 24) })) }] } } });
 }
 
-/** Envía imagen, video o archivo con su texto (caption). */
-function sendMedia(
+/* ────────────────────────────────────────────────────────────────────────────
+ * MULTIMEDIA — POR QUÉ NO SE MANDA POR ENLACE
+ *
+ * Si a Meta se le pasa la URL de la imagen, Meta acepta la petición al instante
+ * pero todavía tiene que ir a descargar el archivo antes de poder entregarlo.
+ * Mientras hace ese viaje, el bloque siguiente —un texto o unos botones, que no
+ * necesitan descargar nada— sale y llega ANTES. El cliente ve las opciones y
+ * después la imagen, aunque la imagen fuera el inicio del flujo.
+ *
+ * Por eso el archivo se sube primero a Meta y se envía por su identificador:
+ * cuando llega el turno de mandarlo, Meta ya tiene los bytes en la mano y no
+ * hay nada que esperar. El orden se respeta siempre.
+ *
+ * El identificador se guarda en `wa_media_cache`, así que un archivo solo se
+ * sube la primera vez y no en cada conversación.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Meta caduca los ids a los 30 días. Los damos por vencidos antes, a los 25. */
+const DIAS_CACHE_MEDIA = 25;
+
+/** Por encima de esto no subimos: se manda por enlace y que Meta lo descargue. */
+const TOPE_SUBIDA = 16 * 1024 * 1024;
+
+const TIPO_POR_DEFECTO: Record<string, string> = {
+  image: "image/jpeg",
+  video: "video/mp4",
+  file: "application/pdf",
+};
+
+/**
+ * Sube el archivo a Meta y devuelve el identificador que nos da.
+ *
+ * Devuelve null ante cualquier tropiezo —archivo caído, demasiado grande, Meta
+ * de mal humor— y quien llama vuelve al envío por enlace. Que llegue tarde es
+ * malo; que no llegue es peor.
+ */
+async function subirMediaAMeta(
+  pnid: string, token: string, url: string,
+  kind: "image" | "video" | "file", filename?: string,
+): Promise<string | null> {
+  try {
+    const bajada = await fetch(url);
+    if (!bajada.ok) {
+      console.error("media bajar", bajada.status, url.slice(0, 120));
+      return null;
+    }
+    const archivo = await bajada.blob();
+    if (archivo.size === 0 || archivo.size > TOPE_SUBIDA) {
+      console.error("media tamaño", archivo.size, url.slice(0, 120));
+      return null;
+    }
+
+    const tipo = archivo.type || bajada.headers.get("content-type") || TIPO_POR_DEFECTO[kind];
+    const nombre = filename || url.split("/").pop()?.split("?")[0] || "archivo";
+
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", tipo);
+    form.append("file", new File([archivo], nombre, { type: tipo }));
+
+    // Sin Content-Type a mano: lo pone fetch con el `boundary` que toca.
+    const res = await fetch(`${GRAPH}/${pnid}/media`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    const cuerpo = await res.text().catch(() => "");
+    if (!res.ok) {
+      console.error("media subir", res.status, cuerpo.slice(0, 300));
+      return null;
+    }
+    return (JSON.parse(cuerpo)?.id as string) ?? null;
+  } catch (e) {
+    console.error("media subir red:", e);
+    return null;
+  }
+}
+
+/** El id de Meta para esta URL: de la caché si sigue fresco, o subiéndolo. */
+async function mediaIdDeMeta(
+  ctx: any, kind: "image" | "video" | "file", url: string, filename?: string,
+): Promise<string | null> {
+  const limite = new Date(Date.now() - DIAS_CACHE_MEDIA * 86400000).toISOString();
+
+  const { data } = await ctx.db
+    .from("wa_media_cache")
+    .select("media_id")
+    .eq("phone_number_id", ctx.pnid)
+    .eq("url", url)
+    .gt("created_at", limite)
+    .maybeSingle();
+  if (data?.media_id) return data.media_id as string;
+
+  const id = await subirMediaAMeta(ctx.pnid, ctx.token, url, kind, filename);
+  if (!id) return null;
+
+  await ctx.db
+    .from("wa_media_cache")
+    .upsert(
+      { phone_number_id: ctx.pnid, url, media_id: id, created_at: new Date().toISOString() },
+      { onConflict: "phone_number_id,url" },
+    );
+  return id;
+}
+
+/** El envío en sí, dando a Meta o el id que ya tiene o el enlace. */
+function mediaPost(
   pnid: string, token: string, to: string,
-  kind: "image" | "video" | "file", link: string, caption?: string, filename?: string,
+  kind: "image" | "video" | "file",
+  fuente: { id: string } | { link: string },
+  caption?: string, filename?: string,
 ) {
   const cap = (caption ?? "").slice(0, 1024);
-  if (kind === "video") {
-    return waPost(pnid, token, { to, type: "video", video: { link, ...(cap ? { caption: cap } : {}) } });
-  }
+  const cuerpo = { ...fuente, ...(cap ? { caption: cap } : {}) };
+  if (kind === "video") return waPost(pnid, token, { to, type: "video", video: cuerpo });
   if (kind === "file") {
     return waPost(pnid, token, {
       to, type: "document",
-      document: { link, ...(cap ? { caption: cap } : {}), ...(filename ? { filename } : {}) },
+      document: { ...cuerpo, ...(filename ? { filename } : {}) },
     });
   }
-  return waPost(pnid, token, { to, type: "image", image: { link, ...(cap ? { caption: cap } : {}) } });
+  return waPost(pnid, token, { to, type: "image", image: cuerpo });
+}
+
+/** Envía imagen, video o archivo con su texto (caption), en el orden correcto. */
+async function sendMedia(
+  ctx: any,
+  kind: "image" | "video" | "file", url: string, caption?: string, filename?: string,
+): Promise<ResultadoEnvio> {
+  const mediaId = await mediaIdDeMeta(ctx, kind, url, filename);
+
+  if (mediaId) {
+    const r = await mediaPost(ctx.pnid, ctx.token, ctx.to, kind, { id: mediaId }, caption, filename);
+    if (r.ok) return r;
+    // El id pudo caducar antes de tiempo o borrarse del lado de Meta. Se tira
+    // la fila para que la próxima vez se vuelva a subir, y se reintenta ahora
+    // por enlace para que este cliente sí reciba su archivo.
+    await ctx.db.from("wa_media_cache").delete()
+      .eq("phone_number_id", ctx.pnid).eq("url", url);
+  }
+
+  return mediaPost(ctx.pnid, ctx.token, ctx.to, kind, { link: url }, caption, filename);
 }
 
 // ---- IA (mismo comportamiento que en el canal web) ----
@@ -488,13 +614,17 @@ async function runFrom(startId: string | undefined, ctx: any) {
         const kind = (node.data.mediaType ?? "image") as "image" | "video" | "file";
         const caption = interp(node.data.caption ?? "", ctx.vars);
         if (node.data.mediaUrl) {
-          const envio = await sendMedia(ctx.pnid, ctx.token, ctx.to, kind, node.data.mediaUrl, caption, node.data.mediaName);
+          const envio = await sendMedia(ctx, kind, node.data.mediaUrl, caption, node.data.mediaName);
           await registrar(
             ctx,
             caption || `(${kind === "video" ? "video" : kind === "file" ? "archivo" : "imagen"})`,
             envio,
             { media: { type: kind, url: node.data.mediaUrl, name: node.data.mediaName ?? null } },
           );
+          // Cinturón además de tirantes: subir el archivo antes ya arregla el
+          // orden, pero un respiro corto quita cualquier duda de que el bloque
+          // siguiente adelante a la imagen dentro de la cola de Meta.
+          if (envio.ok) await new Promise((r) => setTimeout(r, 400));
         } else if (caption) {
           // Sin archivo cargado todavía: al menos mandamos el texto, no un ejemplo.
           await say(ctx, node.data.caption ?? "");
