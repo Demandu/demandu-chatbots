@@ -27,6 +27,34 @@ export function LlavesApi({ llaves }: { llaves: LlaveFila[] }) {
   const [copiada, setCopiada] = useState(false);
   const [error, setError] = useState("");
   const [ocupado, empezar] = useTransition();
+  const [probando, setProbando] = useState(false);
+  const [prueba, setPrueba] = useState<{ ok: boolean; texto: string } | null>(null);
+
+  /**
+   * Comprobar la llave sin salir de la pantalla.
+   *
+   * Solo se puede hacer AQUÍ, con la llave recién creada: en cuanto se cierre
+   * esta tarjeta deja de existir en claro, ni siquiera para nosotros. Por eso
+   * el botón vive junto al aviso de "cópiala ahora" y no en la lista de abajo.
+   */
+  const probar = async () => {
+    if (!reciente) return;
+    setProbando(true);
+    setPrueba(null);
+    try {
+      const r = await fetch("/api/v1/yo", { headers: { Authorization: `Bearer ${reciente}` } });
+      const j = await r.json();
+      setPrueba(
+        r.ok && j?.ok
+          ? { ok: true, texto: `Funciona — conectada a «${j.organizacion?.nombre ?? "tu cuenta"}»` }
+          : { ok: false, texto: j?.error ?? "La llave no funcionó." },
+      );
+    } catch {
+      setPrueba({ ok: false, texto: "No se pudo comprobar. Revisa tu conexión." });
+    } finally {
+      setProbando(false);
+    }
+  };
 
   const crear = () =>
     empezar(async () => {
@@ -93,10 +121,29 @@ export function LlavesApi({ llaves }: { llaves: LlaveFila[] }) {
                   onClick={() => {
                     navigator.clipboard?.writeText(reciente).then(() => setCopiada(true));
                   }}
+                  title="Copiar"
                   className="flex-none rounded-lg border border-linea px-3 py-2 text-xs font-semibold text-ink-2 transition hover:bg-suave-2"
                 >
                   {copiada ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
                 </button>
+              </div>
+
+              {/* Comprobarla es cosa de un clic, no de un comando. Y solo se
+                  puede AQUÍ: en cuanto se cierre esta tarjeta la llave deja de
+                  existir en claro, ni siquiera para nosotros. */}
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={probar}
+                  disabled={probando}
+                  className="rounded-lg border border-linea bg-tarjeta px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-suave-2 disabled:opacity-60"
+                >
+                  {probando ? "Probando…" : "Probar la llave"}
+                </button>
+                {prueba && (
+                  <span className={`text-xs font-semibold ${prueba.ok ? "text-success" : "text-danger"}`}>
+                    {prueba.texto}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -122,12 +169,25 @@ export function LlavesApi({ llaves }: { llaves: LlaveFila[] }) {
             </details>
           )}
 
-          <p className="mt-4 text-[11px] text-ink-3">
-            Prueba que funciona:{" "}
-            <code className="font-mono">
-              curl -H &quot;Authorization: Bearer TU_LLAVE&quot; https://platform.demandu.tech/api/v1/yo
-            </code>
-          </p>
+          {/* Lo técnico, escondido. Quien conecta Zapier lo busca; quien no,
+              no tiene por qué tropezarse con un comando de terminal en la
+              pantalla de su negocio. */}
+          <details className="mt-4">
+            <summary className="cursor-pointer text-[11px] text-ink-3">
+              Para quien programa: dirección y ejemplo
+            </summary>
+            <div className="mt-2 space-y-1.5 rounded-xl border border-linea bg-suave p-3">
+              <p className="text-[11px] text-ink-2">
+                Base: <code className="font-mono text-ink">https://platform.demandu.tech/api/v1</code>
+                {" · "}autenticación por cabecera{" "}
+                <code className="font-mono text-ink">Authorization: Bearer TU_LLAVE</code>
+              </p>
+              <pre className="overflow-x-auto rounded-lg bg-tarjeta p-2.5 font-mono text-[11px] text-ink-2">
+{`curl -H "Authorization: Bearer TU_LLAVE" \\
+  https://platform.demandu.tech/api/v1/yo`}
+              </pre>
+            </div>
+          </details>
         </div>
       </div>
     </div>
