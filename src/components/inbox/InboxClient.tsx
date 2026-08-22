@@ -9,6 +9,7 @@ import { ContactPanel } from "./ContactPanel";
 import { ConvoMenu, type AccionChat } from "./ConvoMenu";
 import { TraductorBoton } from "./TraductorBoton";
 import { RespuestasRapidas } from "./RespuestasRapidas";
+import { ResponderEnIdioma } from "./ResponderEnIdioma";
 import { rellenar, type RespuestaRapida } from "@/lib/quickReplies";
 import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
@@ -32,14 +33,26 @@ type Convo = {
   state_id: string | null;
   opportunity_id?: string | null;
   assignee_member_id: string | null;
+  /** En qué idioma escribe el lead. Se detecta solo; el agente puede cambiarlo. */
+  idioma_lead: string | null;
   contact: Contact | null;
   state: State | null;
   member: Member | null;
 };
 type Message = {
   id: string; direction: string; sender: string; body: string | null; created_at: string;
-  /** Si WhatsApp rechazó el envío, aquí viene el motivo en humano. */
-  payload?: { no_entregado?: { motivo: string; code: number | null } } | null;
+  payload?: {
+    /** Si WhatsApp rechazó el envío, aquí viene el motivo en humano. */
+    no_entregado?: { motivo: string; code: number | null };
+    /**
+     * Lo que el agente escribió de verdad, cuando el mensaje salió traducido.
+     * Se guarda SIEMPRE: al lead le llega la traducción, pero el equipo tiene
+     * que poder ver después qué se quiso decir. Sin esto, una conversación
+     * traducida sería imposible de auditar.
+     */
+    original?: string;
+    idioma?: string;
+  } | null;
 };
 
 const CH: Record<string, { label: string; emoji: string; color: string }> = {
@@ -121,6 +134,13 @@ export function InboxClient({
   const [traducciones, setTraducciones] = useState<Record<string, string>>({});
   const [traduciendo, setTraduciendo] = useState(false);
   const [errorTraduccion, setErrorTraduccion] = useState("");
+  // Responder en el idioma del lead: interruptor, texto ya traducido y espera.
+  // El interruptor arranca APAGADO en cada conversación a propósito: que un
+  // mensaje salga traducido sin que el agente lo haya pedido es justo el tipo
+  // de sorpresa que no queremos en algo que se manda en nombre del negocio.
+  const [responderEn, setResponderEn] = useState(false);
+  const [previa, setPrevia] = useState("");
+  const [previaCargando, setPreviaCargando] = useState(false);
   // Respuestas rápidas: se abren con el botón ⚡ o escribiendo "/" al inicio
   const [rapidasAbierto, setRapidasAbierto] = useState(false);
   const cajaTexto = useRef<HTMLTextAreaElement>(null);
@@ -132,7 +152,7 @@ export function InboxClient({
   const sel = convos.find((c) => c.id === selId) ?? null;
 
   const selectSql =
-    "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, " +
+    "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, idioma_lead, " +
     "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
     "state:conversation_states(id,name,color), member:team_members(id,name)";
 
@@ -251,6 +271,70 @@ export function InboxClient({
   }, [idioma, messages, traducciones]);
 
   /**
+   * En qué idioma escribe el lead.
+   *
+   * SE DETECTA UNA SOLA VEZ POR CONVERSACIÓN y se guarda. Detectar en cada
+   * mensaje sería inestable: con textos cortos —"ok", "gracias"— la detección
+   * falla y el idioma cambiaría a media conversación. Se mira lo que ya
+   * escribió el lead, se decide, y a partir de ahí manda lo guardado (o lo que
+   * el agente corrija).
+   */
+  useEffect(() => {
+    if (!sel || sel.idioma_lead) return;
+    const suyos = messages.filter((m) => m.direction === "inbound" && m.body).map((m) => m.body!);
+    if (suyos.length < 2) return; // con un solo mensaje no hay con qué decidir
+
+    let cancelado = false;
+    fetch("/api/translate/detectar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ textos: suyos }),
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelado || !j?.idioma) return;
+        sb.from("conversations").update({ idioma_lead: j.idioma }).eq("id", sel.id).then(() => {});
+        setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, idioma_lead: j.idioma } : c)));
+      })
+      .catch(() => {});
+
+    return () => { cancelado = true; };
+  }, [sb, sel, messages]);
+
+  /**
+   * La vista previa de lo que va a salir.
+   *
+   * Va con espera de medio segundo: sin ella habría una llamada a Google por
+   * cada letra que teclea el agente. Y el agente ve el texto ANTES de enviarlo
+   * porque él responde de lo que se manda en nombre del negocio — una
+   * traducción automática puede cambiarle el tono o estropear un modismo.
+   */
+  useEffect(() => {
+    const destino = sel?.idioma_lead;
+    if (!responderEn || !destino || !text.trim()) { setPrevia(""); return; }
+
+    let cancelado = false;
+    setPreviaCargando(true);
+    const t = setTimeout(() => {
+      fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idioma: destino, textos: [text.trim()] }),
+      })
+        .then((r) => r.json())
+        .then((j) => { if (!cancelado) setPrevia(j?.traducciones?.[0] ?? ""); })
+        .catch(() => { if (!cancelado) setPrevia(""); })
+        .finally(() => { if (!cancelado) setPreviaCargando(false); });
+    }, 500);
+
+    return () => { cancelado = true; clearTimeout(t); setPreviaCargando(false); };
+  }, [responderEn, text, sel?.idioma_lead]);
+
+  // Cambiar de conversación apaga el interruptor: el idioma del lead anterior
+  // no tiene nada que ver con el de este.
+  useEffect(() => { setResponderEn(false); setPrevia(""); }, [selId]);
+
+  /**
    * Avisa al visitante de que hay alguien escribiéndole.
    *
    * Se manda como mucho una vez cada 3 s aunque el agente teclee sin parar: si
@@ -271,10 +355,26 @@ export function InboxClient({
   }, [sb, selId]);
 
   const send = async () => {
-    const body = text.trim();
-    if (!body || !sel) return;
+    const escrito = text.trim();
+    if (!escrito || !sel) return;
+
+    // Si el agente pidió responder en el idioma del lead, lo que SALE es la
+    // traducción y lo que escribió queda guardado al lado. Si la traducción no
+    // llegó a tiempo, sale el texto original: es mejor que el lead reciba algo
+    // en español a que se quede esperando.
+    const traducido = responderEn && previa.trim() ? previa.trim() : "";
+    const body = traducido || escrito;
+    const extra = traducido
+      ? { payload: { original: escrito, idioma: sel.idioma_lead ?? undefined } }
+      : {};
+
     setText("");
-    const optimistic: Message = { id: `tmp-${Date.now()}`, direction: "outbound", sender: "agent", body, created_at: new Date().toISOString() };
+    setPrevia("");
+    const optimistic: Message = {
+      id: `tmp-${Date.now()}`, direction: "outbound", sender: "agent", body,
+      created_at: new Date().toISOString(),
+      payload: traducido ? { original: escrito, idioma: sel.idioma_lead ?? undefined } : null,
+    };
     setMessages((m) => [...m, optimistic]);
     const orgRes = await sb.from("conversations").select("org_id").eq("id", sel.id).maybeSingle();
     const org_id = (orgRes.data as any)?.org_id;
@@ -289,7 +389,7 @@ export function InboxClient({
     // montaba otra vez — ese es el parpadeo de "desaparece y vuelve".
     const ins = await sb
       .from("messages")
-      .insert({ conversation_id: sel.id, org_id, direction: "outbound", sender: "agent", body })
+      .insert({ conversation_id: sel.id, org_id, direction: "outbound", sender: "agent", body, ...extra })
       .select("id,direction,sender,body,created_at,payload")
       .maybeSingle();
 
@@ -300,7 +400,9 @@ export function InboxClient({
       // en pantalla y se iba tan tranquilo, convencido de haber contestado.
       console.error("[bandeja] no se pudo enviar el mensaje:", ins.error?.message);
       setMessages((m) => m.filter((x) => x.id !== optimistic.id));
-      setText(body);
+      // Se devuelve lo que ESCRIBIÓ, no lo traducido: si le devolviéramos la
+      // traducción, al reintentar se traduciría otra vez sobre sí misma.
+      setText(escrito);
       setErrorEnvio("No se pudo enviar. Revisa tu conexión e inténtalo otra vez.");
       return;
     }
@@ -684,6 +786,18 @@ export function InboxClient({
                     </div>
                   )}
                   <span className="whitespace-pre-wrap break-words align-bottom">{m.body}</span>
+                  {/* Si el mensaje salió traducido, se enseña lo que el agente
+                      escribió de verdad. Sin esto, el equipo leería después una
+                      conversación en un idioma que quizá nadie de la casa habla
+                      y no habría forma de saber qué se quiso decir. */}
+                  {m.payload?.original && (
+                    <span
+                      className="mt-1.5 block whitespace-pre-wrap break-words border-t pt-1.5 text-[12px]"
+                      style={{ borderColor: `${paleta.textOut}22`, color: paleta.textOut, opacity: 0.7 }}
+                    >
+                      <b className="font-semibold">Escribiste:</b> {m.payload.original}
+                    </span>
+                  )}
                   {idioma && traducciones[m.id] && (
                     <span
                       className="mt-1.5 block whitespace-pre-wrap break-words border-t pt-1.5 text-[12.5px] italic"
@@ -723,6 +837,25 @@ export function InboxClient({
             <div className="flex-none bg-danger/10 px-4 py-2 text-xs font-semibold text-danger">
               {errorEnvio}
             </div>
+          )}
+
+          {/* Responder en el idioma del lead. Solo aparece cuando de verdad
+              escribe en otro idioma: ofrecérselo a quien ya habla español
+              sería ruido en la pantalla más usada de la plataforma. */}
+          {sel?.idioma_lead && sel.idioma_lead !== "es" && (
+            <ResponderEnIdioma
+              idioma={sel.idioma_lead}
+              activo={responderEn}
+              previa={previa}
+              cargando={previaCargando}
+              hayTexto={!!text.trim()}
+              onCambiar={setResponderEn}
+              onCorregir={(code) => {
+                sb.from("conversations").update({ idioma_lead: code }).eq("id", sel.id).then(() => {});
+                setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, idioma_lead: code } : c)));
+                setPrevia("");
+              }}
+            />
           )}
 
           {/* Composer (estilo WhatsApp Web · Demandu) */}
