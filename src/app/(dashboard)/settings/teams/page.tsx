@@ -1,24 +1,46 @@
 import { createClient } from "@/lib/supabase/server";
-import { createTeam, deleteTeam, createMember, deleteMember } from "../actions";
+import { exigir } from "@/lib/permisos-server";
+import { Personas, type Persona } from "@/components/settings/Personas";
+import { createTeam, deleteTeam, createMember } from "../actions";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Equipos y personas.
+ *
+ * UNA SOLA LISTA DE PERSONAS, no dos. Antes esta pantalla mostraba "miembros"
+ * (agentes que reciben chats) y los accesos a la plataforma vivían en ningún
+ * sitio: se podía crear a alguien que recibiera conversaciones y no pudiera
+ * entrar a verlas. Ahora cada persona es una fila con las dos cosas.
+ *
+ * `exigir("equipo")` NO ES DECORACIÓN: la barra lateral esconde lo que no te
+ * toca, pero cualquiera puede escribir la dirección a mano. Sin esta línea, los
+ * permisos serían una sugerencia.
+ */
 export default async function TeamsPage() {
+  await exigir("equipo");
+
   const supabase = createClient();
-  const [{ data: teamsData }, { data: membersData }] = await Promise.all([
-    supabase.from("teams").select("*").order("created_at"),
-    supabase.from("team_members").select("*").order("created_at"),
+  const [{ data: teamsData }, { data: personasData }] = await Promise.all([
+    supabase.from("teams").select("id,name").order("created_at"),
+    supabase.rpc("personas_de_la_org"),
   ]);
-  const teams = (teamsData ?? []) as any[];
-  const members = (membersData ?? []) as any[];
-  const teamName = (id: string | null) => teams.find((t) => t.id === id)?.name ?? "Sin equipo";
+
+  const teams = (teamsData ?? []) as { id: string; name: string }[];
+  const personas = (personasData ?? []) as Persona[];
 
   return (
     <div className="space-y-8">
-      {/* Equipos */}
+      {/* ── Equipos ──────────────────────────────────────────────────────── */}
       <section>
-        <h3 className="mb-3 font-display text-base font-semibold text-ink">Equipos</h3>
-        <form action={createTeam} className="mb-4 flex items-end gap-3 rounded-2xl border border-linea bg-tarjeta p-4">
+        <h3 className="mb-1 font-display text-base font-semibold text-ink">Equipos</h3>
+        <p className="mb-3 text-sm text-ink-3">
+          Sirven para repartir las conversaciones por área: Ventas, Soporte, Cobranza.
+        </p>
+        <form
+          action={createTeam}
+          className="mb-4 flex items-end gap-3 rounded-2xl border border-linea bg-tarjeta p-4"
+        >
           <div className="flex-1">
             <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre del equipo</label>
             <input name="name" required placeholder="Ventas" className="input-l" />
@@ -27,11 +49,16 @@ export default async function TeamsPage() {
         </form>
         <div className="flex flex-wrap gap-2">
           {teams.map((t) => (
-            <div key={t.id} className="flex items-center gap-2 rounded-full border border-linea bg-tarjeta px-3 py-1.5">
+            <div
+              key={t.id}
+              className="flex items-center gap-2 rounded-full border border-linea bg-tarjeta px-3 py-1.5"
+            >
               <span className="text-sm text-ink">👥 {t.name}</span>
               <form action={deleteTeam}>
                 <input type="hidden" name="id" value={t.id} />
-                <button className="text-ink-3 transition hover:text-danger" title="Eliminar">✕</button>
+                <button className="text-ink-3 transition hover:text-danger" title="Eliminar">
+                  ✕
+                </button>
               </form>
             </div>
           ))}
@@ -39,10 +66,15 @@ export default async function TeamsPage() {
         </div>
       </section>
 
-      {/* Miembros */}
+      {/* ── Personas ─────────────────────────────────────────────────────── */}
       <section>
-        <h3 className="mb-3 font-display text-base font-semibold text-ink">Miembros</h3>
-        <form action={createMember} className="mb-4 rounded-2xl border border-linea bg-tarjeta p-4">
+        <h3 className="mb-1 font-display text-base font-semibold text-ink">Personas</h3>
+        <p className="mb-3 text-sm text-ink-3">
+          Quién recibe conversaciones y quién puede entrar a la plataforma. Agregar a alguien aquí
+          lo pone en el reparto; el acceso a la plataforma se le da aparte, invitándolo por correo.
+        </p>
+
+        <form action={createMember} className="mb-5 rounded-2xl border border-linea bg-tarjeta p-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre</label>
@@ -53,12 +85,14 @@ export default async function TeamsPage() {
               <select name="team_id" className="input-l">
                 <option value="">Sin equipo</option>
                 {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-ink-2">Email</label>
+              <label className="mb-1.5 block text-xs font-semibold text-ink-2">Correo</label>
               <input name="email" type="email" placeholder="ana@empresa.com" className="input-l" />
             </div>
             <div>
@@ -67,46 +101,11 @@ export default async function TeamsPage() {
             </div>
           </div>
           <div className="mt-3 flex justify-end">
-            <button className="btn-primary">Agregar miembro</button>
+            <button className="btn-primary">Agregar persona</button>
           </div>
         </form>
 
-        <div className="overflow-x-auto rounded-2xl border border-linea">
-          <table className="min-w-[560px] w-full text-sm">
-            <thead className="bg-suave text-xs text-ink-3">
-              <tr>
-                <th className="px-4 py-2.5 text-left font-semibold">Nombre</th>
-                <th className="px-4 py-2.5 text-left font-semibold">Email</th>
-                <th className="px-4 py-2.5 text-left font-semibold">Teléfono</th>
-                <th className="px-4 py-2.5 text-left font-semibold">Equipo</th>
-                <th className="px-4 py-2.5"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.map((m) => (
-                <tr key={m.id} className="border-t border-linea bg-tarjeta">
-                  <td className="px-4 py-2.5 font-medium text-ink">{m.name}</td>
-                  <td className="px-4 py-2.5 text-ink-2">{m.email || "—"}</td>
-                  <td className="px-4 py-2.5 text-ink-2">{m.phone || "—"}</td>
-                  <td className="px-4 py-2.5 text-ink-2">{teamName(m.team_id)}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <form action={deleteMember}>
-                      <input type="hidden" name="id" value={m.id} />
-                      <button className="text-ink-3 transition hover:text-danger" title="Eliminar">✕</button>
-                    </form>
-                  </td>
-                </tr>
-              ))}
-              {members.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-ink-3">
-                    Aún no tienes miembros. Agrega el primero arriba 👆
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <Personas personas={personas} equipos={teams} />
       </section>
     </div>
   );
