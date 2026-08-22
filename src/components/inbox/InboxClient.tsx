@@ -141,6 +141,9 @@ export function InboxClient({
   const [responderEn, setResponderEn] = useState(false);
   const [previa, setPrevia] = useState("");
   const [previaCargando, setPreviaCargando] = useState(false);
+  // Si el idioma lo eligió el agente, no se le dice "detectado por sus
+  // mensajes": sería mentirle sobre de dónde salió el dato.
+  const [idiomaAMano, setIdiomaAMano] = useState(false);
   // Respuestas rápidas: se abren con el botón ⚡ o escribiendo "/" al inicio
   const [rapidasAbierto, setRapidasAbierto] = useState(false);
   const cajaTexto = useRef<HTMLTextAreaElement>(null);
@@ -332,7 +335,7 @@ export function InboxClient({
 
   // Cambiar de conversación apaga el interruptor: el idioma del lead anterior
   // no tiene nada que ver con el de este.
-  useEffect(() => { setResponderEn(false); setPrevia(""); }, [selId]);
+  useEffect(() => { setResponderEn(false); setPrevia(""); setIdiomaAMano(false); }, [selId]);
 
   /**
    * Avisa al visitante de que hay alguien escribiéndole.
@@ -839,21 +842,26 @@ export function InboxClient({
             </div>
           )}
 
-          {/* Responder en el idioma del lead. Solo aparece cuando de verdad
-              escribe en otro idioma: ofrecérselo a quien ya habla español
-              sería ruido en la pantalla más usada de la plataforma. */}
-          {sel?.idioma_lead && sel.idioma_lead !== "es" && (
+          {/* Responder en el idioma del lead.
+              SIEMPRE VISIBLE. La primera versión solo salía si el detector
+              había encontrado otro idioma, y eso dejaba al agente sin forma de
+              encenderlo cuando la detección fallaba o cuando simplemente quería
+              contestar en otro idioma. Apagado ocupa un renglón discreto. */}
+          {sel && (
             <ResponderEnIdioma
               idioma={sel.idioma_lead}
               activo={responderEn}
               previa={previa}
               cargando={previaCargando}
               hayTexto={!!text.trim()}
+              detectado={!idiomaAMano}
               onCambiar={setResponderEn}
-              onCorregir={(code) => {
+              onElegirIdioma={(code) => {
                 sb.from("conversations").update({ idioma_lead: code }).eq("id", sel.id).then(() => {});
                 setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, idioma_lead: code } : c)));
+                setIdiomaAMano(true);
                 setPrevia("");
+                setResponderEn(true);
               }}
             />
           )}
