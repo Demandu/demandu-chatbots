@@ -419,31 +419,18 @@ export function InboxClient({
         bytes: file.size,
       };
 
-      const orgRes = await sb.from("conversations").select("org_id").eq("id", sel.id).maybeSingle();
-      const org_id = (orgRes.data as any)?.org_id;
+      // Mismo camino que el texto: el servidor lo entrega por el canal del
+      // cliente y después lo guarda. El cuerpo lleva el nombre del archivo para
+      // que la lista de conversaciones y las notificaciones digan algo.
+      const r = await fetch("/api/canales/enviar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversacion: sel.id, texto: file.name, adjunto }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j?.mensaje) throw new Error(j?.error ?? "no se guardó el mensaje");
 
-      const ins = await sb
-        .from("messages")
-        .insert({
-          conversation_id: sel.id,
-          org_id,
-          direction: "outbound",
-          sender: "agent",
-          // El cuerpo lleva el nombre del archivo para que la lista de
-          // conversaciones y las notificaciones digan algo, no un hueco.
-          body: file.name,
-          payload: { adjunto },
-        })
-        .select("id,direction,sender,body,created_at,payload")
-        .maybeSingle();
-
-      if (!ins.data) throw new Error(ins.error?.message ?? "no se guardó el mensaje");
-
-      setMessages((m) => [...m, ins.data as any]);
-      await sb
-        .from("conversations")
-        .update({ last_message_at: new Date().toISOString(), handoff_requested_at: null })
-        .eq("id", sel.id);
+      setMessages((m) => [...m, j.mensaje as Message]);
       setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, handoff_requested_at: null } : c)));
       loadConvos();
     } catch (e: any) {
@@ -476,29 +463,38 @@ export function InboxClient({
       payload: traducido ? { original: escrito, idioma: sel.idioma_lead ?? undefined } : null,
     };
     setMessages((m) => [...m, optimistic]);
-    const orgRes = await sb.from("conversations").select("org_id").eq("id", sel.id).maybeSingle();
-    const org_id = (orgRes.data as any)?.org_id;
 
-    // Se pide de vuelta el renglón recién guardado para CAMBIAR la burbuja
-    // provisional por la de verdad, conservando su sitio.
+    // YA NO SE ESCRIBE DIRECTO EN LA BASE. Se pide al servidor que lo ENTREGUE
+    // por el canal del cliente y después lo guarde con el resultado. Escribir
+    // aquí funcionaba solo en el canal web —donde el widget del visitante
+    // pregunta cada cuatro segundos— y en WhatsApp no llegaba nada, sin error.
     //
-    // Antes no se hacía, y la burbuja provisional vivía hasta el refresco de
-    // cada 6 s. Entonces la lista entera se reemplazaba por lo que había en la
-    // base: la burbuja con id `tmp-…` desaparecía y volvía a aparecer con otro
-    // id. Para React son dos elementos distintos, así que la desmontaba y la
-    // montaba otra vez — ese es el parpadeo de "desaparece y vuelve".
-    const ins = await sb
-      .from("messages")
-      .insert({ conversation_id: sel.id, org_id, direction: "outbound", sender: "agent", body, ...extra })
-      .select("id,direction,sender,body,created_at,payload")
-      .maybeSingle();
+    // Vuelve el renglón guardado para CAMBIAR la burbuja provisional por la de
+    // verdad conservando su sitio: si no, al refrescar la lista desaparecería y
+    // volvería a aparecer con otro id, y eso React lo pinta como un parpadeo.
+    let fila: Message | null = null;
+    try {
+      const r = await fetch("/api/canales/enviar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversacion: sel.id,
+          texto: body,
+          original: traducido ? escrito : undefined,
+          idioma: traducido ? sel.idioma_lead ?? undefined : undefined,
+        }),
+      });
+      const j = await r.json();
+      if (r.ok && j?.mensaje) fila = j.mensaje as Message;
+    } catch {
+      fila = null;
+    }
 
-    if (ins.data) {
-      setMessages((m) => m.map((x) => (x.id === optimistic.id ? (ins.data as any) : x)));
+    if (fila) {
+      setMessages((m) => m.map((x) => (x.id === optimistic.id ? fila! : x)));
     } else {
-      // No se guardó. Antes esto pasaba en SILENCIO: el agente veía su mensaje
-      // en pantalla y se iba tan tranquilo, convencido de haber contestado.
-      console.error("[bandeja] no se pudo enviar el mensaje:", ins.error?.message);
+      // Antes esto pasaba en SILENCIO: el agente veía su mensaje en pantalla y
+      // se iba tan tranquilo, convencido de haber contestado.
       setMessages((m) => m.filter((x) => x.id !== optimistic.id));
       // Se devuelve lo que ESCRIBIÓ, no lo traducido: si le devolviéramos la
       // traducción, al reintentar se traduciría otra vez sobre sí misma.
@@ -507,13 +503,10 @@ export function InboxClient({
       return;
     }
     setErrorEnvio("");
-    // Contestar SÍ es atender: aquí se cierra la solicitud de persona, no al
-    // abrir la conversación. Así una petición sigue en "Solicitudes" hasta que
-    // alguien de verdad le responda al cliente.
-    await sb
-      .from("conversations")
-      .update({ last_message_at: new Date().toISOString(), handoff_requested_at: null })
-      .eq("id", sel.id);
+    // Contestar SÍ es atender: la solicitud de persona se cierra aquí, no al
+    // abrir la conversación. Así sigue en "Solicitudes" hasta que alguien de
+    // verdad le responda al cliente. (El servidor ya la limpió; esto es para
+    // que la lista de la izquierda no espere al siguiente refresco.)
     setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, handoff_requested_at: null } : c)));
     loadConvos();
   };
