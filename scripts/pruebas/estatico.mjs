@@ -419,7 +419,29 @@ describe("Modelo de IA", () => {
       const t = fs.readFileSync(path.join(SRC, rel), "utf8");
       esperar(t.includes("diagnostico")).falso(`${rel} no debe pedir diagnóstico`);
     }
-    esperar(wa.includes("diagnostico")).falso("el motor de WhatsApp no debe pedir diagnóstico");
+
+    // ANTES ESTA PRUEBA BUSCABA LA PALABRA EN TODO EL ARCHIVO y se rompió el
+    // día que el motor ganó un diagnóstico de administrador. La palabra no era
+    // el peligro: el peligro es que el diagnóstico se cuele en el camino por
+    // donde entran los mensajes. Eso es lo que se comprueba ahora.
+    const iPost = wa.indexOf('req.method === "POST"');
+    esperar(iPost > 0).verdadero("no encuentro el manejador POST del motor de WhatsApp");
+
+    // Los mensajes de los clientes llegan por POST. De ahí para abajo no puede
+    // haber ni rastro del diagnóstico.
+    esperar(wa.slice(iPost).includes("diagnostico")).falso(
+      "el camino de los mensajes del motor de WhatsApp no debe tocar el diagnóstico",
+    );
+
+    // Y donde sí se llama, tiene que ir detrás del token del webhook.
+    const llamadas = wa.split("\n").filter((l) => /diagnosticoIA\s*\(/.test(l) && !/^\s*(\*|\/\/)/.test(l));
+    // Una sola llamada, y la declaración. Si aparece una tercera línea es que
+    // alguien llamó al diagnóstico desde otro sitio: hay que mirarlo a mano.
+    esperar(llamadas.length).igual(2, "el diagnóstico debe llamarse desde un solo sitio");
+    const llamada = llamadas.find((l) => !/function\s+diagnosticoIA/.test(l)) ?? "";
+    esperar(llamada.includes("VERIFY_TOKEN")).verdadero(
+      "el diagnóstico del motor de WhatsApp debe ir detrás del token del webhook",
+    );
   });
 });
 

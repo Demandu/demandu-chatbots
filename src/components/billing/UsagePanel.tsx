@@ -106,25 +106,29 @@ export function UsagePanel({ usage, compact = false }: { usage: Usage; compact?:
 
       {/* La explicación va SIEMPRE debajo, no escondida en un globo al pasar
           el mouse: en el celular no hay mouse, y es justo donde la mayoría de
-          nuestros clientes mira su consumo. */}
+          nuestros clientes mira su consumo.
+
+          UN SOLO CONCEPTO. Todo lo que se cuenta es "mensajes que salen". La
+          IA no es otra moneda: va incluida. Cualquier segundo contador se lee
+          como cobro doble, por muy bien explicado que esté. */}
       <div className="mt-4 space-y-2 rounded-xl border border-linea bg-suave p-3.5 text-[11px] leading-relaxed text-ink-2">
         <p>
-          <b className="text-ink">Mensajes enviados.</b> Cada mensaje que sale de tu chatbot o de tu equipo.
+          <b className="text-ink">Se cuenta cada mensaje que sale</b> de tu chatbot o de tu equipo.
           Lo que te escriben tus clientes <b className="text-ink">no cuenta</b>: recibir siempre es gratis.
         </p>
         <p>
-          <b className="text-ink">Respuestas de Lana.</b> Son las que la inteligencia artificial{" "}
-          <b className="text-ink">piensa</b>, en vez de seguir un botón que ya escribiste tú. Cuestan aparte porque
-          la IA cuesta dinero cada vez que responde.
+          <b className="text-ink">La inteligencia artificial va incluida.</b> Da igual si la respuesta la pensó
+          Lana o si fue un botón de tu menú: cuenta como 1 mensaje, igual. No hay créditos aparte que se te
+          puedan acabar.
         </p>
-        <p className="rounded-lg bg-tarjeta px-2.5 py-1.5">
-          Ejemplo: si Lana contesta una pregunta, eso gasta{" "}
-          <b className="text-ink">1 respuesta de Lana</b> y también{" "}
-          <b className="text-ink">1 mensaje</b> — porque es una respuesta pensada, y además es un mensaje que salió.
-          Si en cambio el cliente toca un botón de tu menú, eso solo gasta <b className="text-ink">1 mensaje</b>.
-        </p>
+        {usage.aiAnswers > 0 && (
+          <p className="rounded-lg bg-tarjeta px-2.5 py-1.5">
+            Este mes, <b className="text-ink">{usage.aiAnswers.toLocaleString("es-MX")}</b> de tus mensajes los
+            pensó Lana con inteligencia artificial. Es solo un dato: ya están contados arriba.
+          </p>
+        )}
         <p className="text-ink-3">
-          Los dos se reinician el día 1 de cada mes. Si se te acaba alguno, puedes comprar más sin cambiar de plan.
+          El contador se reinicia el día 1 de cada mes. Si se te acaban, puedes comprar más sin cambiar de plan.
         </p>
         <p className="text-ink-3">
           El costo de los mensajes de WhatsApp te lo cobra Meta directamente a ti, con su propia tarifa.

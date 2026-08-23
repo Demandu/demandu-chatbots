@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "15";
+const VERSION_MOTOR = "16";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -552,6 +552,41 @@ async function buscarConocimiento(db: any, orgId: string, botId: string, pregunt
   } catch { return []; }
 }
 
+/**
+ * ¿Esta cuenta ya se pasó de su tope de IA este mes?
+ *
+ * Casi siempre `tope_ia` es NULL y esto contesta que no sin contar nada — que
+ * es el caso normal y no debe costar ni una consulta de más.
+ *
+ * Si algo falla, contesta que NO. Ante la duda, el bot responde: un cliente sin
+ * respuestas por un error nuestro es mucho peor que unos centavos de IA.
+ */
+async function pasoElTopeDeIA(ctx: any): Promise<boolean> {
+  try {
+    const { data: org } = await ctx.db
+      .from("organizations").select("tope_ia").eq("id", ctx.orgId).maybeSingle();
+
+    const tope = org?.tope_ia;
+    if (tope === null || tope === undefined) return false;
+
+    const ini = new Date();
+    ini.setUTCDate(1);
+    ini.setUTCHours(0, 0, 0, 0);
+
+    const { count } = await ctx.db
+      .from("usage_events")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", ctx.orgId)
+      .eq("kind", "ai_message")
+      .gte("created_at", ini.toISOString());
+
+    return (count ?? 0) >= Number(tope);
+  } catch (e) {
+    console.error("[ia] tope:", e);
+    return false;
+  }
+}
+
 /** Responde con IA. Nunca revienta la conversación: ante cualquier fallo, respaldo. */
 async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string) {
   const ai = { ...AI_DEFAULTS, ...(ctx.aiSettings ?? {}) };
@@ -561,8 +596,18 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
   // apagada no se llama a la API, no se gasta y no se registra consumo.
   if (ai.enabled === false) return ai.fallback;
 
-  const key = Deno.env.get("ANTHROPIC_API_KEY");
+  // El `.trim()` no sobra: una llave pegada con un salto de línea al final se
+  // ve idéntica en el panel y falla con 401 sin que nadie entienda por qué.
+  const key = (Deno.env.get("ANTHROPIC_API_KEY") ?? "").trim();
   if (!key) return ai.fallback;
+
+  // Freno de mano. Normalmente NO hay tope y la IA va incluida — es lo que se
+  // vende. Se pone un número solo cuando una cuenta concreta se desborda.
+  //
+  // AL LLEGAR AL TOPE EL BOT NO SE CALLA: sigue con sus flujos y sus botones y
+  // solo deja de pensar respuestas nuevas. Degradar es mejor que cortar — el
+  // cliente sigue atendiendo mientras se habla con él para subirlo de plan.
+  if (await pasoElTopeDeIA(ctx)) return ai.fallback;
 
   const kbRows = await buscarConocimiento(ctx.db, ctx.orgId, ctx.botId, pregunta);
   const kb = kbRows.length
