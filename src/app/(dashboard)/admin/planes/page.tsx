@@ -25,13 +25,19 @@ export default async function AdminPlanesPage({
 
   // Con permisos elevados para poder listar todas las organizaciones
   const admin = createAdminClient();
-  const [{ data: orgs }, { data: custom }] = await Promise.all([
+  const [{ data: orgs }, { data: custom }, { data: publicos }] = await Promise.all([
     admin.from("organizations").select("id, name, plan").order("name"),
     admin.from("plans").select("*").eq("is_custom", true).order("sort").order("name"),
+    // Los tres planes de siempre. También hay que registrarlos en Stripe, y
+    // hasta ahora no había forma de hacerlo desde aquí: solo aparecían los
+    // planes a la medida, así que los públicos se quedaban sin precio en
+    // Stripe y el botón de contratar del cliente no funcionaba nunca.
+    admin.from("plans").select("*").eq("is_custom", false).order("sort"),
   ]);
 
   const organizaciones = (orgs as any[]) ?? [];
   const planes = (custom as any[]) ?? [];
+  const planesPublicos = (publicos as any[]) ?? [];
   const orgName = (id: string) => organizaciones.find((o) => o.id === id)?.name ?? "—";
   const stripeOn = stripeConfigured();
 
@@ -138,6 +144,62 @@ export default async function AdminPlanesPage({
 
           {/* Lista */}
           <div className="lg:col-span-2">
+            {/* ── Los planes de siempre ──────────────────────────────────────
+                Sin registrarlos en Stripe, el botón "Contratar" del cliente no
+                puede funcionar: Stripe necesita un Precio suyo al que cobrar. */}
+            <h3 className="mb-1 font-display text-lg font-semibold text-ink">Planes públicos</h3>
+            <p className="mb-3 text-xs text-ink-3">
+              Los que ve cualquier cliente. Tienen que estar registrados en Stripe para poder cobrarlos.
+            </p>
+
+            <div className="mb-8 space-y-2">
+              {planesPublicos.map((p) => {
+                const seCotiza = Number(p.price_monthly) <= 0;
+                return (
+                  <div key={p.code} className="card-l flex flex-wrap items-center justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-display font-semibold text-ink">{p.name}</span>
+                        {seCotiza ? (
+                          <span className="rounded-md bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">
+                            Se cotiza
+                          </span>
+                        ) : p.stripe_price_id ? (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-exito">
+                            <CheckCircle2 className="h-3 w-3" /> En Stripe
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-warning/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-aviso">
+                            <AlertTriangle className="h-3 w-3" /> Sin registrar
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-xs text-ink-3">
+                        {seCotiza ? "A la medida, se habla con ventas" : `${usd(p.price_monthly)}/mes`}
+                        {" · "}
+                        {Number(p.messages_month).toLocaleString("es-MX")} mensajes · {p.agents_included} agentes
+                      </div>
+                      {p.stripe_error && (
+                        <div className="mt-1 text-[11px] text-danger">Stripe: {p.stripe_error}</div>
+                      )}
+                    </div>
+
+                    {/* Un plan sin precio no se puede registrar: no hay nada que
+                        cobrar. Se negocia y se crea como plan a la medida. */}
+                    {!seCotiza && (
+                      <form action={resyncPlan} className="flex-none">
+                        <input type="hidden" name="code" value={p.code} />
+                        <button className="btn-soft px-3 py-1.5 text-xs" disabled={!stripeOn}>
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          {p.stripe_price_id ? "Actualizar en Stripe" : "Registrar en Stripe"}
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
             <h3 className="mb-3 font-display text-lg font-semibold text-ink">Planes creados</h3>
             {planes.length === 0 ? (
               <div className="card-l grid place-items-center p-12 text-center">
