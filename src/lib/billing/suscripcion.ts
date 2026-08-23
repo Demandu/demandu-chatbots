@@ -157,6 +157,81 @@ export async function abrirPagoDePlan(opts: {
 }
 
 /**
+ * Cancelar el plan. Sin contratos, sin penalización, sin llamar a nadie.
+ *
+ * NO SE CORTA EN EL ACTO, y es a propósito: el mes ya está pagado. Se le dice
+ * a Stripe que no renueve (`cancel_at_period_end`), la cuenta sigue trabajando
+ * hasta que termine el periodo y ahí se apaga sola. Cortar antes sería
+ * quedarnos con dinero por un servicio que dejamos de dar.
+ *
+ * Y como no se corta, se puede DESHACER: mientras el periodo siga corriendo,
+ * `reactivar()` lo devuelve todo a su sitio sin cobrar de nuevo. Buena parte de
+ * las cancelaciones son un enojo de un martes; conviene que el camino de vuelta
+ * exista y sea de un clic.
+ */
+export async function cancelarSuscripcion(opts: {
+  admin: any;
+  orgId: string;
+}): Promise<{ ok: boolean; error?: string; hasta?: string | null }> {
+  return cambiarRenovacion(opts.admin, opts.orgId, true);
+}
+
+/** Deshacer la cancelación, mientras el periodo pagado siga vivo. */
+export async function reactivarSuscripcion(opts: {
+  admin: any;
+  orgId: string;
+}): Promise<{ ok: boolean; error?: string; hasta?: string | null }> {
+  return cambiarRenovacion(opts.admin, opts.orgId, false);
+}
+
+async function cambiarRenovacion(
+  admin: any,
+  orgId: string,
+  cancelar: boolean,
+): Promise<{ ok: boolean; error?: string; hasta?: string | null }> {
+  if (!stripeConfigurado()) return { ok: false, error: "Los pagos no están habilitados." };
+
+  const { data: org } = await admin
+    .from("organizations")
+    .select("stripe_subscription_id, estado_cobro")
+    .eq("id", orgId)
+    .maybeSingle();
+
+  if (!org?.stripe_subscription_id) {
+    // En prueba todavía no hay nada que cancelar: no se ha cobrado nunca.
+    return {
+      ok: false,
+      error:
+        org?.estado_cobro === "prueba"
+          ? "Todavía estás en tu prueba gratuita: no hay nada que cancelar ni se te ha cobrado nada."
+          : "No encontramos una suscripción activa.",
+    };
+  }
+
+  try {
+    const sub = await stripe(`/subscriptions/${org.stripe_subscription_id}`, {
+      cancel_at_period_end: cancelar ? "true" : "false",
+    });
+
+    const hasta = sub?.current_period_end
+      ? new Date(sub.current_period_end * 1000).toISOString()
+      : null;
+
+    // Se guarda ya, sin esperar al webhook: el cliente acaba de dar el clic y
+    // tiene que ver el cambio al instante. El webhook confirmará lo mismo.
+    await admin
+      .from("organizations")
+      .update({ cancela_al_terminar: cancelar, ...(hasta ? { periodo_termina_at: hasta } : {}) })
+      .eq("id", orgId);
+
+    return { ok: true, hasta };
+  } catch (e: any) {
+    console.error("[suscripcion] renovación:", e?.message ?? e);
+    return { ok: false, error: "No pudimos completar el cambio. Inténtalo otra vez." };
+  }
+}
+
+/**
  * El portal de Stripe: cambiar tarjeta, ver recibos, cancelar.
  *
  * SE USA EL PORTAL DE STRIPE Y NO UNA PANTALLA PROPIA porque los datos de la

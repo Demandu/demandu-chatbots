@@ -105,6 +105,10 @@ async function aplicarSuscripcion(admin: any, orgId: string, sub: any) {
   const patch: any = {
     stripe_subscription_id: sub?.id ?? null,
     periodo_termina_at: aFecha(sub?.current_period_end),
+    // Canceló pero su mes sigue corriendo. La cuenta trabaja hasta el final
+    // del periodo; esto solo sirve para decírselo en pantalla y para ofrecerle
+    // deshacerlo mientras siga a tiempo.
+    cancela_al_terminar: !!sub?.cancel_at_period_end,
   };
   if (estado) patch.estado_cobro = estado;
   if (planCode) patch.plan = planCode;
@@ -120,6 +124,8 @@ async function aplicarSuscripcion(admin: any, orgId: string, sub: any) {
   if (estado === "cancelada") {
     patch.cancelada_at = new Date().toISOString();
     patch.gracia_termina_at = null;
+    // Ya terminó de verdad: la bandera de "va a cancelar" deja de tener sentido.
+    patch.cancela_al_terminar = false;
   }
 
   await admin.from("organizations").update(patch).eq("id", orgId);

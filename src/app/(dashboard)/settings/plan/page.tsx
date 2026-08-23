@@ -7,6 +7,7 @@ import { AddonCart } from "@/components/billing/AddonCart";
 import { stripeConfigured } from "@/lib/billing/stripe";
 import { BotonPlan } from "@/components/billing/BotonPlan";
 import { PortalPago } from "@/components/billing/PortalPago";
+import { CancelarPlan } from "@/components/billing/CancelarPlan";
 import { VENTAS, linkWhatsApp, linkCorreo } from "@/lib/contacto";
 import { Check, TriangleAlert, Sparkles } from "lucide-react";
 
@@ -107,20 +108,45 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
       )}
 
       {estado?.estado === "activa" && (
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-linea bg-tarjeta p-4">
-          <p className="text-sm text-ink-2">
-            Tu plan está al día
-            {estado.periodo_termina_at && (
-              <> · se renueva el{" "}
-                <b className="text-ink">
-                  {new Date(estado.periodo_termina_at).toLocaleDateString("es-MX", {
-                    day: "numeric", month: "long", year: "numeric",
-                  })}
-                </b>
-              </>
+        <div className="mb-5 rounded-2xl border border-linea bg-tarjeta p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {estado.cancela_al_terminar ? (
+              // Canceló, pero su mes sigue corriendo. Hay que decírselo claro
+              // y dejarle el camino de vuelta a un clic: buena parte de las
+              // cancelaciones son un enojo de un martes.
+              <p className="text-sm text-ink">
+                Cancelaste tu plan. Sigue funcionando hasta el{" "}
+                <b>
+                  {estado.periodo_termina_at
+                    ? new Date(estado.periodo_termina_at).toLocaleDateString("es-MX", {
+                        day: "numeric", month: "long", year: "numeric",
+                      })
+                    : "final del periodo"}
+                </b>{" "}
+                y después no se te vuelve a cobrar.
+              </p>
+            ) : (
+              <p className="text-sm text-ink-2">
+                Tu plan está al día
+                {estado.periodo_termina_at && (
+                  <> · se renueva el{" "}
+                    <b className="text-ink">
+                      {new Date(estado.periodo_termina_at).toLocaleDateString("es-MX", {
+                        day: "numeric", month: "long", year: "numeric",
+                      })}
+                    </b>
+                  </>
+                )}
+              </p>
             )}
-          </p>
-          <PortalPago />
+            <div className="flex flex-wrap items-center gap-3">
+              {!estado.cancela_al_terminar && <PortalPago />}
+              <CancelarPlan
+                cancelaAlTerminar={!!estado.cancela_al_terminar}
+                hasta={estado.periodo_termina_at ?? null}
+              />
+            </div>
+          </div>
         </div>
       )}
 
