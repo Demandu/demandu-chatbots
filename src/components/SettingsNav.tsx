@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  CreditCard, Crown, Bell, Zap, Palette, ListTree, Tags, Users,
+  CreditCard, Bell, Zap, Palette, ListTree, Tags, Users,
   Shuffle, UsersRound, KanbanSquare, Clock, Plug,
 } from "lucide-react";
 
@@ -26,7 +26,8 @@ const GRUPOS: {
     titulo: "Tu cuenta",
     items: [
       { href: "/settings/plan", label: "Plan y uso", icon: CreditCard },
-      { href: "/admin/planes", label: "Planes a la medida", icon: Crown, adminOnly: true },
+      // «Planes a la medida» se mudó a /superadmin: es del equipo de Demandu,
+      // no del cliente, y no tenía por qué colgar del menú de su Configuración.
       { href: "/settings/notifications", label: "Notificaciones", icon: Bell },
       { href: "/settings/hours", label: "Horario laboral", icon: Clock },
     ],
