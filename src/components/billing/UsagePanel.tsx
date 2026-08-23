@@ -104,11 +104,33 @@ export function UsagePanel({ usage, compact = false }: { usage: Usage; compact?:
         })}
       </div>
 
-      <p className="mt-3 text-[11px] text-ink-3">
-        Los <b className="text-ink-2">mensajes enviados</b> son los que salen de tu chatbot o de tu equipo. Lo que te
-        escriben tus clientes no consume tu paquete. El costo de las plantillas de WhatsApp lo cobra Meta
-        directamente a tu cuenta — Demandu no le agrega ningún cargo.
-      </p>
+      {/* La explicación va SIEMPRE debajo, no escondida en un globo al pasar
+          el mouse: en el celular no hay mouse, y es justo donde la mayoría de
+          nuestros clientes mira su consumo. */}
+      <div className="mt-4 space-y-2 rounded-xl border border-linea bg-suave p-3.5 text-[11px] leading-relaxed text-ink-2">
+        <p>
+          <b className="text-ink">Mensajes enviados.</b> Cada mensaje que sale de tu chatbot o de tu equipo.
+          Lo que te escriben tus clientes <b className="text-ink">no cuenta</b>: recibir siempre es gratis.
+        </p>
+        <p>
+          <b className="text-ink">Respuestas de Lana.</b> Son las que la inteligencia artificial{" "}
+          <b className="text-ink">piensa</b>, en vez de seguir un botón que ya escribiste tú. Cuestan aparte porque
+          la IA cuesta dinero cada vez que responde.
+        </p>
+        <p className="rounded-lg bg-tarjeta px-2.5 py-1.5">
+          Ejemplo: si Lana contesta una pregunta, eso gasta{" "}
+          <b className="text-ink">1 respuesta de Lana</b> y también{" "}
+          <b className="text-ink">1 mensaje</b> — porque es una respuesta pensada, y además es un mensaje que salió.
+          Si en cambio el cliente toca un botón de tu menú, eso solo gasta <b className="text-ink">1 mensaje</b>.
+        </p>
+        <p className="text-ink-3">
+          Los dos se reinician el día 1 de cada mes. Si se te acaba alguno, puedes comprar más sin cambiar de plan.
+        </p>
+        <p className="text-ink-3">
+          El costo de los mensajes de WhatsApp te lo cobra Meta directamente a ti, con su propia tarifa.
+          Demandu no le agrega ningún cargo.
+        </p>
+      </div>
     </div>
   );
 }

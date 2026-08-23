@@ -8,6 +8,7 @@ import { stripeConfigured } from "@/lib/billing/stripe";
 import { BotonPlan } from "@/components/billing/BotonPlan";
 import { PortalPago } from "@/components/billing/PortalPago";
 import { CancelarPlan } from "@/components/billing/CancelarPlan";
+import { BorrarCuenta } from "@/components/billing/BorrarCuenta";
 import { VENTAS, linkWhatsApp, linkCorreo } from "@/lib/contacto";
 import { Check, TriangleAlert, Sparkles } from "lucide-react";
 
@@ -25,7 +26,7 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
   const supabase = createClient();
   const orgId = await getCurrentOrgId();
 
-  const [usage, contratados, { data: plans }, { data: addons }, { data: cobro }] = await Promise.all([
+  const [usage, contratados, { data: plans }, { data: addons }, { data: cobro }, { data: org }] = await Promise.all([
     getUsage(supabase, orgId),
     getAddons(supabase, orgId),
     // Los planes públicos MÁS el plan a la medida de esta cuenta, si tiene uno.
@@ -35,6 +36,9 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
       .order("sort"),
     supabase.from("addons").select("*").eq("active", true).order("sort"),
     orgId ? supabase.rpc("estado_de_cobro", { p_org_id: orgId }) : Promise.resolve({ data: null }),
+    orgId
+      ? supabase.from("organizations").select("name, datos_borrados_at").eq("id", orgId).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   const todos = (plans as any[]) ?? [];
@@ -326,6 +330,15 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
           <Link href="/bots" className="font-semibold text-pink hover:underline">Revisa tus chatbots →</Link>
         </p>
       </div>
+
+      {/* Sus datos son suyos: llevárselos y borrarlos va al final de la
+          pantalla, sin esconderlo. Si ya los borró, no tiene sentido volver
+          a ofrecérselo. */}
+      {(org as any)?.name && !(org as any)?.datos_borrados_at && (
+        <div className="mt-6">
+          <BorrarCuenta negocio={(org as any).name} />
+        </div>
+      )}
     </div>
   );
 }

@@ -50,6 +50,12 @@ export default async function SuperadminLayout({ children }: { children: React.R
             Planes
           </Link>
           <Link
+            href="/superadmin/bajas"
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+          >
+            Bajas
+          </Link>
+          <Link
             href="/dashboard"
             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
           >

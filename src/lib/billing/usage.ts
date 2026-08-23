@@ -76,12 +76,23 @@ export async function getUsage(supabase: any, orgId: string | null): Promise<Usa
     if (error || !row) return EMPTY;
 
     const metrics: Metric[] = [
+      // DOS BARRAS, NO UNA. Son dos cosas distintas y mezclarlas fue el error
+      // anterior: una respuesta de IA se cobraba como 3 mensajes y el cliente
+      // veía su paquete vaciarse sin entender por qué. Ahora cada barra mide
+      // una sola cosa y se explica en una frase.
       metric(
         "messages",
         "Mensajes enviados",
-        "Mensajes que enviaron tu chatbot y tu equipo este mes. Los que escriben tus clientes no cuentan.",
+        "Cada mensaje que sale de tu chatbot o de tu equipo. Lo que te escriben tus clientes no cuenta: eso es gratis.",
         Number(row.messages_used ?? 0),
         Number(row.messages_limit ?? 0),
+      ),
+      metric(
+        "ai",
+        "Respuestas de Lana",
+        "Cuando Lana piensa la respuesta en vez de seguir un botón del flujo. Cada una gasta además 1 mensaje.",
+        Number(row.ai_used ?? 0),
+        Number(row.ai_limit ?? 0),
       ),
       metric(
         "storage",
