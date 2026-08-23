@@ -137,6 +137,20 @@ export async function abrirPagoDePlan(opts: {
       allow_promotion_codes: "true",
       // Para poder emitir facturas con los datos fiscales del cliente.
       "billing_address_collection": "auto",
+      // TODO SE COBRA EN DÓLARES. Decisión de negocio, no técnica.
+      //
+      // Stripe tiene «Adaptive Pricing»: convierte el precio a la moneda del
+      // cliente y le mete entre un 2% y un 4% de conversión dentro del tipo de
+      // cambio. En México eso ayuda a vender. En PANAMÁ es un despropósito: el
+      // balboa está fijado 1:1 con el dólar por ley, y Stripe igual aplicaba
+      // 1 USD = 1.0400 PAB. Un panameño veía B/. 61.36 donde dice $59 — casi
+      // dos dólares y medio de más por convertir a una moneda que ES el dólar.
+      //
+      // El panel de Stripe no permite excluir un país: es todo o nada. Este
+      // parámetro sí es por sesión y MANDA SOBRE EL PANEL, así que la decisión
+      // vive aquí, en el código, donde se revisa — y no depende de que nadie
+      // vuelva a mover un interruptor por error.
+      "adaptive_pricing[enabled]": "false",
     };
 
     // Los días de prueba que le queden, respetados.

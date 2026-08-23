@@ -93,9 +93,31 @@ export async function revisarServicios(origen: string): Promise<Chequeo[]> {
     }),
 
     medir("meta-whatsapp", async (señal) => {
-      if (!metaToken) return { ok: null as any, detalle: "No hay token de Meta en este entorno" };
+      // NO HACE FALTA CONFIGURAR NINGÚN TOKEN PARA ESTO.
+      //
+      // Meta no tiene un punto público que diga «estoy bien»: todo pide
+      // credencial. La tentación es meter un token de plataforma en una
+      // variable de entorno — un secreto más que rotar, que caduca, y que un
+      // día caduca sin que nadie se entere y hace que el tablero mienta.
+      //
+      // Se usa el token de un cliente que YA está conectado. Si ese token
+      // sirve, Meta está en pie; y si el mensaje de error es de credencial en
+      // vez de caída, también nos interesa saberlo — significa que a ese
+      // cliente se le venció la conexión.
+      const token =
+        metaToken ||
+        (await createAdminClient()
+          .from("whatsapp_channels")
+          .select("access_token")
+          .not("access_token", "is", null)
+          .limit(1)
+          .maybeSingle()
+          .then((r: any) => r?.data?.access_token ?? ""));
+
+      if (!token) return { ok: null as any, detalle: "Todavía no hay ningún WhatsApp conectado que comprobar" };
+
       const r = await fetch("https://graph.facebook.com/v21.0/me", {
-        headers: { Authorization: `Bearer ${metaToken}` },
+        headers: { Authorization: `Bearer ${token}` },
         signal: señal,
         cache: "no-store",
       });

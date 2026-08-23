@@ -70,6 +70,11 @@ export async function createCheckout(opts: {
     client_reference_id: opts.orgId,
     "metadata[org_id]": opts.orgId,
     allow_promotion_codes: "true",
+    // En dólares, igual que los planes. Si los complementos se cobraran en
+    // moneda local y el plan no, el mismo cliente vería dos monedas en la
+    // misma cuenta — y eso se lee como que le están cambiando el precio.
+    // El porqué de fondo está explicado en `suscripcion.ts`.
+    "adaptive_pricing[enabled]": "false",
   };
   if (opts.email) params.customer_email = opts.email;
 
