@@ -2,8 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listarFacturas, estadoDeFactura } from "@/lib/billing/facturas";
-import { reenviar } from "../acciones";
-import { ArrowLeft, FileText, ExternalLink, Send, TriangleAlert, Check } from "lucide-react";
+import { reenviar, restablecer } from "../acciones";
+import { ArrowLeft, FileText, ExternalLink, Send, TriangleAlert, Check, KeyRound, Mail, Phone, User } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -42,14 +42,14 @@ export default async function FichaCliente({
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { enviada?: string; error?: string };
+  searchParams: { enviada?: string; error?: string; clave?: string; reset?: string };
 }) {
   const admin = createAdminClient();
 
   const { data: org } = await admin
     .from("organizations")
     .select(
-      "id, name, plan, estado_cobro, created_at, periodo_termina_at, prueba_termina_at, gracia_termina_at, cancela_al_terminar, cancelada_at, motivo_cancelacion, stripe_customer_id, stripe_subscription_id, tope_ia, datos_borrados_at",
+      "id, name, plan, estado_cobro, created_at, periodo_termina_at, prueba_termina_at, gracia_termina_at, cancela_al_terminar, cancelada_at, motivo_cancelacion, stripe_customer_id, stripe_subscription_id, tope_ia, datos_borrados_at, contacto_nombre, contacto_email, contacto_telefono, notas_internas",
     )
     .eq("id", params.id)
     .maybeSingle();
@@ -119,6 +119,65 @@ export default async function FichaCliente({
           {org.motivo_cancelacion && <> Motivo que dio: «{org.motivo_cancelacion}».</>}
         </div>
       )}
+
+      {/* LA CLAVE TEMPORAL SE ENSEÑA UNA VEZ Y NO SE GUARDA. Llega en la
+          dirección desde la acción que la generó, así que al recargar
+          desaparece — que es exactamente lo que tiene que pasar. */}
+      {searchParams?.clave && (
+        <div className="mb-6 rounded-xl border border-violet/40 bg-violet/5 p-5">
+          <div className="mb-2 flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-violet" />
+            <h3 className="font-display text-base font-semibold text-ink">
+              {searchParams.reset ? "Nueva contraseña temporal" : "Contraseña temporal"}
+            </h3>
+          </div>
+          <p className="mb-3 text-sm text-ink-2">
+            Dictale esto al cliente <b className="text-ink">ahora</b>. Al recargar esta página ya no vas a poder
+            verla, y no queda guardada en ninguna parte.
+            {searchParams.reset && " Su contraseña anterior ya no funciona."}
+          </p>
+          <p className="select-all rounded-lg bg-tarjeta px-4 py-3 font-mono text-2xl font-bold tracking-[0.2em] text-ink">
+            {searchParams.clave}
+          </p>
+          <p className="mt-2 text-[11px] text-ink-3">
+            Entra con {org.contacto_email ?? "su correo"} y esta contraseña. La plataforma le va a pedir que
+            elija la suya antes de dejarlo pasar.
+          </p>
+        </div>
+      )}
+
+      <div className="card-l mb-6 p-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-display text-base font-semibold text-ink">Contacto</h3>
+          <form action={restablecer}>
+            <input type="hidden" name="org_id" value={org.id} />
+            <button className="btn-soft inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
+              <KeyRound className="h-3.5 w-3.5" /> Generar contraseña temporal
+            </button>
+          </form>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            [User, "Persona", org.contacto_nombre],
+            [Mail, "Correo", org.contacto_email],
+            [Phone, "Teléfono", org.contacto_telefono],
+          ].map(([Icono, etiqueta, valor]: any) => (
+            <div key={etiqueta} className="flex items-start gap-2">
+              <Icono className="mt-0.5 h-3.5 w-3.5 flex-none text-ink-3" />
+              <div className="min-w-0">
+                <p className="text-[11px] text-ink-3">{etiqueta}</p>
+                <p className="truncate text-sm text-ink">{valor || "—"}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        {org.notas_internas && (
+          <div className="mt-4 rounded-lg bg-suave px-3.5 py-2.5">
+            <p className="mb-0.5 text-[11px] font-semibold text-ink-3">Notas internas · el cliente no las ve</p>
+            <p className="whitespace-pre-wrap text-sm text-ink-2">{org.notas_internas}</p>
+          </div>
+        )}
+      </div>
 
       <h3 className="mb-1 font-display text-lg font-semibold text-ink">Facturas</h3>
       <p className="mb-3 max-w-3xl text-xs text-ink-3">

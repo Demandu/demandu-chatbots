@@ -18,7 +18,7 @@ import { createClient } from "@/lib/supabase/client";
  * `/auth/callback`, que canjea el código por una sesión; por eso basta con
  * `updateUser` y no hace falta ningún token en esta pantalla.
  */
-export function FormularioDeContrasena() {
+export function FormularioDeContrasena({ temporal = false }: { temporal?: boolean }) {
   const router = useRouter();
   const [clave, setClave] = useState("");
   const [repetida, setRepetida] = useState("");
@@ -33,7 +33,26 @@ export function FormularioDeContrasena() {
     if (clave !== repetida) return setError("Las dos contraseñas no coinciden.");
 
     setGuardando(true);
-    const { error } = await createClient().auth.updateUser({ password: clave });
+    const supabase = createClient();
+    const { error } = await supabase.auth.updateUser({ password: clave });
+
+    if (!error) {
+      // Se apaga la bandera de «entró con clave temporal». Va DESPUÉS de que
+      // el cambio de contraseña haya salido bien: si se apagara antes y el
+      // cambio fallara, la persona se quedaría dentro con la clave que le
+      // dictaron por teléfono y sin nada que la obligue a cambiarla.
+      //
+      // Si esta línea falla, no se le corta el paso: como mucho se le volverá
+      // a pedir que elija contraseña la próxima vez. Molesto, no grave.
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase
+          .from("memberships")
+          .update({ debe_cambiar_contrasena: false })
+          .eq("user_id", user.id);
+      }
+    }
+
     setGuardando(false);
 
     if (error) {
@@ -58,11 +77,23 @@ export function FormularioDeContrasena() {
         <Logo />
 
         <h1 className="mt-10 font-display text-3xl font-extrabold leading-tight text-white">
-          Ponle una contraseña a tu cuenta
+          {temporal ? "Elige tu contraseña" : "Ponle una contraseña a tu cuenta"}
         </h1>
+        {/* Dos textos porque son dos situaciones distintas y la persona sabe
+            en cuál está. A quien le dictaron una clave por teléfono, leer «te
+            invitaron» le hace dudar de si está en el sitio correcto. */}
         <p className="mt-3 text-sm leading-relaxed text-muted">
-          Te invitaron a Demandu. Elige tu contraseña — <b className="text-white">solo tú la vas a
-          saber</b>, ni siquiera quien te invitó.
+          {temporal ? (
+            <>
+              Entraste con una contraseña temporal que te dio el equipo. Elige ahora la tuya —{" "}
+              <b className="text-white">a partir de aquí solo tú la vas a saber</b>, ni siquiera nosotros.
+            </>
+          ) : (
+            <>
+              Te invitaron a Demandu. Elige tu contraseña — <b className="text-white">solo tú la vas a
+              saber</b>, ni siquiera quien te invitó.
+            </>
+          )}
         </p>
 
         <form onSubmit={enviar} className="mt-8 space-y-3.5">

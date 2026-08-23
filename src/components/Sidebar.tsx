@@ -26,7 +26,23 @@ const CONFIG = [
   { href: "/settings/ai", label: "Lana IA", icon: Sparkles },
 ];
 
-export function Sidebar() {
+/** Lo justo para pintar la tarjeta de abajo. Lo calcula el marco (servidor). */
+export type ResumenDePlan = {
+  nombre: string;
+  usados: number;
+  limite: number;
+  pct: number;
+};
+
+function corto(n: number): string {
+  if (n >= 1000) {
+    const k = n / 1000;
+    return `${k % 1 === 0 ? k : k.toFixed(1)}k`;
+  }
+  return String(n);
+}
+
+export function Sidebar({ plan }: { plan?: ResumenDePlan | null }) {
   const pathname = usePathname();
   // Gente esperando a que alguien del equipo le conteste. Va aquí y no solo en
   // un aviso emergente porque el aviso se lo lleva el viento: si el agente
@@ -80,18 +96,50 @@ export function Sidebar() {
         <Item key={i.href} {...i} />
       ))}
 
-      <div className="mt-auto card p-3">
-        <div className="flex items-center justify-between text-xs text-muted">
-          <span>
-            Plan <b className="text-white">Crecimiento</b>
-          </span>
-          <span>1.9k / 3k</span>
-        </div>
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-border">
-          <span className="block h-full w-[64%] bg-gradient-to-r from-pink to-violet" />
-        </div>
-        <p className="mt-2 text-xs text-muted-2">Conversaciones este mes</p>
-      </div>
+      {/* ESTA TARJETA ESTUVO MINTIENDO. Nació como maqueta con números
+          inventados a fuego —«Plan Crecimiento · 1.9k / 3k conversaciones»— y
+          nunca se conectó, así que TODOS los clientes veían el mismo consumo
+          falso, y encima con el nombre de un plan que no existe y contando
+          conversaciones cuando lo que se cobra son mensajes.
+
+          Ahora sale de `org_usage`, la misma fuente que la pantalla de Plan,
+          para que los dos sitios no puedan volver a decir cosas distintas.
+          Si no hay dato, la tarjeta NO se pinta: un hueco es honesto, un
+          número inventado no. */}
+      {plan && (
+        <Link href="/settings/plan" className="mt-auto card p-3 transition hover:border-pink/35">
+          <div className="flex items-center justify-between text-xs text-muted">
+            <span>
+              Plan <b className="text-white">{plan.nombre}</b>
+            </span>
+            {plan.limite > 0 && (
+              <span>
+                {corto(plan.usados)} / {corto(plan.limite)}
+              </span>
+            )}
+          </div>
+          {plan.limite > 0 && (
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-border">
+              <span
+                className={cn(
+                  "block h-full rounded-full transition-all",
+                  plan.pct >= 100
+                    ? "bg-danger"
+                    : plan.pct >= 85
+                      ? "bg-warning"
+                      : "bg-gradient-to-r from-pink to-violet",
+                )}
+                // El mínimo del 2% es para que con poco consumo se vea que la
+                // barra existe, en vez de parecer que está rota.
+                style={{ width: `${Math.max(2, Math.min(100, plan.pct))}%` }}
+              />
+            </div>
+          )}
+          <p className="mt-2 text-xs text-muted-2">
+            {plan.limite > 0 ? "Mensajes enviados este mes" : "Mensajes sin límite"}
+          </p>
+        </Link>
+      )}
     </aside>
   );
 }

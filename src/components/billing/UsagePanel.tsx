@@ -49,16 +49,53 @@ export function UsagePanel({ usage, compact = false }: { usage: Usage; compact?:
         </Link>
       </div>
 
-      {usage.anyOver && (
-        <div className="mb-4 rounded-xl border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm text-danger">
-          Llegaste al límite en algo de tu plan. Amplía para que tus chatbots sigan trabajando sin cortes.
-        </div>
-      )}
-      {!usage.anyOver && usage.anyNear && (
-        <div className="mb-4 rounded-xl border border-warning/50 bg-warning/10 px-4 py-2.5 text-sm text-ink-2">
-          Te estás acercando al límite de tu plan. Considera ampliarlo antes de que se agote.
-        </div>
-      )}
+      {/* EL AVISO TIENE QUE DECIR QUÉ SE ACABÓ Y QUÉ PASA POR ESO.
+          Antes decía siempre lo mismo —«Amplía para que tus chatbots sigan
+          trabajando sin cortes»— aunque lo agotado fueran las licencias de
+          agente, que no paran ningún chatbot. Un cliente con 3 de 3 agentes
+          veía una alarma roja avisándole de un corte que no iba a ocurrir.
+          Una alarma que exagera se aprende a ignorar, y el día que sí se
+          acaben los mensajes ya nadie la lee. */}
+      {(() => {
+        const agotadas = usage.metrics.filter((m) => m.over);
+        const cerca = usage.metrics.filter((m) => m.near);
+        if (!agotadas.length && !cerca.length) return null;
+
+        // Solo quedarse sin MENSAJES corta la atención. Lo demás estorba, pero
+        // el bot sigue contestando — y decirlo así evita el susto de balde.
+        const sinMensajes = agotadas.some((m) => m.key === "messages");
+        const lista = (ms: typeof usage.metrics) =>
+          ms.map((m) => m.label.toLowerCase()).join(" y ");
+
+        if (agotadas.length) {
+          return (
+            <div
+              className={`mb-4 rounded-xl border px-4 py-2.5 text-sm ${
+                sinMensajes ? "border-danger/40 bg-danger/10 text-danger" : "border-warning/50 bg-warning/10 text-ink-2"
+              }`}
+            >
+              {sinMensajes ? (
+                <>
+                  <b>Se te acabaron los mensajes del mes.</b> Tus chatbots dejarán de responder hasta que
+                  amplíes o empiece el mes siguiente.
+                </>
+              ) : (
+                <>
+                  Llegaste al límite de <b className="text-ink">{lista(agotadas)}</b>. Tus chatbots siguen
+                  respondiendo con normalidad — esto solo te impide agregar más.
+                </>
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div className="mb-4 rounded-xl border border-warning/50 bg-warning/10 px-4 py-2.5 text-sm text-ink-2">
+            Te estás acercando al límite de <b className="text-ink">{lista(cerca)}</b>. Buen momento para
+            ampliar, sin prisa.
+          </div>
+        );
+      })()}
 
       <div className={`grid gap-3 ${compact ? "sm:grid-cols-3" : "sm:grid-cols-2 lg:grid-cols-5"}`}>
         {usage.metrics.map((m) => {

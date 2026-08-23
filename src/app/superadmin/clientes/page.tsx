@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, UserPlus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +45,7 @@ export default async function ClientesPage() {
     admin
       .from("organizations")
       .select(
-        "id, name, plan, estado_cobro, created_at, periodo_termina_at, prueba_termina_at, cancela_al_terminar, cancelada_at, stripe_customer_id, datos_borrados_at",
+        "id, name, plan, estado_cobro, created_at, periodo_termina_at, prueba_termina_at, cancela_al_terminar, cancelada_at, stripe_customer_id, datos_borrados_at, contacto_nombre, contacto_email, contacto_telefono",
       )
       .order("created_at", { ascending: false }),
     admin.from("plans").select("code, name, price_monthly"),
@@ -88,11 +88,18 @@ export default async function ClientesPage() {
 
   return (
     <div>
-      <h2 className="font-display text-2xl font-bold text-ink">Clientes</h2>
-      <p className="mb-5 mt-1 max-w-3xl text-sm text-ink-2">
-        Todas las cuentas de la plataforma. Entra en una para ver sus facturas, su consumo y el estado de su
-        cuenta de Meta.
-      </p>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-ink">Clientes</h2>
+          <p className="mt-1 max-w-2xl text-sm text-ink-2">
+            Todas las cuentas de la plataforma. Entra en una para ver sus facturas, su consumo y el estado de
+            su cuenta de Meta.
+          </p>
+        </div>
+        <Link href="/superadmin/clientes/nuevo" className="btn-primary inline-flex items-center gap-1.5 px-4">
+          <UserPlus className="h-4 w-4" /> Dar de alta un cliente
+        </Link>
+      </div>
 
       <div className="mb-6 grid gap-3 sm:grid-cols-4">
         {[
@@ -109,10 +116,11 @@ export default async function ClientesPage() {
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-linea">
-        <table className="w-full min-w-[860px] text-left text-sm">
+        <table className="w-full min-w-[1000px] text-left text-sm">
           <thead className="bg-suave text-xs uppercase tracking-wide text-ink-3">
             <tr>
               <th className="px-4 py-3">Cliente</th>
+              <th className="px-4 py-3">Contacto</th>
               <th className="px-4 py-3">Plan</th>
               <th className="px-4 py-3">Al mes</th>
               <th className="px-4 py-3">Estado</th>
@@ -130,6 +138,13 @@ export default async function ClientesPage() {
                     {!c.stripe_customer_id && (
                       <div className="text-xs text-ink-3">todavía sin cliente en Stripe</div>
                     )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="text-ink-2">{c.contacto_nombre || "—"}</div>
+                    <div className="text-xs text-ink-3">
+                      {c.contacto_email || ""}
+                      {c.contacto_telefono ? ` · ${c.contacto_telefono}` : ""}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-ink-2">{c.planNombre}</td>
                   <td className="px-4 py-3 text-ink-2">
@@ -166,7 +181,7 @@ export default async function ClientesPage() {
             })}
             {!filas.length && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-sm text-ink-3">
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-3">
                   Todavía no hay clientes.
                 </td>
               </tr>
