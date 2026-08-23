@@ -44,6 +44,12 @@ export default async function SuperadminLayout({ children }: { children: React.R
 
         <nav className="flex items-center gap-1.5">
           <Link
+            href="/superadmin/clientes"
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+          >
+            Clientes
+          </Link>
+          <Link
             href="/superadmin/planes"
             className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
           >
