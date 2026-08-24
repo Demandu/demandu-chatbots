@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { anotarComoYo } from "@/lib/bitacora";
 
 /**
  * El freno de mano de la IA, por cliente.
@@ -29,5 +30,14 @@ export async function ponerTopeIA(formData: FormData): Promise<void> {
   const tope = crudo === "" ? null : Math.max(0, Math.floor(Number(crudo) || 0));
 
   await createAdminClient().from("organizations").update({ tope_ia: tope }).eq("id", orgId);
+
+  // Ponerle un freno a la IA de un cliente le cambia lo que su bot puede
+  // hacer. Eso no puede pasar sin quedar apuntado.
+  await anotarComoYo({
+    orgId,
+    accion: tope === null ? "quitó el tope de IA" : "puso un tope de IA",
+    detalle: { tope },
+  });
+
   revalidatePath("/superadmin/consumo");
 }

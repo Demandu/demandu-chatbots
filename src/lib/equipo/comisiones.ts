@@ -46,6 +46,8 @@ export type Resumen = {
   revisadas: number;
   apuntadas: number;
   saltadas: number;
+  /** Por qué no salió nada, en cristiano. Vacío si sí salió algo. */
+  porQueNada?: string;
   error?: string;
 };
 
@@ -76,19 +78,30 @@ export async function devengarComisiones(desde?: Date): Promise<Resumen> {
     // Quién atiende a cada cliente, y con qué porcentaje.
     const { data: orgs } = await admin
       .from("organizations")
-      .select("id, stripe_customer_id, atendido_por")
+      .select("id, stripe_customer_id, atendido_por, comision_pct")
       .not("atendido_por", "is", null);
 
-    const porCliente = new Map<string, { orgId: string; miembroId: string }>();
+    const porCliente = new Map<string, { orgId: string; miembroId: string; pct: number | null }>();
     for (const o of ((orgs as any[]) ?? [])) {
       if (o.stripe_customer_id) {
-        porCliente.set(o.stripe_customer_id, { orgId: o.id, miembroId: o.atendido_por });
+        porCliente.set(o.stripe_customer_id, {
+          orgId: o.id,
+          miembroId: o.atendido_por,
+          pct: o.comision_pct,
+        });
       }
     }
 
     // Si nadie tiene cartera asignada no hay nada que devengar, y así nos
     // ahorramos pedirle a Stripe una lista que no vamos a usar.
-    if (!porCliente.size) return { revisadas: 0, apuntadas: 0, saltadas: 0 };
+    if (!porCliente.size) {
+      return {
+        revisadas: 0, apuntadas: 0, saltadas: 0,
+        porQueNada:
+          "Ningún cliente tiene vendedor asignado todavía, o los que lo tienen aún no han pagado en Stripe. " +
+          "Asigna clientes desde esta misma pantalla y vuelve a calcular.",
+      };
+    }
 
     const { data: equipo } = await admin
       .from("equipo_demandu")
@@ -127,8 +140,9 @@ export async function devengarComisiones(desde?: Date): Promise<Resumen> {
 
       if (base <= 0) { saltadas++; continue; }
 
-      // El porcentaje del miembro pisa la escala; si no tiene, manda la escala.
-      let pct = miembro.pct;
+      // Lo más específico gana: primero lo pactado con ESTE cliente, luego lo
+      // pactado con ESE vendedor, y si no hay nada, la escala.
+      let pct = rel.pct ?? miembro.pct;
       if (pct == null) {
         const { data } = await admin.rpc("comision_de", { p_precio: precioMensual });
         pct = Number(data ?? 0);
@@ -157,7 +171,16 @@ export async function devengarComisiones(desde?: Date): Promise<Resumen> {
       apuntadas++;
     }
 
-    return { revisadas: lista.length, apuntadas, saltadas };
+    return {
+      revisadas: lista.length,
+      apuntadas,
+      saltadas,
+      porQueNada: apuntadas
+        ? undefined
+        : lista.length === 0
+          ? "Stripe no tiene ninguna factura pagada en los últimos 45 días."
+          : `Se revisaron ${lista.length} factura(s) pagada(s), pero ninguna es de un cliente con vendedor asignado, o ya estaban apuntadas.`,
+    };
   } catch (e: any) {
     return { revisadas: 0, apuntadas: 0, saltadas: 0, error: e?.message ?? "No se pudo calcular" };
   }

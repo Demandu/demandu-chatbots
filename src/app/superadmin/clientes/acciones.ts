@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { reenviarFactura } from "@/lib/billing/facturas";
 import { crearCliente, nuevaContrasenaTemporal } from "@/lib/clientes/alta";
+import { anotarComoYo } from "@/lib/bitacora";
+import { abrirSoporte } from "@/lib/soporte";
 
 /**
  * Cada acción vuelve a comprobar el permiso aunque el marco de /superadmin ya
@@ -61,6 +63,12 @@ export async function crear(formData: FormData): Promise<void> {
     redirect(`/superadmin/clientes/nuevo?error=${encodeURIComponent(r.error)}`);
   }
 
+  await anotarComoYo({
+    orgId: r.orgId,
+    accion: "dio de alta un cliente",
+    detalle: { empresa: String(formData.get("empresa") ?? ""), correo: String(formData.get("email") ?? "") },
+  });
+
   revalidatePath("/superadmin/clientes");
   redirect(`/superadmin/clientes/${r.orgId}?clave=${encodeURIComponent(r.contrasena)}`);
 }
@@ -73,10 +81,42 @@ export async function restablecer(formData: FormData): Promise<void> {
   if (!org) return;
 
   const r = await nuevaContrasenaTemporal(org);
+
+  // Se anota SIEMPRE, salga bien o mal, y el cliente lo ve. Cambiarle la
+  // contraseña a alguien sin que quede rastro es justo lo que no puede pasar.
+  await anotarComoYo({
+    orgId: org,
+    accion: r.ok ? "generó una contraseña temporal para el dueño" : "intentó generar una contraseña temporal",
+    detalle: r.ok ? {} : { error: r.error },
+    visibleParaElCliente: true,
+  });
+
   const q = r.ok
     ? `clave=${encodeURIComponent(r.contrasena)}&reset=1`
     : `error=${encodeURIComponent(r.error)}`;
 
   revalidatePath(`/superadmin/clientes/${org}`);
   redirect(`/superadmin/clientes/${org}?${q}`);
+}
+
+/**
+ * Entra a la cuenta de un cliente para dar soporte.
+ *
+ * Manda al panel del CLIENTE, no a otra pantalla del superadmin: la idea es
+ * ver lo que él ve. El aviso de que estás dentro de una cuenta ajena lo pinta
+ * el marco del panel y no se puede quitar.
+ */
+export async function entrarComoSoporte(formData: FormData): Promise<void> {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const org = String(formData.get("org_id") ?? "");
+  if (!org) return;
+
+  const r = await abrirSoporte(user.id, org);
+  if (!r.ok) {
+    redirect(`/superadmin/clientes/${org}?error=${encodeURIComponent(r.error)}`);
+  }
+  redirect("/dashboard");
 }

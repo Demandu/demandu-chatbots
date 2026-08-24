@@ -18,7 +18,7 @@
  * te toca, la barra lateral; y prohibirlo de verdad, cada pantalla.
  */
 
-export type Rol = "owner" | "admin" | "developer" | "agent" | "viewer";
+export type Rol = "owner" | "admin" | "coordinador" | "developer" | "agent" | "viewer";
 
 export type ClavePermiso =
   | "chatbots"
@@ -63,8 +63,9 @@ export const TODAS: ClavePermiso[] = PERMISOS.map((p) => p.clave);
 export const ROLES: { valor: Rol; nombre: string; descripcion: string }[] = [
   { valor: "owner", nombre: "Dueño", descripcion: "Acceso total. Solo puede haber uno y no se le pueden quitar permisos." },
   { valor: "admin", nombre: "Administrador", descripcion: "Puede con todo salvo tocar al dueño." },
-  { valor: "agent", nombre: "Atención al cliente", descripcion: "Atiende conversaciones y mueve el embudo. No entra a la configuración." },
-  { valor: "developer", nombre: "Desarrollo", descripcion: "Arma chatbots, conexiones e integraciones. No atiende clientes." },
+  { valor: "coordinador", nombre: "Coordinador", descripcion: "Lleva la operación del día a día. No arma chatbots ni toca la IA, y no entra a la facturación." },
+  { valor: "agent", nombre: "Atención al cliente", descripcion: "Atiende conversaciones, mueve el embudo y edita contactos. Nada más." },
+  { valor: "developer", nombre: "Desarrollo", descripcion: "Arma chatbots, entrena a Lana y conecta las APIs. No atiende clientes." },
   { valor: "viewer", nombre: "Solo lectura", descripcion: "Mira y no toca." },
 ];
 
@@ -72,12 +73,41 @@ export const ROLES: { valor: Rol; nombre: string; descripcion: string }[] = [
  * Lo que trae cada rol de fábrica. El dueño no aparece: siempre tiene todo, y
  * ponerlo aquí invitaría a que alguien "editara" esa lista algún día.
  */
+const DE_DESARROLLO: ClavePermiso[] = ["chatbots", "ia", "conexiones"];
+
+/**
+ * Lo que el coordinador NO trae de fábrica aunque sea «todo menos desarrollo».
+ *
+ * Decidido con el dueño: un coordinador lleva la operación del día a día, no
+ * la caja. «Plan y facturación» deja cambiar el plan y contratar complementos;
+ * «Eliminar información» borra conversaciones y contactos sin vuelta atrás.
+ * Ninguna de las dos es coordinar.
+ *
+ * No es una prohibición: el dueño puede dárselas a una persona concreta
+ * marcando la casilla. Lo que cambia aquí es con qué nace el rol.
+ */
+const FUERA_DEL_COORDINADOR: ClavePermiso[] = ["plan", "borrar"];
+
 const POR_ROL: Record<Exclude<Rol, "owner">, ClavePermiso[]> = {
   admin: [...TODAS],
+  // «Todo menos lo de desarrollo». Se calcula restando en vez de escribir la
+  // lista a mano: así, el día que nazca un permiso nuevo, el coordinador lo
+  // hereda solo — y no se queda fuera de algo por un olvido al añadirlo.
+  coordinador: TODAS.filter(
+    (c) => !DE_DESARROLLO.includes(c) && !FUERA_DEL_COORDINADOR.includes(c),
+  ),
   agent: ["conversaciones", "embudo", "contactos"],
-  developer: ["chatbots", "ia", "conexiones", "resultados"],
+  developer: [...DE_DESARROLLO],
   viewer: ["embudo", "contactos", "resultados"],
 };
+
+/**
+ * ⚠️ ESTA TABLA ESTÁ REPETIDA EN POSTGRES, en `auth_puede(text)`.
+ *
+ * No es descuido: la base tiene que poder decidir igual que la interfaz para
+ * sostener las políticas de RLS sin reescribir el criterio en dos idiomas.
+ * SI SE CAMBIA AQUÍ, HAY QUE CAMBIARLA ALLÁ (migración 0049).
+ */
 
 /** Lo guardado en `memberships.permisos`: solo lo que se cambió a mano. */
 export type Ajustes = Partial<Record<ClavePermiso, boolean>> | null | undefined;

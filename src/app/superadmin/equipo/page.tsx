@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PERMISOS } from "@/lib/permisos";
 import {
-  crearMiembro, guardarMiembro, asignarCliente, calcularComisiones, marcarPagadas,
+  crearMiembro, guardarMiembro, asignarCliente, calcularComisiones, marcarPagadas, comisionDeCliente,
 } from "./acciones";
 import { KeyRound, TriangleAlert, Calculator, Banknote, UserPlus, Building2, Users } from "lucide-react";
 
@@ -25,7 +25,7 @@ const usd0 = (v: number) => `$${(v ?? 0).toLocaleString("es-MX", { maximumFracti
 export default async function EquipoPage({
   searchParams,
 }: {
-  searchParams: { clave?: string; quien?: string; error?: string };
+  searchParams: { clave?: string; quien?: string; error?: string; aviso?: string };
 }) {
   const admin = createAdminClient();
 
@@ -33,7 +33,7 @@ export default async function EquipoPage({
     admin.from("equipo_demandu").select("*").order("creado_at"),
     admin
       .from("organizations")
-      .select("id, name, plan, estado_cobro, atendido_por")
+      .select("id, name, plan, estado_cobro, atendido_por, comision_pct")
       .is("datos_borrados_at", null)
       .order("name"),
     admin.from("plans").select("code, price_monthly"),
@@ -81,6 +81,11 @@ export default async function EquipoPage({
         </div>
       </div>
 
+      {searchParams?.aviso && (
+        <div className="mb-4 rounded-xl border border-linea bg-suave px-4 py-2.5 text-sm text-ink-2">
+          {searchParams.aviso}
+        </div>
+      )}
       {searchParams?.error && (
         <div className="mb-4 flex items-start gap-2 rounded-xl border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm text-danger">
           <TriangleAlert className="mt-0.5 h-4 w-4 flex-none" /> {searchParams.error}
@@ -112,6 +117,12 @@ export default async function EquipoPage({
           <li>· Planes de <b className="text-ink">más de $99</b> al mes → <b className="text-ink">20%</b> mensual.</li>
           <li>· Complementos y pagos únicos (taller, configuración de Meta, bolsitas) → <b className="text-ink">sin comisión</b>.</li>
         </ul>
+        <p className="mt-3">
+          <b className="text-ink">Se puede pactar otra cosa, y gana lo más específico:</b> el porcentaje que le
+          pongas a <b className="text-ink">un cliente concreto</b> (en su línea, dentro de la cartera de abajo)
+          pisa al del vendedor, y el del vendedor pisa a la escala. El número gris que aparece en la casilla es
+          el que se está aplicando hoy.
+        </p>
         <p className="mt-3">
           <b className="text-ink">Se comisiona lo cobrado, no lo facturado.</b> La comisión nace de una factura
           pagada de Stripe: si un cobro rebota, no genera nada. Y una vez apuntada{" "}
@@ -298,16 +309,36 @@ export default async function EquipoPage({
                 <div className="rounded-xl border border-linea bg-suave p-4">
                   <p className="mb-2 text-[11px] font-semibold text-ink-2">Su cartera</p>
                   {mios.length ? (
-                    <ul className="mb-3 space-y-1 text-xs text-ink-2">
-                      {mios.map((c) => (
-                        <li key={c.id} className="flex items-center justify-between gap-2">
-                          <span className="truncate">{c.name}</span>
-                          <span className="flex-none text-ink-3">
-                            {usd0(precioDe.get(c.plan) ?? 0)}
-                            {c.estado_cobro !== "activa" && ` · ${c.estado_cobro}`}
-                          </span>
-                        </li>
-                      ))}
+                    <ul className="mb-3 space-y-1.5">
+                      {mios.map((c) => {
+                        const precio = precioDe.get(c.plan) ?? 0;
+                        // Lo más específico gana: cliente → vendedor → escala.
+                        const efectivo = c.comision_pct ?? m.comision_pct ?? (precio > 99 ? 20 : 15);
+                        return (
+                          <li key={c.id} className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
+                            <span className="min-w-0 flex-1 truncate text-ink-2">
+                              {c.name}
+                              <span className="ml-1.5 text-ink-3">
+                                {usd0(precio)}
+                                {c.estado_cobro !== "activa" && ` · ${c.estado_cobro}`}
+                              </span>
+                            </span>
+                            <form action={comisionDeCliente} className="flex flex-none items-center gap-1">
+                              <input type="hidden" name="org_id" value={c.id} />
+                              <input
+                                name="pct"
+                                defaultValue={c.comision_pct ?? ""}
+                                placeholder={String(efectivo)}
+                                inputMode="decimal"
+                                title="Comisión pactada para este cliente. Vacío = la del vendedor o la escala."
+                                className="input-l w-14 px-1.5 py-0.5 text-center text-[11px]"
+                              />
+                              <span className="text-[11px] text-ink-3">%</span>
+                              <button className="btn-soft px-1.5 py-0.5 text-[11px]">ok</button>
+                            </form>
+                          </li>
+                        );
+                      })}
                     </ul>
                   ) : (
                     <p className="mb-3 text-xs text-ink-3">Todavía no tiene clientes asignados.</p>

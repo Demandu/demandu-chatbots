@@ -2,8 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listarFacturas, estadoDeFactura } from "@/lib/billing/facturas";
-import { reenviar, restablecer } from "../acciones";
-import { ArrowLeft, FileText, ExternalLink, Send, TriangleAlert, Check, KeyRound, Mail, Phone, User } from "lucide-react";
+import { reenviar, restablecer, entrarComoSoporte } from "../acciones";
+import { ArrowLeft, FileText, ExternalLink, Send, TriangleAlert, Check, KeyRound, Mail, Phone, User, LifeBuoy } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -149,12 +149,23 @@ export default async function FichaCliente({
       <div className="card-l mb-6 p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="font-display text-base font-semibold text-ink">Contacto</h3>
-          <form action={restablecer}>
-            <input type="hidden" name="org_id" value={org.id} />
-            <button className="btn-soft inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
-              <KeyRound className="h-3.5 w-3.5" /> Generar contraseña temporal
-            </button>
-          </form>
+          <div className="flex flex-wrap gap-2">
+            {/* ENTRAR A UNA CUENTA AJENA NO ES UN BOTÓN CUALQUIERA. Va en rojo
+                y dice cuánto dura, para que nadie lo pulse por inercia
+                creyendo que abre una pantalla más del superadmin. */}
+            <form action={entrarComoSoporte}>
+              <input type="hidden" name="org_id" value={org.id} />
+              <button className="inline-flex items-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs font-semibold text-danger transition hover:bg-danger/20">
+                <LifeBuoy className="h-3.5 w-3.5" /> Entrar como soporte (1 h)
+              </button>
+            </form>
+            <form action={restablecer}>
+              <input type="hidden" name="org_id" value={org.id} />
+              <button className="btn-soft inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
+                <KeyRound className="h-3.5 w-3.5" /> Generar contraseña temporal
+              </button>
+            </form>
+          </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           {[

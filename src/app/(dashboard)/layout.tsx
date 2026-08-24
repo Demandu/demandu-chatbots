@@ -4,6 +4,8 @@ import { Shell } from "@/components/Shell";
 import { faltaNombreDelNegocio, getCurrentOrgId } from "@/lib/org";
 import { createClient } from "@/lib/supabase/server";
 import { getUsage } from "@/lib/billing/usage";
+import { sesionDeSoporte } from "@/lib/soporte";
+import { AvisoDeSoporte } from "@/components/AvisoDeSoporte";
 
 /**
  * ¿Esta persona entró con una contraseña temporal y todavía no ha puesto la
@@ -34,6 +36,12 @@ async function debeCambiarContrasena(): Promise<boolean> {
  * todas. Poniéndolo en el marco, no hay puerta por la que colarse.
  */
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  // ¿Es alguien de Demandu metido en la cuenta de un cliente? Se resuelve
+  // antes que nada porque el aviso tiene que salir en TODAS las pantallas del
+  // panel, no solo en la primera.
+  const { data: { user: quienEs } } = await createClient().auth.getUser();
+  const soporte = quienEs ? await sesionDeSoporte(quienEs.id) : null;
+
   // Quien entró con una clave temporal no pasa de aquí sin elegir la suya.
   // Va en el marco por la misma razón que el desvío a «bienvenida»: hay
   // muchas puertas al panel y comprobarlo pantalla por pantalla es garantizar
@@ -59,5 +67,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
     plan = null;
   }
 
-  return <Shell sidebar={<Sidebar plan={plan} />}>{children}</Shell>;
+  return (
+    <div className="flex min-h-dvh flex-col">
+      {soporte && <AvisoDeSoporte negocio={soporte.negocio} hasta={soporte.hasta} />}
+      <div className="min-h-0 flex-1">
+        <Shell sidebar={<Sidebar plan={plan} />}>{children}</Shell>
+      </div>
+    </div>
+  );
 }

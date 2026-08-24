@@ -74,6 +74,12 @@ export default async function SuperadminLayout({ children }: { children: React.R
             Consumo
           </Link>
           <Link
+            href="/superadmin/bitacora"
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+          >
+            Bitácora
+          </Link>
+          <Link
             href="/superadmin/bajas"
             className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
           >
