@@ -72,6 +72,33 @@ export async function abrirSoporte(userId: string, orgId: string): Promise<Apert
     }
   }
 
+  // ¿YA PERTENECE A ESTA CUENTA POR DERECHO PROPIO?
+  //
+  // Este caso parece raro y es el primero que iba a ocurrir: el dueño de
+  // Demandu es dueño de su propia organización, y esa es justo la cuenta que
+  // tiene a mano para probar el botón.
+  //
+  // Sin esta comprobación, abrir soporte sobre una cuenta donde ya eres
+  // miembro PISA tu membresía real: el `upsert` la convertiría en un acceso
+  // temporal de solo lectura, y al salir —que borra la fila— te quedarías
+  // fuera de tu propia organización para siempre. Un clic curioso a cambio de
+  // perder la cuenta.
+  const { data: yaEsta } = await admin
+    .from("memberships")
+    .select("role, soporte_hasta")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (yaEsta && yaEsta.soporte_hasta === null) {
+    return {
+      ok: false,
+      error:
+        "Ya perteneces a esta cuenta con tu propio usuario, así que no necesitas entrar como soporte: " +
+        "ábrela normal desde el panel.",
+    };
+  }
+
   const hasta = new Date(Date.now() + MINUTOS * 60_000).toISOString();
 
   // Se entra como 'viewer' y encima se aplican los permisos de su ficha. Se
