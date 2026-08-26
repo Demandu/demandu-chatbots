@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "16";
+const VERSION_MOTOR = "19";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -727,6 +727,84 @@ async function registrar(ctx: any, body: string, envio: ResultadoEnvio, extra: a
   });
 }
 
+/**
+ * Manda un FLUJO DE WHATSAPP (los formularios nativos de Meta dentro del chat).
+ *
+ * EL BLOQUE EXISTÍA EN EL CONSTRUCTOR Y EL MOTOR NO SABÍA ENVIARLO: caía en el
+ * caso por defecto, mandaba el título del bloque como texto plano —«Flujo de
+ * WhatsApp: Agendar Demo»— y seguía de largo. El cliente veía una frase rara y
+ * ningún formulario.
+ *
+ * LA PARTE INCÓMODA: Meta exige `flow_action_payload.screen` —el nombre de la
+ * primera pantalla— cuando la acción es `navigate`, y eso NO está en el bloque:
+ * el constructor solo guarda el id del flujo y el texto del botón. Se descubre
+ * preguntándole a Meta por el JSON del flujo, y se guarda en caché: sin la
+ * caché serían dos viajes extra a Meta por cada mensaje enviado.
+ */
+async function primeraPantalla(db: any, flowId: string, token: string): Promise<string | null> {
+  try {
+    const { data: cache } = await db.from("wa_flow_cache").select("screen").eq("flow_id", flowId).maybeSingle();
+    if (cache?.screen) return cache.screen;
+
+    const r = await fetch(`${GRAPH}/${flowId}/assets`, { headers: { Authorization: `Bearer ${token}` } });
+    const j = await r.json();
+    const url = (j?.data ?? []).find((a: any) => a.asset_type === "FLOW_JSON")?.download_url;
+    if (!url) return null;
+
+    const def = await (await fetch(url)).json();
+    const screen = def?.screens?.[0]?.id ?? null;
+    if (screen) await db.from("wa_flow_cache").upsert({ flow_id: flowId, screen }, { onConflict: "flow_id" });
+    return screen;
+  } catch (e) {
+    console.error("[wa flow] pantalla:", e);
+    return null;
+  }
+}
+
+async function sayFlujo(ctx: any, node: any) {
+  const d = node.data ?? {};
+  const flowId = String(d.waFlowId ?? "").trim();
+  if (!flowId) {
+    console.error("[wa flow] el bloque no tiene id de flujo");
+    return;
+  }
+
+  const screen = await primeraPantalla(ctx.db, flowId, ctx.token);
+
+  const parametros: any = {
+    flow_message_version: "3",
+    // Identifica esta apertura concreta: lleva dentro la conversación y el
+    // bloque, para reconocer la respuesta cuando el cliente termine.
+    flow_token: `${ctx.convId}:${node.id}`,
+    flow_id: flowId,
+    // Meta rechaza un botón de más de 20 caracteres o con emoji.
+    flow_cta: (d.waFlowCta || "Abrir").replace(/[^\p{L}\p{N} .,!?'-]/gu, "").trim().slice(0, 20) || "Abrir",
+  };
+
+  // Sin nombre de pantalla no se puede navegar; se pide intercambio de datos,
+  // que es lo que usan los flujos con servidor propio. Si el flujo no lo
+  // admite, Meta dice por qué y queda en el registro — mejor eso que mandar un
+  // texto suelto y aparentar que funcionó.
+  if (screen) {
+    parametros.flow_action = "navigate";
+    parametros.flow_action_payload = { screen };
+  } else {
+    parametros.flow_action = "data_exchange";
+  }
+
+  const interactive: any = {
+    type: "flow",
+    body: { text: interp(d.waBody || d.text || "Toca el botón de abajo 👇", ctx.vars).slice(0, 1024) },
+    action: { name: "flow", parameters: parametros },
+  };
+  if (d.waFooter) interactive.footer = { text: String(d.waFooter).slice(0, 60) };
+  if (d.waHeader) interactive.header = { type: "text", text: String(d.waHeader).slice(0, 60) };
+
+  const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
+  await registrar(ctx, `📋 ${d.waFlowCta || "Formulario"}`, envio, { flow_id: flowId, screen });
+  if (!envio?.ok) console.error("[wa flow] Meta rechazó el envío:", JSON.stringify(envio));
+}
+
 async function say(ctx: any, body: string) {
   if (esEjemplo(body)) return; // bloque sin configurar: no molestamos al cliente
   const text = interp(body, ctx.vars);
@@ -812,6 +890,12 @@ async function runFrom(startId: string | undefined, ctx: any) {
         }).eq("id", ctx.convId);
         ctx.finMotivo = "agente";
         return null;
+      case "whatsapp_flow":
+        await sayFlujo(ctx, node);
+        // Se queda esperando a que el cliente termine el formulario: el
+        // siguiente bloque corre cuando llegue su respuesta.
+        return { nodeId: node.id, type: "wa_flow" };
+
       case "end":
         if (node.data.text) await say(ctx, node.data.text);
         await ctx.db.from("conversations").update({ status: "closed" }).eq("id", ctx.convId);
@@ -897,7 +981,16 @@ async function handleIncoming(opts: any) {
   let startId: string | undefined;
   if (awaiting?.nodeId) {
     const node = getNode(opts.flow, awaiting.nodeId);
-    if (awaiting.type === "question") {
+    if (awaiting.type === "wa_flow") {
+      // Cada campo del formulario se guarda como variable del flujo, así se
+      // puede usar después en un mensaje, una condición o el CRM. Sin esto,
+      // el cliente rellena el formulario y lo que escribió se pierde.
+      for (const [k, v] of Object.entries(opts.respuestaFormulario ?? {})) {
+        if (k === "flow_token") continue;
+        vars[k] = typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
+      }
+      startId = node ? defaultNext(opts.flow, node) : undefined;
+    } else if (awaiting.type === "question") {
       if (node?.data.variable) vars[node.data.variable] = opts.text;
       // El bloque de IA se queda escuchando: la siguiente pregunta vuelve a él.
       startId = node?.type === "ai" ? node.id : (node ? defaultNext(opts.flow, node) : undefined);
@@ -1050,7 +1143,20 @@ Deno.serve(async (req: Request) => {
       //  · `text`    → lo que usa el motor para saber qué botón se tocó (el id).
       //  · `visible` → lo que LEE una persona en la bandeja (el texto del botón).
       // Antes se guardaba el id, y en el chat aparecían códigos raros.
-      const text = msg.text?.body ?? msg.interactive?.button_reply?.id ?? msg.interactive?.list_reply?.id ?? msg.button?.text ?? "";
+      // La respuesta de un Flujo de WhatsApp llega como `nfm_reply`, con los
+      // campos del formulario dentro de `response_json` (una CADENA, no un
+      // objeto: hay que interpretarla).
+      let respuestaDeFormulario: Record<string, any> | null = null;
+      if (msg.interactive?.type === "nfm_reply") {
+        try {
+          const crudo = msg.interactive?.nfm_reply?.response_json;
+          respuestaDeFormulario = typeof crudo === "string" ? JSON.parse(crudo) : (crudo ?? null);
+        } catch (e) {
+          console.error("[wa flow] respuesta ilegible:", e);
+        }
+      }
+
+      const text = msg.text?.body ?? msg.interactive?.button_reply?.id ?? msg.interactive?.list_reply?.id ?? msg.button?.text ?? (respuestaDeFormulario ? "__formulario__" : "");
       const etiquetaAdjunto =
         msg.type === "image" ? "📷 Imagen"
         : msg.type === "video" ? "🎥 Video"
@@ -1063,6 +1169,15 @@ Deno.serve(async (req: Request) => {
         msg.text?.body ??
         msg.interactive?.button_reply?.title ??
         msg.interactive?.list_reply?.title ??
+        // Lo que ve el agente en la Bandeja: lo que el cliente respondió, no
+        // un "__formulario__" que no le dice nada a nadie.
+        (respuestaDeFormulario
+          ? "📋 Formulario completado:\n" +
+            Object.entries(respuestaDeFormulario)
+              .filter(([k]) => k !== "flow_token")
+              .map(([k, v]) => `· ${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+              .join("\n")
+          : undefined) ??
         msg.button?.text ??
         (etiquetaAdjunto || text);
       const db = admin();
@@ -1095,10 +1210,52 @@ Deno.serve(async (req: Request) => {
       if (contact && !contact.name && name) {
         await db.from("contacts").update({ name }).eq("id", contact.id);
       }
-      let { data: conv } = await db.from("conversations").select("id, flow_state, status").eq("org_id", cfg.org_id).eq("contact_id", contact.id).eq("channel", "whatsapp").order("last_message_at", { ascending: false }).limit(1).maybeSingle();
+      const nuevaConversacion = async () => {
+        const ins = await db.from("conversations")
+          .insert({ org_id: cfg.org_id, contact_id: contact.id, bot_id: cfg.bot_id, channel: "whatsapp", status: "open", flow_state: {} })
+          .select("id, flow_state, status, last_message_at").single();
+        return ins.data;
+      };
+
+      let { data: conv } = await db.from("conversations").select("id, flow_state, status, last_message_at").eq("org_id", cfg.org_id).eq("contact_id", contact.id).eq("channel", "whatsapp").order("last_message_at", { ascending: false }).limit(1).maybeSingle();
+
+      // ── PASADAS 24 HORAS, LA CONVERSACIÓN SE CIERRA Y EMPIEZA OTRA ─────
+      //
+      // Antes se reanudaba donde se quedó. Quien escribió el martes y volvía
+      // el viernes retomaba la pregunta del martes: si el martes había llegado
+      // a un nodo de IA, el viernes le contestaba la IA a un «Hola» y su
+      // bienvenida —con su imagen y sus botones— no se veía nunca más. Parecía
+      // un chatbot roto y era un chatbot obedeciendo.
+      //
+      // El corte son 24 horas porque es la ventana de WhatsApp: pasada esa,
+      // Meta ya lo considera otra conversación y al negocio solo le deja
+      // escribir primero con una plantilla. Si Meta lo trata como nuevo,
+      // nosotros también.
+      //
+      // SE CIERRA DE VERDAD, no se le vacía el estado. Así queda un hilo
+      // cerrado en la Bandeja con su historia completa y nace otro limpio, que
+      // es lo que un agente espera ver — y lo que hace que la analítica cuente
+      // dos conversaciones y no una eterna.
+      //
+      // NO se cierra si la lleva una persona (`assigned`): un caso humano en
+      // curso no es un flujo aparcado, y cortarlo le quitaría el hilo al agente
+      // justo cuando el cliente vuelve. Al escribir el cliente se abre otra
+      // ventana de 24 h y el agente puede seguir contestando.
+      const VENTANA_MS = 24 * 60 * 60 * 1000;
+      const ultimo = conv?.last_message_at ? Date.parse(conv.last_message_at as string) : 0;
+      const dormidaDeMas = ultimo > 0 && Date.now() - ultimo > VENTANA_MS;
+
+      if (conv && conv.status === "open" && dormidaDeMas) {
+        // El recorrido abierto se cierra como abandonado: si se dejara vivo,
+        // quedaría contado como "en curso" para siempre y la analítica de
+        // embudos mentiría.
+        await cerrarRecorrido(db, (conv.flow_state as any)?.run_id ?? null, "abandonado");
+        await db.from("conversations").update({ status: "closed" }).eq("id", conv.id);
+        conv = null;
+      }
+
       if (!conv || conv.status === "closed") {
-        const ins = await db.from("conversations").insert({ org_id: cfg.org_id, contact_id: contact.id, bot_id: cfg.bot_id, channel: "whatsapp", status: "open", flow_state: {} }).select("id, flow_state, status").single();
-        conv = ins.data;
+        conv = await nuevaConversacion();
       }
       await db.from("messages").insert({ conversation_id: conv.id, org_id: cfg.org_id, direction: "inbound", sender: "contact", body: visible });
       await db.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
@@ -1168,6 +1325,7 @@ Deno.serve(async (req: Request) => {
             const newState = await handleIncoming({
               flow, pnid, token: cfg.access_token, to: from,
               orgId: cfg.org_id, convId: conv.id, db, flowState, text, visible,
+              respuestaFormulario: respuestaDeFormulario,
               botId: cfg.bot_id, aiSettings: (botRow as any)?.ai ?? null, baseVars, atajos,
               flowId: chosen.id, flowName: chosen.name ?? null,
               numeroPropio: cfg.display_number ?? null,
