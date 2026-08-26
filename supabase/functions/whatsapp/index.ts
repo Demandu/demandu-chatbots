@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "20";
+const VERSION_MOTOR = "22";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -741,6 +741,114 @@ async function registrar(ctx: any, body: string, envio: ResultadoEnvio, extra: a
  * preguntándole a Meta por el JSON del flujo, y se guarda en caché: sin la
  * caché serían dos viajes extra a Meta por cada mensaje enviado.
  */
+/**
+ * El bloque CALENDARIO: ofrece horarios reales y agenda la cita.
+ *
+ * NO HABLA CON GOOGLE DIRECTAMENTE, y es a propósito. El cálculo de huecos
+ * —horario laboral del negocio, zona horaria, lo ya ocupado— vive en la web,
+ * en `computeSlots`, y copiarlo aquí en Deno sería tener dos versiones que se
+ * separan el día que alguien toque una. El motor le pregunta a la plataforma.
+ *
+ * ESTE ES EL CAMINO CORTO. El otro —Flujo de WhatsApp + bloque de API contra
+ * `/api/v1/agenda`— llega al mismo sitio por fuera, y muchos clientes lo van a
+ * preferir porque el formulario nativo de Meta se ve mejor. Los dos usan el
+ * mismo motor de agenda: no puede pasar que uno ofrezca una hora que el otro
+ * ya dio por ocupada.
+ */
+async function pedirAgenda(cuerpo: Record<string, any>): Promise<any> {
+  const base = Deno.env.get("PLATAFORMA_URL") ?? "https://platform.demandu.tech";
+  const llave = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const ctl = new AbortController();
+  const reloj = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const r = await fetch(`${base}/api/motor/agenda`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-demandu-motor": llave },
+      body: JSON.stringify(cuerpo),
+      signal: ctl.signal,
+    });
+    return await r.json();
+  } catch (e) {
+    console.error("[agenda] no contestó:", e);
+    return null;
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
+async function sayCalendario(ctx: any, node: any) {
+  const d = node.data ?? {};
+  const r = await pedirAgenda({
+    accion: "horarios",
+    org_id: ctx.orgId,
+    calendario: d.calendarId || undefined,
+    duracion: Number(d.durationMin) || 30,
+    cuantos: 6,
+  });
+
+  const slots = r?.slots ?? [];
+
+  // Sin horarios NO se deja al lead colgado con un «no hay nada»: se pasa a una
+  // persona. Puede que Google no esté conectado, que la agenda esté llena o que
+  // el horario laboral esté sin configurar — para quien escribe da igual la
+  // causa, lo que necesita es que alguien lo atienda.
+  if (!slots.length) {
+    const porque = r?.conectado === false
+      ? "no hay agenda conectada"
+      : "no hay horarios libres";
+    console.error(`[agenda] sin horarios (${porque}) org=${ctx.orgId}`);
+    await say(ctx, d.textoSinHorarios || "Ahora mismo no puedo ver horarios disponibles 😕 Te paso con una persona del equipo.");
+    return null; // el bloque de abajo decide; ver el caso en el switch
+  }
+
+  // Los horarios se ofrecen como botones, con la etiqueta ya en español que
+  // devuelve la plataforma («mié 27 ago, 10:00»). Formatear fechas dentro del
+  // motor sería reimplementar lo que la web ya hace bien.
+  const botones = slots.slice(0, 3).map((s: any) => ({ id: s.startISO, label: s.label }));
+  const envio = await sendButtons(
+    ctx.pnid, ctx.token, ctx.to,
+    interp(d.text || "Estos son los horarios disponibles para tu cita:", ctx.vars),
+    botones,
+  );
+  await registrar(ctx, d.text || "(horarios de cita)", envio, { slots: botones });
+  return { nodeId: node.id, type: "cita" };
+}
+
+/**
+ * El lead eligió una hora. Se crea la cita y se guarda todo en variables para
+ * que el mensaje siguiente pueda decir cuándo quedó y con qué enlace.
+ */
+async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<boolean> {
+  const d = node.data ?? {};
+  const correo = d.attendeeAttr ? ctx.vars[d.attendeeAttr] : undefined;
+  const nombre = d.nameAttr ? ctx.vars[d.nameAttr] : ctx.vars.nombre;
+
+  const r = await pedirAgenda({
+    accion: "agendar",
+    org_id: ctx.orgId,
+    inicio: inicioISO,
+    duracion: Number(d.durationMin) || 30,
+    calendario: d.calendarId || undefined,
+    titulo: d.tituloEvento || `Cita con ${nombre ?? "cliente"}`,
+    descripcion: d.descripcionEvento || "Cita agendada desde WhatsApp.",
+    correo: correo || undefined,
+  });
+
+  if (r?.ok) {
+    ctx.vars.cita_inicio = r.inicioISO ?? inicioISO;
+    ctx.vars.cita_enlace = r.enlace ?? "";
+    ctx.vars.cita_ok = "true";
+    return true;
+  }
+
+  ctx.vars.cita_ok = "false";
+  ctx.vars.cita_error = r?.error ?? "No se pudo agendar.";
+  // El motivo se le dice al lead tal cual viene: «ese horario acaba de
+  // ocuparse» es accionable, «error 502» no lo es.
+  await say(ctx, r?.error || "No pude agendar esa hora 😕 Intentemos con otra.");
+  return false;
+}
+
 async function primeraPantalla(db: any, flowId: string, token: string): Promise<string | null> {
   try {
     const { data: cache } = await db.from("wa_flow_cache").select("screen").eq("flow_id", flowId).maybeSingle();
@@ -980,6 +1088,15 @@ async function runFrom(startId: string | undefined, ctx: any) {
         }).eq("id", ctx.convId);
         ctx.finMotivo = "agente";
         return null;
+      case "calendar": {
+        const espera = await sayCalendario(ctx, node);
+        if (espera) return espera;
+        // No había horarios: se sigue por la salida del bloque, que en un flujo
+        // bien armado lleva a una persona.
+        current = defaultNext(ctx.flow, node);
+        break;
+      }
+
       case "api":
         current = await llamarApi(ctx, node);
         break;
@@ -995,8 +1112,29 @@ async function runFrom(startId: string | undefined, ctx: any) {
         await ctx.db.from("conversations").update({ status: "closed" }).eq("id", ctx.convId);
         ctx.finMotivo = "completado";
         return null;
-      default:
+      // El bloque de texto de toda la vida. Antes no tenía caso propio y
+      // funcionaba "de rebote" porque el caso por defecto manda `text`. Ahora
+      // es explícito, para que el por defecto pueda dejar de mandar nada.
+      case "message":
         if (node.data.text) await say(ctx, node.data.text);
+        current = defaultNext(ctx.flow, node);
+        break;
+
+      default:
+        // UN BLOQUE QUE EL MOTOR NO CONOCE NO LE ESCRIBE AL CLIENTE.
+        //
+        // Antes el por defecto mandaba `node.data.text`, que en los bloques sin
+        // implementar es su NOMBRE. Por eso a un cliente le llegaban cosas como
+        // «contacto-demo demandu» o «Flujo de WhatsApp: Agendar Demo»: no era
+        // un mensaje, era la etiqueta del bloque escapándose al chat.
+        //
+        // Y lo peor es que fallaba en silencio: el flujo seguía como si el
+        // bloque hubiera hecho su trabajo. Ahora se salta el bloque, se sigue
+        // por la salida siguiente y queda un aviso claro en el registro.
+        console.error(
+          `[flujo] bloque sin implementar en el motor: type="${node.type}" id=${node.id} ` +
+          `("${String(node.data?.label ?? "").slice(0, 40)}"). Se salta.`,
+        );
         current = defaultNext(ctx.flow, node);
     }
   }
@@ -1075,7 +1213,19 @@ async function handleIncoming(opts: any) {
   let startId: string | undefined;
   if (awaiting?.nodeId) {
     const node = getNode(opts.flow, awaiting.nodeId);
-    if (awaiting.type === "wa_flow") {
+    if (awaiting.type === "cita") {
+      // El id del botón ES la hora en ISO: así no hay que guardar la lista de
+      // horarios en ninguna parte ni preocuparse de que caduque.
+      const ok = node ? await agendarElegido(ctx, node, opts.text) : false;
+      startId = node ? defaultNext(opts.flow, node) : undefined;
+      if (!ok) {
+        // Falló al agendar: se vuelven a ofrecer horarios en vez de seguir
+        // adelante como si la cita existiera.
+        if (node) await sayCalendario(ctx, node);
+        await avanzarRecorrido(opts.db, runId, 1, node?.id ?? null);
+        return { vars, awaiting: { nodeId: node?.id, type: "cita" }, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+      }
+    } else if (awaiting.type === "wa_flow") {
       // Cada campo del formulario se guarda como variable del flujo, así se
       // puede usar después en un mensaje, una condición o el CRM. Sin esto,
       // el cliente rellena el formulario y lo que escribió se pierde.
