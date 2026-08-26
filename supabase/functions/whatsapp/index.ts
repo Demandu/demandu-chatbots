@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "22";
+const VERSION_MOTOR = "23";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -1091,10 +1091,24 @@ async function runFrom(startId: string | undefined, ctx: any) {
       case "calendar": {
         const espera = await sayCalendario(ctx, node);
         if (espera) return espera;
-        // No había horarios: se sigue por la salida del bloque, que en un flujo
-        // bien armado lleva a una persona.
-        current = defaultNext(ctx.flow, node);
-        break;
+
+        // ── NO SE PUDO OFRECER NINGUNA HORA ────────────────────────────
+        //
+        // ANTES ESTO SEGUÍA POR LA SALIDA NORMAL, y era un error feo: en un
+        // flujo real la salida normal es el mensaje de «tu cita ha sido
+        // agendada». O sea que el bot decía «te paso con una persona» y acto
+        // seguido le confirmaba al cliente una cita que NUNCA EXISTIÓ, con
+        // todos los campos vacíos. Dos mentiras seguidas.
+        //
+        // Después de un fallo no se entra jamás al camino del éxito. Se pasa
+        // de verdad con una persona y el flujo se detiene aquí.
+        await ctx.db.from("conversations").update({
+          status: "assigned",
+          handoff_requested_at: new Date().toISOString(),
+          handoff_reason: "No se pudieron ofrecer horarios de cita",
+        }).eq("id", ctx.convId);
+        ctx.finMotivo = "agente";
+        return null;
       }
 
       case "api":
@@ -1217,7 +1231,9 @@ async function handleIncoming(opts: any) {
       // El id del botón ES la hora en ISO: así no hay que guardar la lista de
       // horarios en ninguna parte ni preocuparse de que caduque.
       const ok = node ? await agendarElegido(ctx, node, opts.text) : false;
-      startId = node ? defaultNext(opts.flow, node) : undefined;
+      // Solo se sigue adelante —al mensaje de «cita agendada»— si la cita se
+      // creó de verdad. Ver el comentario del bloque `calendar`.
+      startId = ok && node ? defaultNext(opts.flow, node) : undefined;
       if (!ok) {
         // Falló al agendar: se vuelven a ofrecer horarios en vez de seguir
         // adelante como si la cita existiera.
