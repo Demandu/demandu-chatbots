@@ -27,6 +27,8 @@ type Member = { id: string; name: string };
 type Convo = {
   id: string;
   channel: string;
+  /** Para poder mandar al agente a las plantillas de ESE chatbot. */
+  bot_id: string | null;
   status: string;
   unread: number;
   last_message_at: string;
@@ -161,8 +163,31 @@ export function InboxClient({
 
   const sel = convos.find((c) => c.id === selId) ?? null;
 
+  /**
+   * ¿Se cerró la ventana de 24 horas de WhatsApp?
+   *
+   * SE MIDE DESDE EL ÚLTIMO MENSAJE DEL CLIENTE, no desde el último de la
+   * conversación. Es la diferencia que importa: si el agente escribe, el
+   * `last_message_at` de la conversación se actualiza, y usar ese dato haría
+   * parecer que la ventana está abierta cuando Meta ya la cerró. La ventana la
+   * abre el cliente escribiendo, y solo él.
+   *
+   * Solo aplica a WhatsApp: el chat de la web y los demás canales no tienen
+   * ventana, y bloquear ahí sería inventarse una limitación.
+   */
+  const ventanaCerrada = (() => {
+    if (!sel || sel.channel !== "whatsapp") return false;
+    const suyos = messages.filter((m) => m.direction === "inbound");
+    const ultimo = suyos.length ? Date.parse(suyos[suyos.length - 1].created_at) : NaN;
+    // Sin ningún mensaje del cliente todavía no se bloquea: puede ser una
+    // conversación recién creada cuyos mensajes aún se están cargando, y dejar
+    // al agente mudo por una carga a medias sería peor que el problema.
+    if (!Number.isFinite(ultimo)) return false;
+    return Date.now() - ultimo > 24 * 60 * 60 * 1000;
+  })();
+
   const selectSql =
-    "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, idioma_lead, " +
+    "id, channel, bot_id, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, idioma_lead, " +
     "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
     "state:conversation_states(id,name,color), member:team_members(id,name)";
 
@@ -984,8 +1009,32 @@ export function InboxClient({
             />
           )}
 
-          {/* Composer (estilo WhatsApp Web · Demandu) */}
-          <div className="flex flex-none items-end gap-2 px-3 py-2.5" style={{ backgroundColor: "var(--tarjeta)" }}>
+                  {/* LA VENTANA DE 24 HORAS DE WHATSAPP.
+              Antes el agente escribía, pulsaba enviar, y Meta lo rechazaba: se
+              enteraba DESPUÉS de haber redactado. Ahora el compositor se
+              bloquea y lo dice antes de que escriba una palabra.
+              Solo aplica a WhatsApp — el chat de la web no tiene ventana. */}
+          {sel && ventanaCerrada && (
+            <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-t border-surface-border px-3 py-3" style={{ backgroundColor: "var(--tarjeta)" }}>
+              <p className="text-sm text-muted">
+                <b className="text-white">Pasaron más de 24 horas</b> desde el último mensaje de esta persona.
+                WhatsApp ya no permite escribirle libremente — solo se puede retomar con una plantilla aprobada.
+              </p>
+              <a
+                href={sel.bot_id ? `/bots/${sel.bot_id}/templates` : "/bots"}
+                className="flex-none rounded-lg px-3 py-1.5 text-xs font-bold text-white"
+                style={{ backgroundColor: "#6E42FF" }}
+              >
+                Enviar una plantilla
+              </a>
+            </div>
+          )}
+
+  {/* Composer (estilo WhatsApp Web · Demandu) */}
+          <div
+            className="flex flex-none items-end gap-2 px-3 py-2.5"
+            style={{ backgroundColor: "var(--tarjeta)", display: ventanaCerrada ? "none" : undefined }}
+          >
             <EmojiPicker onElegir={insertarEmoji} />
 
             {/* Adjuntar. Es una etiqueta con un campo de archivo escondido y no

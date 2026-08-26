@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "19";
+const VERSION_MOTOR = "20";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -761,6 +761,96 @@ async function primeraPantalla(db: any, flowId: string, token: string): Promise<
   }
 }
 
+/**
+ * Llama a una API de fuera y sigue por la salida que toque.
+ *
+ * ES EL SEGUNDO BLOQUE QUE EL CONSTRUCTOR OFRECÍA Y EL MOTOR NO SABÍA EJECUTAR
+ * (el otro era el Flujo de WhatsApp). Caía en el caso por defecto: mandaba el
+ * nombre del bloque como texto —«contacto-demo demandu»— y seguía de largo,
+ * así que ni se llamaba a nadie ni se tomaba ninguna de las tres salidas.
+ *
+ * TRES SALIDAS, Y LA TERCERA NO SOBRA:
+ *   · Éxito (2xx) — contestaron y les pareció bien.
+ *   · Error (4xx/5xx) — contestaron y algo estaba mal.
+ *   · Otros — NO CONTESTARON: se cayó la red, tardaron demasiado, o el bloque
+ *     ni siquiera tiene dirección configurada. Es distinto de un error del
+ *     servidor y conviene poder atenderlo distinto.
+ *
+ * Lo que devuelva la API queda en variables (`api_status`, `api_ok` y cada
+ * campo de la respuesta si es JSON), para poder usarlo en el mensaje siguiente
+ * — por ejemplo, el número de la cita que acaba de crear.
+ */
+async function llamarApi(ctx: any, node: any): Promise<string | undefined> {
+  const d = node.data ?? {};
+  const botones = d.buttons ?? [];
+  const salida = (prefijo: string) => {
+    const b = botones.find((x: any) => String(x.id ?? "").startsWith(prefijo));
+    return b ? buttonTarget(ctx.flow, node.id, b) : undefined;
+  };
+
+  const url = interp(String(d.apiUrl ?? "").trim(), ctx.vars);
+
+  // Sin dirección no hay nada que llamar. Se va por «Otros» en vez de fingir
+  // que salió bien: en el flujo de un cliente esa salida suele llevar a una
+  // persona, que es exactamente lo que hace falta si el bloque quedó a medias.
+  if (!url) {
+    console.error("[api] el bloque no tiene dirección configurada:", node.id);
+    ctx.vars.api_ok = "false";
+    ctx.vars.api_status = "0";
+    ctx.vars.api_error = "El bloque de API no tiene dirección configurada.";
+    return salida("other-") ?? salida("err-") ?? defaultNext(ctx.flow, node);
+  }
+
+  const metodo = String(d.apiMethod ?? "GET").toUpperCase();
+  const cabeceras: Record<string, string> = { "Content-Type": "application/json" };
+  for (const h of (d.apiHeaders ?? [])) {
+    if (h?.key) cabeceras[String(h.key)] = interp(String(h.value ?? ""), ctx.vars);
+  }
+
+  let status = 0;
+  let cuerpo = "";
+  try {
+    const ctl = new AbortController();
+    // 15 s y fuera. Detrás hay una persona esperando en WhatsApp: dejar la
+    // petición abierta "por si acaso" solo alarga su silencio.
+    const reloj = setTimeout(() => ctl.abort(), 15000);
+    const res = await fetch(url, {
+      method: metodo,
+      headers: cabeceras,
+      body: metodo === "GET" || metodo === "HEAD" ? undefined : interp(String(d.apiBody ?? ""), ctx.vars) || undefined,
+      signal: ctl.signal,
+    });
+    clearTimeout(reloj);
+    status = res.status;
+    cuerpo = await res.text().catch(() => "");
+  } catch (e: any) {
+    console.error("[api] no contestó:", e?.message ?? e);
+    ctx.vars.api_ok = "false";
+    ctx.vars.api_status = "0";
+    ctx.vars.api_error = e?.name === "AbortError" ? "La API tardó demasiado." : "No se pudo conectar con la API.";
+    return salida("other-") ?? salida("err-") ?? defaultNext(ctx.flow, node);
+  }
+
+  ctx.vars.api_status = String(status);
+  ctx.vars.api_ok = status >= 200 && status < 300 ? "true" : "false";
+
+  // Si contestaron con JSON, cada campo pasa a ser una variable del flujo.
+  // Se limita a lo de primer nivel: anidar variables con puntos complicaría
+  // el editor sin que nadie lo haya pedido.
+  try {
+    const j = JSON.parse(cuerpo);
+    if (j && typeof j === "object" && !Array.isArray(j)) {
+      for (const [k, v] of Object.entries(j)) {
+        if (v === null || typeof v === "object") continue;
+        ctx.vars[`api_${k}`] = String(v);
+      }
+    }
+  } catch { /* no era JSON, no pasa nada */ }
+
+  if (status >= 200 && status < 300) return salida("ok-") ?? defaultNext(ctx.flow, node);
+  return salida("err-") ?? salida("other-") ?? defaultNext(ctx.flow, node);
+}
+
 async function sayFlujo(ctx: any, node: any) {
   const d = node.data ?? {};
   const flowId = String(d.waFlowId ?? "").trim();
@@ -890,6 +980,10 @@ async function runFrom(startId: string | undefined, ctx: any) {
         }).eq("id", ctx.convId);
         ctx.finMotivo = "agente";
         return null;
+      case "api":
+        current = await llamarApi(ctx, node);
+        break;
+
       case "whatsapp_flow":
         await sayFlujo(ctx, node);
         // Se queda esperando a que el cliente termine el formulario: el
