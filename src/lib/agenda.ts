@@ -32,6 +32,20 @@ export type Cita = {
   enlace: string;
   inicioISO: string;
   finISO: string;
+  /**
+   * La misma hora, ya escrita para una persona. NO ES UN ADORNO: quien arma un
+   * flujo escribe «tu cita quedó el {{cita_dia}} a las {{cita_hora}}», y si lo
+   * único que le damos es `2026-08-27T15:00:00.000Z` acaba pegando eso en el
+   * mensaje —o peor, no pone nada y el cliente recibe una confirmación con los
+   * huecos vacíos, que fue exactamente lo que pasó aquí—.
+   *
+   * Se formatea de este lado porque la zona horaria del negocio vive aquí. El
+   * motor corre en Deno y no la conoce; pedirle que la adivine es pedirle que
+   * un día se equivoque en cinco husos.
+   */
+  dia: string;      // «jueves, 27 de agosto»
+  hora: string;     // «10:00»
+  etiqueta: string; // «jue 27 ago, 10:00» — el mismo formato de los botones
 };
 
 export type Fallo = { ok: false; error: string; motivo: "sin_conexion" | "sin_datos" | "google" };
@@ -153,7 +167,24 @@ export async function agendar(
       timeZone,
       attendeeEmail: d.correoInvitado || undefined,
     });
-    return { ok: true, eventoId: ev.id, enlace: ev.htmlLink, inicioISO: inicio, finISO };
+    const cuando = new Date(Date.parse(inicio));
+    return {
+      ok: true,
+      eventoId: ev.id,
+      enlace: ev.htmlLink,
+      inicioISO: inicio,
+      finISO,
+      dia: new Intl.DateTimeFormat("es-MX", {
+        timeZone, weekday: "long", day: "numeric", month: "long",
+      }).format(cuando),
+      hora: new Intl.DateTimeFormat("es-MX", {
+        timeZone, hour: "2-digit", minute: "2-digit", hour12: false,
+      }).format(cuando),
+      etiqueta: new Intl.DateTimeFormat("es-MX", {
+        timeZone, weekday: "short", day: "2-digit", month: "short",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).format(cuando),
+    };
   } catch (e: any) {
     return { ok: false, motivo: "google", error: e?.message ?? "Google no aceptó la cita." };
   }

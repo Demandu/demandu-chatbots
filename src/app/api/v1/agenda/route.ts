@@ -88,7 +88,18 @@ export async function POST(req: Request) {
   }
 
   return Response.json(
-    { ok: true, evento: r.eventoId, enlace: r.enlace, inicio: r.inicioISO, fin: r.finISO },
+    {
+      ok: true,
+      evento: r.eventoId,
+      enlace: r.enlace,
+      inicio: r.inicioISO,
+      fin: r.finISO,
+      // Ya escrito para una persona. Quien usa esto desde un bloque de API lo
+      // recibe como {{api_dia}} y {{api_hora}} y lo pega en su mensaje tal cual.
+      dia: r.dia,
+      hora: r.hora,
+      etiqueta: r.etiqueta,
+    },
     { headers: cors },
   );
 }

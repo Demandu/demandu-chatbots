@@ -84,37 +84,30 @@ export async function findKnowledge(
     /* seguimos a palabras clave */
   }
 
-  // 2) Por palabras clave
+  // 2) Por palabras, ordenado por relevancia (ver la migración 0054).
+  //
+  // La versión anterior pedía que TODAS las palabras de la pregunta cayeran en
+  // el mismo fragmento —una pregunta de verdad casi nunca cumple eso—, no
+  // encontraba nada, y un respaldo mandaba «los 5 primeros fragmentos» sin
+  // relación con lo preguntado. Con contexto que no viene al caso, un modelo no
+  // se calla: rellena. Ese respaldo se quitó a propósito.
   try {
-    const { data, error } = await admin
-      .from("bot_knowledge")
-      .select("title, content")
-      .eq("org_id", orgId)
-      .eq("bot_id", botId)
-      .eq("enabled", true)
-      .textSearch("search", q, { type: "websearch", config: "spanish" })
-      .limit(limit);
-
-    if (!error && data?.length) return data;
+    const { data, error } = await admin.rpc("buscar_conocimiento", {
+      p_org_id: orgId,
+      p_bot_id: botId,
+      p_pregunta: q,
+      p_limit: limit,
+    });
+    if (!error && data?.length) {
+      return (data as any[]).map((d) => ({ title: d.title, content: d.content }));
+    }
   } catch {
-    /* seguimos al respaldo */
+    /* sin contexto */
   }
 
-  // Respaldo: si la búsqueda por relevancia no encontró nada, mandamos
-  // los primeros fragmentos para que la IA al menos tenga contexto.
-  try {
-    const { data } = await admin
-      .from("bot_knowledge")
-      .select("title, content")
-      .eq("org_id", orgId)
-      .eq("bot_id", botId)
-      .eq("enabled", true)
-      .order("created_at", { ascending: true })
-      .limit(limit);
-    return data ?? [];
-  } catch {
-    return [];
-  }
+  // Sin nada parecido a la pregunta se devuelve vacío: la IA dirá que no lo
+  // sabe y ofrecerá una persona, que es la respuesta honesta.
+  return [];
 }
 
 function buildSystem(ai: Required<AiSettings>, knowledge: { title: string; content: string }[]) {

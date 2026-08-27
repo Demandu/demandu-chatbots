@@ -445,4 +445,76 @@ describe("Modelo de IA", () => {
   });
 });
 
+// ─── El conocimiento del negocio ─────────────────────────────────────────────
+describe("Búsqueda en el conocimiento del negocio", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+  const web = fs.readFileSync(path.join(RAIZ, "src/lib/ai/answer.ts"), "utf8");
+
+  test("ningún motor cae a «los primeros fragmentos» cuando no encuentra nada", () => {
+    // POR QUÉ EXISTE ESTA PRUEBA. Ese respaldo mandaba a la IA cinco fragmentos
+    // SIN RELACIÓN con lo preguntado. Con contexto que no viene al caso, un
+    // modelo no se calla: rellena. Así aseguró que el plan de 99 USD «no tiene
+    // límite de mensajes» — dato que nadie le dio y que es falso.
+    // El invariante real: NINGÚN motor lee la tabla del conocimiento a pelo.
+    // Todo pasa por las dos funciones que sí saben ordenar por relevancia
+    // (`match_bot_knowledge` por significado, `buscar_conocimiento` por
+    // palabras). Quien vuelva a poner un `.from("bot_knowledge")` aquí está
+    // reabriendo la puerta por la que entró el respaldo que inventaba datos.
+    for (const [nombre, texto] of [["el motor de WhatsApp", wa], ["la web", web]]) {
+      esperar(/from\(\s*["']bot_knowledge["']\s*\)/.test(sinComentarios(texto))).falso(
+        `${nombre} debe buscar con buscar_conocimiento, no leyendo la tabla a pelo`,
+      );
+    }
+  });
+
+  test("los dos motores buscan por relevancia con la misma función", () => {
+    for (const [nombre, texto] of [["el motor de WhatsApp", wa], ["la web", web]]) {
+      esperar(texto.includes("buscar_conocimiento")).verdadero(
+        `${nombre} no usa la búsqueda por relevancia`,
+      );
+    }
+  });
+
+  test("la búsqueda sigue acotada a organización Y chatbot", () => {
+    for (const [nombre, texto] of [["el motor de WhatsApp", wa], ["la web", web]]) {
+      esperar(texto.includes("p_org_id") && texto.includes("p_bot_id")).verdadero(
+        `${nombre} debe pasar SIEMPRE organización y chatbot: el conocimiento de un cliente no puede rozar el de otro`,
+      );
+    }
+  });
+});
+
+// ─── La agenda entre el motor y la web ───────────────────────────────────────
+describe("Puerta de agenda del motor", () => {
+  const ruta = fs.readFileSync(path.join(RAIZ, "src/app/api/motor/agenda/route.ts"), "utf8");
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  test("no se autoriza comparando dos copias de un secreto", () => {
+    // Comparar la llave del motor con la de la web se cayó en producción: las
+    // dos eran válidas y ninguna era igual a la otra (Supabase convive con dos
+    // formatos de llave de servicio). El calendario dejó de ofrecer horarios y
+    // el mensaje al cliente no decía por qué.
+    esperar(ruta.includes("/auth/v1/admin/users")).verdadero(
+      "la puerta del motor debe comprobar que la llave MANDA en el proyecto, no que sea idéntica a la de aquí",
+    );
+  });
+
+  test("cuando la plataforma no contesta bien, queda escrito el porqué", () => {
+    esperar(wa.includes("__fallo")).verdadero(
+      "un fallo de la agenda tiene que distinguirse de «no hay horarios»: son dos arreglos distintos",
+    );
+  });
+
+  test("tras un fallo de calendario NUNCA se sigue por la salida de éxito", () => {
+    // El peor error del proyecto: el bot decía «te paso con una persona» y un
+    // segundo después «tu cita ha sido agendada», con los datos en blanco.
+    const i = wa.indexOf('case "calendar"');
+    esperar(i > 0).verdadero("no encuentro el bloque de calendario en el motor");
+    const bloque = wa.slice(i, i + 1200);
+    esperar(/handoff_reason/.test(bloque)).verdadero(
+      "sin horarios, el calendario tiene que pasar la conversación a una persona",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "23";
+const VERSION_MOTOR = "24";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -535,21 +535,26 @@ async function buscarConocimiento(db: any, orgId: string, botId: string, pregunt
     }
   } catch { /* seguimos a palabras clave */ }
 
-  // 2) Por palabras clave (español)
+  // 2) Por palabras, ordenado por relevancia (ver 0054).
+  //
+  // ANTES ESTO EXIGÍA QUE COINCIDIERAN TODAS LAS PALABRAS de la pregunta en un
+  // mismo fragmento, cosa que casi nunca ocurre con una pregunta escrita por
+  // una persona. Como no encontraba nada, se caía a un respaldo que devolvía
+  // «los 5 primeros fragmentos» —siempre los mismos, sin relación con lo que
+  // preguntaron— y la IA rellenaba el hueco con lo que le sonaba. Así fue como
+  // aseguró que el plan de 99 USD «no tiene límite de mensajes».
+  //
+  // Por eso ese respaldo YA NO EXISTE: si no hay nada parecido a la pregunta,
+  // se devuelve vacío y la IA dice que no lo sabe y ofrece una persona. Un «no
+  // lo sé» cuesta una conversación; un dato inventado cuesta un cliente.
   try {
-    const { data, error } = await db.from("bot_knowledge")
-      .select("title, content").eq("org_id", orgId).eq("bot_id", botId).eq("enabled", true)
-      .textSearch("search", q, { type: "websearch", config: "spanish" }).limit(limit);
-    if (!error && data?.length) return data;
-  } catch { /* seguimos al respaldo */ }
+    const { data, error } = await db.rpc("buscar_conocimiento", {
+      p_org_id: orgId, p_bot_id: botId, p_pregunta: q, p_limit: limit,
+    });
+    if (!error && data?.length) return data.map((d: any) => ({ title: d.title, content: d.content }));
+  } catch { /* sin contexto */ }
 
-  // 3) Respaldo: los primeros fragmentos, para que haya algo de contexto
-  try {
-    const { data } = await db.from("bot_knowledge")
-      .select("title, content").eq("org_id", orgId).eq("bot_id", botId).eq("enabled", true)
-      .order("created_at", { ascending: true }).limit(limit);
-    return data ?? [];
-  } catch { return []; }
+  return [];
 }
 
 /**
@@ -767,10 +772,21 @@ async function pedirAgenda(cuerpo: Record<string, any>): Promise<any> {
       body: JSON.stringify(cuerpo),
       signal: ctl.signal,
     });
-    return await r.json();
+    const crudo = await r.text();
+    if (!r.ok) {
+      // SE REGISTRA EL PORQUÉ, NO SOLO EL QUÉ. Este bloque estuvo días diciendo
+      // «no hay horarios disponibles» cuando la verdad era un 401: el mensaje
+      // al cliente es el mismo, pero para arreglarlo son dos mundos distintos.
+      console.error(`[agenda] la plataforma respondió ${r.status}: ${crudo.slice(0, 200)}`);
+      return { __fallo: `http ${r.status}` };
+    }
+    try { return JSON.parse(crudo); } catch {
+      console.error(`[agenda] respuesta ilegible: ${crudo.slice(0, 200)}`);
+      return { __fallo: "respuesta ilegible" };
+    }
   } catch (e) {
     console.error("[agenda] no contestó:", e);
-    return null;
+    return { __fallo: "sin respuesta" };
   } finally {
     clearTimeout(reloj);
   }
@@ -793,7 +809,9 @@ async function sayCalendario(ctx: any, node: any) {
   // el horario laboral esté sin configurar — para quien escribe da igual la
   // causa, lo que necesita es que alguien lo atienda.
   if (!slots.length) {
-    const porque = r?.conectado === false
+    const porque = r?.__fallo
+      ? `la plataforma no respondió bien (${r.__fallo})`
+      : r?.conectado === false
       ? "no hay agenda conectada"
       : "no hay horarios libres";
     console.error(`[agenda] sin horarios (${porque}) org=${ctx.orgId}`);
@@ -838,6 +856,13 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
     ctx.vars.cita_inicio = r.inicioISO ?? inicioISO;
     ctx.vars.cita_enlace = r.enlace ?? "";
     ctx.vars.cita_ok = "true";
+    // Lo que de verdad se pega en un mensaje. La fecha en ISO no la escribe
+    // nadie en un WhatsApp; si solo dejamos eso, el mensaje de confirmación
+    // sale con los datos en blanco —y una confirmación en blanco es peor que
+    // no confirmar—.
+    ctx.vars.cita_dia = r.dia ?? "";
+    ctx.vars.cita_hora = r.hora ?? "";
+    ctx.vars.cita_cuando = r.etiqueta ?? "";
     return true;
   }
 
