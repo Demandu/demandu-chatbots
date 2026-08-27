@@ -72,7 +72,7 @@ export function hasFeature(channel: Channel, key: FeatureKey): boolean {
 export type ComponentKey =
   | "message" | "media" | "question" | "buttons" | "condition" | "ai" | "delay"
   | "action" | "api" | "calendar" | "tags" | "human" | "assign" | "redirect"
-  | "catalog" | "payment" | "whatsapp_flow" | "template"
+  | "catalog" | "payment" | "whatsapp_flow" | "call_permission" | "template"
   | "ig_story" | "ig_comment" | "ig_dm" | "fb_comment" | "web_form" | "end";
 
 const ALL: Channel[] = ["whatsapp", "instagram", "messenger", "webchat"];
@@ -97,6 +97,7 @@ export const COMPONENTS: Record<ComponentKey, {
   template:  { label: "Enviar plantilla de WhatsApp", desc: "Mensaje aprobado por Meta.", lana: "Envía una plantilla aprobada por Meta. Es la única forma de escribirle primero a alguien en WhatsApp fuera de las 24 horas.", channels: ["whatsapp"] },
   catalog:   { label: "Mostrar producto / catálogo", desc: "Vende productos por WhatsApp.", lana: "Muestra productos de tu catálogo directo en el chat para que el cliente compre sin salir de WhatsApp.", channels: ["whatsapp"] },
   whatsapp_flow: { label: "Formulario (WhatsApp Flow)", desc: "Pide varios datos en una sola pantalla.", lana: "Un formulario nativo de WhatsApp: el cliente llena varios campos en una sola pantalla, sin ir pregunta por pregunta.", channels: ["whatsapp"] },
+  call_permission: { label: "Permiso para llamar", desc: "Pide autorización antes de llamar por WhatsApp.", lana: "En WhatsApp no puedes llamar a un cliente sin que él lo autorice antes. Este bloque le manda la petición dentro de la conversación; si acepta, tu equipo puede llamarlo desde WhatsApp. Meta solo deja pedirlo una vez al día y dos veces por semana por persona, así que conviene pedirlo cuando de verdad haga falta.", channels: ["whatsapp"] },
   payment:   { label: "Cobro / pago", desc: "Cobra dentro del chat.", lana: "Cobra dentro de WhatsApp con tu pasarela de pago. (En otros canales, más adelante, será con un enlace de pago.)", channels: ["whatsapp"] },
   action:    { label: "Acción / Webhook", desc: "Avisa a otro sistema tuyo.", lana: "Manda la información a otro programa que uses (tu CRM, tu hoja de cálculo, tu sistema de pedidos). Si no sabes qué poner aquí, pídenos ayuda.", channels: ALL },
   api:       { label: "Consultar un sistema", desc: "Pregunta a otro sistema y sigue según la respuesta.", lana: "Le pregunta algo a otro sistema tuyo — por ejemplo si hay inventario — y la conversación sigue por un camino u otro según lo que conteste.", channels: ALL },

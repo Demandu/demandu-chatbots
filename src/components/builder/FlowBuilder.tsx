@@ -138,6 +138,19 @@ function BuilderInner({
             { id: `other-${now}`, label: "Otros" },
           ],
         };
+      } else if (type === "call_permission") {
+        // Dos salidas desde el primer momento. Un permiso siempre tiene dos
+        // desenlaces, y si el bloque naciera con una sola el flujo se quedaría
+        // mudo justo cuando el cliente dice que no — que es cuando más
+        // importa tener algo que decirle.
+        data = {
+          label: meta.label,
+          text: "¿Nos autorizas a llamarte por WhatsApp para ayudarte con esto?",
+          buttons: [
+            { id: `si-${now}`, label: "✅ Aceptó" },
+            { id: `no-${now}`, label: "🚫 No aceptó" },
+          ],
+        };
       } else if (type === "payment") {
         data = { label: meta.label, text: "Cobro con pasarela", currency: "MXN", gateway: "stripe" };
       } else if (type === "condition") {

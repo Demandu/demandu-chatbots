@@ -517,4 +517,65 @@ describe("Puerta de agenda del motor", () => {
   });
 });
 
+// ─── El catálogo de componentes ──────────────────────────────────────────────
+describe("Catálogo de componentes", () => {
+  const tipos = fs.readFileSync(path.join(RAIZ, "src/lib/flow/types.ts"), "utf8");
+  const canales = fs.readFileSync(path.join(RAIZ, "src/lib/channels.ts"), "utf8");
+  const motor = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  // Se recorta CADA tabla por su nombre antes de leer las claves. Buscar
+  // `algo: { label:` en todo el archivo pesca también los canales y las
+  // acciones, y una prueba que falla por estar mal escrita es peor que no
+  // tenerla: enseña a ignorar las alarmas.
+  const tabla = (texto, nombre) => {
+    const i = texto.indexOf(nombre);
+    if (i < 0) return [];
+    const desde = texto.indexOf("{", i);
+    let nivel = 0, fin = desde;
+    for (let j = desde; j < texto.length; j++) {
+      if (texto[j] === "{") nivel++;
+      else if (texto[j] === "}") { nivel--; if (nivel === 0) { fin = j; break; } }
+    }
+    return [...texto.slice(desde, fin).matchAll(/^\s{2}(\w+):\s*\{/gm)].map((m) => m[1]);
+  };
+
+  const meta = tabla(tipos, "NODE_META");
+  const documentados = tabla(canales, "export const COMPONENTS");
+
+  test("todo componente que se puede arrastrar está explicado", () => {
+    // `channels.ts` lo dice en un comentario: si documentamos un bloque que no
+    // existe, prometemos algo que no está; si falta uno, se queda sin
+    // explicación y sin tutorial de Lana. Hasta hoy nadie lo comprobaba.
+    const sinExplicar = meta.filter((k) => !documentados.includes(k));
+    esperar(sinExplicar.join(",")).igual("", "hay componentes sin explicación en channels.ts");
+  });
+
+  test("no se explica ningún componente que no exista", () => {
+    const inventados = documentados.filter((k) => !meta.includes(k));
+    esperar(inventados.join(",")).igual("", "channels.ts promete bloques que el constructor no tiene");
+  });
+
+  test("todo componente aparece en el orden de la paleta", () => {
+    const orden = (tipos.match(/PALETTE_ORDER[^=]*=\s*\[([\s\S]*?)\]/) ?? [])[1] ?? "";
+    // Los de Instagram y Messenger viven en su propia categoría del canal.
+    const propiosDeOtroCanal = ["ig_story", "ig_comment", "ig_dm", "fb_comment", "web_form"];
+    const fuera = meta.filter((k) => !propiosDeOtroCanal.includes(k) && !orden.includes('"' + k + '"'));
+    esperar(fuera.join(",")).igual("", "hay componentes que no aparecen en la paleta");
+  });
+
+  test("el motor sabe ejecutar el bloque de permiso para llamar", () => {
+    // Un bloque en la paleta que el motor no sabe ejecutar es una promesa rota:
+    // el cliente lo arrastra, lo configura, y en la conversación no pasa nada.
+    esperar(motor.includes('case "call_permission"')).verdadero(
+      "el bloque de permiso para llamar está en la paleta pero el motor no lo ejecuta",
+    );
+    esperar(motor.includes("call_permission_request")).verdadero(
+      "el motor no manda la petición de permiso de Meta",
+    );
+    esperar(motor.includes("call_permission_reply")).verdadero(
+      "el motor no reconoce la respuesta del cliente al permiso",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

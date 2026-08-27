@@ -20,6 +20,7 @@ export type NodeType =
   | "redirect"
   | "api"
   | "whatsapp_flow"
+  | "call_permission"
   | "payment"
   | "catalog"
   | "template"
@@ -275,6 +276,7 @@ export const NODE_META: Record<
   redirect: { label: "Redirigir", description: "Va a otro flujo / bot", icon: "🔀", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
   api: { label: "Acción API", description: "Llama una API y ramifica", icon: "🔌", color: "#3DDC97", bg: "rgba(61,220,151,.15)" },
   whatsapp_flow: { label: "WhatsApp Flow", description: "Formulario nativo de WhatsApp", icon: "📋", color: "#25D366", bg: "rgba(37,211,102,.16)" },
+  call_permission: { label: "Permiso para llamar", description: "Pide autorización para llamarle", icon: "📞", color: "#25D366", bg: "rgba(37,211,102,.16)" },
   payment: { label: "Pago", description: "Cobro con pasarela", icon: "💳", color: "#FFC857", bg: "rgba(255,200,87,.15)" },
   catalog: { label: "Catálogo", description: "Venta de productos por WhatsApp", icon: "🛒", color: "#6E42FF", bg: "rgba(110,66,255,.15)" },
   template: { label: "Plantilla WA", description: "Mensaje con plantilla aprobada", icon: "🗂️", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
@@ -290,5 +292,5 @@ export const NODE_META: Record<
 export const PALETTE_ORDER: NodeType[] = [
   "message", "media", "question", "buttons", "condition",
   "ai", "delay", "action", "api", "calendar", "tags", "human", "assign", "redirect",
-  "catalog", "payment", "whatsapp_flow", "template", "end",
+  "catalog", "payment", "whatsapp_flow", "call_permission", "template", "end",
 ];

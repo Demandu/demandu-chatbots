@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "24";
+const VERSION_MOTOR = "27";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -714,6 +714,10 @@ function evalCondition(flow: any, node: any, vars: Record<string, string>) {
  * veía una conversación que el cliente nunca recibió.
  */
 async function registrar(ctx: any, body: string, envio: ResultadoEnvio, extra: any = {}) {
+  // Todo lo que sale hacia el cliente pasa por aquí. Es el único sitio donde se
+  // puede saber, sin dudas, si en este turno el bot abrió la boca — y de eso
+  // depende la red de seguridad del final de `handleIncoming`.
+  ctx.dijoAlgo = true;
   const payload: any = { ...extra };
   if (!envio.ok) {
     let motivo = envio.error ?? "No se pudo enviar";
@@ -874,6 +878,53 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
   return false;
 }
 
+/**
+ * PIDE PERMISO PARA LLAMAR.
+ *
+ * En WhatsApp un negocio NO puede llamar a quien quiera: primero tiene que
+ * pedirlo y que la persona acepte. Meta limita las peticiones a una cada 24 h y
+ * dos por semana, y si se abusa recorta el número. Por eso esto es un bloque
+ * del constructor y no un botón suelto: se pide DENTRO de una conversación, en
+ * el momento en que tiene sentido —«¿te llamo para terminar de configurarlo?»—
+ * y no en frío.
+ *
+ * Devuelve si Meta lo aceptó. Si dijo que no, quien llama decide; lo que no se
+ * hace es quedarse esperando una respuesta que no va a existir.
+ */
+async function pedirPermisoDeLlamada(ctx: any, node: any): Promise<boolean> {
+  const d = node.data ?? {};
+  const cuerpo = interp(
+    d.text || "¿Nos autorizas a llamarte por WhatsApp para ayudarte con esto?",
+    ctx.vars,
+  ).slice(0, 1024);
+
+  const interactive: any = {
+    type: "call_permission_request",
+    body: { text: cuerpo },
+    action: { name: "call_permission_request" },
+  };
+
+  const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
+  await registrar(ctx, `📞 ${cuerpo}`, envio, { permiso_de_llamada: true });
+  if (!envio?.ok) console.error("[llamadas] Meta rechazó la petición de permiso:", JSON.stringify(envio));
+
+  // Queda apuntado que se pidió, aunque todavía no haya respuesta: de aquí sale
+  // el «no vuelvas a pedirlo hasta mañana».
+  if (envio?.ok) {
+    try {
+      await ctx.db.from("permisos_de_llamada").upsert(
+        {
+          org_id: ctx.orgId, telefono: ctx.to, estado: "pedido",
+          pedido_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+        { onConflict: "org_id,telefono" },
+      );
+    } catch (e) { console.error("[llamadas] no se pudo apuntar la petición:", e); }
+  }
+
+  return !!envio?.ok;
+}
+
 async function primeraPantalla(db: any, flowId: string, token: string): Promise<string | null> {
   try {
     const { data: cache } = await db.from("wa_flow_cache").select("screen").eq("flow_id", flowId).maybeSingle();
@@ -984,12 +1035,12 @@ async function llamarApi(ctx: any, node: any): Promise<string | undefined> {
   return salida("err-") ?? salida("other-") ?? defaultNext(ctx.flow, node);
 }
 
-async function sayFlujo(ctx: any, node: any) {
+async function sayFlujo(ctx: any, node: any): Promise<boolean> {
   const d = node.data ?? {};
   const flowId = String(d.waFlowId ?? "").trim();
   if (!flowId) {
     console.error("[wa flow] el bloque no tiene id de flujo");
-    return;
+    return false;
   }
 
   const screen = await primeraPantalla(ctx.db, flowId, ctx.token);
@@ -1015,6 +1066,23 @@ async function sayFlujo(ctx: any, node: any) {
     parametros.flow_action = "data_exchange";
   }
 
+  // UN FORMULARIO SIN PUBLICAR SOLO SE PUEDE MANDAR EN MODO BORRADOR.
+  //
+  // Meta rechaza con «(#131009) Parameter value is not valid» —un mensaje que
+  // no dice nada— cuando el flujo está en DRAFT y se manda como si estuviera
+  // publicado. Y así es como está TODO formulario recién hecho: nadie publica
+  // antes de probar. El cliente armaba su formulario, lo probaba, no le llegaba
+  // nada, y el error no contaba el porqué.
+  //
+  // Si lo tenemos sincronizado y sabemos que está en borrador, se manda en modo
+  // borrador. Solo lo ve quien tiene el número dado de alta en la cuenta de
+  // Meta, que es justo quien está probando.
+  try {
+    const { data: ficha } = await ctx.db
+      .from("whatsapp_forms").select("status").eq("meta_flow_id", flowId).maybeSingle();
+    if (String(ficha?.status ?? "").toUpperCase() === "DRAFT") parametros.mode = "draft";
+  } catch { /* si no lo sabemos, se manda normal */ }
+
   const interactive: any = {
     type: "flow",
     body: { text: interp(d.waBody || d.text || "Toca el botón de abajo 👇", ctx.vars).slice(0, 1024) },
@@ -1024,8 +1092,9 @@ async function sayFlujo(ctx: any, node: any) {
   if (d.waHeader) interactive.header = { type: "text", text: String(d.waHeader).slice(0, 60) };
 
   const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
-  await registrar(ctx, `📋 ${d.waFlowCta || "Formulario"}`, envio, { flow_id: flowId, screen });
+  await registrar(ctx, `📋 ${d.waFlowCta || "Formulario"}`, envio, { flow_id: flowId, screen, modo: parametros.mode ?? "publicado" });
   if (!envio?.ok) console.error("[wa flow] Meta rechazó el envío:", JSON.stringify(envio));
+  return !!envio?.ok;
 }
 
 async function say(ctx: any, body: string) {
@@ -1140,11 +1209,55 @@ async function runFrom(startId: string | undefined, ctx: any) {
         current = await llamarApi(ctx, node);
         break;
 
-      case "whatsapp_flow":
-        await sayFlujo(ctx, node);
+      case "whatsapp_flow": {
+        const salio = await sayFlujo(ctx, node);
+
+        // SI EL FORMULARIO NO SALIÓ, NO SE ESPERA UNA RESPUESTA QUE NUNCA VA A
+        // LLEGAR. Antes el motor se quedaba esperando el formulario aunque Meta
+        // lo hubiera rechazado: al cliente no le llegaba nada, escribiera lo
+        // que escribiera el bot no reaccionaba, y la conversación se moría de
+        // pie. Pasó de verdad con un formulario que ya no existía en Meta.
+        if (!salio) {
+          await say(ctx, "No pude abrirte el formulario 😕 Te paso con una persona del equipo.");
+          await ctx.db.from("conversations").update({
+            status: "assigned",
+            handoff_requested_at: new Date().toISOString(),
+            handoff_reason: "Meta rechazó el formulario de WhatsApp",
+          }).eq("id", ctx.convId);
+          ctx.finMotivo = "agente";
+          return null;
+        }
+
         // Se queda esperando a que el cliente termine el formulario: el
         // siguiente bloque corre cuando llegue su respuesta.
         return { nodeId: node.id, type: "wa_flow" };
+      }
+
+      case "call_permission": {
+        const salio = await pedirPermisoDeLlamada(ctx, node);
+        if (!salio) {
+          // Meta rechaza cuando ya se pidió hace poco (una cada 24 h, dos por
+          // semana; contesta 138009). No es un error del cliente ni algo que
+          // contarle: se sigue por la salida de «no aceptó» y la conversación
+          // continúa.
+          //
+          // LAS VARIABLES SE PONEN AQUÍ TAMBIÉN, y no es un detalle: si no, se
+          // quedan con el valor de la vez anterior. Lo vimos en la prueba — el
+          // permiso ni siquiera llegó a pedirse y el mensaje siguiente decía
+          // «permiso=si», porque en el intento previo el cliente había
+          // aceptado. Una variable vieja miente peor que una vacía.
+          ctx.vars.permiso_llamada = "no";
+          ctx.vars.permiso_llamada_permanente = "no";
+          // Para poder distinguir «dijo que no» de «no se le pudo ni preguntar»:
+          // en el primer caso hay que respetar la respuesta, en el segundo se
+          // puede volver a intentar mañana.
+          ctx.vars.permiso_llamada_motivo = "no_se_pudo_pedir";
+          const no = (node.data?.buttons ?? []).find((b: any) => String(b.id ?? "").startsWith("no-"));
+          current = (no ? buttonTarget(ctx.flow, node.id, no) : undefined) ?? defaultNext(ctx.flow, node);
+          break;
+        }
+        return { nodeId: node.id, type: "permiso_llamada" };
+      }
 
       case "end":
         if (node.data.text) await say(ctx, node.data.text);
@@ -1193,6 +1306,9 @@ async function handleIncoming(opts: any) {
     // ¿En este turno el bot ofreció pasar con una persona? Lo sabrá el turno
     // siguiente, para entender un "sí" suelto.
     ofreciAgente: false,
+    // ¿Salió algo hacia el cliente en este turno? Lo marca `registrar`, por
+    // donde pasa todo lo que se envía. Ver la red de seguridad del final.
+    dijoAlgo: false,
   };
 
   // Analítica: el recorrido que venía abierto de turnos anteriores.
@@ -1275,6 +1391,20 @@ async function handleIncoming(opts: any) {
         vars[k] = typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
       }
       startId = node ? defaultNext(opts.flow, node) : undefined;
+    } else if (awaiting.type === "permiso_llamada") {
+      const r = opts.permisoLlamada;
+      const acepto = String(r?.response ?? "").toLowerCase() === "accept";
+
+      // Disponibles para el resto del flujo: sirven para decir «perfecto, te
+      // llamamos en un rato» o para no volver a insistir.
+      vars.permiso_llamada = acepto ? "si" : "no";
+      vars.permiso_llamada_permanente = r?.is_permanent ? "si" : "no";
+      vars.permiso_llamada_motivo = acepto ? "concedido" : "rechazado";
+
+      const salidas = node?.data?.buttons ?? [];
+      const b = salidas.find((x: any) => String(x.id ?? "").startsWith(acepto ? "si-" : "no-"));
+      startId = (node && b ? buttonTarget(opts.flow, node.id, b) : undefined)
+        ?? (node ? defaultNext(opts.flow, node) : undefined);
     } else if (awaiting.type === "question") {
       if (node?.data.variable) vars[node.data.variable] = opts.text;
       // El bloque de IA se queda escuchando: la siguiente pregunta vuelve a él.
@@ -1303,7 +1433,33 @@ async function handleIncoming(opts: any) {
   // desde antes de que existiera esta medición.
   if (startId && !runId) runId = await abrirNuevo();
 
-  const nextAwait = await runFrom(startId, ctx);
+  let nextAwait = await runFrom(startId, ctx);
+
+  // ── RED DE SEGURIDAD: EL SILENCIO NO ES UNA RESPUESTA ──────────────────────
+  //
+  // Un cliente escribió y el bot no contestó NADA. Pasa cuando el flujo se
+  // queda sin salida: un bloque que el motor todavía no sabe ejecutar y que
+  // además no tiene nada conectado después. Lo vimos en vivo — alguien probaba
+  // la tienda demo, escribía «ya hice el pedido de prueba», y del otro lado no
+  // pasaba absolutamente nada: ni respuesta, ni aviso a un agente, ni la
+  // conversación marcada. Ese lead se pierde y nadie se entera nunca.
+  //
+  // Un flujo mal armado es un problema del cliente que lo armó; dejar a alguien
+  // hablándole a una pared es un problema nuestro. Ante la duda, una persona.
+  // Se exige `nextAwait === null` a propósito: la red se tiende solo cuando el
+  // flujo TERMINÓ sin decir nada. Si el bot sigue esperando una respuesta, está
+  // vivo y no hay a quién rescatar.
+  if (nextAwait === null && !ctx.dijoAlgo && ctx.finMotivo !== "agente") {
+    console.error(`[flujo] turno sin respuesta: flujo=${opts.flow?.id ?? "?"} último bloque=${ctx.ultimoNodo ?? "?"}`);
+    await say(ctx, "Déjame pasarte con una persona del equipo para seguir por aquí 🙌");
+    await opts.db.from("conversations").update({
+      status: "assigned",
+      handoff_requested_at: new Date().toISOString(),
+      handoff_reason: "El flujo se quedó sin salida y el cliente se quedó sin respuesta",
+    }).eq("id", opts.convId);
+    ctx.finMotivo = "agente";
+    nextAwait = null;
+  }
 
   // Analítica: si el bot ya no espera nada, el recorrido terminó. Llegar al
   // final del gráfico sin bloque "Cerrar el flujo" también cuenta como
@@ -1317,8 +1473,14 @@ async function handleIncoming(opts: any) {
 
   // Recordatorio de los atajos: solo la primera vez de la conversación,
   // para no repetirlo en cada mensaje.
+  //
+  // Y NUNCA JUSTO DESPUÉS DE PASAR CON UNA PERSONA. El bot decía «Bienvenido al
+  // chat en vivo de Demandu» y un segundo después «escribe 1 para hablar con
+  // una persona»: el cliente ya está esperando a esa persona. Ofrecerle lo que
+  // acaba de pedir lo hace dudar de si su solicitud entró.
   const hint = ctx.atajos?.hint;
-  if (hint?.enabled && hint?.onStart && hint?.text && !opts.flowState?.hintEnviado) {
+  const acabaDePasarConAlguien = ctx.finMotivo === "agente";
+  if (hint?.enabled && hint?.onStart && hint?.text && !opts.flowState?.hintEnviado && !acabaDePasarConAlguien) {
     await say(ctx, hint.text);
     return { vars, awaiting: nextAwait, hintEnviado: true, run_id: runId, ofreciAgente: ctx.ofreciAgente };
   }
@@ -1391,6 +1553,149 @@ async function handleStatuses(db: any, statuses: any[]) {
   }
 }
 
+/**
+ * LLAMADAS DE WHATSAPP.
+ *
+ * Meta avisa de cada llamada por el mismo webhook que los mensajes, en
+ * `value.calls`. Aquí NO se contesta ninguna llamada —el audio va por WebRTC y
+ * eso necesita un servicio de medios que no tenemos—: se DEJA CONSTANCIA.
+ *
+ * Y eso no es poca cosa. Sin esto, un cliente llama, nadie contesta, y en la
+ * Bandeja no queda ni rastro: el agente ve una conversación que se calló sola
+ * y no sabe que del otro lado alguien intentó hablar. Con esto ve «📞 Llamada
+ * perdida» en su sitio, entre los mensajes y con su hora.
+ *
+ * Los eventos que manda Meta son dos: `connect` (empieza) y `terminate`
+ * (termina, con `status` y `duration`). Pueden llegar desordenados o repetidos
+ * —Meta reintenta—, así que todo se resuelve por `wa_call_id` y nunca se
+ * retrocede de estado.
+ */
+const ESTADO_DE_LLAMADA: Record<string, string> = {
+  COMPLETED: "completada",
+  REJECTED: "rechazada",
+  FAILED: "fallida",
+  MISSED: "perdida",
+  NO_ANSWER: "perdida",
+};
+
+function duracionBonita(seg: number): string {
+  const m = Math.floor(seg / 60);
+  const s = seg % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+async function handleCalls(db: any, value: any) {
+  const pnid = value?.metadata?.phone_number_id;
+  const { data: cfg } = await db.from("whatsapp_channels").select("org_id, bot_id").eq("phone_number_id", pnid).maybeSingle();
+  if (!cfg) return;
+
+  for (const c of (value.calls ?? [])) {
+    const callId = String(c?.id ?? "");
+    if (!callId) continue;
+
+    // El otro lado de la llamada: si la recibimos, es quien llama; si la
+    // hacemos, es a quien llamamos.
+    const entrante = String(c?.direction ?? "").toUpperCase() !== "BUSINESS_INITIATED";
+    const telefono = String((entrante ? c?.from : c?.to) ?? c?.from ?? "").replace(/^\+/, "");
+    if (!telefono) continue;
+
+    const { data: contact } = await db.from("contacts")
+      .upsert(
+        { org_id: cfg.org_id, channel: "whatsapp", external_id: telefono, phone: telefono, country: paisDesdeTelefono(telefono) },
+        { onConflict: "org_id,channel,external_id" },
+      )
+      .select("id").single();
+
+    // Sin ficha de contacto no se busca conversación: un `.eq("contact_id","")`
+    // no devuelve vacío, revienta la consulta entera por uuid inválido.
+    const { data: conv } = contact?.id
+      ? await db.from("conversations")
+          .select("id").eq("org_id", cfg.org_id).eq("contact_id", contact.id).eq("channel", "whatsapp")
+          .order("last_message_at", { ascending: false }).limit(1).maybeSingle()
+      : { data: null };
+
+    const evento = String(c?.event ?? "").toLowerCase();
+
+    if (evento === "connect") {
+      await db.from("llamadas").upsert(
+        {
+          org_id: cfg.org_id, conversation_id: conv?.id ?? null, contact_id: contact?.id ?? null,
+          wa_call_id: callId, telefono,
+          direccion: entrante ? "entrante" : "saliente",
+          estado: "conectada",
+          inicio: c?.timestamp ? new Date(Number(c.timestamp) * 1000 || Date.parse(c.timestamp)).toISOString() : new Date().toISOString(),
+          crudo: c,
+        },
+        { onConflict: "org_id,wa_call_id" },
+      );
+      continue;
+    }
+
+    if (evento !== "terminate") continue;
+
+    const seg = Number(c?.duration ?? 0) || 0;
+    const estado = ESTADO_DE_LLAMADA[String(c?.status ?? "").toUpperCase()] ?? (seg > 0 ? "completada" : "perdida");
+
+    await db.from("llamadas").upsert(
+      {
+        org_id: cfg.org_id, conversation_id: conv?.id ?? null, contact_id: contact?.id ?? null,
+        wa_call_id: callId, telefono,
+        direccion: entrante ? "entrante" : "saliente",
+        estado, fin: new Date().toISOString(), duracion_seg: seg, crudo: c,
+      },
+      { onConflict: "org_id,wa_call_id" },
+    );
+
+    // Y en la conversación, para que el agente lo vea donde mira siempre.
+    if (conv?.id) {
+      const etiqueta = estado === "completada"
+        ? `📞 Llamada ${entrante ? "recibida" : "realizada"} · ${duracionBonita(seg)}`
+        : estado === "rechazada" ? `📞 Llamada ${entrante ? "recibida" : "realizada"} · rechazada`
+        : estado === "fallida" ? `📞 Llamada ${entrante ? "recibida" : "realizada"} · no se pudo completar`
+        : `📞 Llamada ${entrante ? "perdida" : "sin respuesta"}`;
+
+      await db.from("messages").insert({
+        conversation_id: conv.id, org_id: cfg.org_id,
+        direction: entrante ? "inbound" : "outbound",
+        // OJO: el enum de la base es `system`, en inglés, como el resto del
+        // esquema. Escribirlo en español hace que PostgREST devuelva un 400 y
+        // la llamada se registre en su tabla pero NO aparezca en la Bandeja —
+        // que es justo donde el agente la busca.
+        sender: "system", body: etiqueta,
+        payload: { llamada: { id: callId, estado, duracion_seg: seg, direccion: entrante ? "entrante" : "saliente" } },
+      });
+    }
+  }
+}
+
+/**
+ * El cliente contestó a la petición de permiso para llamarlo.
+ *
+ * Hay dos formas de conceder: PERMANENTE (`is_permanent`) o TEMPORAL (con
+ * `expiration_timestamp`). Se guardan distinto a propósito: llamar a alguien
+ * cuyo permiso caducó es exactamente lo que hace que Meta cierre un número, y
+ * «permanente» y «caduca el jueves» no se pueden tratar igual.
+ */
+async function guardarPermisoDeLlamada(db: any, orgId: string, contactId: string | null, telefono: string, r: any) {
+  const acepto = String(r?.response ?? "").toLowerCase() === "accept";
+  const permanente = r?.is_permanent === true;
+  const expira = r?.expiration_timestamp
+    ? new Date(Number(r.expiration_timestamp) * 1000).toISOString()
+    : null;
+
+  await db.from("permisos_de_llamada").upsert(
+    {
+      org_id: orgId, contact_id: contactId, telefono,
+      estado: acepto ? "concedido" : "rechazado",
+      permanente: acepto && permanente,
+      respondido_at: new Date().toISOString(),
+      expira_at: acepto && !permanente ? expira : null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "org_id,telefono" },
+  );
+}
+
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
@@ -1418,7 +1723,14 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true });
       }
 
-      // 2) Mensaje entrante
+      // 2) Llamadas (empezó / terminó). Van por su propio camino: no son
+      //    mensajes y no deben mover el flujo del chatbot.
+      if (Array.isArray(value?.calls) && value.calls.length) {
+        await handleCalls(admin(), value);
+        return json({ ok: true });
+      }
+
+      // 3) Mensaje entrante
       const msg = value?.messages?.[0];
       if (!msg) return json({ ok: true });
       const pnid = value?.metadata?.phone_number_id;
@@ -1441,7 +1753,23 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      const text = msg.text?.body ?? msg.interactive?.button_reply?.id ?? msg.interactive?.list_reply?.id ?? msg.button?.text ?? (respuestaDeFormulario ? "__formulario__" : "");
+      // Respuesta a la petición de permiso para llamar. Llega como un
+      // interactivo más, pero no es una opción del menú: es un permiso, y de él
+      // depende que llamar sea legal o sea el camino a que Meta cierre el
+      // número. Por eso se reconoce aparte y se guarda antes de tocar el flujo.
+      const permisoLlamada = msg.interactive?.type === "call_permission_reply"
+        ? (msg.interactive?.call_permission_reply ?? null)
+        : null;
+
+      // OJO CON EL ORDEN Y CON `??`: los dos últimos casos van en UNA sola
+      // expresión a propósito. Encadenarlos con `??` no funcionaría — el primero
+      // devolvería "" (que no es null) y el segundo no llegaría a evaluarse
+      // nunca, dejando los formularios sin reconocer.
+      const text = msg.text?.body
+        ?? msg.interactive?.button_reply?.id
+        ?? msg.interactive?.list_reply?.id
+        ?? msg.button?.text
+        ?? (permisoLlamada ? "__permiso_llamada__" : respuestaDeFormulario ? "__formulario__" : "");
       const etiquetaAdjunto =
         msg.type === "image" ? "📷 Imagen"
         : msg.type === "video" ? "🎥 Video"
@@ -1454,6 +1782,13 @@ Deno.serve(async (req: Request) => {
         msg.text?.body ??
         msg.interactive?.button_reply?.title ??
         msg.interactive?.list_reply?.title ??
+        (permisoLlamada
+          ? (String(permisoLlamada.response ?? "").toLowerCase() === "accept"
+              ? (permisoLlamada.is_permanent
+                  ? "📞 Autorizó que le llamemos (sin caducidad)"
+                  : "📞 Autorizó que le llamemos")
+              : "📞 No autorizó que le llamemos")
+          : undefined) ??
         // Lo que ve el agente en la Bandeja: lo que el cliente respondió, no
         // un "__formulario__" que no le dice nada a nadie.
         (respuestaDeFormulario
@@ -1494,6 +1829,16 @@ Deno.serve(async (req: Request) => {
       // Si todavía no tiene nombre propio, estrenamos con el de WhatsApp.
       if (contact && !contact.name && name) {
         await db.from("contacts").update({ name }).eq("id", contact.id);
+      }
+
+      // El permiso se guarda AQUÍ y no dentro del flujo, a propósito: vale
+      // aunque la conversación esté con un agente, aunque el flujo se haya
+      // cambiado o borrado, y aunque nadie llegue a preguntar por él. Es un
+      // permiso de la persona, no un paso de un chatbot.
+      if (permisoLlamada) {
+        try {
+          await guardarPermisoDeLlamada(db, cfg.org_id, contact?.id ?? null, from, permisoLlamada);
+        } catch (e) { console.error("[llamadas] no se pudo guardar el permiso:", e); }
       }
       const nuevaConversacion = async () => {
         const ins = await db.from("conversations")
@@ -1611,6 +1956,7 @@ Deno.serve(async (req: Request) => {
               flow, pnid, token: cfg.access_token, to: from,
               orgId: cfg.org_id, convId: conv.id, db, flowState, text, visible,
               respuestaFormulario: respuestaDeFormulario,
+              permisoLlamada,
               botId: cfg.bot_id, aiSettings: (botRow as any)?.ai ?? null, baseVars, atajos,
               flowId: chosen.id, flowName: chosen.name ?? null,
               numeroPropio: cfg.display_number ?? null,

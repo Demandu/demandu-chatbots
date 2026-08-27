@@ -911,6 +911,29 @@ export function InboxClient({
 
             {messages.map((m) => {
               const out = m.direction === "outbound";
+
+              // UNA LLAMADA NO ES UN MENSAJE, y pintarla como tal engaña: en la
+              // burbuja de la izquierda parece que el cliente escribió «Llamada
+              // recibida · 3:12». Va centrada y en gris, como lo que es — algo
+              // que pasó en la conversación, no algo que alguien dijo.
+              const ll = (m.payload as any)?.llamada;
+              if (ll) {
+                const fallida = ll.estado === "perdida" || ll.estado === "fallida" || ll.estado === "rechazada";
+                return (
+                  <div key={m.id} className="my-1 self-center text-center">
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px]"
+                      style={{
+                        backgroundColor: fallida ? "rgba(255,111,176,.12)" : "rgba(139,102,255,.12)",
+                        color: fallida ? "#FF6FB0" : "#8B66FF",
+                      }}
+                    >
+                      {m.body}
+                    </span>
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={m.id}

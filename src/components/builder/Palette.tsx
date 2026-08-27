@@ -14,7 +14,7 @@ const COMMON: Category[] = [
 
 /** Componentes exclusivos por canal (los de WhatsApp NO aparecen en otros canales). */
 const CHANNEL_EXTRA: Record<BotChannel, Category[]> = {
-  whatsapp: [{ name: "Comercio & WhatsApp", items: ["catalog", "payment", "whatsapp_flow", "template"] }],
+  whatsapp: [{ name: "Comercio & WhatsApp", items: ["catalog", "payment", "whatsapp_flow", "call_permission", "template"] }],
   instagram: [{ name: "Instagram", items: ["ig_story", "ig_comment", "ig_dm"] }],
   messenger: [{ name: "Messenger", items: ["fb_comment", "template"] }],
   webchat: [{ name: "Sitio web", items: ["web_form"] }],
