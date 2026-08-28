@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Clock,
+  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Clock, Crown,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
@@ -47,7 +47,13 @@ function corto(n: number): string {
   return String(n);
 }
 
-export function Sidebar({ plan }: { plan?: ResumenDePlan | null }) {
+export function Sidebar({
+  plan,
+  esDelEquipo = false,
+}: {
+  plan?: ResumenDePlan | null;
+  esDelEquipo?: boolean;
+}) {
   const pathname = usePathname();
   // Gente esperando a que alguien del equipo le conteste. Va aquí y no solo en
   // un aviso emergente porque el aviso se lo lleva el viento: si el agente
@@ -108,6 +114,24 @@ export function Sidebar({ plan }: { plan?: ResumenDePlan | null }) {
       {CONFIG.map((i) => (
         <Item key={i.href} {...i} />
       ))}
+
+      {/* LA PUERTA A LA TRASTIENDA.
+          Existía el superadmin y no había forma de llegar salvo escribiendo la
+          dirección a mano — una función entera invisible para quien la
+          necesita todos los días.
+
+          Va al final, separada y con otro color a propósito: entrar a la
+          trastienda y trabajar en la cuenta de un cliente no deben parecerse.
+          Confundirlas es como se toca por error algo de alguien. */}
+      {esDelEquipo && (
+        <Link
+          href="/superadmin/clientes"
+          className="mt-4 flex items-center gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2.5 text-sm font-medium text-amber-200 transition hover:border-amber-400/60 hover:text-amber-100"
+        >
+          <Crown className="h-5 w-5" />
+          Superadmin
+        </Link>
+      )}
 
       {/* ESTA TARJETA ESTUVO MINTIENDO. Nació como maqueta con números
           inventados a fuego —«Plan Crecimiento · 1.9k / 3k conversaciones»— y

@@ -57,6 +57,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
   //
   // Nunca revienta: si falla, `getUsage` devuelve vacío y la tarjeta no se
   // pinta. Que no se vea el consumo no puede tumbar el panel entero.
+  // ¿Es alguien del equipo de Demandu? Solo para pintarle la puerta de la
+  // trastienda. Esto NO es lo que protege el superadmin —eso lo hace su propio
+  // marco, con la misma comprobación en el servidor—: aquí solo se decide si
+  // se dibuja un enlace. Esconder no es prohibir, y al revés tampoco.
+  let esDelEquipo = false;
+  try {
+    const { data } = await createClient().rpc("is_platform_admin");
+    esDelEquipo = data === true;
+  } catch {
+    esDelEquipo = false;
+  }
+
   let plan: ResumenDePlan | null = null;
   try {
     const orgId = await getCurrentOrgId();
@@ -71,7 +83,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <div className="flex min-h-dvh flex-col">
       {soporte && <AvisoDeSoporte negocio={soporte.negocio} hasta={soporte.hasta} />}
       <div className="min-h-0 flex-1">
-        <Shell sidebar={<Sidebar plan={plan} />}>{children}</Shell>
+        <Shell sidebar={<Sidebar plan={plan} esDelEquipo={esDelEquipo} />}>{children}</Shell>
       </div>
     </div>
   );
