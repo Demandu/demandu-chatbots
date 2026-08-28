@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listarFacturas, estadoDeFactura } from "@/lib/billing/facturas";
-import { reenviar, restablecer, entrarComoSoporte } from "../acciones";
+import { reenviar, restablecer, entrarComoSoporte, eliminarCliente } from "../acciones";
 import { ArrowLeft, FileText, ExternalLink, Send, TriangleAlert, Check, KeyRound, Mail, Phone, User, LifeBuoy } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -278,6 +278,40 @@ export default async function FichaCliente({
           </table>
         </div>
       )}
+
+      {/* ── ZONA PELIGROSA ─────────────────────────────────────────────────
+          Va al final, separada y en rojo, porque borrar una cuenta arrastra en
+          cascada 47 tablas: sus contactos, sus conversaciones, sus mensajes,
+          sus chatbots. No hay deshacer.
+
+          El campo del nombre no es un adorno ni un trámite: es lo único que
+          distingue «quería borrar ESTA» de «tenía otra fila seleccionada». */}
+      <div className="mt-10 rounded-2xl border border-danger/40 bg-danger/5 p-4">
+        <h3 className="text-sm font-bold text-danger">Eliminar esta cuenta</h3>
+        <p className="mt-1 max-w-2xl text-xs text-ink-2">
+          Se borran para siempre sus contactos, conversaciones, mensajes, chatbots e integraciones.
+          Las facturas y las comisiones <b>se conservan</b>: son la contabilidad de Demandu, no datos
+          del cliente.
+        </p>
+        <form action={eliminarCliente} className="mt-3 flex flex-wrap items-end gap-2">
+          <input type="hidden" name="org_id" value={org.id} />
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-ink-3">
+              Escribe «{org.name}» para confirmar
+            </label>
+            <input
+              name="confirmacion"
+              required
+              autoComplete="off"
+              placeholder={org.name}
+              className="input-l w-72"
+            />
+          </div>
+          <button className="rounded-lg border border-danger/50 bg-danger/15 px-3 py-2.5 text-sm font-semibold text-danger transition hover:bg-danger/25">
+            Eliminar definitivamente
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

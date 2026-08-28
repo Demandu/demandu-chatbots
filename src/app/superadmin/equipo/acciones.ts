@@ -44,7 +44,11 @@ export async function crearMiembro(formData: FormData): Promise<void> {
     email,
     password: clave,
     email_confirm: true,
-    user_metadata: { name: nombre },
+    // `equipo_demandu` NO es decorativo: lo lee el disparador `handle_new_user`
+    // para NO montarle un negocio propio. Sin esta marca, dar de alta a un
+    // vendedor lo metía además en la lista de clientes, en prueba, sumando al
+    // MRR un negocio que no existe. Pasó con el primero que se creó.
+    user_metadata: { name: nombre, equipo_demandu: true },
   });
 
   if (error || !creado?.user) {
