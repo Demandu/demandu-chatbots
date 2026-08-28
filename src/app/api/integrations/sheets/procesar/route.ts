@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { llamadaDeTareaProgramada } from "@/lib/cron";
 import { getValidAccessTokenForOrg } from "@/lib/integrations/google";
 import { añadirFila, filaDeContacto } from "@/lib/integrations/sheets";
 
@@ -13,19 +14,17 @@ const MAX_INTENTOS = 3;
 /**
  * Vacía la cola de Sheets: coge los contactos pendientes y les añade su fila.
  *
- * LO LLAMA UNA TAREA PROGRAMADA, no un cliente. Por eso pide un secreto
- * compartido: sin él, cualquiera en internet podría dispararlo. No es que
- * pudiera robar datos —no devuelve ninguno— pero sí gastar las cuotas de
- * Google del cliente a base de llamadas.
+ * LO LLAMA UNA TAREA PROGRAMADA, no un cliente. Por eso pide un ticket de un
+ * solo uso emitido por la base (ver 0059): sin él, cualquiera en internet
+ * podría dispararlo. No es que pudiera robar datos —no devuelve ninguno— pero
+ * sí gastar las cuotas de Google del cliente a base de llamadas.
  *
  * SE AGRUPA POR ORGANIZACIÓN para pedir el token de Google una sola vez por
  * cliente en vez de una por fila. Con veinte leads de un mismo negocio eso son
  * diecinueve viajes menos.
  */
 export async function POST(req: Request) {
-  const secreto = process.env.CRON_SECRET;
-  const dado = req.headers.get("x-demandu-cron") ?? "";
-  if (!secreto || dado !== secreto) {
+  if (!(await llamadaDeTareaProgramada(req, "sheets"))) {
     return Response.json({ error: "no autorizado" }, { status: 401 });
   }
 

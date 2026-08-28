@@ -1,3 +1,4 @@
+import { llamadaDeTareaProgramada } from "@/lib/cron";
 import { revisarServicios, guardarChequeos } from "@/lib/estado/servicios";
 import { revisarMeta } from "@/lib/estado/meta";
 
@@ -7,7 +8,7 @@ export const maxDuration = 60;
 /**
  * Revisa el estado de todo y lo guarda. La llama una tarea programada.
  *
- * Pide el mismo secreto compartido que el resto de tareas. Aquí importa más
+ * Pide el mismo ticket de un solo uso que el resto de tareas. Aquí importa más
  * que en las otras: sin él, cualquiera podría hacernos consultar la API de
  * Meta en bucle hasta que nos limite — y Meta nos limita a NOSOTROS, no a
  * quien llamó.
@@ -16,9 +17,7 @@ export const maxDuration = 60;
  * pocos minutos sin gastar llamadas a Meta, que basta con revisar cada hora.
  */
 export async function POST(req: Request) {
-  const secreto = process.env.CRON_SECRET;
-  const dado = req.headers.get("x-demandu-cron") ?? "";
-  if (!secreto || dado !== secreto) {
+  if (!(await llamadaDeTareaProgramada(req, "estado"))) {
     return Response.json({ error: "no autorizado" }, { status: 401 });
   }
 

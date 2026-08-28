@@ -719,4 +719,38 @@ describe("Esperas de minutos u horas", () => {
   });
 });
 
+// ─── Tareas programadas ──────────────────────────────────────────────────────
+describe("Tareas programadas", () => {
+  test("ninguna tarea depende de un secreto que hay que pegar a mano", () => {
+    // La tarea de Google Sheets estuvo 4.859 ejecuciones seguidas siendo
+    // rechazada con 401: se registró con el texto de ejemplo
+    // «PEGA_AQUI_TU_SECRETO» y `CRON_SECRET` nunca existió en Netlify. Nadie se
+    // enteró porque el registro del cron decía «succeeded» — el SQL sí corría;
+    // lo que fallaba era la petición HTTP, que se guarda en otra tabla.
+    //
+    // Ahora la base emite un ticket de un solo uso y no hay nada que copiar.
+    const rutas = ARCHIVOS.filter(
+      (f) => f.ruta.startsWith("src/app/api/") && /x-demandu-cron|CRON_SECRET/.test(sinComentarios(f.texto)),
+    );
+    const sinTicket = rutas
+      .filter((f) => !f.texto.includes("llamadaDeTareaProgramada"))
+      .map((f) => f.ruta);
+    esperar(sinTicket.join(", ")).igual(
+      "",
+      "hay endpoints de tarea programada que siguen comprobando el secreto a mano",
+    );
+  });
+
+  test("el ticket se comprueba y se gasta en una sola operación", () => {
+    // Comprobar y marcar por separado deja pasar dos peticiones simultáneas.
+    const lib = fs.readFileSync(path.join(RAIZ, "src/lib/cron.ts"), "utf8");
+    esperar(lib.includes("usar_ticket_de_cron")).verdadero(
+      "el ticket tiene que consumirse en la base, no comprobarse desde fuera",
+    );
+    esperar(lib.includes("p_proposito")).verdadero(
+      "un ticket sirve para UN propósito: si no, el de una tarea abre la puerta de otra",
+    );
+  });
+});
+
 process.exit(await correrPruebas());
