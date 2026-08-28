@@ -771,6 +771,19 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
           <Field label="Concepto / descripción del cobro">
             <input className="input" value={d.text ?? ""} placeholder="Anticipo de tu pedido" onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
+          <Field label="Enlace de cobro">
+            <input
+              className="input"
+              value={d.paymentUrl ?? ""}
+              placeholder="https://buy.stripe.com/... o tu enlace de Mercado Pago"
+              onChange={(e) => onChange({ paymentUrl: e.target.value })}
+            />
+          </Field>
+          <p className="mb-3 text-[11px] text-muted-2">
+            Pega aquí tu enlace de cobro (Stripe Payment Link, Mercado Pago, Conekta…). Puedes usar variables:
+            <b className="text-muted"> ?monto={"{{total}}"}</b>. Todavía no conectamos tu cuenta de pasarela
+            directamente, así que el enlace lo generas tú una vez y lo reutiliza el chatbot.
+          </p>
           <div className="mb-3">
             <Toggle label="Cobro nativo de WhatsApp Pay" checked={d.whatsappPayment ?? false} onChange={(v) => onChange({ whatsappPayment: v })} />
           </div>

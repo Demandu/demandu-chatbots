@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "27";
+const VERSION_MOTOR = "30";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -925,6 +925,233 @@ async function pedirPermisoDeLlamada(ctx: any, node: any): Promise<boolean> {
   return !!envio?.ok;
 }
 
+/**
+ * ETIQUETAR AL CONTACTO.
+ *
+ * El bloque existía en el constructor desde el principio y el motor NO lo
+ * ejecutaba: el cliente etiquetaba «interesado en demo», guardaba, y la ficha
+ * del lead seguía igual. Peor que no tener la función, porque el negocio creía
+ * que estaba segmentando y filtraba por etiquetas que nunca se pusieron.
+ *
+ * En el constructor se eligen etiquetas por su id; en la ficha del contacto se
+ * guardan por su NOMBRE (así el equipo las lee en la Bandeja sin resolver ids).
+ * Aquí se traduce de una cosa a la otra.
+ */
+async function etiquetar(ctx: any, node: any) {
+  const d = node.data ?? {};
+  const poner: string[] = d.tagIdsAdd ?? [];
+  const quitar: string[] = d.tagIdsRemove ?? [];
+  const grupo: string = d.leadGroupId ?? "";
+  if (!poner.length && !quitar.length && !grupo) return;
+
+  try {
+    const ids = [...poner, ...quitar];
+    const { data: filas } = ids.length
+      ? await ctx.db.from("tags").select("id, name").in("id", ids).eq("org_id", ctx.orgId)
+      : { data: [] };
+    const nombre = new Map((filas ?? []).map((t: any) => [t.id, t.name]));
+
+    const { data: contacto } = await ctx.db
+      .from("contacts").select("id, tags").eq("org_id", ctx.orgId)
+      .eq("channel", "whatsapp").eq("external_id", ctx.to).maybeSingle();
+    if (!contacto) return;
+
+    const actuales = new Set<string>(contacto.tags ?? []);
+    for (const id of poner) { const n = nombre.get(id); if (n) actuales.add(n); }
+    for (const id of quitar) { const n = nombre.get(id); if (n) actuales.delete(n); }
+
+    const cambios: any = { tags: [...actuales] };
+    // Solo se toca el grupo si el bloque eligió uno. Un bloque que solo pone
+    // etiquetas no debe sacar al lead del grupo donde ya estaba.
+    if (grupo) cambios.lead_group_id = grupo;
+
+    await ctx.db.from("contacts").update(cambios).eq("id", contacto.id);
+  } catch (e) {
+    // Etiquetar es importante, pero no tanto como que la conversación siga.
+    console.error("[etiquetas] no se pudieron aplicar:", e);
+  }
+}
+
+/**
+ * ACCIÓN / WEBHOOK: avisar a otro sistema y seguir.
+ *
+ * La diferencia con el bloque de API es intencionada y está escrita en el
+ * propio constructor: la API pregunta y ramifica según la respuesta; esto
+ * avisa y sigue. Por eso NO se espera el resultado — el cliente que puso este
+ * bloque quiere que su CRM se entere, no que la persona en WhatsApp espere a
+ * que su CRM conteste.
+ */
+async function dispararAccion(ctx: any, node: any) {
+  const d = node.data ?? {};
+  const url = interp(String(d.apiUrl ?? "").trim(), ctx.vars);
+  if (!url) {
+    console.error("[accion] el bloque no tiene dirección configurada:", node.id);
+    return;
+  }
+
+  const cabeceras: Record<string, string> = { "Content-Type": "application/json" };
+  // Aquí las cabeceras son un JSON escrito a mano en una caja de texto (en el
+  // bloque de API son una lista). Si está mal escrito no se rompe la
+  // conversación por ello: se manda sin ellas y queda el aviso.
+  try {
+    const extra = JSON.parse(interp(String(d.apiHeaders ?? "").trim() || "{}", ctx.vars));
+    for (const [k, v] of Object.entries(extra)) cabeceras[k] = String(v);
+  } catch { console.error("[accion] cabeceras ilegibles en el bloque", node.id); }
+
+  const metodo = String(d.apiMethod ?? "POST").toUpperCase();
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 10000);
+
+  // Sin `await`: se dispara y la conversación sigue. El fallo queda en el
+  // registro, no en la cara del cliente.
+  fetch(url, {
+    method: metodo,
+    headers: cabeceras,
+    body: metodo === "GET" || metodo === "HEAD" ? undefined : (interp(String(d.apiBody ?? ""), ctx.vars) || "{}"),
+    signal: ctl.signal,
+  })
+    .then((r) => { if (!r.ok) console.error(`[accion] ${url} respondió ${r.status}`); })
+    .catch((e) => console.error("[accion] no contestó:", e?.message ?? e));
+}
+
+/**
+ * ESPERA ANTES DEL SIGUIENTE MENSAJE.
+ *
+ * Sirve para que el bot no dispare tres mensajes en el mismo segundo, que se
+ * lee fatal. Se espera DE VERDAD, pero con tope: esto corre dentro de la
+ * petición del webhook de Meta, y una función que se queda dormida un minuto
+ * se corta sola y deja la conversación a medias.
+ *
+ * Minutos y horas necesitan un programador de tareas que retome la
+ * conversación más tarde; eso todavía no existe, así que se avisa en el
+ * registro en vez de fingir que se esperó.
+ */
+// 5 s y ni uno más. Meta reenvía el webhook si no le contestamos pronto, y cada
+// reenvío es un flujo ejecutado de más. La red de seguridad contra reenvíos ya
+// existe (ver 0056), pero no hay que ponérselo a prueba a propósito.
+const ESPERA_MAXIMA_MS = 5000;
+
+async function esperarDeVerdad(node: any) {
+  const d = node.data ?? {};
+  const valor = Number(d.delayValue) || 0;
+  const unidad = String(d.delayUnit ?? "seconds");
+  if (valor <= 0) return;
+
+  const ms = unidad === "seconds" ? valor * 1000 : unidad === "minutes" ? valor * 60000 : valor * 3600000;
+  if (ms > ESPERA_MAXIMA_MS) {
+    console.error(
+      `[espera] el bloque ${node.id} pide ${valor} ${unidad}: eso necesita un programador de tareas ` +
+      `que todavía no existe. Se espera el máximo (${ESPERA_MAXIMA_MS / 1000} s) y se sigue.`,
+    );
+  }
+  await new Promise((r) => setTimeout(r, Math.min(ms, ESPERA_MAXIMA_MS)));
+}
+
+/**
+ * PLANTILLA APROBADA.
+ *
+ * Es la única forma de escribirle a alguien fuera de la ventana de 24 horas.
+ * Dentro de la ventana también funciona, y por eso el bloque existe en el
+ * constructor: hay negocios que mandan siempre la misma confirmación y
+ * prefieren tenerla aprobada.
+ *
+ * Las variables van por posición ({{1}}, {{2}}…), que es como las pide Meta. En
+ * el bloque se escriben una por línea.
+ */
+async function sayPlantilla(ctx: any, node: any): Promise<boolean> {
+  const d = node.data ?? {};
+  const nombre = String(d.templateName ?? "").trim();
+  if (!nombre) {
+    console.error("[plantilla] el bloque no tiene nombre de plantilla:", node.id);
+    return false;
+  }
+
+  const valores = String(d.text ?? "")
+    .split("\n").map((l: string) => interp(l.trim(), ctx.vars)).filter(Boolean);
+
+  const template: any = { name: nombre, language: { code: String(d.templateLang ?? "es_MX") } };
+  if (valores.length) {
+    template.components = [{
+      type: "body",
+      parameters: valores.map((v: string) => ({ type: "text", text: v })),
+    }];
+  }
+
+  const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "template", template });
+  await registrar(ctx, `📨 Plantilla «${nombre}»${valores.length ? ": " + valores.join(" · ") : ""}`, envio, { plantilla: nombre });
+  if (!envio?.ok) console.error("[plantilla] Meta la rechazó:", JSON.stringify(envio));
+  return !!envio?.ok;
+}
+
+/**
+ * CATÁLOGO DE PRODUCTOS.
+ *
+ * Dos formas, y la diferencia importa: con SKUs se manda una lista de productos
+ * concretos (`product_list`, que necesita el id del catálogo); sin SKUs se
+ * manda el catálogo entero (`catalog_message`), y ahí Meta usa el catálogo que
+ * el número ya tiene conectado.
+ */
+async function sayCatalogo(ctx: any, node: any): Promise<boolean> {
+  const d = node.data ?? {};
+  const texto = interp(d.text || "Estos son nuestros productos:", ctx.vars).slice(0, 1024);
+  const skus = String(d.products ?? "").split("\n").map((s: string) => s.trim()).filter(Boolean);
+  const catalogo = String(d.catalogId ?? "").trim() || String(ctx.catalogId ?? "").trim();
+
+  let interactive: any;
+  if (skus.length && catalogo) {
+    interactive = {
+      type: "product_list",
+      header: { type: "text", text: (d.label || "Productos").slice(0, 60) },
+      body: { text: texto },
+      action: {
+        catalog_id: catalogo,
+        sections: [{ title: "Disponibles", product_items: skus.map((id: string) => ({ product_retailer_id: id })) }],
+      },
+    };
+  } else {
+    interactive = { type: "catalog_message", body: { text: texto }, action: { name: "catalog_message" } };
+  }
+
+  const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
+  await registrar(ctx, texto, envio, { catalogo: catalogo || null, skus });
+  if (!envio?.ok) console.error("[catalogo] Meta lo rechazó:", JSON.stringify(envio));
+  return !!envio?.ok;
+}
+
+/**
+ * REDIRIGIR A OTRO BOT.
+ *
+ * Para qué sirve: un negocio con varios chatbots —ventas, soporte, postventa—
+ * quiere que el de ventas pase la conversación al de soporte sin que el
+ * cliente tenga que escribir otra cosa.
+ *
+ * Se carga el flujo de bienvenida del bot destino. Se exige que esté publicado
+ * (`is_live`) y encendido: redirigir a un borrador dejaría al cliente en un
+ * flujo a medio hacer sin que nadie se entere.
+ */
+async function flujoDeOtroBot(ctx: any, node: any): Promise<{ id: string; nodes: any[]; edges: any[] } | null> {
+  const destino = String(node.data?.targetBotId ?? "").trim();
+  if (!destino) return null;
+
+  try {
+    const { data: flujos } = await ctx.db
+      .from("flows").select("id, graph, trigger_type, enabled, is_live, priority")
+      .eq("bot_id", destino).eq("org_id", ctx.orgId);
+
+    const vivos = (flujos ?? []).filter((f: any) => f.enabled !== false && f.is_live !== false);
+    const elegido = vivos.find((f: any) => f.trigger_type === "welcome")
+      ?? vivos.find((f: any) => f.trigger_type !== "keyword")
+      ?? vivos[0];
+
+    const g = elegido?.graph;
+    if (!g?.nodes?.length) return null;
+    return { id: elegido.id, nodes: g.nodes, edges: g.edges ?? [] };
+  } catch (e) {
+    console.error("[redirigir] no pude cargar el bot destino:", e);
+    return null;
+  }
+}
+
 async function primeraPantalla(db: any, flowId: string, token: string): Promise<string | null> {
   try {
     const { data: cache } = await db.from("wa_flow_cache").select("screen").eq("flow_id", flowId).maybeSingle();
@@ -1119,16 +1346,98 @@ async function runFrom(startId: string | undefined, ctx: any) {
   let current = startId; let guard = 0;
   while (current && guard++ < 80) {
     const node = getNode(ctx.flow, current);
-    if (!node) break;
+    if (!node) {
+      // Un salto a un bloque que no existe deja al cliente sin respuesta. Antes
+      // se salía de aquí sin decir ni pío y no quedaba ni rastro de por qué.
+      console.error(`[flujo] el bloque "${current}" no existe en este flujo. Se corta el recorrido aquí.`);
+      break;
+    }
     // Analítica: cada bloque que se pisa cuenta como un paso del recorrido.
     ctx.pasos = (ctx.pasos ?? 0) + 1;
     ctx.ultimoNodo = node.id;
     switch (node.type) {
-      case "start": current = node.data.to ?? defaultNext(ctx.flow, node); break;
+      case "start": {
+        // NO SE CONFÍA EN `data.to` A CIEGAS. En el bot «Lana» ese campo
+        // apuntaba a un bloque llamado «welcome» que ya no existía: el motor
+        // saltaba al vacío y la conversación se moría en silencio. Quien
+        // escribía a ese bot no recibía absolutamente nada.
+        //
+        // Pasa solo con arrastrar y borrar bloques en el constructor, así que
+        // le puede haber pasado a cualquiera. Si el destino no existe, se usa
+        // la flecha que sale del bloque, que es lo que el cliente ve dibujado.
+        const porDato = node.data?.to && getNode(ctx.flow, node.data.to) ? node.data.to : undefined;
+        if (node.data?.to && !porDato) {
+          console.error(`[flujo] el inicio apunta a un bloque que no existe ("${node.data.to}"). Uso la flecha dibujada.`);
+        }
+        current = porDato ?? defaultNext(ctx.flow, node);
+        break;
+      }
       case "question": await say(ctx, node.data.text ?? ""); return { nodeId: node.id, type: "question" };
       case "buttons": await sayButtons(ctx, node.data.text ?? "", node); return { nodeId: node.id, type: "buttons" };
       case "condition": current = evalCondition(ctx.flow, node, ctx.vars); break;
-      case "delay": current = defaultNext(ctx.flow, node); break;
+      case "delay": await esperarDeVerdad(node); current = defaultNext(ctx.flow, node); break;
+      case "tags": await etiquetar(ctx, node); current = defaultNext(ctx.flow, node); break;
+      case "action": await dispararAccion(ctx, node); current = defaultNext(ctx.flow, node); break;
+
+      case "template": {
+        const salio = await sayPlantilla(ctx, node);
+        // Si Meta rechaza la plantilla —no aprobada, idioma que no existe,
+        // variables que no cuadran— el cliente NO se queda sin nada: se sigue
+        // por la salida siguiente, que es lo mismo que hace el resto del motor
+        // cuando un envío falla. El porqué queda en el registro.
+        if (!salio) console.error("[plantilla] se sigue el flujo sin ella:", node.id);
+        current = defaultNext(ctx.flow, node);
+        break;
+      }
+
+      case "catalog": {
+        await sayCatalogo(ctx, node);
+        current = defaultNext(ctx.flow, node);
+        break;
+      }
+
+      case "payment": {
+        // QUÉ HACE Y QUÉ NO. Manda el concepto, el monto y el ENLACE DE COBRO
+        // que el negocio pegó. No cobra por sí mismo: para eso habría que
+        // conectar la cuenta de pasarela de cada cliente, y eso no existe
+        // todavía en la plataforma.
+        //
+        // Es lo que hace hoy la mayoría de los negocios pequeños —un enlace de
+        // Stripe o de Mercado Pago que reutilizan— así que sirve de verdad. Lo
+        // que no se hace es fingir un cobro que nadie está procesando.
+        const d = node.data ?? {};
+        const enlace = interp(String(d.paymentUrl ?? "").trim(), ctx.vars);
+        const monto = interp(String(d.amount ?? "").trim(), ctx.vars);
+        const moneda = String(d.currency ?? "").trim();
+
+        if (!enlace) {
+          console.error(`[cobro] el bloque ${node.id} no tiene enlace de cobro configurado. No se manda nada.`);
+          current = defaultNext(ctx.flow, node);
+          break;
+        }
+
+        const concepto = interp(String(d.text ?? "").trim(), ctx.vars);
+        const importe = monto ? `\n\nTotal: ${monto}${moneda ? " " + moneda : ""}` : "";
+        await say(ctx, `${concepto || "Puedes completar tu pago aquí"}${importe}\n\n${enlace}`);
+        current = defaultNext(ctx.flow, node);
+        break;
+      }
+
+      case "redirect": {
+        const otro = await flujoDeOtroBot(ctx, node);
+        if (!otro) {
+          console.error("[redirigir] no encontré flujo de destino en el bloque", node.id);
+          current = defaultNext(ctx.flow, node);
+          break;
+        }
+        // Se cambia el flujo EN CALIENTE y se sigue desde su inicio. El id
+        // nuevo se guarda para que el turno siguiente retome donde toca: sin
+        // eso, el estado apuntaría a un bloque de un flujo que ya no corre.
+        ctx.flow = { nodes: otro.nodes, edges: otro.edges };
+        ctx.flowIdNuevo = otro.id;
+        current = getStartNode(ctx.flow)?.id;
+        break;
+      }
 
       // Multimedia: manda la imagen/video/archivo de verdad, con su texto.
       case "media": {
@@ -1309,6 +1618,11 @@ async function handleIncoming(opts: any) {
     // ¿Salió algo hacia el cliente en este turno? Lo marca `registrar`, por
     // donde pasa todo lo que se envía. Ver la red de seguridad del final.
     dijoAlgo: false,
+    // Si un bloque «Redirigir» cambió de bot a mitad del recorrido, aquí queda
+    // el id del flujo que se está ejecutando de verdad.
+    flowIdNuevo: undefined as string | undefined,
+    // El catálogo conectado al número, para el bloque de catálogo sin SKUs.
+    catalogId: opts.catalogId ?? null,
   };
 
   // Analítica: el recorrido que venía abierto de turnos anteriores.
@@ -1482,9 +1796,9 @@ async function handleIncoming(opts: any) {
   const acabaDePasarConAlguien = ctx.finMotivo === "agente";
   if (hint?.enabled && hint?.onStart && hint?.text && !opts.flowState?.hintEnviado && !acabaDePasarConAlguien) {
     await say(ctx, hint.text);
-    return { vars, awaiting: nextAwait, hintEnviado: true, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+    return { vars, awaiting: nextAwait, hintEnviado: true, run_id: runId, ofreciAgente: ctx.ofreciAgente, flow_id: ctx.flowIdNuevo };
   }
-  return { vars, awaiting: nextAwait, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+  return { vars, awaiting: nextAwait, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId, ofreciAgente: ctx.ofreciAgente, flow_id: ctx.flowIdNuevo };
 }
 
 // ---- selección de flujo por disparador ----
@@ -1801,6 +2115,28 @@ Deno.serve(async (req: Request) => {
         msg.button?.text ??
         (etiquetaAdjunto || text);
       const db = admin();
+      // ── ¿YA HABÍAMOS VISTO ESTE MENSAJE? ────────────────────────────────
+      //
+      // Meta REENVÍA el webhook si no le contestamos rápido, y cada reenvío
+      // volvía a correr el flujo entero: mensajes repetidos al cliente, la cita
+      // agendada dos veces, el webhook del negocio disparado dos veces y la
+      // bolsa de mensajes cobrada dos veces. Lo vi en vivo probando el bloque
+      // de acción.
+      //
+      // La comprobación es el propio INSERT: la clave primaria decide. Dos
+      // reenvíos simultáneos no pueden ganar los dos, y no hay hueco entre
+      // «miro si existe» y «lo escribo» por donde se cuele el segundo.
+      if (msg.id) {
+        const { error: repetido } = await db.from("mensajes_vistos").insert({ wa_message_id: msg.id });
+        if (repetido) {
+          // 23505 = clave duplicada: es un reenvío, ya lo atendimos.
+          if ((repetido as any).code === "23505") return json({ ok: true, repetido: true });
+          // Cualquier otro fallo NO puede dejar al cliente sin respuesta: se
+          // sigue. Es mejor arriesgarse a un duplicado que a un silencio.
+          console.error("[reenvios] no pude anotar el mensaje:", repetido);
+        }
+      }
+
       const { data: cfg } = await db.from("whatsapp_channels").select("*").eq("phone_number_id", pnid).maybeSingle();
       if (!cfg) return json({ ok: true });
 
@@ -1957,11 +2293,19 @@ Deno.serve(async (req: Request) => {
               orgId: cfg.org_id, convId: conv.id, db, flowState, text, visible,
               respuestaFormulario: respuestaDeFormulario,
               permisoLlamada,
+              catalogId: cfg.catalog_id ?? null,
               botId: cfg.bot_id, aiSettings: (botRow as any)?.ai ?? null, baseVars, atajos,
               flowId: chosen.id, flowName: chosen.name ?? null,
               numeroPropio: cfg.display_number ?? null,
             });
-            await db.from("conversations").update({ flow_state: { ...newState, flow_id: chosen.id } }).eq("id", conv.id);
+            // OJO CON EL ORDEN: si el flujo se redirigió a otro bot a mitad
+            // de camino, el id bueno es el que devuelve el motor, no el que se
+            // eligió al entrar. Escribir el viejo dejaría el estado apuntando a
+            // un bloque de un flujo que ya no se está ejecutando, y el turno
+            // siguiente no encontraría dónde retomar.
+            await db.from("conversations")
+              .update({ flow_state: { ...newState, flow_id: newState.flow_id ?? chosen.id } })
+              .eq("id", conv.id);
           }
         }
       }

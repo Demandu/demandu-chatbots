@@ -527,12 +527,18 @@ describe("Catálogo de componentes", () => {
   // `algo: { label:` en todo el archivo pesca también los canales y las
   // acciones, y una prueba que falla por estar mal escrita es peor que no
   // tenerla: enseña a ignorar las alarmas.
+  // Se busca la llave del VALOR (`= {`), no la primera llave que aparezca: el
+  // tipo de la tabla es `Record<NodeType, { label: string; ... }>` y esa llave
+  // llega antes. Buscándola mal, la tabla salía VACÍA y las comprobaciones de
+  // abajo pasaban sin comparar nada — que es la peor forma de fallar, porque
+  // enseña a confiar en una alarma que no suena.
   const tabla = (texto, nombre) => {
     const i = texto.indexOf(nombre);
     if (i < 0) return [];
-    const desde = texto.indexOf("{", i);
-    let nivel = 0, fin = desde;
-    for (let j = desde; j < texto.length; j++) {
+    const desde = texto.indexOf("= {", i);
+    if (desde < 0) return [];
+    let nivel = 0, fin = desde + 2;
+    for (let j = desde + 2; j < texto.length; j++) {
       if (texto[j] === "{") nivel++;
       else if (texto[j] === "}") { nivel--; if (nivel === 0) { fin = j; break; } }
     }
@@ -542,11 +548,20 @@ describe("Catálogo de componentes", () => {
   const meta = tabla(tipos, "NODE_META");
   const documentados = tabla(canales, "export const COMPONENTS");
 
+  test("las dos tablas se leyeron de verdad", () => {
+    // Guarda contra el fallo silencioso: si el recorte devuelve una lista
+    // vacía, TODAS las comprobaciones de este bloque pasarían sin comparar
+    // nada. Ya pasó una vez. Que no vuelva a pasar sin avisar.
+    esperar(meta.length > 10).verdadero("no pude leer NODE_META: las demás pruebas de este bloque no valdrían");
+    esperar(documentados.length > 10).verdadero("no pude leer COMPONENTS: las demás pruebas de este bloque no valdrían");
+  });
+
   test("todo componente que se puede arrastrar está explicado", () => {
     // `channels.ts` lo dice en un comentario: si documentamos un bloque que no
     // existe, prometemos algo que no está; si falta uno, se queda sin
     // explicación y sin tutorial de Lana. Hasta hoy nadie lo comprobaba.
-    const sinExplicar = meta.filter((k) => !documentados.includes(k));
+    // `start` es interno: no se arrastra y no necesita explicación.
+    const sinExplicar = meta.filter((k) => k !== "start" && !documentados.includes(k));
     esperar(sinExplicar.join(",")).igual("", "hay componentes sin explicación en channels.ts");
   });
 
@@ -558,9 +573,27 @@ describe("Catálogo de componentes", () => {
   test("todo componente aparece en el orden de la paleta", () => {
     const orden = (tipos.match(/PALETTE_ORDER[^=]*=\s*\[([\s\S]*?)\]/) ?? [])[1] ?? "";
     // Los de Instagram y Messenger viven en su propia categoría del canal.
-    const propiosDeOtroCanal = ["ig_story", "ig_comment", "ig_dm", "fb_comment", "web_form"];
+    const propiosDeOtroCanal = ["ig_story", "ig_comment", "ig_dm", "fb_comment", "web_form", "start"];
     const fuera = meta.filter((k) => !propiosDeOtroCanal.includes(k) && !orden.includes('"' + k + '"'));
     esperar(fuera.join(",")).igual("", "hay componentes que no aparecen en la paleta");
+  });
+
+  test("el motor de WhatsApp sabe ejecutar TODOS los bloques de WhatsApp", () => {
+    // ESTA ES LA PRUEBA QUE FALTABA. Seis bloques vivieron meses en la paleta
+    // sin que el motor supiera ejecutarlos: etiquetar, acción, espera,
+    // redirigir, plantilla y catálogo. El cliente los arrastraba, los
+    // configuraba, guardaba — y en la conversación no pasaba nada. Etiquetar
+    // era el peor: el negocio creía que estaba segmentando y filtraba por
+    // etiquetas que nunca se pusieron.
+    //
+    // Un bloque en la paleta es una promesa. Esto comprueba que el motor la
+    // puede cumplir.
+    const soloDeOtroCanal = ["ig_story", "ig_comment", "ig_dm", "fb_comment", "web_form"];
+    // `start` no es un componente: es el nodo de arranque, no se arrastra.
+    const internos = ["start"];
+    const casos = [...motor.matchAll(/case "(\w+)":/g)].map((m) => m[1]);
+    const sinMotor = meta.filter((k) => !soloDeOtroCanal.includes(k) && !internos.includes(k) && !casos.includes(k));
+    esperar(sinMotor.join(",")).igual("", "hay bloques en la paleta que el motor de WhatsApp no ejecuta");
   });
 
   test("el motor sabe ejecutar el bloque de permiso para llamar", () => {
@@ -574,6 +607,52 @@ describe("Catálogo de componentes", () => {
     );
     esperar(motor.includes("call_permission_reply")).verdadero(
       "el motor no reconoce la respuesta del cliente al permiso",
+    );
+  });
+});
+
+// ─── Reenvíos de Meta ────────────────────────────────────────────────────────
+describe("Reenvíos del webhook", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  test("un mensaje repetido no vuelve a correr el flujo", () => {
+    // Meta reenvía el webhook cuando no le contestamos rápido. Sin esto, cada
+    // reenvío repetía los mensajes al cliente, agendaba la cita otra vez,
+    // disparaba el webhook del negocio otra vez y cobraba la bolsa otra vez.
+    esperar(wa.includes("mensajes_vistos")).verdadero(
+      "el motor tiene que descartar los reenvíos de Meta por el id del mensaje",
+    );
+    esperar(wa.includes("23505")).verdadero(
+      "el descarte se decide por la clave duplicada del INSERT, no por una consulta previa (que deja hueco a la carrera)",
+    );
+  });
+
+  test("la espera del bloque de retardo no invita a que Meta reintente", () => {
+    const m = wa.match(/ESPERA_MAXIMA_MS\s*=\s*(\d+)/);
+    esperar(!!m).verdadero("no encuentro el tope de la espera");
+    esperar(Number(m[1]) <= 5000).verdadero(
+      "retener la respuesta del webhook más de 5 s hace que Meta reenvíe el mensaje",
+    );
+  });
+});
+
+// ─── Saltos a bloques que no existen ─────────────────────────────────────────
+describe("Saltos rotos en un flujo", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  test("el bloque de inicio no salta a ciegas", () => {
+    // El bot «Lana» estuvo MUDO en producción por esto: su nodo de inicio
+    // apuntaba a un bloque «welcome» que ya no existía —basta con borrar un
+    // bloque en el constructor— y el motor saltaba al vacío. Quien le escribía
+    // no recibía nada, y no quedaba ni rastro de por qué.
+    const i = wa.indexOf('case "start"');
+    esperar(i > 0).verdadero("no encuentro el caso del bloque de inicio");
+    const bloque = wa.slice(i, i + 900);
+    esperar(/getNode\(ctx\.flow,\s*node\.data\.to\)/.test(bloque)).verdadero(
+      "el inicio debe comprobar que su destino existe antes de saltar",
+    );
+    esperar(/defaultNext/.test(bloque)).verdadero(
+      "si el destino no existe hay que usar la flecha dibujada, no morirse",
     );
   });
 });

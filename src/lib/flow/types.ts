@@ -202,6 +202,8 @@ export interface DemanduNodeData {
   waFooter?: string;
   /** solo para type = "payment" */
   gateway?: string;
+  /** Enlace de cobro que el negocio pega (Stripe Payment Link, Mercado Pago, etc.). */
+  paymentUrl?: string;
   amount?: string;
   currency?: string;
   successBotId?: string;
