@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Briefcase, ArrowLeft } from "lucide-react";
+import { anotarPaso } from "@/lib/equipo/asistencia";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,10 @@ export const dynamic = "force-dynamic";
 export default async function PanelLayout({ children }: { children: React.ReactNode }) {
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) redirect("/login");
+
+  // Queda constancia de que hoy pasó por aquí. No se espera al resultado: es
+  // un apunte de gestión, no puede retrasar la carga de nadie.
+  anotarPaso(user.id);
 
   const { data: miembro } = await createAdminClient()
     .from("equipo_demandu")

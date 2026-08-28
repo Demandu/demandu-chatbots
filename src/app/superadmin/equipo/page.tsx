@@ -22,6 +22,18 @@ const usd = (v: number) =>
 
 const usd0 = (v: number) => `$${(v ?? 0).toLocaleString("es-MX", { maximumFractionDigits: 0 })}`;
 
+/** «hace 3 h», «ayer», «hace 5 días». Más legible que una fecha para esto. */
+function haceCuanto(iso: string | null): string {
+  if (!iso) return "Nunca ha entrado";
+  const min = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (min < 2) return "ahora mismo";
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "ayer" : `hace ${d} días`;
+}
+
 export default async function EquipoPage({
   searchParams,
 }: {
@@ -29,7 +41,7 @@ export default async function EquipoPage({
 }) {
   const admin = createAdminClient();
 
-  const [{ data: equipo }, { data: orgs }, { data: planes }, { data: comisiones }] = await Promise.all([
+  const [{ data: equipo }, { data: orgs }, { data: planes }, { data: comisiones }, { data: actividad }] = await Promise.all([
     admin.from("equipo_demandu").select("*").order("creado_at"),
     admin
       .from("organizations")
@@ -38,6 +50,7 @@ export default async function EquipoPage({
       .order("name"),
     admin.from("plans").select("code, price_monthly"),
     admin.from("comisiones").select("miembro_id, monto, estado, periodo"),
+    admin.from("actividad_del_equipo").select("*"),
   ]);
 
   const miembros = (equipo as any[]) ?? [];
@@ -62,6 +75,9 @@ export default async function EquipoPage({
   };
 
   const sinAsignar = clientes.filter((c) => !c.atendido_por);
+  const actividadDe = ((actividad as any[]) ?? []).slice().sort((a, b) =>
+    (b.ultimo_acceso ?? "").localeCompare(a.ultimo_acceso ?? ""),
+  );
 
   return (
     <div>
@@ -208,6 +224,63 @@ export default async function EquipoPage({
           <button className="btn-primary px-5">Crear acceso</button>
         </form>
       </details>
+
+      {/* ── Quién está trabajando ──────────────────────────────────────────
+          POR QUÉ NO SOLO «ÚLTIMO ACCESO». Entrar a la plataforma no es
+          trabajar: se puede abrir todos los días y no hacer nada. Al lado del
+          acceso van las dos cosas que sí son trabajo — a cuántas cuentas entró
+          a dar soporte y cuántos clientes dio de alta. Un vendedor que entra a
+          diario y tiene las dos columnas en cero dice mucho más que la fecha
+          sola. */}
+      <div className="mb-7">
+        <h3 className="mb-2 text-sm font-semibold text-ink">Actividad de los últimos 30 días</h3>
+        <div className="overflow-x-auto rounded-2xl border border-linea">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="bg-suave text-xs uppercase tracking-wide text-ink-3">
+              <tr>
+                <th className="px-4 py-3">Persona</th>
+                <th className="px-4 py-3">Última vez</th>
+                <th className="px-4 py-3">Días que entró</th>
+                <th className="px-4 py-3">Entró a cuentas</th>
+                <th className="px-4 py-3">Clientes que dio de alta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {actividadDe.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-3">
+                    Todavía no hay nadie en el equipo.
+                  </td>
+                </tr>
+              )}
+              {actividadDe.map((a: any) => (
+                <tr key={a.miembro_id} className="border-t border-linea bg-tarjeta">
+                  <td className="px-4 py-3">
+                    <span className="font-semibold text-ink">{a.nombre}</span>
+                    <span className="ml-2 text-[11px] text-ink-3">{a.tipo}</span>
+                  </td>
+                  <td className="px-4 py-3 text-ink-2">{haceCuanto(a.ultimo_acceso)}</td>
+                  <td className="px-4 py-3 text-ink-2">
+                    {a.dias_activos_30 > 0 ? `${a.dias_activos_30} de 30` : <span className="text-ink-3">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {a.soportes_30 > 0
+                      ? <span className="font-semibold text-exito">{a.soportes_30}</span>
+                      : <span className="text-ink-3">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-ink-2">
+                    {a.clientes_dados_de_alta > 0 ? a.clientes_dados_de_alta : <span className="text-ink-3">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-[11px] text-ink-3">
+          «Entró a cuentas» son accesos de soporte a cuentas de clientes, que es donde se hace el
+          trabajo. El registro de días empieza a contar desde hoy: antes no se guardaba.
+        </p>
+      </div>
 
       {/* ── La gente ───────────────────────────────────────────────────── */}
       <div className="space-y-4">

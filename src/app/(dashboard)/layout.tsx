@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { Sidebar, type ResumenDePlan } from "@/components/Sidebar";
+import { anotarPaso } from "@/lib/equipo/asistencia";
 import { Shell } from "@/components/Shell";
 import { faltaNombreDelNegocio, getCurrentOrgId } from "@/lib/org";
 import { createClient } from "@/lib/supabase/server";
@@ -61,6 +62,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // trastienda. Esto NO es lo que protege el superadmin —eso lo hace su propio
   // marco, con la misma comprobación en el servidor—: aquí solo se decide si
   // se dibuja un enlace. Esconder no es prohibir, y al revés tampoco.
+  // Si es del equipo de Demandu, queda constancia de que estuvo trabajando.
+  // AQUÍ NO SOBRA: cuando un vendedor entra a la cuenta de un cliente para
+  // darle soporte, lo que se pinta es este panel — y eso es justo el trabajo
+  // que se quiere poder ver.
+  anotarPaso(quienEs?.id);
+
   let esDelEquipo = false;
   try {
     const { data } = await createClient().rpc("is_platform_admin");
