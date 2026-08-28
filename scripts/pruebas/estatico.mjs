@@ -657,4 +657,66 @@ describe("Saltos rotos en un flujo", () => {
   });
 });
 
+// ─── Esperas largas ──────────────────────────────────────────────────────────
+describe("Esperas de minutos u horas", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  test("una espera larga se programa, no se finge", () => {
+    // El bloque «Espera» dejaba elegir horas y se ejecutaba en cero segundos:
+    // el «recuérdaselo en 2 h» salía en el mismo instante. No se puede dormir
+    // dentro del webhook de Meta, así que se apunta y se retoma después.
+    esperar(wa.includes("esperas_pendientes")).verdadero(
+      "una espera que no cabe en el webhook tiene que quedar programada",
+    );
+    esperar(wa.includes("retomarEn")).verdadero(
+      "al despertar hay que retomar por el bloque exacto, no por el principio del flujo",
+    );
+  });
+
+  test("dormido no es lo mismo que mudo", () => {
+    // La red de seguridad pasa con un agente al cliente cuando el bot no dijo
+    // nada. Una conversación en pausa NO puede caer ahí: está esperando su
+    // recordatorio, no abandonada.
+    const i = wa.indexOf("nextAwait === null && !ctx.dijoAlgo");
+    esperar(i > 0).verdadero("no encuentro la red de seguridad del silencio");
+    esperar(wa.slice(i, i + 120).includes("enPausa")).verdadero(
+      "una conversación dormida no debe activar el rescate por silencio",
+    );
+  });
+
+  test("si el lead escribe durante la pausa, la espera se cancela", () => {
+    // Si no, el bot le contesta a algo que ya no viene a cuento — la charla
+    // siguió por otro lado mientras dormía.
+    esperar(wa.includes("cancelar_esperas_de")).verdadero(
+      "un mensaje nuevo del lead tiene que cancelar lo que estuviera programado",
+    );
+  });
+
+  test("al despertar se respeta la ventana de 24 h", () => {
+    // Es LA diferencia entre una espera corta y una larga: cuando vence el
+    // reloj pueden haber pasado horas, y fuera de la ventana WhatsApp no deja
+    // escribir. Mandarlo igual deja en la Bandeja un mensaje que nunca llegó.
+    const i = wa.indexOf("async function retomarEspera");
+    esperar(i > 0).verdadero("no encuentro el punto de entrada del reloj");
+    const bloque = wa.slice(i, i + 4000);
+    esperar(/horas\s*>=\s*24/.test(bloque)).verdadero(
+      "al retomar hay que comprobar la ventana de 24 h antes de escribir",
+    );
+    esperar(bloque.includes("caducada")).verdadero(
+      "fuera de la ventana la espera se marca caducada, no se manda igual",
+    );
+  });
+
+  test("el reloj no necesita ninguna llave guardada", () => {
+    // La alternativa era dejar la llave de servicio dentro de la definición del
+    // cron, que cualquiera con acceso a `cron.job` puede leer. Cada espera
+    // lleva su propio testigo de un solo uso.
+    const i = wa.indexOf("async function retomarEspera");
+    const bloque = wa.slice(i, i + 1200);
+    esperar(bloque.includes("testigo")).verdadero(
+      "retomar se autoriza con el testigo de esa espera, no con un secreto compartido",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

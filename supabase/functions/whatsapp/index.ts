@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "30";
+const VERSION_MOTOR = "31";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -1031,20 +1031,52 @@ async function dispararAccion(ctx: any, node: any) {
 // existe (ver 0056), pero no hay que ponérselo a prueba a propósito.
 const ESPERA_MAXIMA_MS = 5000;
 
-async function esperarDeVerdad(node: any) {
+/**
+ * Devuelve `true` si la conversación queda EN PAUSA (se retomará más tarde) y
+ * el recorrido debe detenerse aquí.
+ */
+async function esperarDeVerdad(ctx: any, node: any): Promise<boolean> {
   const d = node.data ?? {};
   const valor = Number(d.delayValue) || 0;
   const unidad = String(d.delayUnit ?? "seconds");
-  if (valor <= 0) return;
+  if (valor <= 0) return false;
 
   const ms = unidad === "seconds" ? valor * 1000 : unidad === "minutes" ? valor * 60000 : valor * 3600000;
-  if (ms > ESPERA_MAXIMA_MS) {
-    console.error(
-      `[espera] el bloque ${node.id} pide ${valor} ${unidad}: eso necesita un programador de tareas ` +
-      `que todavía no existe. Se espera el máximo (${ESPERA_MAXIMA_MS / 1000} s) y se sigue.`,
-    );
+
+  // Espera corta: se duerme aquí mismo y la conversación sigue de corrido.
+  if (ms <= ESPERA_MAXIMA_MS) {
+    await new Promise((r) => setTimeout(r, ms));
+    return false;
   }
-  await new Promise((r) => setTimeout(r, Math.min(ms, ESPERA_MAXIMA_MS)));
+
+  // Espera larga: NO se puede dormir dentro del webhook. Se apunta dónde
+  // seguir y quién la retome será el reloj de la base (ver 0058).
+  const siguiente = defaultNext(ctx.flow, node);
+  if (!siguiente) {
+    console.error(`[espera] el bloque ${node.id} no tiene nada conectado después. No hay nada que retomar.`);
+    return false;
+  }
+
+  const cuando = new Date(Date.now() + ms).toISOString();
+  const { error } = await ctx.db.from("esperas_pendientes").insert({
+    org_id: ctx.orgId,
+    conversation_id: ctx.convId,
+    bot_id: ctx.botId ?? null,
+    flow_id: ctx.flowIdNuevo ?? ctx.flowId ?? null,
+    nodo_id: siguiente,
+    vars: ctx.vars ?? {},
+    ejecutar_at: cuando,
+  });
+
+  if (error) {
+    // Si no se pudo apuntar, se sigue de largo: es preferible un mensaje
+    // antes de tiempo a una conversación que se queda muda para siempre.
+    console.error("[espera] no pude programarla, sigo sin esperar:", error);
+    return false;
+  }
+
+  console.log(`[espera] conversación ${ctx.convId} en pausa hasta ${cuando}, seguirá por ${siguiente}`);
+  return true;
 }
 
 /**
@@ -1375,7 +1407,17 @@ async function runFrom(startId: string | undefined, ctx: any) {
       case "question": await say(ctx, node.data.text ?? ""); return { nodeId: node.id, type: "question" };
       case "buttons": await sayButtons(ctx, node.data.text ?? "", node); return { nodeId: node.id, type: "buttons" };
       case "condition": current = evalCondition(ctx.flow, node, ctx.vars); break;
-      case "delay": await esperarDeVerdad(node); current = defaultNext(ctx.flow, node); break;
+      case "delay": {
+        const enPausa = await esperarDeVerdad(ctx, node);
+        if (enPausa) {
+          // La conversación queda dormida. NO se deja `awaiting`: el bot no
+          // está esperando que el cliente diga nada, está esperando al reloj.
+          ctx.enPausa = true;
+          return null;
+        }
+        current = defaultNext(ctx.flow, node);
+        break;
+      }
       case "tags": await etiquetar(ctx, node); current = defaultNext(ctx.flow, node); break;
       case "action": await dispararAccion(ctx, node); current = defaultNext(ctx.flow, node); break;
 
@@ -1621,8 +1663,14 @@ async function handleIncoming(opts: any) {
     // Si un bloque «Redirigir» cambió de bot a mitad del recorrido, aquí queda
     // el id del flujo que se está ejecutando de verdad.
     flowIdNuevo: undefined as string | undefined,
+    // ¿La conversación quedó dormida esperando al reloj? No es lo mismo que
+    // quedarse muda: aquí SÍ va a seguir sola, más tarde.
+    enPausa: false,
     // El catálogo conectado al número, para el bloque de catálogo sin SKUs.
     catalogId: opts.catalogId ?? null,
+    // Qué flujo se está ejecutando. Lo necesita la espera larga para saber por
+    // dónde retomar cuando despierte.
+    flowId: opts.flowId ?? null,
   };
 
   // Analítica: el recorrido que venía abierto de turnos anteriores.
@@ -1680,7 +1728,12 @@ async function handleIncoming(opts: any) {
 
   const awaiting = opts.flowState?.awaiting;
   let startId: string | undefined;
-  if (awaiting?.nodeId) {
+
+  // ¿Nos despertó el reloj de una espera larga? Entonces no hay mensaje del
+  // cliente que interpretar: se retoma por el bloque exacto donde se dejó.
+  if (opts.retomarEn) {
+    startId = opts.retomarEn;
+  } else if (awaiting?.nodeId) {
     const node = getNode(opts.flow, awaiting.nodeId);
     if (awaiting.type === "cita") {
       // El id del botón ES la hora en ISO: así no hay que guardar la lista de
@@ -1763,7 +1816,11 @@ async function handleIncoming(opts: any) {
   // Se exige `nextAwait === null` a propósito: la red se tiende solo cuando el
   // flujo TERMINÓ sin decir nada. Si el bot sigue esperando una respuesta, está
   // vivo y no hay a quién rescatar.
-  if (nextAwait === null && !ctx.dijoAlgo && ctx.finMotivo !== "agente") {
+  // `ctx.enPausa` queda fuera a propósito: ahí el bot no se quedó mudo, se
+  // quedó DORMIDO. Rescatar a alguien que está esperando su recordatorio de
+  // mañana —pasándolo con un agente— sería justo lo contrario de lo que pidió
+  // el flujo.
+  if (nextAwait === null && !ctx.dijoAlgo && ctx.finMotivo !== "agente" && !ctx.enPausa) {
     console.error(`[flujo] turno sin respuesta: flujo=${opts.flow?.id ?? "?"} último bloque=${ctx.ultimoNodo ?? "?"}`);
     await say(ctx, "Déjame pasarte con una persona del equipo para seguir por aquí 🙌");
     await opts.db.from("conversations").update({
@@ -2010,6 +2067,103 @@ async function guardarPermisoDeLlamada(db: any, orgId: string, contactId: string
   );
 }
 
+/**
+ * RETOMAR UNA CONVERSACIÓN DORMIDA.
+ *
+ * Lo llama el reloj de la base cuando vence una espera larga. No lleva ninguna
+ * llave de servicio: lleva el TESTIGO de esa espera concreta, de un solo uso.
+ * Aunque alguien adivinara la dirección, sin el testigo exacto de una fila
+ * pendiente no consigue nada — y con él solo consigue lo que esa espera ya iba
+ * a hacer sola un segundo después.
+ */
+async function retomarEspera(db: any, esperaId: string, testigo: string) {
+  const { data: e } = await db.from("esperas_pendientes").select("*").eq("id", esperaId).maybeSingle();
+  if (!e) return json({ ok: true, motivo: "no existe" });
+  if (String(e.testigo) !== String(testigo)) {
+    console.error("[espera] testigo que no cuadra para", esperaId);
+    return json({ ok: false }, 403);
+  }
+  if (e.estado === "hecha" || e.estado === "cancelada" || e.estado === "caducada") {
+    return json({ ok: true, motivo: e.estado });
+  }
+
+  const cerrar = async (estado: string, detalle?: string) => {
+    await db.from("esperas_pendientes")
+      .update({ estado, detalle: detalle ?? null, updated_at: new Date().toISOString() })
+      .eq("id", esperaId);
+  };
+
+  const { data: conv } = await db.from("conversations")
+    .select("id, org_id, bot_id, status, contact_id, flow_state").eq("id", e.conversation_id).maybeSingle();
+  if (!conv) { await cerrar("cancelada", "la conversación ya no existe"); return json({ ok: true }); }
+
+  // Si mientras dormía la tomó una persona, el bot no se mete.
+  if (conv.status === "assigned") {
+    await cerrar("cancelada", "la conversación la está atendiendo una persona");
+    return json({ ok: true });
+  }
+
+  const { data: contacto } = await db.from("contacts").select("phone, external_id, name, wa_name").eq("id", conv.contact_id).maybeSingle();
+  const telefono = contacto?.external_id ?? contacto?.phone;
+  if (!telefono) { await cerrar("fallida", "el contacto no tiene teléfono"); return json({ ok: true }); }
+
+  // ── LA VENTANA DE 24 HORAS ──────────────────────────────────────────────
+  //
+  // Esto es lo que hace que una espera larga sea distinta de una corta: cuando
+  // el reloj vence pueden haber pasado horas, y fuera de la ventana WhatsApp
+  // NO deja escribir salvo con plantilla. Mandarlo igual sería quemar el
+  // intento y dejar en la Bandeja un mensaje que nunca llegó.
+  const { data: ultimo } = await db.from("messages")
+    .select("created_at").eq("conversation_id", conv.id).eq("direction", "inbound")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+
+  const horas = ultimo?.created_at
+    ? (Date.now() - Date.parse(ultimo.created_at)) / 3600_000
+    : 999;
+
+  if (horas >= 24) {
+    await cerrar("caducada", "venció la ventana de 24 h de WhatsApp: solo se podría escribir con plantilla");
+    console.error(`[espera] ${esperaId} caducada: ${Math.round(horas)} h desde el último mensaje del lead`);
+    return json({ ok: true, caducada: true });
+  }
+
+  const { data: cfg } = await db.from("whatsapp_channels").select("*").eq("org_id", conv.org_id).maybeSingle();
+  if (!cfg) { await cerrar("fallida", "la cuenta ya no tiene WhatsApp conectado"); return json({ ok: true }); }
+
+  const { data: flujo } = await db.from("flows").select("id, graph").eq("id", e.flow_id).maybeSingle();
+  const g = flujo?.graph;
+  if (!g?.nodes?.length) { await cerrar("fallida", "el flujo ya no existe"); return json({ ok: true }); }
+
+  const { data: botRow } = conv.bot_id
+    ? await db.from("bots").select("ai, shortcuts").eq("id", conv.bot_id).maybeSingle()
+    : { data: null };
+
+  // Se marca HECHA antes de mandar nada: si el envío falla a medias, es mejor
+  // no volver a intentarlo y repetirle los mensajes al cliente.
+  await cerrar("hecha");
+
+  const nuevo = await handleIncoming({
+    flow: { nodes: g.nodes, edges: g.edges ?? [] },
+    pnid: cfg.phone_number_id, token: cfg.access_token, to: telefono,
+    orgId: conv.org_id, convId: conv.id, db,
+    flowState: { vars: e.vars ?? {}, hintEnviado: (conv.flow_state as any)?.hintEnviado ?? true },
+    // Sin texto del cliente: no hay mensaje nuevo, es el reloj quien despierta.
+    text: "", visible: "",
+    botId: conv.bot_id, aiSettings: (botRow as any)?.ai ?? null,
+    baseVars: e.vars ?? {}, atajos: leerAtajos((botRow as any)?.shortcuts),
+    flowId: e.flow_id, numeroPropio: cfg.display_number ?? null,
+    catalogId: cfg.catalog_id ?? null,
+    // La clave: se retoma por el bloque apuntado, no por el principio.
+    retomarEn: e.nodo_id,
+  });
+
+  await db.from("conversations")
+    .update({ flow_state: { ...nuevo, flow_id: nuevo.flow_id ?? e.flow_id } })
+    .eq("id", conv.id);
+
+  return json({ ok: true, retomada: true });
+}
+
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
@@ -2027,6 +2181,17 @@ Deno.serve(async (req: Request) => {
   if (req.method === "POST") {
     let body: any;
     try { body = await req.json(); } catch { return json({ ok: true }); }
+
+    // El reloj de la base viene a despertar una conversación dormida.
+    if (url.searchParams.has("continuar")) {
+      try {
+        return await retomarEspera(admin(), String(body?.espera ?? ""), String(body?.testigo ?? ""));
+      } catch (e) {
+        console.error("[espera] falló al retomar:", e);
+        return json({ ok: false }, 500);
+      }
+    }
+
     try {
       const value = body?.entry?.[0]?.changes?.[0]?.value;
 
@@ -2245,6 +2410,15 @@ Deno.serve(async (req: Request) => {
         await cerrarRecorrido(db, (conv.flow_state as any)?.run_id ?? null, "reiniciado");
         conv.flow_state = {};
       }
+
+      // EL LEAD ESCRIBIÓ MIENTRAS LA CONVERSACIÓN DORMÍA.
+      //
+      // Retomar la espera ahora sería hablarle de algo que ya pasó: la charla
+      // siguió por otro lado. Se cancela lo programado y se atiende lo que
+      // acaba de decir, que es lo que cualquiera esperaría.
+      try {
+        await db.rpc("cancelar_esperas_de", { p_conversation_id: conv.id });
+      } catch (e) { console.error("[espera] no pude cancelar las pendientes:", e); }
 
       if (cfg.bot_id && (conv.status !== "assigned")) {
         // ¿Lead que regresa? (tiene más de una conversación con nosotros)
