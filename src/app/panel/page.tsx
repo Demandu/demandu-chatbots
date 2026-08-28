@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { miPanel } from "@/lib/equipo/comisiones";
 import { VENTAS, linkWhatsApp } from "@/lib/contacto";
-import { TrendingUp, Users, Wallet, Clock } from "lucide-react";
+import { TrendingUp, Users, Wallet, Clock, LogIn } from "lucide-react";
+import { entrarComoSoporteDesdeElPanel } from "./acciones";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,11 @@ const ETIQUETA: Record<string, { texto: string; clase: string }> = {
   cancelada: { texto: "Cancelada", clase: "bg-suave-2 text-ink-3" },
 };
 
-export default async function PanelPage() {
+export default async function PanelPage({
+  searchParams,
+}: {
+  searchParams: { error?: string };
+}) {
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) redirect("/login");
 
@@ -43,6 +48,12 @@ export default async function PanelPage() {
 
   return (
     <div>
+      {searchParams?.error && (
+        <div className="mb-4 rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-ink">
+          {searchParams.error}
+        </div>
+      )}
+
       <h2 className="font-display text-2xl font-bold text-ink">Hola, {miembro.nombre}</h2>
       <p className="mb-5 mt-1 text-sm text-ink-2">
         {miembro.alcance === "todas"
@@ -101,6 +112,7 @@ export default async function PanelPage() {
               <th className="px-4 py-3">Paga</th>
               <th className="px-4 py-3">Te deja</th>
               <th className="px-4 py-3">Estado</th>
+              <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody>
@@ -127,12 +139,23 @@ export default async function PanelPage() {
                       {e.texto}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    {/* Entrar a la cuenta del cliente para ayudarle. Dura una
+                        hora y caduca sola; entrar y salir quedan apuntados en
+                        la bitácora, y el cliente lo ve. */}
+                    <form action={entrarComoSoporteDesdeElPanel}>
+                      <input type="hidden" name="org_id" value={c.id} />
+                      <button className="inline-flex items-center gap-1.5 rounded-lg border border-linea-2 px-2.5 py-1.5 text-xs text-ink-2 transition hover:border-violet/50 hover:text-ink">
+                        <LogIn className="h-3.5 w-3.5" /> Entrar
+                      </button>
+                    </form>
+                  </td>
                 </tr>
               );
             })}
             {!clientes.length && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-sm text-ink-3">
+                <td colSpan={6} className="px-4 py-8 text-center text-sm text-ink-3">
                   Todavía no tienes clientes asignados.
                 </td>
               </tr>

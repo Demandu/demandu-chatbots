@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare,
+  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Clock,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,11 @@ const MAIN = [
   { href: "/dashboard", label: "Inicio", icon: Home },
   { href: "/bots", label: "Chatbots", icon: Bot },
   { href: "/inbox", label: "Conversaciones", icon: MessagesSquare },
+  // Va aquí, justo debajo de Conversaciones, porque es lo mismo visto en el
+  // futuro: charlas que el chatbot va a retomar solo. Escondida dentro de la
+  // Bandeja nadie la encontraría, y es la única forma de enterarse —y de
+  // impedir— que el bot escriba esta tarde.
+  { href: "/inbox/programados", label: "En espera", icon: Clock },
   { href: "/crm", label: "Embudo", icon: KanbanSquare },
   { href: "/contacts", label: "Contactos", icon: Users },
 ];
@@ -49,8 +54,16 @@ export function Sidebar({ plan }: { plan?: ResumenDePlan | null }) {
   // estaba en otra pestaña o recargó, la solicitud quedaba invisible.
   const pendientes = usePendientes();
 
+  // Todas las direcciones del menú, para decidir cuál se ilumina. Con
+  // `startsWith` a secas, estando en «/inbox/programados» se encendían DOS
+  // opciones a la vez —«Conversaciones» y «En espera»— y el menú dejaba de
+  // decirte dónde estás. Gana siempre la coincidencia más larga.
+  const TODAS = [...MAIN, ...CONFIG].map((i) => i.href);
+
   const Item = ({ href, label, icon: Icon }: (typeof MAIN)[number]) => {
-    const active = pathname === href || pathname.startsWith(href + "/");
+    const encaja = (h: string) => pathname === h || pathname.startsWith(h + "/");
+    const mejor = TODAS.filter(encaja).sort((a, b) => b.length - a.length)[0];
+    const active = encaja(href) && mejor === href;
     const aviso = href === "/inbox" ? pendientes : 0;
     return (
       <Link
