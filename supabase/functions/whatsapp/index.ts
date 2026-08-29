@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "31";
+const VERSION_MOTOR = "33";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -593,6 +593,297 @@ async function pasoElTopeDeIA(ctx: any): Promise<boolean> {
 }
 
 /** Responde con IA. Nunca revienta la conversación: ante cualquier fallo, respaldo. */
+/**
+ * LAS HERRAMIENTAS DEL AGENTE.
+ *
+ * Se arman por cliente, no por código: qué herramientas existen es universal,
+ * QUÉ PUEDE HACER CADA UNA sale de los catálogos de esa organización. Una
+ * clínica y una inmobiliaria califican distinto y ninguna necesita que
+ * programemos su criterio.
+ *
+ * Ver `herramientas.md` en esta misma carpeta para el porqué completo.
+ */
+async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; contexto: string }> {
+  const quiere: string[] = Array.isArray(ai.herramientas) ? ai.herramientas : [];
+  if (!quiere.length) return { tools: [], contexto: "" };
+
+  const tools: any[] = [];
+  const notas: string[] = [];
+
+  if (quiere.includes("ver_horarios")) {
+    tools.push({
+      name: "ver_horarios",
+      description:
+        "Consulta los horarios libres en la agenda del negocio. Úsala ANTES de proponer una hora: " +
+        "nunca inventes disponibilidad.",
+      input_schema: {
+        type: "object",
+        properties: {
+          dias: { type: "integer", description: "Cuántos días hacia adelante mirar. Por defecto 14." },
+          duracion: { type: "integer", description: "Duración de la cita en minutos. Por defecto 30." },
+        },
+      },
+    });
+  }
+
+  if (quiere.includes("agendar_cita")) {
+    tools.push({
+      name: "agendar_cita",
+      description:
+        "Reserva una cita. El `inicio` DEBE ser uno de los que devolvió ver_horarios, copiado tal cual. " +
+        "No la llames sin haber confirmado la hora con la persona.",
+      input_schema: {
+        type: "object",
+        properties: {
+          inicio: { type: "string", description: "La fecha y hora exacta que devolvió ver_horarios." },
+          nombre: { type: "string", description: "Nombre de quien reserva, si lo sabes." },
+          correo: { type: "string", description: "Su correo, si lo sabes. Le llega la invitación." },
+        },
+        required: ["inicio"],
+      },
+    });
+  }
+
+  if (quiere.includes("etiquetar")) {
+    // El catálogo REAL de este cliente. Sin esto el modelo se inventa etiquetas
+    // y el embudo del negocio deja de significar nada.
+    const { data: tags } = await ctx.db.from("tags").select("name").eq("org_id", ctx.orgId);
+    const nombres = ((tags ?? []) as any[]).map((t) => t.name);
+    if (nombres.length) {
+      notas.push(`Etiquetas disponibles: ${nombres.join(", ")}.`);
+      tools.push({
+        name: "etiquetar",
+        description:
+          "Marca a esta persona con una etiqueta del negocio para clasificarla. " +
+          "Solo puedes usar las etiquetas que existen; cualquier otra será rechazada.",
+        input_schema: {
+          type: "object",
+          properties: {
+            etiqueta: { type: "string", enum: nombres, description: "Una de las etiquetas existentes." },
+            por_que: { type: "string", description: "En una frase, por qué le pones esta etiqueta." },
+          },
+          required: ["etiqueta", "por_que"],
+        },
+      });
+    }
+  }
+
+  if (quiere.includes("guardar_dato")) {
+    const { data: campos } = await ctx.db
+      .from("custom_attributes").select("key, name, type").eq("org_id", ctx.orgId);
+    const lista = ((campos ?? []) as any[]);
+    if (lista.length) {
+      notas.push(
+        "Datos que puedes guardar de la persona: " +
+          lista.map((c) => `${c.key} (${c.name})`).join(", ") + ".",
+      );
+      tools.push({
+        name: "guardar_dato",
+        description:
+          "Guarda un dato de esta persona en su ficha, para que el equipo lo vea después. " +
+          "Solo campos que existan.",
+        input_schema: {
+          type: "object",
+          properties: {
+            campo: { type: "string", enum: lista.map((c) => c.key), description: "La clave del campo." },
+            valor: { type: "string", description: "Lo que la persona dijo, tal cual." },
+          },
+          required: ["campo", "valor"],
+        },
+      });
+    }
+  }
+
+  if (quiere.includes("pasar_a_humano")) {
+    tools.push({
+      name: "pasar_a_humano",
+      description:
+        "Pasa la conversación a una persona del equipo. Úsala cuando te lo pidan, cuando no puedas " +
+        "resolver algo importante, o cuando la persona esté molesta.",
+      input_schema: {
+        type: "object",
+        properties: { motivo: { type: "string", description: "Por qué la pasas." } },
+        required: ["motivo"],
+      },
+    });
+  }
+
+  if (quiere.includes("consultar_sistema") && ai.sistemaUrl) {
+    tools.push({
+      name: "consultar_sistema",
+      description:
+        String(ai.sistemaDescripcion ?? "") ||
+        "Consulta el sistema del negocio para obtener información que no está en el conocimiento cargado.",
+      input_schema: {
+        type: "object",
+        properties: {
+          consulta: { type: "string", description: "Qué quieres consultar, en pocas palabras." },
+        },
+        required: ["consulta"],
+      },
+    });
+  }
+
+  // Los criterios del cliente, en su idioma. Esto es LA pieza que hace que el
+  // mismo código sirva para una clínica y para una inmobiliaria.
+  if (ai.criterios) notas.push(`Criterios del negocio:\n${ai.criterios}`);
+
+  return { tools, contexto: notas.join("\n") };
+}
+
+/**
+ * Ejecuta una herramienta que pidió el modelo.
+ *
+ * TODO SE VALIDA AQUÍ, no en el prompt. Lo que el modelo pide es una propuesta;
+ * lo que se puede hacer lo decide la base. Cuando algo no cuadra se devuelve un
+ * error EXPLICATIVO en vez de fallar en silencio: con eso el modelo corrige y
+ * lo vuelve a intentar bien, que es justo lo que se quiere.
+ */
+async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any): Promise<string> {
+  try {
+    switch (nombre) {
+      case "ver_horarios": {
+        const r = await pedirAgenda({
+          accion: "horarios",
+          org_id: ctx.orgId,
+          duracion: Number(args?.duracion) || 30,
+          dias: Number(args?.dias) || 14,
+          cuantos: 8,
+        });
+        const slots = r?.slots ?? [];
+        if (!slots.length) {
+          return "No hay horarios libres o la agenda no está conectada. Dile que le pasarás con una persona.";
+        }
+        return "Horarios libres (usa el valor de `inicio` tal cual al agendar):\n" +
+          slots.map((s: any) => `- ${s.label} → inicio: ${s.startISO}`).join("\n");
+      }
+
+      case "agendar_cita": {
+        const inicio = String(args?.inicio ?? "").trim();
+        if (!inicio) return "Falta la hora. Llama primero a ver_horarios.";
+        const r = await pedirAgenda({
+          accion: "agendar",
+          org_id: ctx.orgId,
+          inicio,
+          duracion: 30,
+          titulo: `Cita con ${args?.nombre ?? ctx.vars?.nombre ?? "cliente"}`,
+          descripcion: "Cita agendada por el agente de IA.",
+          correo: args?.correo || undefined,
+        });
+        if (!r?.ok) return `No se pudo agendar: ${r?.error ?? "error desconocido"}. Ofrece otra hora.`;
+
+        ctx.vars.cita_inicio = r.inicioISO ?? inicio;
+        ctx.vars.cita_dia = r.dia ?? "";
+        ctx.vars.cita_hora = r.hora ?? "";
+        contarFuera(ctx.db, ctx.orgId, "cita.agendada", {
+          telefono: ctx.to, nombre: args?.nombre ?? null, correo: args?.correo ?? null,
+          inicio: r.inicioISO ?? inicio, dia: r.dia ?? null, hora: r.hora ?? null,
+          enlace: r.enlace ?? null, conversacion_id: ctx.convId, por: "agente_ia",
+        });
+        return `Cita confirmada para el ${r.dia ?? ""} a las ${r.hora ?? ""}. Confírmaselo con esas palabras.`;
+      }
+
+      case "etiquetar": {
+        const etiqueta = String(args?.etiqueta ?? "").trim();
+        const { data: existe } = await ctx.db
+          .from("tags").select("name").eq("org_id", ctx.orgId).eq("name", etiqueta).maybeSingle();
+        if (!existe) {
+          const { data: tags } = await ctx.db.from("tags").select("name").eq("org_id", ctx.orgId);
+          return `La etiqueta "${etiqueta}" no existe. Las que hay son: ` +
+            ((tags ?? []) as any[]).map((t) => t.name).join(", ") + ".";
+        }
+
+        const { data: c } = await ctx.db.from("contacts")
+          .select("id, tags").eq("org_id", ctx.orgId).eq("channel", "whatsapp")
+          .eq("external_id", ctx.to).maybeSingle();
+        if (!c) return "No encuentro la ficha de esta persona.";
+
+        const juntas = new Set<string>(c.tags ?? []);
+        juntas.add(etiqueta);
+        await ctx.db.from("contacts").update({ tags: [...juntas] }).eq("id", c.id);
+
+        contarFuera(ctx.db, ctx.orgId, "lead.datos", {
+          telefono: ctx.to, etiqueta, por_que: args?.por_que ?? null, por: "agente_ia",
+        });
+        return `Listo, quedó etiquetado como "${etiqueta}". No se lo menciones a la persona.`;
+      }
+
+      case "guardar_dato": {
+        const campo = String(args?.campo ?? "").trim();
+        const valor = String(args?.valor ?? "").trim();
+        const { data: attr } = await ctx.db
+          .from("custom_attributes").select("key").eq("org_id", ctx.orgId).eq("key", campo).maybeSingle();
+        if (!attr) {
+          const { data: todos } = await ctx.db.from("custom_attributes").select("key").eq("org_id", ctx.orgId);
+          return `El campo "${campo}" no existe. Los que hay son: ` +
+            ((todos ?? []) as any[]).map((a) => a.key).join(", ") + ".";
+        }
+
+        const { data: c } = await ctx.db.from("contacts")
+          .select("id, attributes").eq("org_id", ctx.orgId).eq("channel", "whatsapp")
+          .eq("external_id", ctx.to).maybeSingle();
+        if (!c) return "No encuentro la ficha de esta persona.";
+
+        await ctx.db.from("contacts")
+          .update({ attributes: { ...(c.attributes ?? {}), [campo]: valor } }).eq("id", c.id);
+
+        contarFuera(ctx.db, ctx.orgId, "lead.datos", {
+          telefono: ctx.to, campo, valor, por: "agente_ia",
+        });
+        return `Guardado: ${campo} = ${valor}. No se lo menciones a la persona.`;
+      }
+
+      case "pasar_a_humano": {
+        await ctx.db.from("conversations").update({
+          status: "assigned",
+          handoff_requested_at: new Date().toISOString(),
+          handoff_reason: String(args?.motivo ?? "Lo pidió el agente de IA").slice(0, 200),
+        }).eq("id", ctx.convId);
+        ctx.finMotivo = "agente";
+        ctx.pasoAHumano = true;
+        contarFuera(ctx.db, ctx.orgId, "pase.a.humano", {
+          telefono: ctx.to, motivo: args?.motivo ?? null, conversacion_id: ctx.convId, por: "agente_ia",
+        });
+        return "Hecho. Despídete diciendo que en un momento le atiende una persona del equipo.";
+      }
+
+      case "consultar_sistema": {
+        // LA URL LA PONE EL CLIENTE, NUNCA EL MODELO. Si el modelo pudiera
+        // elegir a dónde se llama, bastaría con convencerlo para hacernos
+        // pedir cualquier dirección de internet desde nuestros servidores.
+        const url = String(ai.sistemaUrl ?? "").trim();
+        if (!url) return "No hay ningún sistema configurado.";
+
+        const ctl = new AbortController();
+        const reloj = setTimeout(() => ctl.abort(), 8000);
+        try {
+          const r = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ consulta: args?.consulta ?? "", telefono: ctx.to }),
+            signal: ctl.signal,
+          });
+          const texto = (await r.text().catch(() => "")).slice(0, 1500);
+          if (!r.ok) return `El sistema respondió ${r.status}. Dile que ahora no puedes consultarlo.`;
+          return texto || "El sistema no devolvió nada.";
+        } catch (e: any) {
+          return e?.name === "AbortError"
+            ? "El sistema tardó demasiado. Dile que ahora no puedes consultarlo."
+            : "No se pudo conectar con el sistema.";
+        } finally {
+          clearTimeout(reloj);
+        }
+      }
+
+      default:
+        return `No conozco la herramienta "${nombre}".`;
+    }
+  } catch (e: any) {
+    console.error(`[herramienta ${nombre}]`, e);
+    return "Hubo un error al ejecutarla. Sigue la conversación sin ella.";
+  }
+}
+
 async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string) {
   const ai = { ...AI_DEFAULTS, ...(ctx.aiSettings ?? {}) };
   if (promptDelNodo) ai.persona = promptDelNodo;
@@ -647,32 +938,79 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
       .map((m: any) => ({ role: m.direction === "inbound" ? "user" : "assistant", content: m.body }));
   } catch { /* sin historial */ }
 
+  // ── LAS HERRAMIENTAS ──────────────────────────────────────────────────────
+  //
+  // Si el cliente no activó ninguna, `tools` va vacío y esto se comporta
+  // EXACTAMENTE como antes: una sola llamada y devuelve texto. Nadie que no
+  // haya pedido un agente nota ninguna diferencia.
+  const { tools, contexto } = await armarHerramientas(ctx, ai);
+  const sistemaFinal = contexto ? `${system}\n\n${contexto}` : system;
+
+  // Un modelo puede quedarse pidiendo herramientas en bucle, y esto corre dentro
+  // del webhook de Meta —que reintenta si tardamos—. Cuatro vueltas cubren de
+  // sobra «mira horarios → agenda → confirma» y cortan cualquier bucle.
+  const MAX_VUELTAS = 4;
+  const mensajes: any[] = [...history, { role: "user", content: pregunta }];
+
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
+    for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
+      const cuerpo: any = {
         // Debe coincidir con src/lib/ai/answer.ts. Si el nombre no existe, la
         // API falla y el bot contesta "esa no me la sé" sin que se note.
         model: Deno.env.get("ANTHROPIC_MODEL") ?? "claude-haiku-4-5",
         max_tokens: 400,
-        system,
-        messages: [...history, { role: "user", content: pregunta }],
-      }),
-    });
-    if (!res.ok) {
-      console.error("[ai]", res.status, (await res.text().catch(() => "")).slice(0, 200));
-      return ai.fallback;
-    }
-    const j = await res.json();
-    const text = (j?.content ?? []).filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n").trim();
-    if (text) {
-      // Registra el consumo para el panel y la facturación (best-effort).
+        system: sistemaFinal,
+        messages: mensajes,
+      };
+      if (tools.length) cuerpo.tools = tools;
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify(cuerpo),
+      });
+      if (!res.ok) {
+        console.error("[ai]", res.status, (await res.text().catch(() => "")).slice(0, 200));
+        return ai.fallback;
+      }
+
+      const j = await res.json();
+      const bloques = j?.content ?? [];
+      const texto = bloques.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n").trim();
+
+      // Cada vuelta cuesta. Se cobra por vuelta, no por respuesta: si no, un
+      // agente que llama tres herramientas costaría el triple y se facturaría
+      // como uno.
       try {
         await ctx.db.from("usage_events").insert({ org_id: ctx.orgId, bot_id: ctx.botId, kind: "ai_message", quantity: 1 });
       } catch { /* no bloquea la respuesta */ }
+
+      const pedidas = bloques.filter((c: any) => c?.type === "tool_use");
+      if (j?.stop_reason !== "tool_use" || !pedidas.length) {
+        return texto || ai.fallback;
+      }
+
+      // Se ejecuta lo que pidió y se le devuelve el resultado para que siga.
+      mensajes.push({ role: "assistant", content: bloques });
+      const resultados: any[] = [];
+      for (const p of pedidas) {
+        console.log(`[agente] usa ${p.name}`, JSON.stringify(p.input ?? {}).slice(0, 200));
+        const salida = await ejecutarHerramienta(ctx, ai, p.name, p.input ?? {});
+        resultados.push({ type: "tool_result", tool_use_id: p.id, content: salida });
+      }
+      mensajes.push({ role: "user", content: resultados });
+
+      // Si la herramienta pasó la charla a una persona, no hay más que hablar:
+      // seguir el ciclo sería que el bot siguiera conversando después de haber
+      // dicho que lo atiende alguien.
+      if (ctx.pasoAHumano) {
+        return texto || "En un momento te atiende una persona del equipo 🙌";
+      }
     }
-    return text || ai.fallback;
+
+    // Se acabaron las vueltas y el modelo seguía pidiendo herramientas.
+    console.error("[agente] se agotaron las vueltas sin una respuesta final");
+    return ai.fallback;
   } catch (e) {
     console.error("[ai] red:", e);
     return ai.fallback;
@@ -713,6 +1051,28 @@ function evalCondition(flow: any, node: any, vars: Record<string, string>) {
  * Es importante: antes se guardaba igual aunque Meta lo rechazara, y el equipo
  * veía una conversación que el cliente nunca recibió.
  */
+/**
+ * Cuenta hacia fuera algo que acaba de pasar, para el CRM del cliente.
+ *
+ * Solo ENCOLA: entregar y reintentar es cosa del reloj de la base. Aquí no se
+ * espera, no se comprueba y no se falla — esto corre en el camino de un mensaje
+ * de WhatsApp, y un webhook mal configurado no puede tumbarle la conversación a
+ * nadie ni hacerla más lenta.
+ *
+ * Si el cliente no configuró ninguna salida —el caso de casi todos— la función
+ * de la base no inserta nada.
+ */
+function contarFuera(db: any, orgId: string, tipo: string, datos: Record<string, unknown>) {
+  try {
+    db.rpc("emitir_evento", { p_org_id: orgId, p_tipo: tipo, p_payload: datos })
+      .then(({ error }: any) => {
+        if (error) console.error(`[salidas] no pude encolar ${tipo}:`, error.message);
+      });
+  } catch (e) {
+    console.error(`[salidas] fallo al encolar ${tipo}:`, e);
+  }
+}
+
 async function registrar(ctx: any, body: string, envio: ResultadoEnvio, extra: any = {}) {
   // Todo lo que sale hacia el cliente pasa por aquí. Es el único sitio donde se
   // puede saber, sin dudas, si en este turno el bot abrió la boca — y de eso
@@ -867,6 +1227,16 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
     ctx.vars.cita_dia = r.dia ?? "";
     ctx.vars.cita_hora = r.hora ?? "";
     ctx.vars.cita_cuando = r.etiqueta ?? "";
+    contarFuera(ctx.db, ctx.orgId, "cita.agendada", {
+      telefono: ctx.to,
+      nombre: nombre ?? null,
+      correo: correo ?? null,
+      inicio: r.inicioISO ?? inicioISO,
+      dia: r.dia ?? null,
+      hora: r.hora ?? null,
+      enlace: r.enlace ?? null,
+      conversacion_id: ctx.convId,
+    });
     return true;
   }
 
@@ -1517,6 +1887,12 @@ async function runFrom(startId: string | undefined, ctx: any) {
         const respaldo = { ...AI_DEFAULTS, ...(ctx.aiSettings ?? {}) }.fallback;
         ctx.ofreciAgente = respuesta === respaldo;
         await say(ctx, respuesta);
+
+        // Si el propio agente decidió pasar la charla con una persona, el
+        // bloque NO puede quedarse esperando la siguiente pregunta: el
+        // siguiente mensaje del cliente es para el humano, no para el bot.
+        if (ctx.pasoAHumano) return null;
+
         return { nodeId: node.id, type: "question" };
       }
 
@@ -1532,6 +1908,13 @@ async function runFrom(startId: string | undefined, ctx: any) {
           handoff_reason: "El flujo lo mandó con una persona",
         }).eq("id", ctx.convId);
         ctx.finMotivo = "agente";
+        contarFuera(ctx.db, ctx.orgId, "pase.a.humano", {
+          telefono: ctx.to,
+          nombre: ctx.vars?.nombre ?? null,
+          motivo: "el flujo lo mandó con una persona",
+          conversacion_id: ctx.convId,
+          datos: ctx.vars ?? {},
+        });
         return null;
       case "calendar": {
         const espera = await sayCalendario(ctx, node);
@@ -1614,6 +1997,13 @@ async function runFrom(startId: string | undefined, ctx: any) {
         if (node.data.text) await say(ctx, node.data.text);
         await ctx.db.from("conversations").update({ status: "closed" }).eq("id", ctx.convId);
         ctx.finMotivo = "completado";
+        contarFuera(ctx.db, ctx.orgId, "conversacion.cerrada", {
+          telefono: ctx.to,
+          nombre: ctx.vars?.nombre ?? null,
+          motivo: "completado",
+          conversacion_id: ctx.convId,
+          datos: ctx.vars ?? {},
+        });
         return null;
       // El bloque de texto de toda la vida. Antes no tenía caso propio y
       // funcionaba "de rebote" porque el caso por defecto manda `text`. Ahora
@@ -1666,6 +2056,9 @@ async function handleIncoming(opts: any) {
     // ¿La conversación quedó dormida esperando al reloj? No es lo mismo que
     // quedarse muda: aquí SÍ va a seguir sola, más tarde.
     enPausa: false,
+    // ¿Una herramienta del agente pasó la charla a una persona? Si sí, el
+    // bloque de IA tiene que DETENERSE, no quedarse esperando otra pregunta.
+    pasoAHumano: false,
     // El catálogo conectado al número, para el bloque de catálogo sin SKUs.
     catalogId: opts.catalogId ?? null,
     // Qué flujo se está ejecutando. Lo necesita la espera larga para saber por
@@ -2326,10 +2719,24 @@ Deno.serve(async (req: Request) => {
           { org_id: cfg.org_id, channel: "whatsapp", external_id: from, phone: from, wa_name: name, country: paisDesdeTelefono(from) },
           { onConflict: "org_id,channel,external_id" },
         )
-        .select("id, name").single();
+        .select("id, name, created_at").single();
       // Si todavía no tiene nombre propio, estrenamos con el de WhatsApp.
       if (contact && !contact.name && name) {
         await db.from("contacts").update({ name }).eq("id", contact.id);
+      }
+
+      // ¿Es la primera vez que esta persona escribe? El `upsert` no dice si
+      // insertó o actualizó, así que se mira la fecha de alta: si la ficha
+      // nació hace un instante, es nueva. Un margen de 10 s cubre de sobra lo
+      // que tarda esta misma petición y no puede confundir a un lead de ayer.
+      if (contact?.created_at && Date.now() - Date.parse(contact.created_at) < 10_000) {
+        contarFuera(db, cfg.org_id, "lead.nuevo", {
+          telefono: from,
+          nombre: name ?? null,
+          canal: "whatsapp",
+          primer_mensaje: visible ?? text ?? "",
+          contacto_id: contact.id,
+        });
       }
 
       // El permiso se guarda AQUÍ y no dentro del flujo, a propósito: vale

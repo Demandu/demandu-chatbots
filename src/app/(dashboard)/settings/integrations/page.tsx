@@ -7,6 +7,7 @@ import { GoogleCalendarLogo } from "@/components/integrations/Logos";
 import { Catalogo } from "@/components/integrations/Catalogo";
 import { LlavesApi, type LlaveFila } from "@/components/integrations/LlavesApi";
 import { SheetsConfig, type ConfigSheets } from "@/components/integrations/SheetsConfig";
+import { SalidasCrm, type SalidaFila } from "@/components/integrations/SalidasCrm";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ export default async function IntegrationsPage({
 }) {
   const orgId = await getCurrentOrgId();
   const sb = createClient();
-  const [{ data }, { data: wa }, { data: bots }, { data: intereses }, { data: llaves }, { data: sheets }] = await Promise.all([
+  const [{ data }, { data: wa }, { data: bots }, { data: intereses }, { data: llaves }, { data: sheets }, { data: salidas }] = await Promise.all([
     sb.from("integrations").select("provider, account_email, data, created_at").eq("org_id", orgId ?? "").eq("provider", "google_calendar").maybeSingle(),
     sb.from("whatsapp_channels").select("*").eq("org_id", orgId ?? "").maybeSingle(),
     sb.from("bots").select("id,name,channel").order("created_at", { ascending: false }),
@@ -26,6 +27,7 @@ export default async function IntegrationsPage({
       .eq("org_id", orgId ?? "").order("created_at", { ascending: false }),
     sb.from("sheets_config").select("hoja_id, hoja_nombre, activo, ultimo_error")
       .eq("org_id", orgId ?? "").maybeSingle(),
+    sb.from("salidas").select("*").eq("org_id", orgId ?? "").order("created_at", { ascending: false }),
   ]);
 
   const google = data as any | null;
@@ -111,6 +113,10 @@ export default async function IntegrationsPage({
 
       <div className="mt-4">
         <SheetsConfig config={(sheets as ConfigSheets) ?? null} googleConectado={!!google} />
+      </div>
+
+      <div className="mt-4">
+        <SalidasCrm salidas={((salidas as any[]) ?? []) as SalidaFila[]} />
       </div>
 
       <div className="mt-4">

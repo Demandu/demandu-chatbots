@@ -753,4 +753,58 @@ describe("Tareas programadas", () => {
   });
 });
 
+// ─── El agente con herramientas ──────────────────────────────────────────────
+describe("Agente de IA con herramientas", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  test("sin herramientas activadas, se comporta igual que antes", () => {
+    // Nadie que solo quería un bot que contesta puede notar que existe todo
+    // esto. `tools` solo se manda si el cliente activó alguna.
+    esperar(/if \(tools\.length\) cuerpo\.tools = tools;/.test(wa)).verdadero(
+      "el campo de herramientas solo debe mandarse cuando hay alguna activada",
+    );
+  });
+
+  test("lo que el modelo pide se valida contra el catálogo del cliente", () => {
+    // La regla que sostiene el diseño: la capacidad es código, la política es
+    // dato del cliente. Si el modelo se inventa una etiqueta y la aceptamos,
+    // el embudo del negocio deja de significar nada.
+    const i = wa.indexOf('case "etiquetar"');
+    esperar(i > 0).verdadero("no encuentro la herramienta de etiquetar");
+    const bloque = wa.slice(i, i + 900);
+    esperar(bloque.includes('from("tags")')).verdadero(
+      "etiquetar tiene que comprobar que la etiqueta EXISTE en ese cliente",
+    );
+    esperar(bloque.includes("no existe")).verdadero(
+      "cuando la etiqueta no existe hay que decirle al modelo cuáles sí, para que corrija",
+    );
+  });
+
+  test("el modelo nunca elige a qué dirección se llama", () => {
+    // Si pudiera, bastaría con convencerlo para hacernos pedir cualquier
+    // dirección de internet desde nuestros servidores.
+    const i = wa.indexOf('case "consultar_sistema"');
+    esperar(i > 0).verdadero("no encuentro la herramienta de consultar el sistema");
+    const bloque = wa.slice(i, i + 500);
+    esperar(bloque.includes("ai.sistemaUrl")).verdadero(
+      "la dirección tiene que salir de la configuración del cliente, no de lo que pida el modelo",
+    );
+  });
+
+  test("el ciclo de herramientas tiene tope", () => {
+    // Esto corre dentro del webhook de Meta, que reintenta si tardamos.
+    const m = wa.match(/MAX_VUELTAS\s*=\s*(\d+)/);
+    esperar(!!m).verdadero("el ciclo de herramientas necesita un tope de vueltas");
+    esperar(Number(m[1]) <= 6).verdadero("un tope alto deja que un bucle agote el tiempo del webhook");
+  });
+
+  test("si el agente pasa con una persona, el bloque se detiene", () => {
+    // Si no, el bot seguiría conversando después de haber dicho que lo atiende
+    // alguien — y el siguiente mensaje del cliente es para esa persona.
+    esperar(wa.includes("if (ctx.pasoAHumano) return null;")).verdadero(
+      "tras pasar con una persona el bloque de IA no puede seguir esperando preguntas",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

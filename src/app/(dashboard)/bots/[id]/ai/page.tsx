@@ -147,6 +147,94 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
                   </label>
                 </div>
 
+                {/* ── QUÉ PUEDE HACER, ADEMÁS DE HABLAR ────────────────────
+                    Sin nada marcado, el asistente solo conversa — que es como
+                    se comportaba antes de que existieran las herramientas.
+                    Nadie que solo quería un bot que contesta nota la
+                    diferencia. */}
+                <div className="rounded-xl border border-violet/30 bg-violet/5 p-4">
+                  <h4 className="text-sm font-bold text-ink">Qué puede hacer solo</h4>
+                  <p className="mb-3 mt-0.5 text-xs text-ink-2">
+                    Marca lo que quieras que tu asistente pueda hacer por su cuenta, sin que armes un
+                    flujo. Si no marcas nada, solo conversa.
+                  </p>
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {[
+                      ["ver_horarios", "Consultar tu agenda", "Mira los huecos libres en tu Google Calendar."],
+                      ["agendar_cita", "Agendar citas", "Reserva en tu calendario. Requiere lo anterior."],
+                      ["etiquetar", "Etiquetar al cliente", "Solo con TUS etiquetas. Si inventa una, se rechaza."],
+                      ["guardar_dato", "Guardar datos en la ficha", "Solo en los campos que hayas creado."],
+                      ["pasar_a_humano", "Pasar con una persona", "Cuando se lo pidan o no pueda resolver."],
+                      ["consultar_sistema", "Consultar tu sistema", "Le pregunta a la dirección que pongas abajo."],
+                    ].map(([clave, titulo, pie]) => (
+                      <label
+                        key={clave}
+                        className="flex cursor-pointer items-start gap-2 rounded-lg border border-linea-2 bg-tarjeta p-2.5"
+                      >
+                        <input
+                          type="checkbox"
+                          name={`h_${clave}`}
+                          defaultChecked={((ai as any).herramientas ?? []).includes(clave)}
+                          className="mt-0.5 h-4 w-4 flex-none accent-violet"
+                        />
+                        <span>
+                          <b className="text-[13px] text-ink">{titulo}</b>
+                          <span className="mt-0.5 block text-[11px] leading-snug text-ink-3">{pie}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="mt-3">
+                    <label className="mb-1 block text-xs font-semibold text-ink-2">
+                      Cuándo hacerlo (tus reglas, en tus palabras)
+                    </label>
+                    <textarea
+                      name="criterios"
+                      defaultValue={(ai as any).criterios ?? ""}
+                      className="input-l min-h-[110px]"
+                      placeholder={
+                        "Ej: Etiqueta lead-alto si pregunta precios o menciona presupuesto.\n" +
+                        "Etiqueta lead-bajo si solo pide información general.\n" +
+                        "Guarda el presupuesto y la zona en cuanto los diga.\n" +
+                        "Pasa con una persona si pide factura o se queja."
+                      }
+                    />
+                    <p className="mt-1 text-[11px] text-ink-3">
+                      Aquí se decide cómo calificas TÚ. Las etiquetas salen de las que creaste en
+                      Configuración; los datos, de tus campos personalizados.
+                    </p>
+                  </div>
+
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-ink-2">
+                        Dirección de tu sistema (opcional)
+                      </label>
+                      <input
+                        name="sistemaUrl"
+                        defaultValue={(ai as any).sistemaUrl ?? ""}
+                        placeholder="https://tu-sistema.com/consulta"
+                        className="input-l font-mono text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-ink-2">¿Qué se consulta ahí?</label>
+                      <input
+                        name="sistemaDescripcion"
+                        defaultValue={(ai as any).sistemaDescripcion ?? ""}
+                        placeholder="Inventario y precios en tiempo real"
+                        className="input-l"
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1 text-[11px] text-ink-3">
+                    La dirección la pones tú y el asistente no puede cambiarla: solo decide cuándo
+                    preguntar, nunca a dónde.
+                  </p>
+                </div>
+
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-ink-2">Largo máximo de respuesta (palabras)</label>
                   <input name="maxWords" type="number" min={20} max={300} defaultValue={ai.maxWords} className="input-l w-32" />
