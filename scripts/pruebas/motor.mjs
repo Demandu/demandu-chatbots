@@ -7,8 +7,8 @@
  *
  *   node --experimental-strip-types scripts/pruebas/motor.mjs
  */
-import { describe, testAsync, esperar, correrPruebas } from "./_runner.mjs";
-import { runWebFlow } from "../../src/lib/flow/webRuntime.ts";
+import { describe, test, testAsync, esperar, correrPruebas } from "./_runner.mjs";
+import { runWebFlow, chooseWebFlow } from "../../src/lib/flow/webRuntime.ts";
 
 // ─── Base de datos falsa ─────────────────────────────────────────────────────
 /**
@@ -430,6 +430,73 @@ describe("Pase a una persona", () => {
     const r = await correr({ texto: "1" });
     const p = ultimoPatch(r);
     esperar(p && "unread" in p).falso("el motor no debe tocar `unread`");
+  });
+});
+
+// ─── Qué flujo atiende ───────────────────────────────────────────────────────
+/**
+ * El 31 ago un bot se quedó MUDO en producción con esta forma exacta: dos
+ * flujos con la palabra clave «AI», uno de ellos sin ningún bloque porque se
+ * creó sin querer minutos antes. El motor se quedaba con el primero que
+ * coincidiera; cuando le tocaba el vacío, no ejecutaba nada.
+ *
+ * Estas pruebas llaman al selector de VERDAD con esos mismos datos. Las
+ * estáticas comprueban que el arreglo está escrito; estas comprueban que el
+ * motor se comporta.
+ */
+describe("Motor: qué flujo atiende", () => {
+  const conBloques = (id, extra = {}) => ({
+    id, trigger_type: "keyword", keywords: ["AI"],
+    graph: { nodes: [{ id: "n1", type: "ai", data: {} }], edges: [] },
+    ...extra,
+  });
+  const vacio = (id, extra = {}) => ({
+    id, trigger_type: "keyword", keywords: ["AI"],
+    graph: { nodes: [], edges: [] },
+    ...extra,
+  });
+
+  test("un flujo vacío no se traga el mensaje aunque vaya primero", () => {
+    const elegido = chooseWebFlow([vacio("vacio"), conBloques("bueno")], "AI", false, {});
+    esperar(elegido?.id).igual("bueno");
+  });
+
+  test("un flujo vacío no gana ni con más prioridad", () => {
+    // Sin bloques no puede atender a nadie: la prioridad no lo arregla.
+    const elegido = chooseWebFlow(
+      [vacio("vacio", { priority: 99 }), conBloques("bueno", { priority: 0 })],
+      "AI", false, {},
+    );
+    esperar(elegido?.id).igual("bueno");
+  });
+
+  test("si TODOS los flujos que coinciden están vacíos, no se elige ninguno", () => {
+    // Mejor que no arranque nada a que arranque algo que no puede contestar.
+    const elegido = chooseWebFlow([vacio("a"), vacio("b")], "AI", false, {});
+    esperar(elegido).igual(null);
+  });
+
+  test("con dos flujos válidos gana el editado más recientemente", () => {
+    const viejo = conBloques("viejo", { updated_at: "2026-08-30T10:00:00Z" });
+    const nuevo = conBloques("nuevo", { updated_at: "2026-08-31T22:32:00Z" });
+    // En los dos órdenes de entrada, para que no dependa de cómo venga la base.
+    esperar(chooseWebFlow([viejo, nuevo], "AI", false, {})?.id).igual("nuevo");
+    esperar(chooseWebFlow([nuevo, viejo], "AI", false, {})?.id).igual("nuevo");
+  });
+
+  test("la prioridad manda por encima de la fecha", () => {
+    const prioritario = conBloques("prioritario", { priority: 5, updated_at: "2026-01-01T00:00:00Z" });
+    const reciente = conBloques("reciente", { priority: 0, updated_at: "2026-08-31T23:00:00Z" });
+    esperar(chooseWebFlow([reciente, prioritario], "AI", false, {})?.id).igual("prioritario");
+  });
+
+  test("un flujo de bienvenida vacío no tapa a otro que sí puede atender", () => {
+    const bienvenidaVacia = { id: "vacia", trigger_type: "welcome", keywords: [], graph: { nodes: [], edges: [] } };
+    const bienvenidaBuena = {
+      id: "buena", trigger_type: "welcome", keywords: [],
+      graph: { nodes: [{ id: "n1", type: "message", data: { text: "hola" } }], edges: [] },
+    };
+    esperar(chooseWebFlow([bienvenidaVacia, bienvenidaBuena], "hola", false, {})?.id).igual("buena");
   });
 });
 

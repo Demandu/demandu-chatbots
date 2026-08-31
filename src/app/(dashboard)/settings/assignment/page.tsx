@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { guardarReparto } from "../actions";
+import { ReglasDeReparto } from "@/components/ReglasDeReparto";
 import { Users, Clock, Circle, Info } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -17,12 +18,28 @@ export default async function RepartoPage() {
   const sb = createClient();
   const orgId = await getCurrentOrgId();
 
-  const [{ data: cfg }, { data: equipos }, { data: miembros }, { data: org }] = await Promise.all([
-    sb.from("assignment_settings").select("*").maybeSingle(),
-    sb.from("teams").select("id, name").order("name"),
-    sb.from("team_members").select("id, name, available, last_seen_at, team_id").order("name"),
-    sb.from("organizations").select("timezone").limit(1).maybeSingle(),
-  ]);
+  const [{ data: cfg }, { data: equipos }, { data: miembros }, { data: org }, { data: etiquetas }, { data: reglasRaw }] =
+    await Promise.all([
+      sb.from("assignment_settings").select("*").maybeSingle(),
+      sb.from("teams").select("id, name").order("name"),
+      sb.from("team_members").select("id, name, available, last_seen_at, team_id").order("name"),
+      sb.from("organizations").select("timezone").limit(1).maybeSingle(),
+      sb.from("tags").select("id, name, color, grupo").order("name"),
+      sb
+        .from("reglas_de_reparto")
+        .select("id, prioridad, tag:tags(name, color), member:team_members(name), team:teams(name)")
+        .eq("activa", true)
+        .order("prioridad", { ascending: false }),
+    ]);
+
+  // Se aplana aquí para que el componente no tenga que saber si el destino era
+  // una persona o un equipo: solo pinta un nombre.
+  const reglas = ((reglasRaw ?? []) as any[]).map((r) => ({
+    id: r.id as string,
+    prioridad: r.prioridad as number,
+    tag: (r.tag ?? null) as { name: string; color: string | null } | null,
+    destino: r.member?.name ?? (r.team?.name ? `Equipo ${r.team.name}` : "—"),
+  }));
 
   const s = (cfg ?? {}) as any;
   const gente = (miembros ?? []) as any[];
@@ -213,6 +230,13 @@ export default async function RepartoPage() {
           </span>
         </div>
       </form>
+
+      <ReglasDeReparto
+        reglas={reglas}
+        etiquetas={(etiquetas ?? []) as any[]}
+        miembros={(miembros ?? []) as any[]}
+        equipos={(equipos ?? []) as any[]}
+      />
 
       <div className="flex gap-3 rounded-xl border border-linea-2 bg-tarjeta-2 p-4 text-sm leading-relaxed text-ink-2">
         <Info className="mt-0.5 h-4 w-4 flex-none text-violet" />

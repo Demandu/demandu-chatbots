@@ -769,14 +769,21 @@ describe("Agente de IA con herramientas", () => {
     // La regla que sostiene el diseño: la capacidad es código, la política es
     // dato del cliente. Si el modelo se inventa una etiqueta y la aceptamos,
     // el embudo del negocio deja de significar nada.
+    //
+    // Quien valida es la BASE (`poner_etiqueta`), no el motor: hay dos motores
+    // y esta regla no puede divergir. Además la base sabe de GRUPOS, que es lo
+    // que impide que un lead quede «alto» y «medio» a la vez.
     const i = wa.indexOf('case "etiquetar"');
     esperar(i > 0).verdadero("no encuentro la herramienta de etiquetar");
-    const bloque = wa.slice(i, i + 900);
-    esperar(bloque.includes('from("tags")')).verdadero(
-      "etiquetar tiene que comprobar que la etiqueta EXISTE en ese cliente",
+    const bloque = wa.slice(i, i + 2200);
+    esperar(bloque.includes('rpc("poner_etiqueta"')).verdadero(
+      "etiquetar tiene que pasar por la base, que es quien conoce el catálogo y los grupos",
     );
     esperar(bloque.includes("no existe")).verdadero(
       "cuando la etiqueta no existe hay que decirle al modelo cuáles sí, para que corrija",
+    );
+    esperar(!/juntas\.add|new Set<string>\(c\.tags/.test(bloque)).verdadero(
+      "el motor no puede volver a juntar etiquetas a mano: así fue como un lead quedó en dos niveles",
     );
   });
 
@@ -861,13 +868,27 @@ describe("Agente de IA con herramientas", () => {
     // Mismo motivo que en WhatsApp: el modelo propone, la base decide.
     const i = web.indexOf('case "etiquetar"');
     esperar(i > 0).verdadero("no encuentro la herramienta de etiquetar en el motor web");
-    const bloque = web.slice(i, i + 900);
-    esperar(bloque.includes('from("tags")')).verdadero(
-      "etiquetar tiene que comprobar que la etiqueta EXISTE en ese cliente",
+    const bloque = web.slice(i, i + 2200);
+    esperar(bloque.includes('rpc("poner_etiqueta"')).verdadero(
+      "etiquetar tiene que pasar por la base, que es quien conoce el catálogo y los grupos",
     );
     esperar(bloque.includes("no existe")).verdadero(
       "cuando la etiqueta no existe hay que decirle al modelo cuáles sí, para que corrija",
     );
+    esperar(!/juntas\.add|new Set<string>\(c\.tags/.test(bloque)).verdadero(
+      "el motor no puede volver a juntar etiquetas a mano: así fue como un lead quedó en dos niveles",
+    );
+  });
+
+  test("ningún motor reparte por su cuenta", () => {
+    // El reparto lo hace un disparador de la base (migración 0016 + 0064). Si
+    // un motor además repartiera, habría dos repartos pisándose y nadie sabría
+    // cuál decidió.
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      esperar(!texto.includes("repartir_conversacion")).verdadero(
+        `el motor de ${donde} no debe elegir agente: eso lo hace el disparador de la base`,
+      );
+    }
   });
 
   test("el motor web tampoco deja que el modelo elija la dirección", () => {
@@ -905,6 +926,74 @@ describe("Agente de IA con herramientas", () => {
     const motorWeb = fs.readFileSync(path.join(RAIZ, "src/lib/flow/webRuntime.ts"), "utf8");
     esperar(motorWeb.includes("if (agente.pasoAHumano)")).verdadero(
       "tras pasar con una persona el bloque de IA del canal web no puede seguir esperando preguntas",
+    );
+  });
+});
+
+// ─── Qué flujo atiende ───────────────────────────────────────────────────────
+//
+// El 31 ago un bot se quedó mudo: dos flujos con la palabra clave «AI», uno de
+// ellos SIN NINGÚN BLOQUE. El motor se quedaba con el primero que coincidiera,
+// y si le tocaba el vacío no ejecutaba nada. Además no había ningún orden, así
+// que unas veces habría funcionado y otras no.
+describe("Qué flujo atiende", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+  const web = fs.readFileSync(path.join(RAIZ, "src/lib/flow/webRuntime.ts"), "utf8");
+
+  test("un flujo sin bloques nunca compite por un disparador", () => {
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      esperar(texto.includes("function flujosQuePuedenAtender")).verdadero(
+        `el motor de ${donde} tiene que descartar los flujos vacíos antes de elegir`,
+      );
+      esperar(/\.filter\(\(f: any\) => \(f\?\.graph\?\.nodes\?\.length \?\? 0\) > 0\)/.test(texto)).verdadero(
+        `el motor de ${donde} tiene que filtrar por número de bloques`,
+      );
+      esperar(/const flows = flujosQuePuedenAtender\(entrantes\);/.test(texto)).verdadero(
+        `el motor de ${donde} tiene que USAR el filtro, no solo tenerlo escrito`,
+      );
+    }
+  });
+
+  test("con dos flujos empatados siempre gana el mismo", () => {
+    // Sin orden, la base devuelve las filas como quiere: el bot funciona unas
+    // veces sí y otras no, y quien lo reporta parece que se lo inventa.
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      esperar(texto.includes("(b.priority ?? 0) - (a.priority ?? 0)")).verdadero(
+        `el motor de ${donde} tiene que ordenar por prioridad`,
+      );
+      esperar(texto.includes('String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? ""))')).verdadero(
+        `en empate, el motor de ${donde} tiene que quedarse con el editado más recientemente`,
+      );
+    }
+  });
+
+  test("los dos motores piden a la base los datos con los que ordenan", () => {
+    // Ordenar por `priority` sin haberla traído la deja siempre en undefined:
+    // el orden parecería estar puesto y no ordenaría nada.
+    const ruta = fs.readFileSync(path.join(RAIZ, "src/app/api/webchat/route.ts"), "utf8");
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", ruta]]) {
+      const i = texto.indexOf('.select("id, name, graph, trigger_type, keywords, enabled');
+      esperar(i > 0).verdadero(`no encuentro la consulta de flujos del ${donde}`);
+      esperar(texto.slice(i, i + 140).includes("priority, updated_at")).verdadero(
+        `la consulta del ${donde} tiene que traer priority y updated_at o el orden no ordena nada`,
+      );
+    }
+  });
+});
+
+// ─── El aviso de "no se está entregando" ─────────────────────────────────────
+describe("Avisos de la Bandeja", () => {
+  test("el aviso de no entregado mira el ÚLTIMO envío, no cualquiera que falló", () => {
+    // Buscar «el último mensaje que tenga el fallo» deja el aviso rojo puesto
+    // para siempre después de un solo rechazo, aunque el bot siga contestando
+    // con normalidad delante de los ojos del dueño. Pasó: un bloque de
+    // catálogo falló el 28 ago y el aviso seguía tres días después.
+    const inbox = fs.readFileSync(path.join(RAIZ, "src/components/inbox/InboxClient.tsx"), "utf8");
+    esperar(inbox.includes('find((m) => m.direction === "outbound")')).verdadero(
+      "hay que mirar el último mensaje SALIENTE y ver si ese falló",
+    );
+    esperar(!/find\(\(m\) => m\.payload\?\.no_entregado\)/.test(inbox)).verdadero(
+      "no vale buscar cualquier mensaje fallido del historial: eso no dice si el canal funciona ahora",
     );
   });
 });

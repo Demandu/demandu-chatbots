@@ -267,22 +267,39 @@ export async function ejecutarHerramienta(
 
       case "etiquetar": {
         const etiqueta = String(args?.etiqueta ?? "").trim();
-        const { data: existe } = await ctx.admin
-          .from("tags").select("name").eq("org_id", ctx.orgId).eq("name", etiqueta).maybeSingle();
-        if (!existe) {
+        const c = await fichaDeLaConversacion(ctx);
+        if (!c) return "No encuentro la ficha de esta persona.";
+
+        // PONER LA ETIQUETA LO HACE LA BASE, no este archivo.
+        //
+        // Antes se hacía aquí con un conjunto: se añadía la nueva y se dejaban
+        // todas las anteriores. Resultado real, visto el 31 ago: un lead quedó
+        // como «lead-alto» Y «lead-medio» a la vez, porque la IA lo calificó dos
+        // veces según iba sabiendo más. Un embudo donde alguien está en dos
+        // niveles a la vez no significa nada.
+        //
+        // `poner_etiqueta` conoce los GRUPOS: si la etiqueta pertenece a uno
+        // —«Calificación»—, quita a sus hermanas y deja solo esta. Las etiquetas
+        // sueltas («vip», «habla inglés») se siguen acumulando, que es lo suyo.
+        //
+        // Vive en la base porque hay DOS motores y esta regla no puede
+        // divergir: la base es una sola.
+        const { data: quedaron, error } = await ctx.admin.rpc("poner_etiqueta", {
+          p_org_id: ctx.orgId,
+          p_contact_id: c.id,
+          p_etiqueta: etiqueta,
+        });
+
+        if (error) {
+          // El modelo se inventó una etiqueta. Se le devuelven las que sí
+          // existen para que corrija: la IA propone, la base decide.
           const { data: tags } = await ctx.admin.from("tags").select("name").eq("org_id", ctx.orgId);
           return `La etiqueta "${etiqueta}" no existe. Las que hay son: ` +
             ((tags ?? []) as any[]).map((t) => t.name).join(", ") + ".";
         }
 
-        const c = await fichaDeLaConversacion(ctx);
-        if (!c) return "No encuentro la ficha de esta persona.";
-
-        const juntas = new Set<string>(c.tags ?? []);
-        juntas.add(etiqueta);
-        await ctx.admin.from("contacts").update({ tags: [...juntas] }).eq("id", c.id);
-
         emitir(ctx.orgId, "lead.datos", {
+          etiquetas: quedaron ?? [etiqueta],
           contacto_id: c.id,
           etiqueta,
           por_que: args?.por_que ?? null,
@@ -327,6 +344,10 @@ export async function ejecutarHerramienta(
           handoff_reason: String(args?.motivo ?? "Lo pidió el agente de IA").slice(0, 200),
         }).eq("id", ctx.conversationId).eq("org_id", ctx.orgId);
 
+        // EL REPARTO NO SE LLAMA DESDE AQUÍ: lo hace un disparador de la base
+        // en cuanto la conversación queda «assigned». Así reparte igual venga
+        // del flujo, del atajo «1», de esta herramienta o de la Bandeja — un
+        // solo sitio, sin cuatro copias que se desincronizan.
         ctx.pasoAHumano = true;
         emitir(ctx.orgId, "pase.a.humano", {
           motivo: args?.motivo ?? null,

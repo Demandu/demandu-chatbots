@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "33";
+const VERSION_MOTOR = "35";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -785,25 +785,43 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
 
       case "etiquetar": {
         const etiqueta = String(args?.etiqueta ?? "").trim();
-        const { data: existe } = await ctx.db
-          .from("tags").select("name").eq("org_id", ctx.orgId).eq("name", etiqueta).maybeSingle();
-        if (!existe) {
+
+        const { data: c } = await ctx.db.from("contacts")
+          .select("id").eq("org_id", ctx.orgId).eq("channel", "whatsapp")
+          .eq("external_id", ctx.to).maybeSingle();
+        if (!c) return "No encuentro la ficha de esta persona.";
+
+        // PONER LA ETIQUETA LO HACE LA BASE, no este archivo.
+        //
+        // Antes se hacía aquí con un conjunto: se añadía la nueva y se dejaban
+        // todas las anteriores. Resultado real, visto el 31 ago: un lead quedó
+        // como «lead-alto» Y «lead-medio» a la vez, porque la IA lo calificó
+        // dos veces según iba sabiendo más. Un embudo donde alguien está en dos
+        // niveles a la vez no significa nada.
+        //
+        // `poner_etiqueta` conoce los GRUPOS: si la etiqueta pertenece a uno
+        // —«Calificación»—, quita a sus hermanas y deja solo esta. Las sueltas
+        // («vip», «habla inglés») se siguen acumulando, que es lo suyo.
+        //
+        // Vive en la base porque hay DOS motores y esta regla no puede
+        // divergir: la base es una sola.
+        const { data: quedaron, error: fallo } = await ctx.db.rpc("poner_etiqueta", {
+          p_org_id: ctx.orgId,
+          p_contact_id: c.id,
+          p_etiqueta: etiqueta,
+        });
+
+        if (fallo) {
+          // El modelo se inventó una etiqueta. Se le devuelven las que sí
+          // existen para que corrija: la IA propone, la base decide.
           const { data: tags } = await ctx.db.from("tags").select("name").eq("org_id", ctx.orgId);
           return `La etiqueta "${etiqueta}" no existe. Las que hay son: ` +
             ((tags ?? []) as any[]).map((t) => t.name).join(", ") + ".";
         }
 
-        const { data: c } = await ctx.db.from("contacts")
-          .select("id, tags").eq("org_id", ctx.orgId).eq("channel", "whatsapp")
-          .eq("external_id", ctx.to).maybeSingle();
-        if (!c) return "No encuentro la ficha de esta persona.";
-
-        const juntas = new Set<string>(c.tags ?? []);
-        juntas.add(etiqueta);
-        await ctx.db.from("contacts").update({ tags: [...juntas] }).eq("id", c.id);
-
         contarFuera(ctx.db, ctx.orgId, "lead.datos", {
-          telefono: ctx.to, etiqueta, por_que: args?.por_que ?? null, por: "agente_ia",
+          telefono: ctx.to, etiqueta, etiquetas: quedaron ?? [etiqueta],
+          por_que: args?.por_que ?? null, por: "agente_ia",
         });
         return `Listo, quedó etiquetado como "${etiqueta}". No se lo menciones a la persona.`;
       }
@@ -839,6 +857,11 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           handoff_requested_at: new Date().toISOString(),
           handoff_reason: String(args?.motivo ?? "Lo pidió el agente de IA").slice(0, 200),
         }).eq("id", ctx.convId);
+
+        // EL REPARTO NO SE LLAMA DESDE AQUÍ: lo hace un disparador de la base
+        // en cuanto la conversación queda «assigned». Así reparte igual venga
+        // del flujo, del atajo «1», de esta herramienta o de la Bandeja — un
+        // solo sitio, sin cuatro copias que se desincronizan.
         ctx.finMotivo = "agente";
         ctx.pasoAHumano = true;
         contarFuera(ctx.db, ctx.orgId, "pase.a.humano", {
@@ -1907,6 +1930,10 @@ async function runFrom(startId: string | undefined, ctx: any) {
           handoff_requested_at: new Date().toISOString(),
           handoff_reason: "El flujo lo mandó con una persona",
         }).eq("id", ctx.convId);
+
+        // Quién la atiende lo decide el disparador de la base al ver
+        // «assigned»: primero las reglas por etiqueta del cliente, y si
+        // ninguna encaja, el reparto normal (rueda o menos carga).
         ctx.finMotivo = "agente";
         contarFuera(ctx.db, ctx.orgId, "pase.a.humano", {
           telefono: ctx.to,
@@ -2254,7 +2281,39 @@ async function handleIncoming(opts: any) {
 // ---- selección de flujo por disparador ----
 // Prioridad: (1) palabra clave (interrumpe incluso a mitad de conversación),
 // (2) continuar el flujo activo, (3) lead que regresa, (4) bienvenida.
-function chooseFlow(flows: any[], text: string, isReturning: boolean, state: any) {
+
+/**
+ * Los flujos que de verdad pueden atender, en un orden SIEMPRE el mismo.
+ *
+ * DOS COSAS QUE COSTARON UN BOT MUDO EN PRODUCCIÓN (31 ago):
+ *
+ * 1. UN FLUJO VACÍO SE TRAGABA EL MENSAJE. Había dos flujos con la palabra
+ *    clave «AI»: uno con bloques y otro sin ninguno, creado sin querer un rato
+ *    antes. El motor se quedaba con el primero que coincidiera; si le tocaba el
+ *    vacío, no había nada que ejecutar y el bot no contestaba nada. Un flujo
+ *    sin bloques no puede atender a nadie: no debe ni competir.
+ *
+ * 2. NO HABÍA ORDEN. La base devuelve las filas en el orden que le apetece, así
+ *    que con dos flujos empatados el bot funcionaba unas veces sí y otras no —
+ *    la peor clase de fallo, porque quien lo reporta parece que se lo inventa.
+ *    Ahora manda la prioridad y, en empate, el más recientemente editado: si
+ *    alguien duplica un disparador, gana el que acaba de tocar.
+ *
+ * El mismo criterio, palabra por palabra, está en `src/lib/flow/webRuntime.ts`.
+ * Hay una prueba estática que falla si los dos dejan de coincidir.
+ */
+function flujosQuePuedenAtender(flows: any[]): any[] {
+  return (flows ?? [])
+    .filter((f: any) => (f?.graph?.nodes?.length ?? 0) > 0)
+    .sort(
+      (a: any, b: any) =>
+        (b.priority ?? 0) - (a.priority ?? 0) ||
+        String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")),
+    );
+}
+
+function chooseFlow(entrantes: any[], text: string, isReturning: boolean, state: any) {
+  const flows = flujosQuePuedenAtender(entrantes);
   const t = (text || "").toLowerCase();
   for (const f of flows) {
     if (
@@ -2850,7 +2909,9 @@ Deno.serve(async (req: Request) => {
         // Todos los flujos habilitados del bot y elegir por disparador
         const { data: flowRows } = await db
           .from("flows")
-          .select("id, name, graph, trigger_type, keywords, enabled")
+          // `priority` y `updated_at` NO son adorno: son lo que hace que, con dos
+          // flujos que responden al mismo disparador, gane siempre el mismo.
+          .select("id, name, graph, trigger_type, keywords, enabled, priority, updated_at")
           .eq("bot_id", cfg.bot_id);
         const flows = (flowRows ?? []).filter((f: any) => f.enabled !== false);
         const state = conv.flow_state ?? {};

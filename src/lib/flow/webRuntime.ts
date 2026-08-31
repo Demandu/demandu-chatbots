@@ -252,8 +252,39 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
   return null;
 }
 
+/**
+ * Los flujos que de verdad pueden atender, en un orden SIEMPRE el mismo.
+ *
+ * DOS COSAS QUE COSTARON UN BOT MUDO EN PRODUCCIÓN (31 ago):
+ *
+ * 1. UN FLUJO VACÍO SE TRAGABA EL MENSAJE. Había dos flujos con la palabra
+ *    clave «AI»: uno con bloques y otro sin ninguno, creado sin querer un rato
+ *    antes. El motor se quedaba con el primero que coincidiera; si le tocaba el
+ *    vacío, no había nada que ejecutar y el bot no contestaba nada. Un flujo
+ *    sin bloques no puede atender a nadie: no debe ni competir.
+ *
+ * 2. NO HABÍA ORDEN. La base devuelve las filas en el orden que le apetece, así
+ *    que con dos flujos empatados el bot funcionaba unas veces sí y otras no —
+ *    la peor clase de fallo, porque quien lo reporta parece que se lo inventa.
+ *    Ahora manda la prioridad y, en empate, el más recientemente editado: si
+ *    alguien duplica un disparador, gana el que acaba de tocar.
+ *
+ * El mismo criterio, palabra por palabra, está en el motor de WhatsApp. Hay una
+ * prueba estática que falla si los dos dejan de coincidir.
+ */
+export function flujosQuePuedenAtender(flows: any[]): any[] {
+  return (flows ?? [])
+    .filter((f: any) => (f?.graph?.nodes?.length ?? 0) > 0)
+    .sort(
+      (a: any, b: any) =>
+        (b.priority ?? 0) - (a.priority ?? 0) ||
+        String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")),
+    );
+}
+
 /** Elige el flujo por disparador (misma prioridad que WhatsApp). */
-export function chooseWebFlow(flows: any[], text: string, isReturning: boolean, state: any) {
+export function chooseWebFlow(entrantes: any[], text: string, isReturning: boolean, state: any) {
+  const flows = flujosQuePuedenAtender(entrantes);
   const t = (text || "").toLowerCase();
   for (const f of flows) {
     if (

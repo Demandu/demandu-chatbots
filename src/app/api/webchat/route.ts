@@ -304,7 +304,9 @@ export async function POST(req: Request) {
 
     const { data: flowRows } = await admin
       .from("flows")
-      .select("id, name, graph, trigger_type, keywords, enabled")
+      // `priority` y `updated_at` NO son adorno: son lo que hace que, con dos
+      // flujos que responden al mismo disparador, gane siempre el mismo.
+      .select("id, name, graph, trigger_type, keywords, enabled, priority, updated_at")
       .eq("bot_id", bot.id);
 
     const flows = (flowRows ?? []).filter((f: any) => f.enabled !== false);

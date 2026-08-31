@@ -854,7 +854,25 @@ export function InboxClient({
           </div>
 
           {(() => {
-            const fallo = [...messages].reverse().find((m) => m.payload?.no_entregado)?.payload?.no_entregado;
+            /**
+             * EL AVISO SOLO VALE SI FALLÓ EL ÚLTIMO ENVÍO.
+             *
+             * Antes se buscaba el último mensaje QUE TUVIERA el fallo, sin
+             * mirar si después salió algo bien. Consecuencia: un solo mensaje
+             * rechazado dejaba «WhatsApp no está entregando tus mensajes» ahí
+             * para siempre — y el dueño del negocio, viendo cómo el bot
+             * contestaba con normalidad, leía que su canal estaba caído.
+             *
+             * Pasó de verdad: el 28 ago falló un bloque de catálogo (131009,
+             * porque esa cuenta no tiene catálogo de Commerce). Ese mismo día,
+             * horas después, el bot mandó ocho mensajes que llegaron todos. El
+             * aviso rojo seguía puesto tres días más tarde.
+             *
+             * Lo único que de verdad significa «no está entregando» es que
+             * falló lo ÚLTIMO que se intentó mandar.
+             */
+            const ultimoSaliente = [...messages].reverse().find((m) => m.direction === "outbound");
+            const fallo = ultimoSaliente?.payload?.no_entregado;
             if (!fallo) return null;
             return (
               <div className="flex flex-none items-start gap-2 border-b border-danger/40 bg-danger/10 px-4 py-2.5 text-xs text-ink-2">

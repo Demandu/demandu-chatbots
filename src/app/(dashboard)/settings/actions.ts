@@ -31,15 +31,81 @@ export async function updateBusinessHours(formData: FormData) {
 export async function createTag(formData: FormData) {
   const name = s(formData.get("name"));
   const color = s(formData.get("color")) || "#F64A97";
+  // Un grupo es «una pregunta»: Calificación, Temperatura, Tamaño de cuenta…
+  // Dentro de un grupo solo puede haber UNA etiqueta puesta a la vez. Vacío =
+  // etiqueta suelta, de las que se acumulan («vip», «habla inglés»).
+  const grupo = s(formData.get("grupo")) || null;
   if (!name) return;
   const orgId = await getCurrentOrgId();
   if (!orgId) return;
-  await createClient().from("tags").insert({ org_id: orgId, name, color });
+  await createClient().from("tags").insert({ org_id: orgId, name, color, grupo });
   revalidatePath("/settings/tags");
 }
+
+/**
+ * Cambiar a qué grupo pertenece una etiqueta.
+ *
+ * SE PUEDE CAMBIAR DESPUÉS a propósito: casi nadie crea las tres etiquetas de
+ * calificación pensando que son «una pregunta con tres respuestas». Lo
+ * descubren el día que un contacto aparece en dos niveles a la vez — que es
+ * exactamente como lo descubrimos nosotros.
+ */
+export async function agruparTag(formData: FormData) {
+  const id = s(formData.get("id"));
+  const grupo = s(formData.get("grupo")) || null;
+  if (!id) return;
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  // El filtro por organización es la comprobación de verdad: aunque llegue un
+  // id de otra cuenta, no hay ninguna fila que tocar.
+  await createClient().from("tags").update({ grupo }).eq("id", id).eq("org_id", orgId);
+  revalidatePath("/settings/tags");
+}
+
 export async function deleteTag(formData: FormData) {
   await createClient().from("tags").delete().eq("id", s(formData.get("id")));
   revalidatePath("/settings/tags");
+}
+
+// ── Reglas de reparto por etiqueta ───────────────────────────────────────────
+/**
+ * «Si el lead es alto, que le toque a Darwin.»
+ *
+ * El destino llega como `persona:<id>` o `equipo:<id>` en un solo campo. Así
+ * el formulario no puede mandar los dos —la base lo rechazaría— ni ninguno.
+ */
+export async function crearReglaDeReparto(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+
+  const tagId = s(formData.get("tag_id"));
+  const destino = s(formData.get("destino"));
+  if (!tagId || !destino) return;
+
+  const [tipo, id] = destino.split(":");
+  if (!id) return;
+
+  await createClient().from("reglas_de_reparto").insert({
+    org_id: orgId,
+    tag_id: tagId,
+    member_id: tipo === "persona" ? id : null,
+    team_id: tipo === "equipo" ? id : null,
+    // Las más nuevas mandan sobre las viejas si dos etiquetas del mismo
+    // contacto tienen regla. Es lo que espera quien acaba de escribir una.
+    prioridad: Math.floor(Date.now() / 1000) % 100000,
+  });
+
+  revalidatePath("/settings/assignment");
+}
+
+export async function quitarReglaDeReparto(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  const id = s(formData.get("id"));
+  if (!id) return;
+  // El filtro por organización es la comprobación de verdad.
+  await createClient().from("reglas_de_reparto").delete().eq("id", id).eq("org_id", orgId);
+  revalidatePath("/settings/assignment");
 }
 
 // ── Equipos ──────────────────────────────────────────────────────────────────
