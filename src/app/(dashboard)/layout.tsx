@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Sidebar, type ResumenDePlan } from "@/components/Sidebar";
 import { anotarPaso } from "@/lib/equipo/asistencia";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { Shell } from "@/components/Shell";
 import { faltaNombreDelNegocio, getCurrentOrgId } from "@/lib/org";
 import { createClient } from "@/lib/supabase/server";
@@ -48,6 +49,31 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // muchas puertas al panel y comprobarlo pantalla por pantalla es garantizar
   // que un día alguien se cuele por la que se olvidó.
   if (await debeCambiarContrasena()) redirect("/crear-contrasena");
+
+  // ── UN VENDEDOR NO TIENE PANEL DE CLIENTE ─────────────────────────────────
+  //
+  // El login manda a todo el mundo a `/dashboard`. Para un cliente está bien;
+  // para alguien del equipo de Demandu no, porque NO TIENE organización propia
+  // —dejó de tenerla a propósito, para no ensuciar la lista de clientes— y lo
+  // que veía era el panel de un cliente vacío: sin chatbots, sin conversaciones
+  // y sin poder crear nada. Parecía una plataforma rota.
+  //
+  // Va en el marco y no en el login porque hay muchas puertas: un enlace
+  // guardado, la dirección escrita a mano, volver atrás. Comprobarlo en una
+  // sola de ellas es garantizar que un día alguien se cuele por otra.
+  //
+  // OJO CON EL ORDEN: si está dentro de la cuenta de un cliente dando soporte,
+  // SÍ tiene organización (la membresía temporal) y tiene que quedarse aquí —
+  // que es justo el trabajo. Por eso la condición es «no tiene ninguna».
+  if (quienEs && !(await getCurrentOrgId())) {
+    const { data: miembro } = await createAdminClient()
+      .from("equipo_demandu")
+      .select("id")
+      .eq("user_id", quienEs.id)
+      .eq("activo", true)
+      .maybeSingle();
+    if (miembro) redirect("/panel");
+  }
 
   if (await faltaNombreDelNegocio()) redirect("/bienvenida");
 

@@ -807,4 +807,27 @@ describe("Agente de IA con herramientas", () => {
   });
 });
 
+// ─── A dónde va cada quien al entrar ─────────────────────────────────────────
+describe("Puerta de entrada", () => {
+  const marco = fs.readFileSync(path.join(RAIZ, "src/app/(dashboard)/layout.tsx"), "utf8");
+
+  test("alguien del equipo sin organización propia no acaba en un panel de cliente vacío", () => {
+    // El login manda a todos a /dashboard. Un vendedor NO tiene organización
+    // —dejó de tenerla a propósito para no ensuciar la lista de clientes— así
+    // que veía el panel de un cliente vacío: sin chatbots, sin conversaciones,
+    // sin poder crear nada. Parecía una plataforma rota.
+    esperar(marco.includes('redirect("/panel")')).verdadero(
+      "el marco del panel tiene que desviar a /panel a quien es del equipo y no tiene organización",
+    );
+    const i = marco.indexOf('redirect("/panel")');
+    const antes = marco.slice(Math.max(0, i - 700), i);
+    esperar(antes.includes("equipo_demandu")).verdadero(
+      "el desvío tiene que comprobar que de verdad es del equipo, no desviar a cualquiera sin organización",
+    );
+    esperar(antes.includes("getCurrentOrgId")).verdadero(
+      "solo se desvía a quien NO tiene ninguna organización: dando soporte sí tiene una y debe quedarse",
+    );
+  });
+});
+
 process.exit(await correrPruebas());
