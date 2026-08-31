@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { createBrowserClient } from "@supabase/ssr";
 
 /**
  * Recuperar la contraseña.
@@ -35,12 +35,33 @@ export function RecuperarForm() {
     setEnviando(true);
     setError(null);
 
-    const { error } = await createClient().auth.resetPasswordForEmail(email.trim(), {
-      // El enlace del correo trae un código de un solo uso. Pasa primero por
-      // `/auth/callback`, que lo canjea por una sesión y escribe la cookie; sin
-      // ese paso la persona llegaría a elegir contraseña sin sesión y no podría
-      // guardarla. `next` solo admite rutas de esta misma app (lo comprueba el
-      // callback), así que no se puede usar para mandar a nadie a otro sitio.
+    // ── POR QUÉ ESTE CLIENTE Y NO EL DE SIEMPRE ──────────────────────────────
+    //
+    // El cliente normal usa el flujo PKCE: al pedir el enlace guarda un secreto
+    // EN ESTE NAVEGADOR, y el enlace del correo solo sirve si se abre en el
+    // mismo. La gente pide el enlace en la computadora y abre el correo en el
+    // teléfono, o el correo de iCloud le abre Safari cuando pidió desde Chrome.
+    // Entonces la plataforma escupía un párrafo en inglés sobre "PKCE code
+    // verifier" y el enlace no servía para nada. Pasó el 31 ago.
+    //
+    // Con el flujo implícito el enlace se basta a sí mismo —trae la sesión en
+    // el trozo de la URL— y funciona en cualquier navegador y cualquier
+    // aparato, que es lo que un enlace de recuperación TIENE que hacer.
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { auth: { flowType: "implicit" } },
+    );
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      // Va por `/auth/callback` a propósito, aunque aquí no haya código que
+      // canjear: es la dirección que ya está permitida en Supabase —la misma
+      // que usan Apple y Facebook— y el trozo con la sesión viaja intacto en el
+      // redirect hasta la pantalla de elegir contraseña. Añadir otra dirección
+      // a la lista de permitidas es un paso manual más que se puede olvidar.
+      //
+      // `next` solo admite rutas de esta misma app (lo comprueba el callback),
+      // así que no se puede usar para mandar a nadie a otro sitio.
       redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/crear-contrasena?motivo=recuperar")}`,
     });
 

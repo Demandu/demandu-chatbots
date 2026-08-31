@@ -28,14 +28,6 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(proveedorFallo)}`, url.origin));
   }
 
-  if (!code) {
-    return NextResponse.redirect(new URL("/login?error=Falt%C3%B3%20el%20c%C3%B3digo%20de%20acceso.", url.origin));
-  }
-
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    return NextResponse.redirect(new URL("/login?error=Servidor%20sin%20configurar.", url.origin));
-  }
-
   // A dónde va después de entrar. Lo usa la invitación al equipo, que necesita
   // llevar a la persona a ponerse una contraseña en vez de al panel.
   //
@@ -44,6 +36,24 @@ export async function GET(request: Request) {
   // acabaría, ya con sesión iniciada, en una pantalla que imita a Demandu.
   const pedido = url.searchParams.get("next") ?? "";
   const destino = pedido.startsWith("/") && !pedido.startsWith("//") ? pedido : "/dashboard";
+
+  if (!code) {
+    // SIN CÓDIGO NO SIEMPRE ES UN ERROR. El enlace de "olvidé mi contraseña"
+    // llega con la sesión en el TROZO DE LA URL (`#access_token=…`), que el
+    // navegador no manda al servidor: aquí no se ve nada, y aun así el enlace
+    // es bueno. Se hace así a propósito para que funcione aunque el correo se
+    // abra en otro navegador o en el teléfono — que es justo lo que hace la
+    // gente. El trozo viaja solo en el redirect y lo recoge la pantalla de
+    // elegir contraseña.
+    //
+    // Si además no había a dónde ir, entonces sí falta algo de verdad.
+    if (pedido) return NextResponse.redirect(new URL(destino, url.origin));
+    return NextResponse.redirect(new URL("/login?error=Falt%C3%B3%20el%20c%C3%B3digo%20de%20acceso.", url.origin));
+  }
+
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return NextResponse.redirect(new URL("/login?error=Servidor%20sin%20configurar.", url.origin));
+  }
 
   // La respuesta se crea ANTES de hablar con Supabase porque es donde se van a
   // escribir las cookies de sesión.
@@ -69,7 +79,17 @@ export async function GET(request: Request) {
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
-    return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(error.message)}`, url.origin));
+    // NUNCA se le enseña al cliente el mensaje crudo del SDK. Pasó de verdad:
+    // en la pantalla de entrar apareció un párrafo en inglés hablando de "PKCE
+    // code verifier" y de "SSR frameworks". Quien lo lee no entiende qué hizo
+    // mal ni qué hacer ahora, y parece que la plataforma se rompió.
+    console.error("[auth/callback]", error.message);
+    const enEspanol = /code verifier|pkce/i.test(error.message)
+      ? "Ese enlace se abrió en un navegador distinto al que lo pidió. Pide uno nuevo y ábrelo aquí mismo."
+      : /expired|invalid/i.test(error.message)
+        ? "El enlace ya caducó o se usó. Pide uno nuevo."
+        : "No pudimos completar el acceso. Intenta de nuevo.";
+    return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(enEspanol)}`, url.origin));
   }
 
   return respuesta;

@@ -1,0 +1,67 @@
+<!--
+  Correo de "olvidé mi contraseña".
+
+  Se pega en Supabase → Authentication → Emails → Reset Password.
+
+  POR QUÉ ES TODO ESTILOS EN LÍNEA Y UNA TABLA. Gmail borra las hojas de
+  estilo y Outlook no entiende flex ni grid. Lo que se ve bonito en el
+  navegador llega desarmado al correo del cliente. Tabla y `style=` en cada
+  etiqueta es feo de escribir y es lo único que se ve igual en todas partes.
+
+  {{ .ConfirmationURL }} lo rellena Supabase con el enlace de un solo uso.
+-->
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0b0d1a;margin:0;padding:32px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <tr>
+    <td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;background:#12142a;border-radius:16px;padding:32px;">
+        <tr>
+          <td style="padding-bottom:24px;">
+            <span style="font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">demandu</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="font-size:22px;font-weight:800;color:#ffffff;padding-bottom:12px;line-height:1.3;">
+            Recupera tu contraseña
+          </td>
+        </tr>
+        <tr>
+          <td style="font-size:15px;color:#a9adc9;line-height:1.6;padding-bottom:24px;">
+            Pediste entrar a Demandu y no recuerdas tu contraseña. Haz clic en el botón y elige una
+            nueva. El enlace <strong style="color:#ffffff;">sirve una sola vez</strong> y caduca en una
+            hora.
+          </td>
+        </tr>
+        <tr>
+          <td style="padding-bottom:24px;">
+            <a href="{{ .ConfirmationURL }}"
+               style="display:inline-block;background:#e0397f;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:12px;">
+              Elegir contraseña nueva
+            </a>
+          </td>
+        </tr>
+        <tr>
+          <td style="font-size:13px;color:#7a7f9e;line-height:1.6;padding-bottom:18px;">
+            ¿No funciona el botón? Copia y pega esta dirección en tu navegador:<br />
+            <span style="color:#a9adc9;word-break:break-all;">{{ .ConfirmationURL }}</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="border-top:1px solid #23264a;padding-top:18px;font-size:13px;color:#7a7f9e;line-height:1.6;">
+            <!-- Esta línea no es un adorno: es lo que evita que alguien que
+                 recibe el correo sin haberlo pedido entre en pánico o haga
+                 clic "por si acaso". -->
+            Si no pediste esto, ignora el correo: tu contraseña actual sigue funcionando y nadie
+            entró a tu cuenta.
+          </td>
+        </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;">
+        <tr>
+          <td align="center" style="padding-top:18px;font-size:12px;color:#5a5e7d;">
+            Demandu · Meta Business Partner · WhatsApp Business Platform
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>

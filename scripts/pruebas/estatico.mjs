@@ -927,14 +927,76 @@ describe("Recuperar la contraseña", () => {
   });
 
   test("el enlace del correo pasa por el canje de sesión", () => {
-    // Sin `/auth/callback` la persona llega a elegir contraseña SIN sesión y
-    // `updateUser` falla — con un error que no explica nada.
     const rec = fs.readFileSync(path.join(RAIZ, "src/components/RecuperarForm.tsx"), "utf8");
     esperar(rec.includes("/auth/callback?next=")).verdadero(
-      "el enlace de recuperación tiene que canjear el código por una sesión antes de la pantalla",
+      "el enlace tiene que volver por una dirección ya permitida en Supabase",
     );
     esperar(rec.includes("resetPasswordForEmail")).verdadero(
       "la recuperación la manda Supabase por correo; aquí no se toca ninguna contraseña",
+    );
+  });
+
+  // ── LO QUE SE ROMPIÓ DE VERDAD ────────────────────────────────────────────
+  //
+  // La primera versión usaba el flujo PKCE, que guarda un secreto EN EL
+  // NAVEGADOR que pidió el enlace. Alex pidió el enlace desde Chrome y el
+  // correo de iCloud le abrió Safari: el enlace lo devolvió al login con un
+  // párrafo en inglés sobre "PKCE code verifier". Las pruebas estáticas de
+  // entonces pasaban todas, porque comprobaban que las piezas existían y
+  // ninguna comprobaba que el camino funcionara.
+  //
+  // Estas tres cubren cada eslabón del camino real. No sustituyen recorrerlo
+  // de punta a punta, pero cada una falla si alguien deshace el arreglo.
+
+  test("el enlace sirve aunque se abra en otro navegador o en el teléfono", () => {
+    const rec = fs.readFileSync(path.join(RAIZ, "src/components/RecuperarForm.tsx"), "utf8");
+    esperar(/flowType:\s*"implicit"/.test(rec)).verdadero(
+      "con PKCE el enlace solo vale en el navegador que lo pidió, y la gente abre el correo en el teléfono",
+    );
+  });
+
+  test("la pantalla recoge la sesión que viene en el enlace", () => {
+    // La sesión llega en el trozo (`#access_token=…`), que el servidor NO ve.
+    // Si nadie la recoge, la persona escribe su contraseña nueva y al guardar
+    // recibe un error — enterándose en el peor momento.
+    const form = fs.readFileSync(path.join(RAIZ, "src/components/FormularioDeContrasena.tsx"), "utf8");
+    esperar(form.includes("window.location.hash")).verdadero(
+      "hay que leer el trozo de la dirección: ahí viene la sesión del enlace del correo",
+    );
+    esperar(form.includes("setSession")).verdadero(
+      "el trozo hay que canjearlo por una sesión de verdad antes de poder guardar la contraseña",
+    );
+    esperar(form.includes("history.replaceState")).verdadero(
+      "hay que limpiar el trozo de la barra: si no, ese enlace lleva una sesión dentro y se reenvía sin darse cuenta",
+    );
+    esperar(/hidden=\{sesion !== "lista"\}/.test(form)).verdadero(
+      "sin sesión no se enseña el formulario: escribir la contraseña dos veces para que falle es la peor forma de enterarse",
+    );
+  });
+
+  test("nunca se le enseña al cliente el mensaje crudo del SDK", () => {
+    // Lo que se vio en pantalla: "PKCE code verifier not found in storage…
+    // For SSR frameworks (Next.js, SvelteKit, etc.)". Quien lo lee no entiende
+    // qué hizo mal, y parece que la plataforma se rompió.
+    const cb = fs.readFileSync(path.join(RAIZ, "src/app/auth/callback/route.ts"), "utf8");
+    esperar(!/error=\$\{encodeURIComponent\(error\.message\)\}/.test(cb)).verdadero(
+      "el mensaje de Supabase va a la consola, no a la pantalla de entrar",
+    );
+    esperar(/code verifier\|pkce/i.test(cb)).verdadero(
+      "hay que traducir el fallo del enlace abierto en otro navegador a algo accionable",
+    );
+  });
+
+  test("un enlace sin código pero con destino no se trata como un fallo", () => {
+    // El enlace de recuperación llega SIN `code` a propósito. Antes esto caía
+    // en "Faltó el código de acceso" y el enlace bueno parecía roto.
+    // Se comparan SIN comentarios: el porqué de este caso ocupa nueve líneas,
+    // y un trozo fijo del archivo se las come enteras y no llega al código.
+    const cb = sinComentarios(fs.readFileSync(path.join(RAIZ, "src/app/auth/callback/route.ts"), "utf8"));
+    const i = cb.indexOf("if (!code)");
+    esperar(i > 0).verdadero("no encuentro el caso de enlace sin código");
+    esperar(cb.slice(i, i + 300).includes("if (pedido) return")).verdadero(
+      "sin código pero con destino, hay que seguir al destino: la sesión viaja en el trozo de la URL",
     );
   });
 
