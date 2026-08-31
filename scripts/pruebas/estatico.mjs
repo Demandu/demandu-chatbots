@@ -830,4 +830,33 @@ describe("Puerta de entrada", () => {
   });
 });
 
+// ─── La barrera entre servidor y navegador ───────────────────────────────────
+describe("Servidor y navegador", () => {
+  test("ningún componente de cliente importa un módulo de solo-servidor", () => {
+    // ESTA PRUEBA EXISTE POR UN DESPLIEGUE ROTO. `SalidasCrm.tsx` («use
+    // client») importaba `@/lib/salidas`, que empieza con `import
+    // "server-only"`. Eso NO es un aviso: rompe el build entero. Netlify se
+    // quedó sirviendo la versión anterior y un endpoint nuevo daba 404 con el
+    // código perfectamente subido — que es de las cosas más difíciles de
+    // diagnosticar, porque todo «parece» estar bien.
+    //
+    // La barrera `server-only` existe para que una llave de servicio no acabe
+    // en el navegador. Se hereda por importación, así que hay que respetarla
+    // por importación.
+    const soloServidor = new Set(
+      ARCHIVOS.filter((f) => /^import\s+"server-only"/m.test(f.texto))
+        .map((f) => "@/" + f.ruta.replace(/^src\//, "").replace(/\.(ts|tsx)$/, "")),
+    );
+
+    const rotos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (!/^\s*"use client"/m.test(texto)) continue;
+      for (const m of texto.matchAll(/from\s+"(@\/[^"]+)"/g)) {
+        if (soloServidor.has(m[1])) rotos.push(`${ruta} → ${m[1]}`);
+      }
+    }
+    esperar(rotos.join(", ")).igual("", "un componente de cliente importa código de solo-servidor: eso rompe el build");
+  });
+});
+
 process.exit(await correrPruebas());

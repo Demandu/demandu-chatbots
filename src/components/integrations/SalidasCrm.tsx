@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Plug, Trash2, CircleCheck, TriangleAlert, Copy, Check } from "lucide-react";
-import { EVENTOS } from "@/lib/salidas";
+import { EVENTOS } from "@/lib/salidas-eventos";
 import { crearSalida, quitarSalida } from "@/app/(dashboard)/settings/integrations/salidas";
 
 export type SalidaFila = {

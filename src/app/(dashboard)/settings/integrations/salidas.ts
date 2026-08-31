@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import { misPermisos } from "@/lib/permisos-server";
-import { EVENTOS } from "@/lib/salidas";
+import { EVENTOS } from "@/lib/salidas-eventos";
 
 /**
  * Crear y quitar salidas de eventos.

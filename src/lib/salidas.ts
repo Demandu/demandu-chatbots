@@ -1,26 +1,9 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-/**
- * Los eventos que Demandu sabe contar hacia fuera.
- *
- * ESTA LISTA ES UN CONTRATO. Quien conecta su CRM escribe código contra estos
- * nombres; cambiarle el nombre a uno rompe integraciones ajenas sin avisar. Se
- * añaden eventos nuevos, no se renombran los que ya salieron.
- *
- * Están en español a propósito, como el resto de la plataforma: quien los va a
- * leer es una pyme de habla hispana o su consultor, no un ingeniero de Silicon
- * Valley.
- */
-export const EVENTOS = [
-  { clave: "lead.nuevo", nombre: "Lead nuevo", desc: "Alguien escribe por primera vez." },
-  { clave: "lead.datos", nombre: "Datos del lead", desc: "El chatbot capturó su nombre, correo u otro dato." },
-  { clave: "cita.agendada", nombre: "Cita agendada", desc: "Se reservó una cita en el calendario." },
-  { clave: "pase.a.humano", nombre: "Pidió una persona", desc: "La conversación necesita a alguien del equipo." },
-  { clave: "conversacion.cerrada", nombre: "Conversación cerrada", desc: "Terminó la conversación." },
-] as const;
-
-export type ClaveDeEvento = (typeof EVENTOS)[number]["clave"];
+// El catálogo vive aparte porque lo necesita también la pantalla de
+// configuración, que corre en el navegador. Ver `salidas-eventos.ts`.
+export { EVENTOS, type ClaveDeEvento } from "@/lib/salidas-eventos";
 
 /**
  * Manda un evento a las salidas del cliente.
