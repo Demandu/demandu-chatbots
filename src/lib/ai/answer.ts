@@ -10,6 +10,7 @@
  */
 
 import { embedQuery } from "./ingest";
+import { armarHerramientas, ejecutarHerramienta, type ContextoAgente } from "./herramientas";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -29,6 +30,15 @@ export type AiSettings = {
   style?: string;
   fallback?: string;
   maxWords?: number;
+
+  // ── EL AGENTE ──────────────────────────────────────────────────────────────
+  // Qué puede HACER además de hablar. Vacío = solo conversa, exactamente como
+  // se comportaba antes de que existieran las herramientas.
+  herramientas?: string[];
+  /** Cuándo etiquetar, cuándo calificar, cuándo pasar con alguien. Lo escribe el cliente. */
+  criterios?: string;
+  sistemaUrl?: string;
+  sistemaDescripcion?: string;
 };
 
 export const AI_DEFAULTS: Required<AiSettings> = {
@@ -41,6 +51,13 @@ export const AI_DEFAULTS: Required<AiSettings> = {
   style: "Cercano y profesional. Tutea al cliente.",
   fallback: "Esa no me la sé todavía 🙈 ¿Quieres que te comunique con una persona del equipo?",
   maxWords: 80,
+  // Sin herramientas por defecto: un chatbot que nadie configuró como agente
+  // solo debe conversar. Encender esto por defecto sería que un bot empezara a
+  // etiquetar contactos y a agendar citas sin que su dueño lo pidiera.
+  herramientas: [],
+  criterios: "",
+  sistemaUrl: "",
+  sistemaDescripcion: "",
 };
 
 /** ¿Está configurada la IA a nivel plataforma? (sin exponer la llave) */
@@ -155,6 +172,16 @@ export async function aiAnswer(opts: {
    * NUNCA se activa en una conversación con un cliente.
    */
   diagnostico?: boolean;
+  /**
+   * La conversación real, para que el agente pueda ACTUAR: agendar, etiquetar,
+   * guardar datos, pasar con una persona.
+   *
+   * Sin esto —la prueba del panel, por ejemplo— el agente solo conversa aunque
+   * el cliente tenga herramientas activadas. Es a propósito: una herramienta
+   * escribe en la ficha de alguien, y una prueba no debe dejar rastro en los
+   * datos del negocio.
+   */
+  agente?: ContextoAgente;
 }): Promise<string> {
   const ai: Required<AiSettings> = { ...AI_DEFAULTS, ...(opts.settings ?? {}) };
 
@@ -181,54 +208,103 @@ export async function aiAnswer(opts: {
   // El conocimiento SIEMPRE se acota a la organización y al chatbot.
   const knowledge = await findKnowledge(opts.admin, opts.botId, opts.question, opts.orgId);
 
-  const messages = [
+  const messages: any[] = [
     ...(opts.history ?? []).slice(-6),
     { role: "user" as const, content: opts.question },
   ];
 
+  // ── LAS HERRAMIENTAS ────────────────────────────────────────────────────────
+  //
+  // Si el cliente no activó ninguna —o si no hay conversación real donde
+  // actuar— `tools` va vacío y esto se comporta EXACTAMENTE como antes: una
+  // llamada y devuelve texto. Nadie que no haya pedido un agente nota nada.
+  const { tools, contexto } = opts.agente
+    ? await armarHerramientas(opts.agente, ai)
+    : { tools: [] as any[], contexto: "" };
+  const system = contexto
+    ? `${buildSystem(ai, knowledge)}\n\n${contexto}`
+    : buildSystem(ai, knowledge);
+
+  // Un modelo puede quedarse pidiendo herramientas en bucle. Cuatro vueltas
+  // cubren de sobra «mira horarios → agenda → confirma» y cortan el bucle.
+  // El mismo número que en el motor de WhatsApp.
+  const MAX_VUELTAS = 4;
+
   try {
-    const res = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: {
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
+    for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
+      const cuerpo: any = {
         model: DEFAULT_MODEL,
         max_tokens: 400,
-        system: buildSystem(ai, knowledge),
+        system,
         messages,
-      }),
-    });
+      };
+      if (tools.length) cuerpo.tools = tools;
 
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      console.error("[ai] error de la API:", res.status, detail.slice(0, 200));
-      return opts.diagnostico ? explicarFallo(res.status, detail) : ai.fallback;
-    }
+      const res = await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        headers: {
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(cuerpo),
+      });
 
-    const j = await res.json();
-    const text = (j?.content ?? [])
-      .filter((c: any) => c?.type === "text")
-      .map((c: any) => c.text)
-      .join("\n")
-      .trim();
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        console.error("[ai] error de la API:", res.status, detail.slice(0, 200));
+        return opts.diagnostico ? explicarFallo(res.status, detail) : ai.fallback;
+      }
 
-    // Registra el consumo de IA para el panel y la facturación.
-    // Best-effort: si falla, la conversación no se ve afectada.
-    if (text && opts.logUsage !== false) {
-      try {
-        await opts.admin.from("usage_events").insert({
-          org_id: opts.orgId,
-          bot_id: opts.botId,
-          kind: "ai_message",
-          quantity: 1,
+      const j = await res.json();
+      const bloques = (j?.content ?? []) as any[];
+      const text = bloques
+        .filter((c: any) => c?.type === "text")
+        .map((c: any) => c.text)
+        .join("\n")
+        .trim();
+
+      // Registra el consumo de IA para el panel y la facturación.
+      // SE COBRA POR VUELTA, no por respuesta: si no, un agente que llama tres
+      // herramientas costaría el triple y se facturaría como uno.
+      // Best-effort: si falla, la conversación no se ve afectada.
+      if (opts.logUsage !== false) {
+        try {
+          await opts.admin.from("usage_events").insert({
+            org_id: opts.orgId,
+            bot_id: opts.botId,
+            kind: "ai_message",
+            quantity: 1,
+          });
+        } catch { /* no bloquea la respuesta */ }
+      }
+
+      const pedidas = bloques.filter((c: any) => c?.type === "tool_use");
+      if (j?.stop_reason !== "tool_use" || !pedidas.length || !opts.agente) {
+        return text || ai.fallback;
+      }
+
+      // Se ejecuta lo que pidió y se le devuelve el resultado para que siga.
+      messages.push({ role: "assistant", content: bloques });
+      const resultados: any[] = [];
+      for (const p of pedidas) {
+        console.log(`[agente] usa ${p.name}`, JSON.stringify(p.input ?? {}).slice(0, 200));
+        resultados.push({
+          type: "tool_result",
+          tool_use_id: p.id,
+          content: await ejecutarHerramienta(opts.agente, ai, p.name, p.input ?? {}),
         });
-      } catch { /* no bloquea la respuesta */ }
+      }
+      messages.push({ role: "user", content: resultados });
+
+      // Si la herramienta pasó la charla a una persona, no hay más que hablar.
+      if (opts.agente.pasoAHumano) {
+        return text || "En un momento te atiende una persona del equipo 🙌";
+      }
     }
 
-    return text || ai.fallback;
+    console.error("[agente] se agotaron las vueltas sin una respuesta final");
+    return ai.fallback;
   } catch (e: any) {
     console.error("[ai] fallo de red:", e?.message ?? e);
     return opts.diagnostico

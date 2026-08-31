@@ -15,7 +15,15 @@ export const metadata: Metadata = { title: "Crea tu contraseña · Demandu" };
  * pantalla nunca debe servirse desde una caché — llega con una sesión recién
  * creada por el enlace del correo.
  */
-export default async function CrearContrasenaPage() {
+export default async function CrearContrasenaPage({
+  searchParams,
+}: {
+  searchParams?: { motivo?: string };
+}) {
+  // Quien viene de "olvidé mi contraseña" NO fue invitado por nadie: leer «te
+  // invitaron a Demandu» le hace dudar de si el enlace es el suyo.
+  const recuperando = searchParams?.motivo === "recuperar";
+
   // Cuál de los dos casos es, para que el texto diga la verdad. Si algo falla,
   // se enseña el texto de invitación: es el que más se usa.
   let temporal = false;
@@ -34,5 +42,5 @@ export default async function CrearContrasenaPage() {
     temporal = false;
   }
 
-  return <FormularioDeContrasena temporal={temporal} />;
+  return <FormularioDeContrasena temporal={temporal} recuperando={recuperando} />;
 }

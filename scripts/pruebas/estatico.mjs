@@ -805,6 +805,150 @@ describe("Agente de IA con herramientas", () => {
       "tras pasar con una persona el bloque de IA no puede seguir esperando preguntas",
     );
   });
+
+  // ── LOS DOS MOTORES ────────────────────────────────────────────────────────
+  //
+  // Las herramientas están escritas dos veces —Deno en la función de WhatsApp,
+  // Node en `src/lib/ai/herramientas.ts`— porque son runtimes distintos y no
+  // pueden compartir archivo. En este proyecto los dos motores YA se
+  // desincronizaron dos veces (el respaldo del RAG que hacía inventar datos, y
+  // la regla de texto plano), y las dos veces se descubrió en producción.
+  //
+  // Esta prueba es el guardián de esa duplicación.
+  const web = fs.readFileSync(path.join(RAIZ, "src/lib/ai/herramientas.ts"), "utf8");
+  /**
+   * Los `case` de UNA función, no los del archivo entero.
+   *
+   * La primera versión de esto cortaba desde `ejecutarHerramienta` hasta el
+   * final del archivo y se traía los `case` del motor de flujos —"start",
+   * "delay", "media"…— como si fueran herramientas. La prueba fallaba por un
+   * motivo falso, que es la otra forma de que una prueba no sirva.
+   */
+  const casesDeLaFuncion = (texto, firma) => {
+    const desde = texto.indexOf(firma);
+    if (desde < 0) return new Set();
+    const resto = texto.slice(desde + firma.length);
+    const hasta = resto.search(/\n(export )?(async )?function /);
+    const cuerpo = hasta < 0 ? resto : resto.slice(0, hasta);
+    return new Set([...cuerpo.matchAll(/case "([a-z_]+)": \{/g)].map((m) => m[1]));
+  };
+
+  test("los dos motores conocen exactamente las mismas herramientas", () => {
+    const enWa = casesDeLaFuncion(wa, "async function ejecutarHerramienta");
+    const enWeb = casesDeLaFuncion(web, "export async function ejecutarHerramienta");
+
+    // Guardián del guardián: si el regex deja de casar, los dos conjuntos
+    // salen vacíos y la comparación pasaría sin comparar nada. Ya pasó con
+    // otras tres pruebas de este archivo.
+    esperar(enWa.size >= 6).verdadero(
+      `leí ${enWa.size} herramientas en el motor de WhatsApp; esperaba al menos 6 — el regex ya no casa`,
+    );
+    esperar(enWeb.size >= 6).verdadero(
+      `leí ${enWeb.size} herramientas en el motor web; esperaba al menos 6 — el regex ya no casa`,
+    );
+
+    const soloWa = [...enWa].filter((n) => !enWeb.has(n));
+    const soloWeb = [...enWeb].filter((n) => !enWa.has(n));
+    esperar(soloWa.length === 0).verdadero(
+      `WhatsApp tiene herramientas que el canal web no: ${soloWa.join(", ")}`,
+    );
+    esperar(soloWeb.length === 0).verdadero(
+      `el canal web tiene herramientas que WhatsApp no: ${soloWeb.join(", ")}`,
+    );
+  });
+
+  test("el motor web también valida contra el catálogo del cliente", () => {
+    // Mismo motivo que en WhatsApp: el modelo propone, la base decide.
+    const i = web.indexOf('case "etiquetar"');
+    esperar(i > 0).verdadero("no encuentro la herramienta de etiquetar en el motor web");
+    const bloque = web.slice(i, i + 900);
+    esperar(bloque.includes('from("tags")')).verdadero(
+      "etiquetar tiene que comprobar que la etiqueta EXISTE en ese cliente",
+    );
+    esperar(bloque.includes("no existe")).verdadero(
+      "cuando la etiqueta no existe hay que decirle al modelo cuáles sí, para que corrija",
+    );
+  });
+
+  test("el motor web tampoco deja que el modelo elija la dirección", () => {
+    const i = web.indexOf('case "consultar_sistema"');
+    esperar(i > 0).verdadero("no encuentro la herramienta de consultar el sistema en el motor web");
+    esperar(web.slice(i, i + 500).includes("ai.sistemaUrl")).verdadero(
+      "la dirección tiene que salir de la configuración del cliente, no de lo que pida el modelo",
+    );
+  });
+
+  test("una herramienta nunca toca la ficha de otra organización", () => {
+    // Las herramientas corren con el cliente de administración, que se salta
+    // RLS. El filtro por organización es la ÚNICA barrera que queda.
+    const i = web.indexOf("async function fichaDeLaConversacion");
+    esperar(i > 0).verdadero("no encuentro cómo el motor web resuelve la ficha de la persona");
+    const bloque = web.slice(i, i + 900);
+    esperar((bloque.match(/\.eq\("org_id", ctx\.orgId\)/g) ?? []).length >= 2).verdadero(
+      "la conversación Y el contacto tienen que filtrarse por organización",
+    );
+  });
+
+  test("la prueba del panel no deja rastro en los datos del negocio", () => {
+    // Probar la IA desde el panel no puede etiquetar contactos ni agendar
+    // citas de verdad. Sin contexto de agente, no se arma ninguna herramienta.
+    const respuesta = fs.readFileSync(path.join(RAIZ, "src/lib/ai/answer.ts"), "utf8");
+    esperar(/opts\.agente\s*\n?\s*\?\s*await armarHerramientas/.test(respuesta)).verdadero(
+      "las herramientas solo deben armarse cuando hay una conversación real donde actuar",
+    );
+    esperar(respuesta.includes("|| !opts.agente")).verdadero(
+      "sin contexto de agente el ciclo tiene que devolver el texto y parar, nunca ejecutar nada",
+    );
+  });
+
+  test("el canal web se detiene cuando el agente pasa con una persona", () => {
+    const motorWeb = fs.readFileSync(path.join(RAIZ, "src/lib/flow/webRuntime.ts"), "utf8");
+    esperar(motorWeb.includes("if (agente.pasoAHumano)")).verdadero(
+      "tras pasar con una persona el bloque de IA del canal web no puede seguir esperando preguntas",
+    );
+  });
+});
+
+// ─── Recuperar la contraseña ─────────────────────────────────────────────────
+//
+// Esto NO existía. Quien olvidaba su contraseña se quedaba fuera de su cuenta
+// para siempre: no había pantalla, ni enlace, ni ruta. Y no se notaba porque
+// nada fallaba — sencillamente no estaba. Se descubrió el 31 ago, buscando el
+// enlace en la pantalla de entrar.
+describe("Recuperar la contraseña", () => {
+  test("la pantalla de entrar ofrece recuperar la contraseña", () => {
+    const form = fs.readFileSync(path.join(RAIZ, "src/components/AuthForm.tsx"), "utf8");
+    esperar(form.includes('href="/recuperar"')).verdadero(
+      "sin este enlace, quien olvida su contraseña no tiene ninguna salida dentro del producto",
+    );
+    esperar(fs.existsSync(path.join(RAIZ, "src/app/(auth)/recuperar/page.tsx"))).verdadero(
+      "el enlace tiene que llevar a una pantalla que exista",
+    );
+  });
+
+  test("el enlace del correo pasa por el canje de sesión", () => {
+    // Sin `/auth/callback` la persona llega a elegir contraseña SIN sesión y
+    // `updateUser` falla — con un error que no explica nada.
+    const rec = fs.readFileSync(path.join(RAIZ, "src/components/RecuperarForm.tsx"), "utf8");
+    esperar(rec.includes("/auth/callback?next=")).verdadero(
+      "el enlace de recuperación tiene que canjear el código por una sesión antes de la pantalla",
+    );
+    esperar(rec.includes("resetPasswordForEmail")).verdadero(
+      "la recuperación la manda Supabase por correo; aquí no se toca ninguna contraseña",
+    );
+  });
+
+  test("no se le dice a un extraño si un correo tiene cuenta", () => {
+    // Si el mensaje cambiara según exista o no la cuenta, cualquiera podría ir
+    // probando direcciones para averiguar quién es cliente de Demandu.
+    const rec = fs.readFileSync(path.join(RAIZ, "src/components/RecuperarForm.tsx"), "utf8");
+    esperar(/setEnviado\(true\);\s*\};/.test(rec)).verdadero(
+      "el aviso de «revisa tu correo» tiene que salir siempre, haya cuenta o no",
+    );
+    esperar(!/no (existe|est[aá] registrad)/i.test(rec)).verdadero(
+      "ningún mensaje puede revelar que ese correo no tiene cuenta",
+    );
+  });
 });
 
 // ─── A dónde va cada quien al entrar ─────────────────────────────────────────

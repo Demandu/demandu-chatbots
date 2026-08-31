@@ -196,6 +196,16 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               placeholder="••••••••"
             />
             {mode === "register" && <p className="mt-1 text-[11px] text-muted-2">Mínimo 6 caracteres.</p>}
+            {/* Va DEBAJO del campo de contraseña, que es donde la persona se da
+                cuenta de que no la recuerda. Ponerlo al pie de la página, junto
+                a "regístrate", es donde nadie lo busca. */}
+            {mode === "login" && (
+              <p className="mt-1.5 text-right">
+                <Link href="/recuperar" className="text-[11px] font-semibold text-muted hover:text-pink">
+                  ¿Olvidaste tu contraseña?
+                </Link>
+              </p>
+            )}
           </div>
           {error && <p className="text-sm text-danger">{error}</p>}
           <button type="submit" disabled={loading} className="btn-primary w-full">

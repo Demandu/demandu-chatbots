@@ -18,7 +18,14 @@ import { createClient } from "@/lib/supabase/client";
  * `/auth/callback`, que canjea el código por una sesión; por eso basta con
  * `updateUser` y no hace falta ningún token en esta pantalla.
  */
-export function FormularioDeContrasena({ temporal = false }: { temporal?: boolean }) {
+export function FormularioDeContrasena({
+  temporal = false,
+  recuperando = false,
+}: {
+  temporal?: boolean;
+  /** Llegó por "olvidé mi contraseña", no por una invitación. */
+  recuperando?: boolean;
+}) {
   const router = useRouter();
   const [clave, setClave] = useState("");
   const [repetida, setRepetida] = useState("");
@@ -58,10 +65,11 @@ export function FormularioDeContrasena({ temporal = false }: { temporal?: boolea
     if (error) {
       // El enlace del correo caduca. Sin este mensaje, la persona se quedaría
       // reintentando sin entender por qué no la deja.
+      if (!error.message.toLowerCase().includes("session")) return setError(error.message);
       return setError(
-        error.message.toLowerCase().includes("session")
-          ? "El enlace de la invitación ya caducó. Pídele a quien te invitó que te lo mande otra vez."
-          : error.message,
+        recuperando
+          ? "El enlace ya caducó. Vuelve a pedir uno nuevo desde «¿Olvidaste tu contraseña?»."
+          : "El enlace de la invitación ya caducó. Pídele a quien te invitó que te lo mande otra vez.",
       );
     }
 
@@ -77,13 +85,23 @@ export function FormularioDeContrasena({ temporal = false }: { temporal?: boolea
         <Logo />
 
         <h1 className="mt-10 font-display text-3xl font-extrabold leading-tight text-white">
-          {temporal ? "Elige tu contraseña" : "Ponle una contraseña a tu cuenta"}
+          {recuperando
+            ? "Elige tu contraseña nueva"
+            : temporal
+              ? "Elige tu contraseña"
+              : "Ponle una contraseña a tu cuenta"}
         </h1>
-        {/* Dos textos porque son dos situaciones distintas y la persona sabe
-            en cuál está. A quien le dictaron una clave por teléfono, leer «te
-            invitaron» le hace dudar de si está en el sitio correcto. */}
+        {/* Tres textos porque son tres situaciones distintas y la persona sabe
+            en cuál está. A quien le dictaron una clave por teléfono, o a quien
+            viene de "olvidé mi contraseña", leer «te invitaron» le hace dudar
+            de si está en el sitio correcto. */}
         <p className="mt-3 text-sm leading-relaxed text-muted">
-          {temporal ? (
+          {recuperando ? (
+            <>
+              Ya comprobamos que el correo es tuyo. Escribe la contraseña nueva —{" "}
+              <b className="text-white">solo tú la vas a saber</b>, ni siquiera nosotros.
+            </>
+          ) : temporal ? (
             <>
               Entraste con una contraseña temporal que te dio el equipo. Elige ahora la tuya —{" "}
               <b className="text-white">a partir de aquí solo tú la vas a saber</b>, ni siquiera nosotros.

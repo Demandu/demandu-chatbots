@@ -210,6 +210,18 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
           ...(ctx.aiSettings ?? {}),
           ...(node.data.systemPrompt ? { persona: node.data.systemPrompt } : {}),
         };
+        // El contexto del agente. Con él, la IA no solo habla: puede mirar la
+        // agenda, agendar, etiquetar, guardar datos y pasar con una persona.
+        // `armarHerramientas` no arma nada si el cliente no activó ninguna, así
+        // que un bot normal se comporta igual que siempre.
+        const agente = {
+          admin: ctx.admin,
+          orgId: ctx.orgId,
+          botId: ctx.botId,
+          conversationId: ctx.conversationId,
+          vars: ctx.vars,
+          pasoAHumano: false,
+        };
         const answer = await aiAnswer({
           admin: ctx.admin,
           botId: ctx.botId,
@@ -217,8 +229,18 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
           question: ctx.lastUserText,
           settings,
           history: await recentHistory(ctx),
+          agente,
         });
         push(ctx, answer);
+
+        // El agente pasó la conversación a una persona. El flujo se detiene:
+        // seguir escuchando sería que el bot volviera a contestar después de
+        // haber dicho que ya le atiende alguien del equipo.
+        if (agente.pasoAHumano) {
+          ctx.finMotivo = "agente";
+          return null;
+        }
+
         // El nodo de IA se queda escuchando: la siguiente pregunta vuelve aquí.
         return { nodeId: node.id, type: "question" };
       }
