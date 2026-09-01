@@ -1718,6 +1718,43 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("al cliente no se le enseña jerga de programador", () => {
+    // ESTA PRUEBA EXISTE POR UN MENSAJE QUE SÍ SE PUBLICÓ. Un aviso de la
+    // pantalla de Conexión decía literalmente «Falta configurar la dirección
+    // pública de la plataforma en el servidor (NEXT_PUBLIC_SITE_URL)... Meta
+    // rechaza el inicio de sesión con "Invalid redirect_uri"». Quien lo leyó
+    // vende chatbots, no despliega servidores: no podía hacer nada con eso
+    // salvo asustarse y pensar que había roto algo.
+    //
+    // Ya existía la misma regla para recuperar contraseña («nunca se le enseña
+    // al cliente el mensaje crudo del SDK»). Esto la extiende a los avisos de
+    // conexión, que es por donde se coló.
+    const pagina = fs.readFileSync(
+      path.join(RAIZ, "src/app/(dashboard)/bots/[id]/install/page.tsx"), "utf8",
+    );
+
+    // Solo los textos que ve el cliente: los mapas de avisos y de errores.
+    const desde = pagina.indexOf("const AVISO_IG");
+    const hasta = pagina.indexOf("export default");
+    esperar(desde > 0 && hasta > desde).verdadero("no encuentro los mensajes de la pantalla");
+    const mensajes = sinComentarios(pagina.slice(desde, hasta));
+
+    // Nombres de variables de entorno: MAYUSCULAS_CON_GUION_BAJO.
+    const variables = mensajes.match(/\b[A-Z][A-Z0-9]*(_[A-Z0-9]+){2,}\b/g) ?? [];
+    esperar(variables.join(", ")).igual(
+      "",
+      "un mensaje para el cliente nombra una variable del servidor: eso no le sirve de nada",
+    );
+
+    // Parámetros crudos de la API de Meta.
+    const jerga = ["redirect_uri", "client_id", "access_token", "hub.challenge", "webhook", "endpoint"]
+      .filter((p) => mensajes.toLowerCase().includes(p.toLowerCase()));
+    esperar(jerga.join(", ")).igual(
+      "",
+      "un mensaje para el cliente usa vocabulario de la API de Meta en vez de decirle qué le pasa a él",
+    );
+  });
+
   test("el login solo arranca desde el dominio registrado en Meta", () => {
     // ESTA PRUEBA EXISTE POR UN FALLO REAL. La misma plataforma responde en
     // varios dominios a la vez —el propio, el de la rama de Netlify, el de

@@ -36,9 +36,18 @@ const ERROR_IG: Record<string, string> = {
     "Instagram no devolvió ninguna cuenta. Casi siempre es porque la cuenta no es profesional: en la app de Instagram, ve a Configuración → Tipo de cuenta y cámbiala a empresa o creador.",
   cuenta_ya_conectada: "Esa cuenta de Instagram ya está conectada a otra organización de la plataforma.",
   estado_invalido: "El enlace caducó o se abrió desde otro sitio. Vuelve a darle a Conectar.",
+  // ESTOS DOS SON PROBLEMAS NUESTROS, NO DEL CLIENTE, y por eso dicen lo mismo
+  // y no dicen cómo se arreglan.
+  //
+  // La primera versión de `sin_dominio` nombraba una variable de entorno del
+  // servidor. Un cliente que vende zapatos vio en su pantalla el nombre de una
+  // variable y la palabra «Invalid redirect_uri»: no puede hacer nada con eso
+  // salvo asustarse y pensar que rompió algo. El detalle técnico va al registro
+  // del servidor, que es donde lo vamos a leer nosotros.
   sin_dominio:
-    "Falta configurar la dirección pública de la plataforma en el servidor (NEXT_PUBLIC_SITE_URL). Sin eso, Meta rechaza el inicio de sesión con «Invalid redirect_uri». Escríbenos y lo dejamos listo.",
-  sin_configurar: "Falta terminar la configuración de Meta en el servidor. Escríbenos y lo dejamos listo.",
+    "No pudimos abrir la conexión con Instagram. Es un ajuste pendiente de nuestro lado, no de tu cuenta. Ya nos avisó el sistema; inténtalo de nuevo en un rato o escríbenos.",
+  sin_configurar:
+    "No pudimos abrir la conexión con Instagram. Es un ajuste pendiente de nuestro lado, no de tu cuenta. Ya nos avisó el sistema; inténtalo de nuevo en un rato o escríbenos.",
   fallo_al_conectar: "Meta no completó la conexión. Vuelve a intentarlo en un momento.",
 };
 
