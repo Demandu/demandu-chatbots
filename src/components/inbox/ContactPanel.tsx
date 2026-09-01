@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Phone, Mail, User, Building2, Tag as TagIcon, Sparkles, Check, StickyNote } from "lucide-react";
+import { Phone, Mail, User, Building2, Tag as TagIcon, Sparkles, Check, StickyNote, Megaphone } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { bandera, nombrePais, paisDesdeTelefono } from "@/lib/phoneCountry";
 import { NotasPostIt } from "./NotasPostIt";
@@ -17,6 +17,15 @@ export type ContactoFicha = {
   notes?: string | null;
   attributes?: Record<string, any> | null;
   tags: string[] | null;
+  /** De qué anuncio vino esta persona la primera vez. Lo pone el motor. */
+  origen?: {
+    tipo?: string | null;
+    anuncio_id?: string | null;
+    titular?: string | null;
+    cuerpo?: string | null;
+    url?: string | null;
+    visto_en?: string | null;
+  } | null;
 };
 
 /** Atributo definido por el cliente en Configuración. `key` es donde se guarda. */
@@ -217,6 +226,43 @@ export function ContactPanel({
           </div>
         </div>
       </div>
+
+      {/* ── DE DÓNDE VINO ────────────────────────────────────────────────
+          Va ARRIBA de los atributos y de las etiquetas a propósito: es lo
+          primero que cambia cómo saludas. Quien llega desde un anuncio de
+          casas ya dijo qué quiere, y abrir con "¿en qué te ayudo?" es la forma
+          más rápida de que se note que no lo estabas escuchando. */}
+      {contact.origen && (
+        <div className="border-t border-surface-border pt-4">
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-2">
+            <Megaphone className="h-3.5 w-3.5" /> Llegó por
+          </div>
+          <div className="rounded-lg border border-violet/30 bg-violet/10 px-2.5 py-2">
+            <p className="text-sm font-semibold text-white">
+              {contact.origen.titular || "Anuncio sin título"}
+            </p>
+            {contact.origen.cuerpo && (
+              <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted">
+                {contact.origen.cuerpo}
+              </p>
+            )}
+            <p className="mt-1 text-[11px] text-muted-2">
+              {contact.origen.tipo === "post" ? "Publicación" : "Anuncio"}
+              {contact.origen.anuncio_id ? ` · ${contact.origen.anuncio_id}` : ""}
+            </p>
+            {contact.origen.url && (
+              <a
+                href={contact.origen.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="mt-1 inline-block text-[11px] font-semibold text-pink hover:underline"
+              >
+                Ver el anuncio
+              </a>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Atributos que definió el cliente en Configuración */}
       {extras.length > 0 && (

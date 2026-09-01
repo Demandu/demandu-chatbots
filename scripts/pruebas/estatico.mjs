@@ -880,6 +880,25 @@ describe("Agente de IA con herramientas", () => {
     );
   });
 
+  test("no se puede calificar sin decir en qué te basas", () => {
+    // Un lead se calificó como «alto» en el primer mensaje, antes de que la
+    // conversación hubiera empezado y contra el criterio que el cliente había
+    // escrito. Pedirle al modelo «espera a saberlo» dentro del prompt no basta:
+    // hay que obligarle a NOMBRAR lo que la persona dijo. Cuando no hay nada
+    // que citar, se nota — y queda escrito para quien lo audite después.
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      const i = texto.indexOf('name: "etiquetar"');
+      esperar(i > 0).verdadero(`no encuentro la herramienta de etiquetar en ${donde}`);
+      const bloque = texto.slice(i, i + 2600);
+      esperar(bloque.includes('required: ["etiqueta", "por_que", "en_que_me_baso"]')).verdadero(
+        `en ${donde}, citar la evidencia tiene que ser OBLIGATORIO, no opcional`,
+      );
+      esperar(bloque.includes("NO llames a esta herramienta")).verdadero(
+        `en ${donde} hay que decirle explícitamente que pregunte antes de calificar`,
+      );
+    }
+  });
+
   test("ningún motor reparte por su cuenta", () => {
     // El reparto lo hace un disparador de la base (migración 0016 + 0064). Si
     // un motor además repartiera, habría dos repartos pisándose y nadie sabría
@@ -926,6 +945,64 @@ describe("Agente de IA con herramientas", () => {
     const motorWeb = fs.readFileSync(path.join(RAIZ, "src/lib/flow/webRuntime.ts"), "utf8");
     esperar(motorWeb.includes("if (agente.pasoAHumano)")).verdadero(
       "tras pasar con una persona el bloque de IA del canal web no puede seguir esperando preguntas",
+    );
+  });
+});
+
+// ─── Origen de campaña (Click to WhatsApp) ───────────────────────────────────
+//
+// Meta manda un objeto `referral` cuando alguien llega desde un anuncio de
+// Facebook o Instagram. Hasta la v36 el motor NI LO MIRABA: se perdía en cada
+// mensaje, y con él la única forma de saber qué anuncio trae gente que compra.
+describe("Origen de campaña", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  test("el motor lee el referral de Meta", () => {
+    esperar(wa.includes("origenDelAnuncio(msg.referral)")).verdadero(
+      "hay que leer `referral` del mensaje: es donde Meta manda de qué anuncio viene",
+    );
+  });
+
+  test("se guarda el objeto crudo, no solo lo que hoy sabemos leer", () => {
+    // Los campos de Meta cambian y se añaden. Si solo guardáramos los que hoy
+    // entendemos, el día que añadan uno útil lo habríamos estado tirando
+    // durante meses sin enterarnos.
+    const i = wa.indexOf("function origenDelAnuncio");
+    esperar(i > 0).verdadero("no encuentro el normalizador del origen");
+    esperar(wa.slice(i, i + 2500).includes("crudo: referral")).verdadero(
+      "hay que guardar el referral tal cual además de lo normalizado",
+    );
+  });
+
+  test("un anuncio de Estados sin ctwa_clid también cuenta", () => {
+    // Meta OMITE `ctwa_clid` en los anuncios colocados en Estados de WhatsApp.
+    // Exigirlo dejaría fuera esa colocación entera sin que nadie entienda por qué.
+    const i = wa.indexOf("function origenDelAnuncio");
+    const bloque = wa.slice(i, i + 2500);
+    esperar(bloque.includes("if (!anuncioId && !clid) return null;")).verdadero(
+      "basta con el id del anuncio O el clid; exigir los dos rompe los anuncios de Estados",
+    );
+  });
+
+  test("el primer toque del contacto no se pisa", () => {
+    // Quién trajo al cliente y qué disparó esta venta son preguntas distintas,
+    // y marketing necesita las dos. La decisión la toma la base.
+    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/0065_origen_de_campana.sql"), "utf8");
+    esperar(mig.includes("set origen = coalesce(c.origen, p_origen)")).verdadero(
+      "el origen del CONTACTO es el primer toque y no se sobrescribe",
+    );
+    esperar(/update public\.conversations\s+set origen = p_origen/.test(mig)).verdadero(
+      "el de la CONVERSACIÓN sí se actualiza: una segunda venta es de la segunda campaña",
+    );
+  });
+
+  test("un fallo de atribución nunca deja al cliente sin respuesta", () => {
+    const i = wa.indexOf('rpc("guardar_origen"');
+    esperar(i > 0).verdadero("no encuentro dónde se guarda el origen");
+    // Tiene que estar dentro de un try/catch: la atribución es importante, la
+    // conversación lo es más.
+    esperar(wa.slice(Math.max(0, i - 300), i).includes("try {")).verdadero(
+      "guardar el origen tiene que ir en un try: si falla, el bot igual contesta",
     );
   });
 });

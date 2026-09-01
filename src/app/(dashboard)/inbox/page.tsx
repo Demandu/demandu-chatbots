@@ -11,7 +11,7 @@ export default async function InboxPage() {
       .from("conversations")
       .select(
         "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, idioma_lead, " +
-          "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
+          "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags,origen), " +
           "state:conversation_states(id,name,color), " +
           "member:team_members(id,name)"
       )

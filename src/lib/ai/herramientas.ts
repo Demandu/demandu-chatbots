@@ -131,14 +131,33 @@ export async function armarHerramientas(
         name: "etiquetar",
         description:
           "Marca a esta persona con una etiqueta del negocio para clasificarla. " +
-          "Solo puedes usar las etiquetas que existen; cualquier otra será rechazada.",
+          "Solo puedes usar las etiquetas que existen; cualquier otra será rechazada.\n\n" +
+          "CUÁNDO: solo cuando YA SEPAS lo que el criterio del negocio pide para decidir. " +
+          "Si el criterio habla de ingresos, presupuesto o plazo y todavía no te lo han dicho, " +
+          "NO llames a esta herramienta: pregúntalo primero y etiqueta después. " +
+          "Etiquetar al principio 'por si acaso' llena el embudo del negocio de calificaciones " +
+          "inventadas, y alguien toma decisiones de dinero con ellas.\n" +
+          "Si te enteras de algo que cambia la calificación, vuelve a llamarla: la nueva " +
+          "sustituye a la anterior.",
         input_schema: {
           type: "object",
           properties: {
             etiqueta: { type: "string", enum: nombres, description: "Una de las etiquetas existentes." },
             por_que: { type: "string", description: "En una frase, por qué le pones esta etiqueta." },
+            // OBLIGATORIO Y A PROPÓSITO: obliga al modelo a nombrar lo que la
+            // persona DIJO. Cuando no hay nada que citar, se nota —para él al
+            // escribirlo y para quien lo lea después en el evento—, y eso
+            // frena la calificación prematura mucho mejor que pedírselo en
+            // prosa dentro del prompt.
+            en_que_me_baso: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Lo que la persona DIJO y te lleva a esta etiqueta, con sus palabras. " +
+                "Si no puedes citar nada concreto, es que todavía no sabes lo suficiente: no etiquetes.",
+            },
           },
-          required: ["etiqueta", "por_que"],
+          required: ["etiqueta", "por_que", "en_que_me_baso"],
         },
       });
     }
@@ -303,6 +322,9 @@ export async function ejecutarHerramienta(
           contacto_id: c.id,
           etiqueta,
           por_que: args?.por_que ?? null,
+          // Queda por escrito en qué se basó. Es lo que permite auditar una
+          // calificación después, en vez de discutir de memoria.
+          en_que_me_baso: Array.isArray(args?.en_que_me_baso) ? args.en_que_me_baso : [],
           conversacion_id: ctx.conversationId,
           por: "agente_ia",
         });

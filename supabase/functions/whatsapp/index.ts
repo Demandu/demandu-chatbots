@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "35";
+const VERSION_MOTOR = "36";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -655,14 +655,33 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
         name: "etiquetar",
         description:
           "Marca a esta persona con una etiqueta del negocio para clasificarla. " +
-          "Solo puedes usar las etiquetas que existen; cualquier otra será rechazada.",
+          "Solo puedes usar las etiquetas que existen; cualquier otra será rechazada.\n\n" +
+          "CUÁNDO: solo cuando YA SEPAS lo que el criterio del negocio pide para decidir. " +
+          "Si el criterio habla de ingresos, presupuesto o plazo y todavía no te lo han dicho, " +
+          "NO llames a esta herramienta: pregúntalo primero y etiqueta después. " +
+          "Etiquetar al principio 'por si acaso' llena el embudo del negocio de calificaciones " +
+          "inventadas, y alguien toma decisiones de dinero con ellas.\n" +
+          "Si te enteras de algo que cambia la calificación, vuelve a llamarla: la nueva " +
+          "sustituye a la anterior.",
         input_schema: {
           type: "object",
           properties: {
             etiqueta: { type: "string", enum: nombres, description: "Una de las etiquetas existentes." },
             por_que: { type: "string", description: "En una frase, por qué le pones esta etiqueta." },
+            // OBLIGATORIO Y A PROPÓSITO: obliga al modelo a nombrar lo que la
+            // persona DIJO. Cuando no hay nada que citar, se nota —para él al
+            // escribirlo y para quien lo lea después en el evento—, y eso
+            // frena la calificación prematura mucho mejor que pedírselo en
+            // prosa dentro del prompt.
+            en_que_me_baso: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Lo que la persona DIJO y te lleva a esta etiqueta, con sus palabras. " +
+                "Si no puedes citar nada concreto, es que todavía no sabes lo suficiente: no etiquetes.",
+            },
           },
-          required: ["etiqueta", "por_que"],
+          required: ["etiqueta", "por_que", "en_que_me_baso"],
         },
       });
     }
@@ -821,7 +840,11 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
 
         contarFuera(ctx.db, ctx.orgId, "lead.datos", {
           telefono: ctx.to, etiqueta, etiquetas: quedaron ?? [etiqueta],
-          por_que: args?.por_que ?? null, por: "agente_ia",
+          por_que: args?.por_que ?? null,
+          // Queda por escrito en qué se basó. Es lo que permite auditar una
+          // calificación después, en vez de discutir de memoria.
+          en_que_me_baso: Array.isArray(args?.en_que_me_baso) ? args.en_que_me_baso : [],
+          por: "agente_ia",
         });
         return `Listo, quedó etiquetado como "${etiqueta}". No se lo menciones a la persona.`;
       }
@@ -967,7 +990,16 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
   // EXACTAMENTE como antes: una sola llamada y devuelve texto. Nadie que no
   // haya pedido un agente nota ninguna diferencia.
   const { tools, contexto } = await armarHerramientas(ctx, ai);
-  const sistemaFinal = contexto ? `${system}\n\n${contexto}` : system;
+
+  // DE DÓNDE VIENE LA PERSONA. Que la IA lo sepa cambia la primera frase:
+  // quien llega desde un anuncio de casas ya dijo qué quiere, y volver a
+  // preguntárselo desde cero es la forma más rápida de perderlo.
+  const deCampana = String(ctx.vars?.campana_titular ?? "").trim();
+  const notas = [contexto, deCampana
+    ? `Esta persona llegó desde el anuncio: "${deCampana}". Tenlo en cuenta, pero NO se lo menciones salvo que venga a cuento.`
+    : ""].filter(Boolean).join("\n");
+
+  const sistemaFinal = notas ? `${system}\n\n${notas}` : system;
 
   // Un modelo puede quedarse pidiendo herramientas en bucle, y esto corre dentro
   // del webhook de Meta —que reintenta si tardamos—. Cuatro vueltas cubren de
@@ -2340,6 +2372,56 @@ function chooseFlow(entrantes: any[], text: string, isReturning: boolean, state:
   );
 }
 
+/**
+ * DE QUÉ ANUNCIO VIENE ESTA PERSONA.
+ *
+ * Cuando alguien pulsa un anuncio de «Click to WhatsApp» en Facebook o
+ * Instagram, Meta mete un objeto `referral` en el mensaje. Hasta la v36 este
+ * motor NI LO MIRABA: se perdía en cada mensaje que entraba, y con él la única
+ * forma de saber qué anuncio trae gente que compra.
+ *
+ * SE GUARDA TAMBIÉN EL OBJETO CRUDO, y esto no es por pereza. Los nombres de
+ * los campos de Meta cambian y se añaden con el tiempo; si solo guardáramos
+ * los cinco que hoy sabemos leer, el día que Meta añada uno útil lo habríamos
+ * estado tirando durante meses sin enterarnos. Lo que se entiende se normaliza
+ * para poder consultarlo; lo demás se queda por si acaso.
+ */
+function origenDelAnuncio(referral: any): any | null {
+  if (!referral || typeof referral !== "object") return null;
+
+  const texto = (v: any) => {
+    const t = String(v ?? "").trim();
+    return t ? t : null;
+  };
+
+  const anuncioId = texto(referral.source_id);
+  const clid = texto(referral.ctwa_clid);
+  // Basta con UNO de los dos, y por un motivo concreto: en los anuncios
+  // colocados en Estados de WhatsApp, Meta OMITE `ctwa_clid` por completo
+  // (está dicho así en su documentación). Exigir el clid dejaría fuera esa
+  // colocación entera sin que nadie entendiera por qué.
+  //
+  // Sin ninguno de los dos no hay campaña que atribuir: no se guarda nada.
+  if (!anuncioId && !clid) return null;
+
+  return {
+    tipo: texto(referral.source_type) ?? "ad",
+    anuncio_id: anuncioId,
+    titular: texto(referral.headline),
+    cuerpo: texto(referral.body),
+    url: texto(referral.source_url),
+    ctwa_clid: clid,
+    medio: texto(referral.media_type),
+    // El texto que Meta pone ya escrito en el chat cuando alguien pulsa el
+    // anuncio. Sirve para no volver a preguntar lo que el anuncio ya dijo.
+    saludo: texto(referral.welcome_message?.text),
+    imagen: texto(referral.image_url) ?? texto(referral.thumbnail_url),
+    canal: "whatsapp",
+    visto_en: new Date().toISOString(),
+    crudo: referral,
+  };
+}
+
 function json(o: any) { return new Response(JSON.stringify(o), { headers: { "Content-Type": "application/json" } }); }
 
 // ---- estados de entrega (difusiones) ----
@@ -2688,6 +2770,11 @@ Deno.serve(async (req: Request) => {
       // interactivo más, pero no es una opción del menú: es un permiso, y de él
       // depende que llamar sea legal o sea el camino a que Meta cierre el
       // número. Por eso se reconoce aparte y se guarda antes de tocar el flujo.
+      // Meta lo manda en el primer mensaje después de pulsar el anuncio. Se
+      // mira SIEMPRE, no solo en el primero: si algún día lo repite en los
+      // siguientes, mejor tenerlo dos veces que perderlo una.
+      const origen = origenDelAnuncio(msg.referral);
+
       const permisoLlamada = msg.interactive?.type === "call_permission_reply"
         ? (msg.interactive?.call_permission_reply ?? null)
         : null;
@@ -2795,6 +2882,10 @@ Deno.serve(async (req: Request) => {
           canal: "whatsapp",
           primer_mensaje: visible ?? text ?? "",
           contacto_id: contact.id,
+          // Lo que hace que este lead se pueda atribuir a una campaña en el
+          // CRM del cliente. Va en el mismo evento a propósito: un lead que
+          // llega sin su origen ya no se puede atribuir después.
+          origen: origen ?? null,
         });
       }
 
@@ -2886,6 +2977,34 @@ Deno.serve(async (req: Request) => {
         await db.rpc("cancelar_esperas_de", { p_conversation_id: conv.id });
       } catch (e) { console.error("[espera] no pude cancelar las pendientes:", e); }
 
+      // ── DE QUÉ ANUNCIO VINO ──────────────────────────────────────────────
+      //
+      // Se guarda AQUÍ, fuera del flujo, por lo mismo que el permiso de
+      // llamada: es un dato de la persona, no un paso de un chatbot. Vale
+      // aunque la conversación la lleve un agente, aunque el flujo se haya
+      // borrado y aunque nadie llegue a preguntar por él.
+      //
+      // La base decide qué se pisa y qué no: el primer toque del contacto no
+      // se sobrescribe nunca; el de la conversación sí, porque una segunda
+      // venta meses después es de la segunda campaña.
+      let origenPrimero: any = null;
+      if (origen) {
+        try {
+          const { data } = await db.rpc("guardar_origen", {
+            p_org_id: cfg.org_id,
+            p_contact_id: contact.id,
+            p_conversation_id: conv.id,
+            p_origen: origen,
+          });
+          origenPrimero = data ?? origen;
+          console.log(`[campaña] lead desde ${origen.tipo} ${origen.anuncio_id ?? "(sin id)"}`);
+        } catch (e) {
+          // Nunca bloquea la conversación: un fallo de atribución no puede
+          // dejar a un cliente sin respuesta.
+          console.error("[campaña] no pude guardar el origen:", e);
+        }
+      }
+
       if (cfg.bot_id && (conv.status !== "assigned")) {
         // ¿Lead que regresa? (tiene más de una conversación con nosotros)
         const { count: convCount } = await db
@@ -2896,10 +3015,19 @@ Deno.serve(async (req: Request) => {
 
         // Variables listas para usar en cualquier mensaje: {{whatsappName}}, {{nombre}}, {{telefono}}…
         const nombre = (name ?? "").trim();
+        // De qué campaña viene, para poder escribirlo en un mensaje
+        // —«vi que vienes de nuestra promo de X»— o ramificar por ello.
+        // El del contacto (primer toque) manda: es el que no cambia.
+        const campana = origenPrimero ?? origen ?? null;
+
         const baseVars: Record<string, string> = {
           whatsappName: nombre,
           nombre,
           name: nombre,
+          campana_titular: campana?.titular ?? "",
+          campana_id: campana?.anuncio_id ?? "",
+          campana_tipo: campana?.tipo ?? "",
+          campana_url: campana?.url ?? "",
           primerNombre: nombre.split(/\s+/)[0] ?? "",
           firstName: nombre.split(/\s+/)[0] ?? "",
           telefono: from,

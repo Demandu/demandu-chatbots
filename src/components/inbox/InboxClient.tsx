@@ -21,6 +21,8 @@ type Contact = {
   id: string; name: string | null; wa_name: string | null; phone: string | null; email: string | null;
   company: string | null; country: string | null; notes: string | null;
   attributes: Record<string, any> | null; channel: string | null; tags: string[] | null;
+  /** De qué anuncio llegó esta persona la primera vez (Click to WhatsApp). */
+  origen: Record<string, any> | null;
 };
 type State = { id: string; name: string; color: string };
 type Member = { id: string; name: string };
@@ -188,7 +190,7 @@ export function InboxClient({
 
   const selectSql =
     "id, channel, bot_id, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, idioma_lead, " +
-    "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags), " +
+    "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags,origen), " +
     "state:conversation_states(id,name,color), member:team_members(id,name)";
 
   const loadConvos = useCallback(async () => {
