@@ -9,6 +9,7 @@ import {
 import type { Catalogs } from "@/lib/catalogs";
 import { MediaUpload } from "./MediaUpload";
 import { LanaAvatar } from "@/components/Lana";
+import { EditorDePrompt } from "@/components/EditorDePrompt";
 
 interface Props {
   node: DemanduNode | null;
@@ -352,7 +353,16 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
             </select>
           </Field>
           <Field label="Instrucción / Prompt del sistema">
-            <textarea className="input min-h-[80px]" value={d.systemPrompt ?? ""} onChange={(e) => onChange({ systemPrompt: e.target.value })} />
+            {/* El «/» tiene que estar TAMBIÉN aquí. Esta es la pantalla donde
+                de verdad se escribe el prompt de un bot con flujo: tenerlo solo
+                en Lana IA hace que quien escribe aquí crea que no existe —
+                pasó, y con razón. */}
+            <EditorDePrompt
+              value={d.systemPrompt ?? ""}
+              onValueChange={(v) => onChange({ systemPrompt: v })}
+              etiquetas={(catalogs?.tags ?? []).map((t: any) => t.name)}
+              className="input min-h-[140px]"
+            />
           </Field>
         </>
       )}

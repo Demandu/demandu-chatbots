@@ -25,12 +25,23 @@ import { ACCIONES } from "@/lib/ai/acciones";
 export function EditorDePrompt({
   name,
   defaultValue,
+  value,
+  onValueChange,
   placeholder,
   etiquetas = [],
   className = "input-l min-h-[190px]",
 }: {
-  name: string;
+  /** Modo formulario: el valor viaja en el `submit` con este nombre. */
+  name?: string;
   defaultValue?: string;
+  /**
+   * Modo controlado, para el constructor: el prompt del bloque vive en el
+   * flujo, no en un formulario. Se usan los dos modos porque son las DOS
+   * pantallas donde se escribe un prompt, y el «/» tiene que estar en ambas —
+   * si solo estuviera en una, quien escribe en la otra pensaría que no existe.
+   */
+  value?: string;
+  onValueChange?: (v: string) => void;
   placeholder?: string;
   /** Las etiquetas reales del cliente, para sugerirlas tras «/etiquetar». */
   etiquetas?: string[];
@@ -39,7 +50,14 @@ export function EditorDePrompt({
   const ref = useRef<HTMLTextAreaElement>(null);
   const [abierto, setAbierto] = useState(false);
   const [filtro, setFiltro] = useState("");
-  const [texto, setTexto] = useState(defaultValue ?? "");
+  const [propio, setPropio] = useState(defaultValue ?? "");
+
+  const controlado = value !== undefined;
+  const texto = controlado ? value : propio;
+  const setTexto = (v: string) => {
+    if (!controlado) setPropio(v);
+    onValueChange?.(v);
+  };
 
   const usadas = new Set(
     [...texto.matchAll(/(^|[\s(])\/([a-z_]+)/gm)].map((m) => m[2]),

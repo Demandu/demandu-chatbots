@@ -941,6 +941,23 @@ describe("Agente de IA con herramientas", () => {
     esperar(patron.test(cat)).verdadero("el catálogo no usa la expresión estricta");
   });
 
+  test("el «/» está en las DOS pantallas donde se escribe un prompt", () => {
+    // Solo en Lana IA no sirve: quien arma un bot con flujo escribe el prompt
+    // en el Inspector del constructor, y ahí pulsaba «/» y no salía nada.
+    for (const [donde, ruta] of [
+      ["Lana IA", "src/app/(dashboard)/bots/[id]/ai/page.tsx"],
+      ["el constructor", "src/components/builder/Inspector.tsx"],
+    ]) {
+      const t = fs.readFileSync(path.join(RAIZ, ruta), "utf8");
+      esperar(t.includes("<EditorDePrompt")).verdadero(
+        `en ${donde} el prompt tiene que escribirse con el editor que trae el «/»`,
+      );
+      esperar(!/<textarea[^>]*name="persona"/.test(t) && !/<textarea[^>]*systemPrompt/.test(t)).verdadero(
+        `en ${donde} quedó un textarea suelto: ahí el «/» no funcionaría`,
+      );
+    }
+  });
+
   test("ningún motor reparte por su cuenta", () => {
     // El reparto lo hace un disparador de la base (migración 0016 + 0064). Si
     // un motor además repartiera, habría dos repartos pisándose y nadie sabría
