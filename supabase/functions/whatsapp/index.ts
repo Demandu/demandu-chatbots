@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "38";
+const VERSION_MOTOR = "39";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -625,6 +625,65 @@ const CLAVES_DE_ACCION = [
  * cliente acabaría con herramientas que ESCRIBEN en las fichas de sus leads
  * sin haberlas pedido.
  */
+/**
+ * Datos que además tienen su CASILLA PROPIA en la ficha del lead.
+ *
+ * Sin esto, el correo que la IA captura se guarda como «un atributo más» y la
+ * casilla «Correo» de la ficha se queda vacía. Pasó tal cual: el bot pidió el
+ * correo, la persona lo dio, el bot dijo «ya quedó registrado» y en la ficha no
+ * había nada donde el equipo lo busca. Para el agente que abre esa ficha, el
+ * dato no existe.
+ *
+ * Se guarda en LOS DOS SITIOS: en la casilla, que es donde se mira, y en los
+ * atributos, que es de donde tiran los flujos y las plantillas.
+ */
+/**
+ * ¿El bot acaba de PROMETER que va a intervenir una persona?
+ *
+ * GEMELO de `src/lib/ai/promesas.ts`, donde está el porqué completo y las
+ * pruebas. Resumen: un modelo con herramientas a veces NARRA la acción en vez
+ * de ejecutarla — escribe «un asesor se va a comunicar contigo» y no llama a
+ * `pasar_a_humano`. La conversación queda abierta, sin dueño, y el lead espera
+ * a alguien que no va a llegar. Es el peor fallo posible: el bot promete en
+ * nombre del negocio y el negocio no cumple.
+ */
+const PROM_PERSONA =
+  "(?:asesor|asesora|agente|ejecutivo|ejecutiva|vendedor|vendedora|" +
+  "una\\s+persona|alguien\\s+del\\s+equipo|del\\s+equipo|compa[nñ]er[oa])";
+const PROM_COMPROMISO =
+  "(?:se\\s+(?:va|van)\\s+a\\s+comunicar|se\\s+comunicar[aá]n?|te\\s+contactar[aá]n?|" +
+  "lo\\s+contactar[aá]n?|la\\s+contactar[aá]n?|te\\s+escribir[aá]n?|te\\s+atender[aá]n?|" +
+  "lo\\s+atender[aá]n?|la\\s+atender[aá]n?|te\\s+llamar[aá]n?|" +
+  "en\\s+un\\s+momento\\s+te\\s+atiende|enseguida\\s+te\\s+atiende)";
+const PROM_YO_TE_PASO =
+  "(?:te|le|lo|la)\\s+(?:paso|comunico|conecto|transfiero|derivo|enlazo)\\s+(?:con|a)\\b";
+const PROM_PATRONES = [
+  new RegExp(`${PROM_PERSONA}[^.!?\\n]{0,60}${PROM_COMPROMISO}`, "i"),
+  new RegExp(`${PROM_COMPROMISO}[^.!?\\n]{0,60}${PROM_PERSONA}`, "i"),
+  new RegExp(PROM_YO_TE_PASO, "i"),
+];
+const PROM_SOLO_OFRECE =
+  /(?:\?|¿)|(?:quieres|querés|desea|deseas|gustar[íi]a|prefieres|te sirve|puedo)\b/i;
+
+function prometioUnaPersona(texto: string | null | undefined): boolean {
+  const t = String(texto ?? "").trim();
+  if (!t) return false;
+  for (const frase of t.split(/(?<=[.!?\n])/)) {
+    const f = frase.trim();
+    if (!f || PROM_SOLO_OFRECE.test(f)) continue;
+    if (PROM_PATRONES.some((p) => p.test(f))) return true;
+  }
+  return false;
+}
+
+const CASILLA_DE_LA_FICHA: Record<string, string> = {
+  nombre: "name", name: "name", nombre_completo: "name",
+  correo: "email", email: "email", mail: "email", correo_electronico: "email",
+  telefono: "phone", phone: "phone", celular: "phone", movil: "phone",
+  empresa: "company", company: "company", negocio: "company",
+  pais: "country", country: "country",
+};
+
 function accionesDelPrompt(prompt: string | null | undefined): string[] {
   const texto = String(prompt ?? "");
   if (!texto) return [];
@@ -790,6 +849,28 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
   // mismo código sirva para una clínica y para una inmobiliaria.
   if (ai.criterios) notas.push(`Criterios del negocio:\n${ai.criterios}`);
 
+  // ── LA LISTA DE VERDAD, Y VA LA ÚLTIMA ──────────────────────────────────
+  //
+  // Un prompt escrito por el cliente puede nombrar acciones que NO EXISTEN.
+  // Pasó: un prompt de dos páginas terminaba diciendo «Acciones disponibles:
+  // crear_lead_hubspot», una herramienta que nunca construimos. El modelo se
+  // creyó esa lista, no llamó a las que sí tenía, y se limitó a NARRAR lo que
+  // iba a hacer: dijo que registraba, que transfería, y no hizo ninguna.
+  //
+  // Esto va al FINAL a propósito, después del prompt del cliente: lo último
+  // que se lee es lo que manda.
+  if (tools.length) {
+    notas.push(
+      `ACCIONES QUE PUEDES EJECUTAR DE VERDAD: ${tools.map((t: any) => t.name).join(", ")}.\n` +
+        "Esta es la lista completa. Si más arriba se menciona cualquier otra acción o " +
+        "herramienta, NO existe: ignórala.\n" +
+        "NO ANUNCIES LO QUE NO EJECUTAS. Si escribes que vas a pasar con una persona, " +
+        "que registraste un dato o que guardaste algo, tienes que llamar a la herramienta " +
+        "correspondiente EN ESE MISMO TURNO. Decirlo sin hacerlo deja al cliente esperando " +
+        "algo que nunca pasa.",
+    );
+  }
+
   return { tools, contexto: notas.join("\n") };
 }
 
@@ -908,8 +989,11 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           .eq("external_id", ctx.to).maybeSingle();
         if (!c) return "No encuentro la ficha de esta persona.";
 
-        await ctx.db.from("contacts")
-          .update({ attributes: { ...(c.attributes ?? {}), [campo]: valor } }).eq("id", c.id);
+        const cambios: any = { attributes: { ...(c.attributes ?? {}), [campo]: valor } };
+        // Y si ese dato tiene casilla propia en la ficha, también ahí.
+        const casilla = CASILLA_DE_LA_FICHA[campo.toLowerCase()];
+        if (casilla) cambios[casilla] = valor;
+        await ctx.db.from("contacts").update(cambios).eq("id", c.id);
 
         contarFuera(ctx.db, ctx.orgId, "lead.datos", {
           telefono: ctx.to, campo, valor, por: "agente_ia",
@@ -971,6 +1055,48 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
     console.error(`[herramienta ${nombre}]`, e);
     return "Hubo un error al ejecutarla. Sigue la conversación sin ella.";
   }
+}
+
+/**
+ * SI EL BOT PROMETIÓ UNA PERSONA, QUE VENGA UNA PERSONA.
+ *
+ * El modelo a veces narra la acción en vez de ejecutarla: escribe «un asesor
+ * se va a comunicar contigo» y no llama a `pasar_a_humano`. La conversación
+ * queda abierta, sin dueño, y nadie se entera. El lead espera a alguien que no
+ * va a llegar — y la promesa la hizo el bot EN NOMBRE DEL NEGOCIO.
+ *
+ * Así que se cumple igual. No es tapar el fallo del modelo: es que una promesa
+ * hecha a un cliente no puede depender de que el modelo se acuerde de pulsar
+ * el botón.
+ *
+ * Solo actúa si el cliente activó `pasar_a_humano`: en un bot que no tiene esa
+ * acción, el pase no es algo que se pueda hacer.
+ */
+async function cumplirLoPrometido(ctx: any, texto: string, tools: any[]): Promise<string> {
+  if (ctx.pasoAHumano) return texto;
+  if (!tools.some((t: any) => t.name === "pasar_a_humano")) return texto;
+  if (!prometioUnaPersona(texto)) return texto;
+
+  console.log("[agente] prometió una persona sin llamar a la herramienta; se hace el pase");
+  try {
+    await ctx.db.from("conversations").update({
+      status: "assigned",
+      handoff_requested_at: new Date().toISOString(),
+      handoff_reason: "El asistente prometió que atendería una persona",
+    }).eq("id", ctx.convId);
+    ctx.finMotivo = "agente";
+    ctx.pasoAHumano = true;
+    contarFuera(ctx.db, ctx.orgId, "pase.a.humano", {
+      telefono: ctx.to,
+      motivo: "el asistente lo prometió en su respuesta",
+      conversacion_id: ctx.convId,
+      por: "agente_ia",
+    });
+  } catch (e) {
+    // Que falle el pase no puede dejar al cliente sin respuesta.
+    console.error("[agente] no pude cumplir la promesa de pase:", e);
+  }
+  return texto;
 }
 
 async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string) {
@@ -1085,7 +1211,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
 
       const pedidas = bloques.filter((c: any) => c?.type === "tool_use");
       if (j?.stop_reason !== "tool_use" || !pedidas.length) {
-        return texto || ai.fallback;
+        return await cumplirLoPrometido(ctx, texto, tools) || ai.fallback;
       }
 
       // Se ejecuta lo que pidió y se le devuelve el resultado para que siga.

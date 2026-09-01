@@ -10,7 +10,7 @@
  */
 
 import { embedQuery } from "./ingest";
-import { armarHerramientas, ejecutarHerramienta, type ContextoAgente } from "./herramientas";
+import { armarHerramientas, ejecutarHerramienta, cumplirLoPrometido, type ContextoAgente } from "./herramientas";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -281,6 +281,8 @@ export async function aiAnswer(opts: {
 
       const pedidas = bloques.filter((c: any) => c?.type === "tool_use");
       if (j?.stop_reason !== "tool_use" || !pedidas.length || !opts.agente) {
+        // Si prometió una persona y no la llamó, se cumple igual.
+        if (opts.agente) await cumplirLoPrometido(opts.agente, text, tools);
         return text || ai.fallback;
       }
 

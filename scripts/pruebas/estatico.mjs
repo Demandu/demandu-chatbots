@@ -958,6 +958,62 @@ describe("Agente de IA con herramientas", () => {
     }
   });
 
+  test("una promesa de pasar con una persona SE CUMPLE", () => {
+    // El modelo a veces narra la acción en vez de ejecutarla: escribe «un
+    // asesor se va a comunicar contigo» y no llama a la herramienta. El lead
+    // espera a alguien que no va a llegar, y la promesa la hizo el bot en
+    // nombre del negocio. Pasó el 1 sep.
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      esperar(texto.includes("cumplirLoPrometido")).verdadero(
+        `el motor de ${donde} tiene que cumplir el pase que el bot prometió`,
+      );
+      esperar(texto.includes("prometioUnaPersona")).verdadero(
+        `el motor de ${donde} tiene que detectar la promesa en el texto`,
+      );
+    }
+    // Y tiene que estar ENCHUFADO, no solo escrito.
+    const answer = fs.readFileSync(path.join(RAIZ, "src/lib/ai/answer.ts"), "utf8");
+    esperar(answer.includes("await cumplirLoPrometido(")).verdadero(
+      "el canal web lo tiene escrito pero no lo llama",
+    );
+    esperar(/return await cumplirLoPrometido\(ctx, texto, tools\)/.test(wa)).verdadero(
+      "el motor de WhatsApp lo tiene escrito pero no lo llama",
+    );
+  });
+
+  test("la lista REAL de acciones se le dice al modelo, y al final", () => {
+    // Un prompt del cliente puede nombrar herramientas que no existen —pasó con
+    // `crear_lead_hubspot`— y el modelo se cree esa lista. La nuestra va la
+    // última: lo último que se lee es lo que manda.
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      esperar(texto.includes("ACCIONES QUE PUEDES EJECUTAR DE VERDAD")).verdadero(
+        `el motor de ${donde} tiene que decirle cuáles son sus herramientas reales`,
+      );
+      esperar(texto.includes("NO ANUNCIES LO QUE NO EJECUTAS")).verdadero(
+        `el motor de ${donde} tiene que prohibir anunciar acciones sin ejecutarlas`,
+      );
+      const i = texto.indexOf("ACCIONES QUE PUEDES EJECUTAR DE VERDAD");
+      const j = texto.indexOf("Criterios del negocio");
+      esperar(i > j && j > 0).verdadero(
+        `en ${donde}, la lista real tiene que ir DESPUÉS del prompt y los criterios del cliente`,
+      );
+    }
+  });
+
+  test("un dato con casilla propia se guarda TAMBIÉN en la casilla", () => {
+    // El bot pidió el correo, la persona lo dio, el bot dijo «registrado» y la
+    // casilla «Correo» de la ficha seguía vacía: se había guardado solo como
+    // atributo. Para el agente que abre esa ficha, el dato no existía.
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      esperar(texto.includes("CASILLA_DE_LA_FICHA")).verdadero(
+        `el motor de ${donde} tiene que llevar el correo a su casilla, no solo a los atributos`,
+      );
+      esperar(/if \(casilla\) cambios\[casilla\] = valor;/.test(texto)).verdadero(
+        `el motor de ${donde} tiene la tabla pero no la usa`,
+      );
+    }
+  });
+
   test("ningún motor reparte por su cuenta", () => {
     // El reparto lo hace un disparador de la base (migración 0016 + 0064). Si
     // un motor además repartiera, habría dos repartos pisándose y nadie sabría

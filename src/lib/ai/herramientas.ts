@@ -2,6 +2,7 @@ import "server-only";
 import { horariosLibres, agendar } from "@/lib/agenda";
 import { accionesDelPrompt } from "@/lib/ai/acciones";
 import { emitir } from "@/lib/salidas";
+import { prometioUnaPersona } from "@/lib/ai/promesas";
 
 /**
  * LAS HERRAMIENTAS DEL AGENTE — lado Next (canal web y prueba del panel).
@@ -50,6 +51,26 @@ export type AjustesAgente = {
   criterios?: string;
   sistemaUrl?: string;
   sistemaDescripcion?: string;
+};
+
+/**
+ * Datos que además tienen su CASILLA PROPIA en la ficha del lead.
+ *
+ * Sin esto, el correo que la IA captura se guarda como «un atributo más» y la
+ * casilla «Correo» de la ficha se queda vacía. Pasó tal cual: el bot pidió el
+ * correo, la persona lo dio, el bot dijo «ya quedó registrado» y en la ficha no
+ * había nada donde el equipo lo busca. Para el agente que abre esa ficha, el
+ * dato no existe.
+ *
+ * Se guarda en LOS DOS SITIOS: en la casilla, que es donde se mira, y en los
+ * atributos, que es de donde tiran los flujos y las plantillas.
+ */
+const CASILLA_DE_LA_FICHA: Record<string, string> = {
+  nombre: "name", name: "name", nombre_completo: "name",
+  correo: "email", email: "email", mail: "email", correo_electronico: "email",
+  telefono: "phone", phone: "phone", celular: "phone", movil: "phone",
+  empresa: "company", company: "company", negocio: "company",
+  pais: "country", country: "country",
 };
 
 /**
@@ -230,6 +251,27 @@ export async function armarHerramientas(
   // mismo código sirva para una clínica y para una inmobiliaria.
   if (ai.criterios) notas.push(`Criterios del negocio:\n${ai.criterios}`);
 
+  // ── LA LISTA DE VERDAD, Y VA LA ÚLTIMA ──────────────────────────────────
+  //
+  // Un prompt escrito por el cliente puede nombrar acciones que NO EXISTEN.
+  // Pasó: terminaba con «Acciones disponibles: crear_lead_hubspot», una
+  // herramienta que nunca construimos. El modelo se creyó esa lista, no llamó
+  // a las que sí tenía, y se limitó a NARRAR lo que iba a hacer.
+  //
+  // Va al FINAL a propósito, después del prompt del cliente: lo último que se
+  // lee es lo que manda.
+  if (tools.length) {
+    notas.push(
+      `ACCIONES QUE PUEDES EJECUTAR DE VERDAD: ${tools.map((t) => t.name).join(", ")}.\n` +
+        "Esta es la lista completa. Si más arriba se menciona cualquier otra acción o " +
+        "herramienta, NO existe: ignórala.\n" +
+        "NO ANUNCIES LO QUE NO EJECUTAS. Si escribes que vas a pasar con una persona, " +
+        "que registraste un dato o que guardaste algo, tienes que llamar a la herramienta " +
+        "correspondiente EN ESE MISMO TURNO. Decirlo sin hacerlo deja al cliente esperando " +
+        "algo que nunca pasa.",
+    );
+  }
+
   return { tools, contexto: notas.join("\n") };
 }
 
@@ -241,6 +283,40 @@ export async function armarHerramientas(
  * error EXPLICATIVO en vez de fallar en silencio: con eso el modelo corrige y
  * lo vuelve a intentar bien, que es justo lo que se quiere.
  */
+/**
+ * SI EL BOT PROMETIÓ UNA PERSONA, QUE VENGA UNA PERSONA.
+ *
+ * Gemelo del de la función de WhatsApp. El porqué, en `promesas.ts`: el modelo
+ * a veces narra el pase en vez de ejecutarlo, y el lead se queda esperando a
+ * alguien que no va a llegar. La promesa la hizo el bot en nombre del negocio.
+ */
+export async function cumplirLoPrometido(
+  ctx: ContextoAgente,
+  texto: string,
+  tools: any[],
+): Promise<void> {
+  if (ctx.pasoAHumano) return;
+  if (!tools.some((t) => t.name === "pasar_a_humano")) return;
+  if (!prometioUnaPersona(texto)) return;
+
+  console.log("[agente] prometió una persona sin llamar a la herramienta; se hace el pase");
+  try {
+    await ctx.admin.from("conversations").update({
+      status: "assigned",
+      handoff_requested_at: new Date().toISOString(),
+      handoff_reason: "El asistente prometió que atendería una persona",
+    }).eq("id", ctx.conversationId).eq("org_id", ctx.orgId);
+    ctx.pasoAHumano = true;
+    emitir(ctx.orgId, "pase.a.humano", {
+      motivo: "el asistente lo prometió en su respuesta",
+      conversacion_id: ctx.conversationId,
+      por: "agente_ia",
+    });
+  } catch (e) {
+    console.error("[agente] no pude cumplir la promesa de pase:", e);
+  }
+}
+
 export async function ejecutarHerramienta(
   ctx: ContextoAgente,
   ai: AjustesAgente,
@@ -353,8 +429,11 @@ export async function ejecutarHerramienta(
         const c = await fichaDeLaConversacion(ctx);
         if (!c) return "No encuentro la ficha de esta persona.";
 
-        await ctx.admin.from("contacts")
-          .update({ attributes: { ...(c.attributes ?? {}), [campo]: valor } }).eq("id", c.id);
+        const cambios: any = { attributes: { ...(c.attributes ?? {}), [campo]: valor } };
+        // Y si ese dato tiene casilla propia en la ficha, también ahí.
+        const casilla = CASILLA_DE_LA_FICHA[campo.toLowerCase()];
+        if (casilla) cambios[casilla] = valor;
+        await ctx.admin.from("contacts").update(cambios).eq("id", c.id);
 
         emitir(ctx.orgId, "lead.datos", {
           contacto_id: c.id,

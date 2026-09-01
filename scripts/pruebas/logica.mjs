@@ -8,6 +8,7 @@ import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
+import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { paisDesdeTelefono, bandera, nombrePais } from "../../src/lib/phoneCountry.ts";
 import { limpiarAtajo, rellenar, filtrar } from "../../src/lib/quickReplies.ts";
 import { enSilencio, debeAvisar, PREFS_DEFAULT } from "../../src/lib/notifications.ts";
@@ -530,6 +531,53 @@ describe("Acciones escritas con «/» en el prompt", () => {
     const texto = CLAVES_DE_ACCION.map((c) => `/${c}`).join(" ");
     esperar(accionesDelPrompt(texto).sort()).igual([...CLAVES_DE_ACCION].sort());
     esperar(CLAVES_DE_ACCION.length >= 6).verdadero("el catálogo se quedó corto");
+  });
+});
+
+// ─── Promesas que el bot hace y no cumple ────────────────────────────────────
+/**
+ * Caso real del 1 sep: el bot escribió «Un asesor se va a comunicar contigo en
+ * los próximos días» y NO llamó a `pasar_a_humano`. La conversación se quedó
+ * abierta, sin dueño, y nadie del equipo se enteró. El lead esperaba a alguien
+ * que no iba a llegar.
+ *
+ * Las pruebas de lo que NO es una promesa pesan tanto como las otras: pasar a
+ * un humano de más cuesta el tiempo de un agente; no cumplir cuesta el lead.
+ */
+describe("El bot promete una persona", () => {
+  const SI = [
+    "Un asesor se va a comunicar contigo en los próximos días.",
+    "Un asesor se comunicará contigo pronto.",
+    "Te paso con un asesor.",
+    "Le comunico con una persona del equipo.",
+    "En un momento te atiende una persona del equipo 🙌",
+    "Gracias por los datos. Un ejecutivo te contactará mañana.",
+    "Perfecto. Te conecto con alguien del equipo.",
+  ];
+  const NO = [
+    "¿Quieres que te comunique con una persona del equipo?",
+    "Esa no me la sé todavía 🙈 ¿Quieres que te comunique con alguien?",
+    "Si prefieres, un asesor puede ayudarte con eso.",
+    "Nuestros asesores atienden de lunes a viernes.",
+    "Con ese ingreso el crédito bancario se complica, pero tenemos opciones.",
+    "Le mando las opciones desde 120 mil dólares.",
+    "",
+  ];
+
+  for (const t of SI) {
+    test(`promesa: "${t.slice(0, 42)}…"`, () => {
+      esperar(prometioUnaPersona(t)).verdadero("esto es una promesa y hay que cumplirla");
+    });
+  }
+  for (const t of NO) {
+    test(`no es promesa: "${(t || "(vacío)").slice(0, 42)}…"`, () => {
+      esperar(prometioUnaPersona(t)).falso("esto NO promete a nadie: no debe pasar a un humano");
+    });
+  }
+
+  test("una oferta y una promesa en el mismo mensaje: manda la promesa", () => {
+    // Un mensaje puede preguntar algo y además comprometerse dos líneas abajo.
+    esperar(prometioUnaPersona("¿Te sirve el martes? Mientras tanto, te paso con un asesor.")).verdadero();
   });
 });
 
