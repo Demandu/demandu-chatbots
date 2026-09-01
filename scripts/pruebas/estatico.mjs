@@ -899,6 +899,22 @@ describe("Agente de IA con herramientas", () => {
     }
   });
 
+  test("el bloque de etiquetas del flujo también respeta los grupos", () => {
+    // La regla «solo una del grupo» tiene que valer para los DOS caminos. Si
+    // el bloque del constructor siguiera juntando etiquetas a mano, un flujo
+    // podría dejar a un lead como «alto» y «bajo» a la vez — justo el problema
+    // que se arregló en el agente.
+    const i = wa.indexOf("async function etiquetar(ctx: any, node: any)");
+    esperar(i > 0).verdadero("no encuentro el bloque de etiquetas del flujo");
+    const bloque = wa.slice(i, i + 2200);
+    esperar(bloque.includes('rpc("poner_etiqueta"')).verdadero(
+      "poner etiquetas desde el flujo tiene que pasar por la base, que conoce los grupos",
+    );
+    esperar(!/for \(const id of poner\) \{ const n = nombre\.get\(id\); if \(n\) actuales\.add\(n\); \}/.test(bloque)).verdadero(
+      "el bloque no puede volver a añadir etiquetas a mano: así se acumulan las de un mismo grupo",
+    );
+  });
+
   test("ningún motor reparte por su cuenta", () => {
     // El reparto lo hace un disparador de la base (migración 0016 + 0064). Si
     // un motor además repartiera, habría dos repartos pisándose y nadie sabría

@@ -500,4 +500,83 @@ describe("Motor: qué flujo atiende", () => {
   });
 });
 
+// ─── La receta de calificación por ingreso ───────────────────────────────────
+/**
+ * El tramo «pregunta → condición → etiqueta» que califica un lead por su
+ * ingreso. Es LA forma correcta de escribir una regla de negocio con dinero
+ * detrás: no se le pide al modelo que obedezca, se hace un camino.
+ *
+ * Se prueba con el flujo REAL que se armó para CASAS PACIFICA, con los tres
+ * casos que importan — y el tercero es el que casi se me escapa: si la persona
+ * no contesta un número, `parseFloat` da NaN, las dos comparaciones fallan y
+ * el lead se habría ido por la salida de cajón. Sin una rama «otherwise» que
+ * apunte a lead-bajo, un «no sé» acabaría calificado como ALTO.
+ */
+describe("Motor: calificar por ingreso", () => {
+  const flujo = {
+    nodes: [
+      { id: "bienvenida", type: "message", data: { isStart: true, text: "Hola" } },
+      { id: "q-ingreso", type: "question", data: { variable: "ingreso", dataType: "number", text: "¿Ingreso mensual?" } },
+      {
+        id: "cond", type: "condition",
+        data: {
+          conditions: [
+            { id: "bajo", label: "Menos de 900", match: "all", rules: [{ id: "r1", attribute: "ingreso", operator: "less_than", value: "900" }] },
+            { id: "alto", label: "900 o más", match: "all", rules: [{ id: "r2", attribute: "ingreso", operator: "greater_than", value: "899" }] },
+          ],
+        },
+      },
+      { id: "msg-alto", type: "message", data: { text: "CALIFICA: le paso con un asesor" } },
+      { id: "msg-bajo", type: "message", data: { text: "NO CALIFICA: seguimos en seguimiento" } },
+    ],
+    edges: [
+      { id: "e1", source: "bienvenida", target: "q-ingreso" },
+      { id: "e2", source: "q-ingreso", target: "cond" },
+      { id: "e3", source: "cond", target: "msg-bajo", sourceHandle: "bajo" },
+      { id: "e4", source: "cond", target: "msg-alto", sourceHandle: "alto" },
+      { id: "e5", source: "cond", target: "msg-bajo", sourceHandle: "otherwise" },
+    ],
+  };
+
+  const responder = async (texto) => {
+    const { api } = baseFalsa();
+    const r = await runWebFlow({
+      flow: flujo, orgId: "org-1", conversationId: "conv-1", admin: api,
+      flowState: { vars: {}, awaiting: { nodeId: "q-ingreso", type: "question" } },
+      text: texto, botId: "bot-1", aiSettings: { enabled: false },
+    });
+    return r.out.map((m) => m.text).join(" | ");
+  };
+
+  testAsync("1200 califica como ALTO", async () => {
+    esperar(await responder("1200")).contiene("CALIFICA: le paso");
+  });
+
+  testAsync("500 NO califica", async () => {
+    esperar(await responder("500")).contiene("NO CALIFICA");
+  });
+
+  testAsync("justo 900 califica como ALTO", async () => {
+    // El umbral incluye los 900. Con `greater_than 899` y la rama «bajo»
+    // evaluada primero, 899.5 cae en bajo y 900 en alto.
+    esperar(await responder("900")).contiene("CALIFICA: le paso");
+  });
+
+  testAsync("899 NO califica", async () => {
+    esperar(await responder("899")).contiene("NO CALIFICA");
+  });
+
+  testAsync("«no sé» NO califica como alto", async () => {
+    // El caso peligroso: sin número, las dos ramas fallan. Si la salida de
+    // cajón no apuntara a lead-bajo, este lead se iría al asesor.
+    esperar(await responder("no sé")).contiene("NO CALIFICA");
+  });
+
+  testAsync("«1000 dolitas» se entiende como 1000", async () => {
+    // La gente no escribe números limpios. `parseFloat` se queda con el número
+    // que va delante, y eso es justo lo que se quiere.
+    esperar(await responder("1000 dolitas")).contiene("CALIFICA: le paso");
+  });
+});
+
 process.exit(await correrPruebas());

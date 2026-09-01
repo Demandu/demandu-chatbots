@@ -102,6 +102,49 @@ function evalCondition(flow: Flow, node: DemanduNode, vars: Record<string, strin
 }
 
 /** Últimos mensajes de la conversación, para que la IA tenga contexto. */
+/**
+ * Aplica el bloque de etiquetas del constructor.
+ *
+ * Nunca revienta la conversación: etiquetar importa, pero menos que seguir
+ * atendiendo. Si algo falla queda en el registro y el flujo continúa.
+ */
+async function aplicarEtiquetas(ctx: Ctx, node: DemanduNode) {
+  const d: any = node.data ?? {};
+  const poner: string[] = d.tagIdsAdd ?? [];
+  const quitar: string[] = d.tagIdsRemove ?? [];
+  if (!poner.length && !quitar.length) return;
+
+  try {
+    const { data: conv } = await ctx.admin
+      .from("conversations").select("contact_id").eq("id", ctx.conversationId).maybeSingle();
+    if (!conv?.contact_id) return;
+
+    const ids = [...poner, ...quitar];
+    const { data: filas } = await ctx.admin
+      .from("tags").select("id, name").in("id", ids).eq("org_id", ctx.orgId);
+    const nombre = new Map(((filas ?? []) as any[]).map((t) => [t.id, t.name]));
+
+    if (quitar.length) {
+      const { data: c } = await ctx.admin
+        .from("contacts").select("tags").eq("id", conv.contact_id).eq("org_id", ctx.orgId).maybeSingle();
+      const quedan = new Set<string>(c?.tags ?? []);
+      for (const id of quitar) { const n = nombre.get(id); if (n) quedan.delete(n); }
+      await ctx.admin.from("contacts").update({ tags: [...quedan] }).eq("id", conv.contact_id);
+    }
+
+    for (const id of poner) {
+      const n = nombre.get(id);
+      if (!n) continue;
+      const { error } = await ctx.admin.rpc("poner_etiqueta", {
+        p_org_id: ctx.orgId, p_contact_id: conv.contact_id, p_etiqueta: n,
+      });
+      if (error) console.error(`[etiquetas] no pude poner "${n}":`, error.message);
+    }
+  } catch (e) {
+    console.error("[etiquetas] no se pudieron aplicar:", e);
+  }
+}
+
 async function recentHistory(ctx: Ctx): Promise<{ role: "user" | "assistant"; content: string }[]> {
   try {
     const { data } = await ctx.admin
@@ -169,6 +212,18 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
       case "condition":
         current = evalCondition(ctx.flow, node, ctx.vars);
         break;
+      case "tags": {
+        // EL BLOQUE «Segmenta el contacto» NO HACÍA NADA en el canal web:
+        // no tenía caso, así que caía en el `default` y seguía de largo. Un
+        // cliente que armaba su flujo con etiquetas veía cómo funcionaba en
+        // WhatsApp y no en su web, sin ningún error que lo explicara.
+        //
+        // Poner pasa por la base, que es quien conoce los grupos; quitar se
+        // hace aquí. Mismo criterio que el motor de WhatsApp.
+        await aplicarEtiquetas(ctx, node);
+        current = defaultNext(ctx.flow, node);
+        break;
+      }
       case "delay":
         current = defaultNext(ctx.flow, node);
         break;

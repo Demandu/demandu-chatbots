@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "36";
+const VERSION_MOTOR = "37";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -1381,8 +1381,14 @@ async function etiquetar(ctx: any, node: any) {
       .eq("channel", "whatsapp").eq("external_id", ctx.to).maybeSingle();
     if (!contacto) return;
 
+    // QUITAR se hace aquí; PONER lo hace la base.
+    //
+    // `poner_etiqueta` es quien conoce los GRUPOS: si la etiqueta pertenece a
+    // uno —«Calificación»—, quita a sus hermanas. Si este bloque las añadiera
+    // a mano como antes, un flujo podría dejar a un lead como «alto» y «bajo»
+    // a la vez, que es exactamente el problema que arreglamos en la IA. La
+    // regla tiene que valer para los DOS caminos, no solo para el agente.
     const actuales = new Set<string>(contacto.tags ?? []);
-    for (const id of poner) { const n = nombre.get(id); if (n) actuales.add(n); }
     for (const id of quitar) { const n = nombre.get(id); if (n) actuales.delete(n); }
 
     const cambios: any = { tags: [...actuales] };
@@ -1391,6 +1397,15 @@ async function etiquetar(ctx: any, node: any) {
     if (grupo) cambios.lead_group_id = grupo;
 
     await ctx.db.from("contacts").update(cambios).eq("id", contacto.id);
+
+    for (const id of poner) {
+      const n = nombre.get(id);
+      if (!n) continue;
+      const { error } = await ctx.db.rpc("poner_etiqueta", {
+        p_org_id: ctx.orgId, p_contact_id: contacto.id, p_etiqueta: n,
+      });
+      if (error) console.error(`[etiquetas] no pude poner "${n}":`, error.message);
+    }
   } catch (e) {
     // Etiquetar es importante, pero no tanto como que la conversación siga.
     console.error("[etiquetas] no se pudieron aplicar:", e);
