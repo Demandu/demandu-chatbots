@@ -33,6 +33,30 @@ export async function GET(req: Request) {
     return NextResponse.redirect(`${destino}?error=sin_configurar`);
   }
 
+  // ── El dominio desde el que se entra TIENE que ser el registrado ─────────
+  //
+  // ESTO EXISTE POR UN FALLO REAL Y DESCONCERTANTE. La misma plataforma
+  // responde en varios dominios a la vez: el propio (platform.demandu.tech),
+  // el de la rama de Netlify (main--demandu-chatbots.netlify.app) y el de
+  // cualquier vista previa. Como la URL de retorno se construía a partir del
+  // dominio desde el que navegabas, entrar por el de Netlify mandaba a Meta una
+  // dirección que no es la registrada, y Meta contestaba «Invalid redirect_uri»
+  // — un error que no dice ni qué dirección esperaba ni cuál recibió.
+  //
+  // Se comprueba ANTES de mandar a nadie a Meta, y se dice en cristiano.
+  const canonico = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+  if (!canonico) {
+    // Sin esta variable la plataforma no sabe cuál es su propia dirección
+    // pública, así que acertará solo por casualidad.
+    console.error("[ig] falta NEXT_PUBLIC_SITE_URL: la URL de retorno no puede ser fiable");
+    return NextResponse.redirect(`${destino}?error=sin_dominio`);
+  }
+  if (origen !== canonico) {
+    return NextResponse.redirect(
+      `${canonico}/api/integrations/instagram/start?bot=${encodeURIComponent(botId)}`,
+    );
+  }
+
   const nonce = crypto.randomUUID();
   cookies().set("ig_oauth", JSON.stringify({ nonce, botId }), {
     httpOnly: true,

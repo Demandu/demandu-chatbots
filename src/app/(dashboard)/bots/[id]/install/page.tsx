@@ -36,6 +36,8 @@ const ERROR_IG: Record<string, string> = {
     "Instagram no devolvió ninguna cuenta. Casi siempre es porque la cuenta no es profesional: en la app de Instagram, ve a Configuración → Tipo de cuenta y cámbiala a empresa o creador.",
   cuenta_ya_conectada: "Esa cuenta de Instagram ya está conectada a otra organización de la plataforma.",
   estado_invalido: "El enlace caducó o se abrió desde otro sitio. Vuelve a darle a Conectar.",
+  sin_dominio:
+    "Falta configurar la dirección pública de la plataforma en el servidor (NEXT_PUBLIC_SITE_URL). Sin eso, Meta rechaza el inicio de sesión con «Invalid redirect_uri». Escríbenos y lo dejamos listo.",
   sin_configurar: "Falta terminar la configuración de Meta en el servidor. Escríbenos y lo dejamos listo.",
   fallo_al_conectar: "Meta no completó la conexión. Vuelve a intentarlo en un momento.",
 };

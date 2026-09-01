@@ -1718,6 +1718,29 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("el login solo arranca desde el dominio registrado en Meta", () => {
+    // ESTA PRUEBA EXISTE POR UN FALLO REAL. La misma plataforma responde en
+    // varios dominios a la vez —el propio, el de la rama de Netlify, el de
+    // cualquier vista previa— y la URL de retorno se construía a partir del
+    // dominio desde el que navegabas. Entrar por el de Netlify mandaba a Meta
+    // una dirección que no es la registrada, y Meta contestaba «Invalid
+    // redirect_uri»: un error que no dice qué esperaba ni qué recibió.
+    const start = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/app/api/integrations/instagram/start/route.ts"), "utf8"),
+    );
+    esperar(start.includes("NEXT_PUBLIC_SITE_URL")).verdadero(
+      "hay que partir de la dirección pública configurada, no de la que traiga la petición",
+    );
+    esperar(start.includes("origen !== canonico")).verdadero(
+      "si se entra por otro dominio hay que llevar a la persona al bueno antes de ir a Meta",
+    );
+    const iCompr = start.indexOf("origen !== canonico");
+    const iMeta = start.indexOf("urlDeConsentimiento(");
+    esperar(iCompr > 0 && iMeta > iCompr).verdadero(
+      "la comprobación va ANTES de mandar a nadie a Meta: después ya es un error incomprensible",
+    );
+  });
+
   test("el turno de la respuesta privada se pide ANTES de enviar", () => {
     // Meta permite UNA respuesta privada por comentario. Si se enviara primero
     // y se anotara después, dos entregas del mismo webhook mandarían dos y la
