@@ -23,7 +23,15 @@
  * canal.
  */
 
-const GRAPH = "https://graph.facebook.com/v21.0";
+/**
+ * EL ANFITRIÓN ES `graph.instagram.com`, NO `graph.facebook.com`.
+ *
+ * No es intercambiable: con el camino de «Instagram Login» el token es de la
+ * cuenta de Instagram, y `graph.facebook.com` lo rechaza con un error de
+ * permisos que hace pensar que falta un permiso cuando lo que falta es acertar
+ * el dominio. Verificado contra la documentación de Meta el 1 sep 2026.
+ */
+const GRAPH = "https://graph.instagram.com/v25.0";
 
 export type ResultadoEnvio = { ok: boolean; error?: string; code?: number };
 

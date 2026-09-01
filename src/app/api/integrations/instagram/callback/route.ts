@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import {
-  origenPublico, canjearCodigo, cuentasDisponibles, suscribirPagina,
+  origenPublico, conectarConCodigo, suscribirCuenta,
 } from "@/lib/integrations/instagram";
 
 export const dynamic = "force-dynamic";
@@ -54,19 +54,7 @@ export async function GET(req: Request) {
   if (!orgId) return NextResponse.redirect(`${origen}/login`);
 
   try {
-    const tokenDeUsuario = await canjearCodigo(req, code);
-    const cuentas = await cuentasDisponibles(tokenDeUsuario);
-
-    if (!cuentas.length) {
-      // El motivo real casi siempre es el mismo, y decirlo ahorra una llamada
-      // a soporte: o la cuenta no es profesional, o no está ligada a ninguna
-      // página, o la persona no marcó la página en la pantalla de Meta.
-      return NextResponse.redirect(`${destino}?error=sin_cuentas`);
-    }
-
-    // Se conecta la primera. Elegir entre varias es una pantalla más y hoy
-    // ningún cliente tiene dos; cuando alguno las tenga, aquí es donde va.
-    const c = cuentas[0];
+    const c = await conectarConCodigo(req, code);
 
     const sb = createClient();
     const { error } = await sb.from("instagram_channels").upsert(
@@ -75,9 +63,14 @@ export async function GET(req: Request) {
         bot_id: botId || null,
         ig_user_id: c.igUserId,
         username: c.username,
-        page_id: c.pageId,
-        page_name: c.pageName,
-        access_token: c.pageToken,
+        // Con Instagram Login no hay página de Facebook de por medio. La
+        // columna existe para el otro camino y aquí se queda vacía a
+        // propósito, no por descuido.
+        page_id: null,
+        page_name: null,
+        access_token: c.token,
+        token_caduca: c.caduca,
+        permisos: c.permisos,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "ig_user_id" },
@@ -92,7 +85,7 @@ export async function GET(req: Request) {
     }
 
     // El paso que nadie recuerda hasta que no llega ningún mensaje.
-    const sus = await suscribirPagina(c.pageId, c.pageToken);
+    const sus = await suscribirCuenta(c.igUserId, c.token);
     if (!sus.ok) {
       console.error("[ig callback] la página no quedó suscrita:", sus.error);
       // Queda guardada —la conexión existe— pero se dice la verdad: todavía no

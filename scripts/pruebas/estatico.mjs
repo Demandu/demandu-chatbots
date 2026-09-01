@@ -1660,6 +1660,64 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("se usa el camino de Instagram Login, no el de Facebook", () => {
+    // ESTA PRUEBA VIGILA UNA DECISIÓN DE NEGOCIO, no un detalle técnico. Meta
+    // tiene dos integraciones con nombres casi iguales; se eligió la de
+    // Instagram Login porque así el CLIENTE NO NECESITA PÁGINA DE FACEBOOK, y
+    // muchas PYMES de LATAM tienen el Instagram vivo y la página abandonada.
+    // Quien vuelva al camino de Facebook estará reintroduciendo esa fricción
+    // en cada alta sin querer.
+    const integ = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8"),
+    );
+    esperar(integ.includes("https://www.instagram.com/oauth/authorize")).verdadero(
+      "el permiso se pide en instagram.com, no en facebook.com",
+    );
+    esperar(integ.includes("NEXT_PUBLIC_INSTAGRAM_APP_ID")).verdadero(
+      "este camino usa el App ID de INSTAGRAM, que no es el de Facebook que usa WhatsApp",
+    );
+    esperar(/me\/accounts/.test(integ)).falso(
+      "`/me/accounts` es del camino de páginas de Facebook: aquí no hay páginas",
+    );
+  });
+
+  test("el envío va a graph.instagram.com, no a graph.facebook.com", () => {
+    // Con un token de Instagram Login, `graph.facebook.com` responde con un
+    // error de permisos — que hace perder horas buscando un permiso que no
+    // falta, cuando lo que falla es el dominio.
+    const env = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/lib/canales/instagramEnviar.ts"), "utf8"),
+    );
+    esperar(env.includes("https://graph.instagram.com")).verdadero("el anfitrión tiene que ser graph.instagram.com");
+    esperar(env.includes("graph.facebook.com")).falso("graph.facebook.com rechaza el token de Instagram Login");
+  });
+
+  test("el token que se guarda es el de 60 días, no el de una hora", () => {
+    // El canje directo devuelve un token de UNA HORA. Guardarlo sería una
+    // bomba de relojería: funciona en la demo y se cae sola esa misma tarde,
+    // sin ningún error que lo explique.
+    const integ = fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8");
+    esperar(integ.includes("ig_exchange_token")).verdadero(
+      "hay que cambiar el token corto por el largo antes de guardarlo",
+    );
+    const iCorto = integ.indexOf("const tokenCorto");
+    const iLargo = integ.indexOf("ig_exchange_token");
+    esperar(iCorto > 0 && iLargo > iCorto).verdadero("el canje largo va después de obtener el corto");
+  });
+
+  test("se suscribe la cuenta, no solo se guarda", () => {
+    // Configurar el webhook en Meta dice A DÓNDE mandar los avisos; suscribir
+    // la cuenta dice DE QUIÉN. Sin esto todo parece conectado y no llega nada
+    // — el síntoma más desconcertante que hay.
+    const cb = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/app/api/integrations/instagram/callback/route.ts"), "utf8"),
+    );
+    esperar(cb.includes("suscribirCuenta(")).verdadero("hay que suscribir la cuenta al conectar");
+    esperar(cb.includes("sin_suscribir")).verdadero(
+      "si la suscripción falla hay que decirlo: un «conectado» que no recibe mensajes es mentira",
+    );
+  });
+
   test("el turno de la respuesta privada se pide ANTES de enviar", () => {
     // Meta permite UNA respuesta privada por comentario. Si se enviara primero
     // y se anotara después, dos entregas del mismo webhook mandarían dos y la

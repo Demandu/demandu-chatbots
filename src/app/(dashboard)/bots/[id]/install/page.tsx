@@ -33,7 +33,7 @@ const AVISO_IG: Record<string, { tono: "bien" | "mal" | "ojo"; texto: string }> 
 };
 const ERROR_IG: Record<string, string> = {
   sin_cuentas:
-    "No encontramos ninguna cuenta de Instagram. Casi siempre es una de tres: la cuenta no es profesional, no está ligada a una página de Facebook, o no marcaste la página en la pantalla de Meta.",
+    "Instagram no devolvió ninguna cuenta. Casi siempre es porque la cuenta no es profesional: en la app de Instagram, ve a Configuración → Tipo de cuenta y cámbiala a empresa o creador.",
   cuenta_ya_conectada: "Esa cuenta de Instagram ya está conectada a otra organización de la plataforma.",
   estado_invalido: "El enlace caducó o se abrió desde otro sitio. Vuelve a darle a Conectar.",
   sin_configurar: "Falta terminar la configuración de Meta en el servidor. Escríbenos y lo dejamos listo.",
