@@ -4,6 +4,8 @@
  *
  *   node --experimental-strip-types scripts/pruebas/logica.mjs
  */
+import fs from "node:fs";
+import path from "node:path";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
@@ -578,6 +580,72 @@ describe("El bot promete una persona", () => {
   test("una oferta y una promesa en el mismo mensaje: manda la promesa", () => {
     // Un mensaje puede preguntar algo y además comprometerse dos líneas abajo.
     esperar(prometioUnaPersona("¿Te sirve el martes? Mientras tanto, te paso con un asesor.")).verdadero();
+  });
+});
+
+// ─── De qué anuncio viene quien escribe ──────────────────────────────────────
+//
+// Meta manda un objeto `referral` cuando el lead llega desde un anuncio suyo.
+// GOOGLE NO MANDA NADA: un anuncio de Google que lleva a WhatsApp abre un
+// `wa.me/...` como cualquier enlace, y al motor le llega un mensaje normal. La
+// única forma de atribuirlo es que el enlace traiga un mensaje ya escrito con
+// un código — `[cmp:google-verano]` — y eso es lo que lee esta función.
+//
+// SE PRUEBA LA FUNCIÓN DE VERDAD, no su texto. El motor de WhatsApp corre en
+// Deno y no se puede importar desde aquí, así que se recorta del archivo y se
+// evalúa. Una prueba que solo buscara la palabra «origenDelEnlace» en el
+// código pasaría aunque la expresión regular estuviera mal escrita, que es
+// justo lo único que puede fallar aquí.
+describe("Origen por enlace [cmp:...]", () => {
+  const fuente = fs.readFileSync(
+    path.join(import.meta.dirname, "../../supabase/functions/whatsapp/index.ts"),
+    "utf8",
+  );
+  const desde = fuente.indexOf("function origenDelEnlace");
+  if (desde < 0) throw new Error("no encuentro origenDelEnlace en el motor de WhatsApp");
+  // Hasta la siguiente declaración de primer nivel: el cuerpo entero, ni más ni menos.
+  const resto = fuente.slice(desde);
+  const fin = resto.slice(1).search(/\n(?:function|const|async function|type|interface) /);
+  const cuerpo = resto.slice(0, fin > 0 ? fin + 1 : resto.length);
+  // Deno usa TypeScript; aquí solo hacen falta las anotaciones fuera.
+  const origenDelEnlace = new Function(
+    `${cuerpo.replace(/:\s*(string \| null \| undefined|any \| null|any)\b/g, "")}; return origenDelEnlace;`,
+  )();
+
+  test("lee el código del marcador", () => {
+    const o = origenDelEnlace("Hola [cmp:gads-verano] quiero info");
+    esperar(o?.anuncio_id).igual("gads-verano");
+    esperar(o?.tipo).igual("enlace");
+  });
+
+  test("un mensaje normal NO atribuye nada", () => {
+    // Lo más importante de todo: inventarse un origen es peor que no tenerlo.
+    // Quien mira el informe movería presupuesto con un número falso.
+    for (const t of ["Hola, quiero información", "", null, undefined, "cmp:algo", "[cmp:]", "[cmp: ]"]) {
+      esperar(origenDelEnlace(t)).igual(null, `${JSON.stringify(t)} no debía atribuir ninguna campaña`);
+    }
+  });
+
+  test("agrupa por plataforma cuando el código lo dice", () => {
+    esperar(origenDelEnlace("[cmp:google-verano]")?.plataforma).igual("google");
+    esperar(origenDelEnlace("[cmp:gads.black]")?.plataforma).igual("google");
+    esperar(origenDelEnlace("[cmp:tt-septiembre]")?.plataforma).igual("tiktok");
+    esperar(origenDelEnlace("[cmp:ig_historias]")?.plataforma).igual("meta");
+  });
+
+  test("un código que no empieza por plataforma conocida NO se inventa una", () => {
+    // «volante-feria» es un QR en papel. Meterlo en Google porque empieza por
+    // «g»… no empieza; pero «gimnasio-mayo» sí, y ESO es lo que se prueba: el
+    // prefijo tiene que ir seguido de un separador, no ser cualquier palabra
+    // que empiece por «g».
+    esperar(origenDelEnlace("[cmp:gimnasio-mayo]")?.plataforma).igual("enlace");
+    esperar(origenDelEnlace("[cmp:volante-feria]")?.plataforma).igual("enlace");
+    esperar(origenDelEnlace("[cmp:google]")?.plataforma).igual("google", "«google» a secas sí es Google");
+  });
+
+  test("mayúsculas y espacios no rompen la atribución", () => {
+    esperar(origenDelEnlace("Hola [CMP:Google-Verano]")?.anuncio_id).igual("Google-Verano");
+    esperar(origenDelEnlace("[cmp: gads-verano ]")?.anuncio_id).igual("gads-verano");
   });
 });
 

@@ -1120,6 +1120,106 @@ describe("Origen de campaña", () => {
       "guardar el origen tiene que ir en un try: si falla, el bot igual contesta",
     );
   });
+
+  test("el marcador [cmp:] se lee DESPUÉS de tener el texto del mensaje", () => {
+    // Se escribió al revés la primera vez: la línea usaba `visible` 23 líneas
+    // antes de declararlo. En JavaScript eso no avisa al escribirlo, revienta
+    // en producción con «Cannot access before initialization» — y revienta el
+    // webhook entero, no solo la atribución.
+    const uso = wa.indexOf("origenDelEnlace(visible");
+    const decl = wa.indexOf("const visible =");
+    esperar(uso > 0 && decl > 0).verdadero("no encuentro el uso o la declaración de `visible`");
+    esperar(uso > decl).verdadero("`visible` se usa antes de declararse: eso tumba el webhook");
+  });
+});
+
+// ─── La métrica de campañas ──────────────────────────────────────────────────
+describe("Resultados: leads por campaña", () => {
+  // SIN LOS COMENTARIOS. La primera versión de estas pruebas fallaba contra un
+  // código correcto: el comentario que explica «esto NO lleva security
+  // definer» contiene esas dos palabras, y la prueba las encontraba. Una
+  // prueba que reacciona a la prosa no está mirando el código.
+  const mig = fs
+    .readFileSync(path.join(RAIZ, "supabase/migrations/0067_metrica_de_campanas.sql"), "utf8")
+    .replace(/^\s*--.*$/gm, "");
+  const pagina = fs.readFileSync(
+    path.join(RAIZ, "src/app/(dashboard)/analytics/page.tsx"), "utf8",
+  );
+
+  test("la consulta NO se salta el aislamiento entre clientes", () => {
+    // ESTA PRUEBA EXISTE POR UN FALLO REAL. La primera versión se aplicó con
+    // `security definer`, que lee saltándose RLS. Como la organización llega
+    // por parámetro, cualquier usuario con sesión podía pedir el id de otra
+    // empresa y ver sus campañas. Es la peor clase de bug de un multi-cliente:
+    // no se nota nunca hasta que se nota en la prensa.
+    esperar(/security\s+definer/i.test(mig)).falso(
+      "esta función lee datos de contactos: con `security definer` se salta RLS",
+    );
+    esperar(mig.includes("p_org not in (select auth_org_ids())")).verdadero(
+      "hay que comprobar a la cara que la organización es de quien pregunta",
+    );
+  });
+
+  test("las campañas se ordenan por número, no por texto", () => {
+    // `jsonb_agg(x order by x->>'leads' desc)` ordena CADENAS: "9" va después
+    // de "10". La campaña con más leads acababa al final de la tabla.
+    esperar(/order by\s+x->>/.test(mig)).falso(
+      "ordenar por un campo de jsonb es ordenar por texto: 10 quedaría antes que 9",
+    );
+    esperar((mig.match(/order by leads desc/g) ?? []).length >= 2).verdadero(
+      "el orden va sobre la columna numérica, en las dos listas",
+    );
+  });
+
+  test("un contacto sin origen no cuenta como campaña", () => {
+    // La diferencia entre «llegaron 11 leads, 2 por anuncios» y «llegaron 11
+    // por anuncios» es la que decide si se sube o se baja el presupuesto.
+    esperar(mig.includes("ct.origen is not null")).verdadero(
+      "solo cuentan como campaña los contactos que traen origen",
+    );
+  });
+
+  test("la pantalla de Resultados la pide y la dibuja", () => {
+    esperar(pagina.includes('sb.rpc("analytics_campanas"')).verdadero(
+      "la tarjeta no sirve de nada si la página no pide los datos",
+    );
+    esperar(pagina.includes("<Campanas datos=")).verdadero("hay que dibujar la tarjeta");
+  });
+
+  test("si la métrica falla, el resto del tablero se sigue viendo", () => {
+    // Son quince números en la misma pantalla. Que uno no cargue no puede
+    // dejar en blanco a los otros catorce.
+    const i = pagina.indexOf("const campanas");
+    esperar(i > 0).verdadero("no encuentro dónde se leen los datos de campañas");
+    // Se busca el objeto por defecto EN SÍ, no un «??» cerca. La primera
+    // versión de esta prueba miraba los 400 caracteres siguientes y pasaba con
+    // el respaldo borrado: el «??» que encontraba era el de la línea de abajo,
+    // que no tiene nada que ver. Una prueba que pasa sin el código que prueba
+    // es peor que no tenerla, porque da tranquilidad falsa.
+    const asignacion = pagina.slice(i, i + 400);
+    esperar(asignacion.includes("total_con_campana: 0")).verdadero(
+      "hace falta un respaldo vacío: sin él, un error de esta consulta deja la pantalla en blanco",
+    );
+  });
+
+  test("no se promete separar Facebook de Instagram", () => {
+    // WhatsApp manda el MISMO objeto para las dos: no dice la colocación.
+    // Pintar dos barras sería repartir a ojo un número que no tenemos, y
+    // alguien movería dinero con él.
+    const tarjeta = fs.readFileSync(
+      path.join(RAIZ, "src/components/analytics/Campanas.tsx"), "utf8",
+    );
+    esperar(tarjeta.includes('meta: "Facebook e Instagram"')).verdadero(
+      "Meta va en una sola fila mientras el webhook no distinga la colocación",
+    );
+    // Se mira el MAPA de nombres, no el archivo entero: el texto explicativo
+    // que ve el cliente sí nombra a Instagram, y debe hacerlo.
+    const i = tarjeta.indexOf("const NOMBRE");
+    const mapa = tarjeta.slice(i, tarjeta.indexOf("}", i));
+    esperar(/instagram/i.test(mapa.replace(/Facebook e Instagram/g, ""))).falso(
+      "no puede haber otra fila que separe Instagram: el webhook no da ese dato",
+    );
+  });
 });
 
 // ─── Qué flujo atiende ───────────────────────────────────────────────────────
@@ -1432,6 +1532,66 @@ describe("Puerta de entrada", () => {
     );
     esperar(antes.includes("getCurrentOrgId")).verdadero(
       "solo se desvía a quien NO tiene ninguna organización: dando soporte sí tiene una y debe quedarse",
+    );
+  });
+});
+
+// ─── Poder salir ─────────────────────────────────────────────────────────────
+//
+// ESTAS PRUEBAS EXISTEN POR UNA PERSONA ATRAPADA. Darwin, vendedor, no podía
+// salir de la plataforma: pulsaba «Salir» y no pasaba nada. No era su
+// navegador ni sus permisos — el botón era un `<Link href="/login">` que no
+// cerraba ninguna sesión, y los tres desvíos se pasaban la pelota en círculo:
+//
+//   /panel → «Salir» → /login → el middleware ve sesión → /dashboard
+//          → el marco ve equipo sin organización → /panel
+//
+// Cada pieza por separado estaba bien pensada. El bucle solo existe al
+// juntarlas, que es justo lo que una prueba de una sola pieza no ve.
+describe("Poder salir de la plataforma", () => {
+  const salir = fs.readFileSync(path.join(RAIZ, "src/app/salir.ts"), "utf8");
+  const panel = fs.readFileSync(path.join(RAIZ, "src/app/panel/layout.tsx"), "utf8");
+  const superadmin = fs.readFileSync(path.join(RAIZ, "src/app/superadmin/layout.tsx"), "utf8");
+  const medio = fs.readFileSync(path.join(RAIZ, "src/lib/supabase/middleware.ts"), "utf8");
+
+  test("cerrar sesión de verdad cierra la sesión", () => {
+    esperar(salir.includes("auth.signOut()")).verdadero(
+      "sin `signOut` esto es un enlace disfrazado: la galleta sigue viva y no sales de nada",
+    );
+    esperar(salir.includes('"use server"')).verdadero(
+      "tiene que ser una acción de servidor: la galleta solo se puede borrar desde el servidor",
+    );
+  });
+
+  test("salir cierra también el soporte abierto en la cuenta de un cliente", () => {
+    // Irse a casa dentro de la cuenta de un cliente no puede dejar ese acceso
+    // vivo una hora más sin nadie delante.
+    esperar(salir.includes("cerrarSoporte(user.id)")).verdadero(
+      "al salir hay que cerrar la membresía temporal de soporte",
+    );
+  });
+
+  test("las dos casas del equipo tienen una salida real, no un enlace", () => {
+    for (const [nombre, marco] of [["panel de ventas", panel], ["superadmin", superadmin]]) {
+      esperar(marco.includes("cerrarSesion")).verdadero(
+        `el ${nombre} necesita un botón que cierre sesión de verdad`,
+      );
+      esperar(/href="\/login"/.test(marco)).falso(
+        `en el ${nombre}, un enlace a /login NO saca a nadie: con sesión viva el middleware lo devuelve`,
+      );
+    }
+  });
+
+  test("el bucle sigue siendo un bucle, y por eso hace falta la salida", () => {
+    // Esta prueba vigila la PREMISA. Si algún día el middleware deja de rebotar
+    // a quien va a /login con sesión, la salida del panel deja de ser lo único
+    // que rompe el círculo — y entonces conviene enterarse leyendo esto, no
+    // volviendo a atrapar a alguien.
+    esperar(medio.includes("user && isAuthPage")).verdadero(
+      "el middleware devuelve al panel a quien va a /login con la sesión viva",
+    );
+    esperar(panel.includes("cerrarSesion")).verdadero(
+      "mientras eso siga así, /panel es la única puerta de salida y no puede perderla",
     );
   });
 });

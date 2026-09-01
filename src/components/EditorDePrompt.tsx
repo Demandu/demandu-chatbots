@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ACCIONES } from "@/lib/ai/acciones";
 
 /**
@@ -49,6 +49,8 @@ export function EditorDePrompt({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const espejo = useRef<HTMLDivElement>(null);
+  const caja = useRef<HTMLDivElement>(null);
+
   const [abierto, setAbierto] = useState(false);
   const [filtro, setFiltro] = useState("");
   const [modo, setModo] = useState<"acciones" | "etiquetas">("acciones");
@@ -60,6 +62,61 @@ export function EditorDePrompt({
     if (!controlado) setPropio(v);
     onValueChange?.(v);
   };
+
+  /**
+   * El espejo COPIA las medidas del textarea, no las hereda de una clase.
+   *
+   * La primera versión confiaba en que las dos capas llevaran el mismo
+   * `className` y por tanto la misma tipografía. No basta: el textarea del
+   * constructor y el de Lana IA usan clases distintas, el navegador le pone su
+   * propia fuente por defecto a los `textarea`, y cualquier diferencia de
+   * interlineado desplaza el resaltado. Se veía el texto duplicado y corrido.
+   *
+   * Copiando las medidas reales ya calculadas, el espejo encaja pase lo que
+   * pase con el CSS. Se rehace al cambiar de tamaño porque el textarea se
+   * puede arrastrar para agrandarlo.
+   */
+  useEffect(() => {
+    const ta = ref.current;
+    const es = espejo.current;
+    if (!ta || !es) return;
+
+    const copiar = () => {
+      const c = window.getComputedStyle(ta);
+      for (const prop of [
+        "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight",
+        "letterSpacing", "wordSpacing", "textIndent", "textTransform",
+        "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+        "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+        "boxSizing", "whiteSpace", "wordBreak", "overflowWrap", "tabSize",
+      ] as const) {
+        (es.style as any)[prop] = c[prop as any];
+      }
+      // EL FONDO SE MUDA AL CONTENEDOR. El espejo va DEBAJO del textarea, así
+      // que el textarea tiene que ser transparente para dejarlo ver — y si el
+      // relleno se perdiera sin más, el campo quedaría flotando sin caja.
+      // Se toma el color real que tenía y se pinta en el contenedor: se ve
+      // exactamente igual que antes.
+      if (caja.current && c.backgroundColor && c.backgroundColor !== "rgba(0, 0, 0, 0)") {
+        caja.current.style.backgroundColor = c.backgroundColor;
+        caja.current.style.borderRadius = c.borderRadius;
+      }
+      ta.style.backgroundColor = "transparent";
+
+      // Estas no se copian: se imponen. El espejo no debe verse a sí mismo.
+      es.style.borderColor = "transparent";
+      es.style.borderStyle = c.borderStyle;
+      es.style.borderRadius = c.borderRadius;
+      es.style.color = "transparent";
+      es.style.background = "transparent";
+      es.scrollTop = ta.scrollTop;
+    };
+
+    copiar();
+    const obs = new ResizeObserver(copiar);
+    obs.observe(ta);
+    return () => obs.disconnect();
+  }, [texto, className]);
 
   /**
    * El texto partido en trozos, marcando dónde hay una acción.
@@ -180,23 +237,25 @@ export function EditorDePrompt({
   };
 
   return (
-    <div className="relative">
+    <div ref={caja} className="relative">
       {/* El espejo. `aria-hidden` porque para un lector de pantalla el texto
           ya está en el textarea: leerlo dos veces sería peor que no marcarlo. */}
       <div
         ref={espejo}
         aria-hidden
-        // `scrollbar-gutter: stable` en LOS DOS, y no es un detalle: en cuanto
-        // el prompt es largo, el textarea saca barra de scroll y su texto pasa
-        // a caber en menos ancho. El espejo, sin barra, partiría las líneas en
-        // otro sitio y el resaltado saldría corrido justo en los prompts
-        // largos — que son los únicos donde de verdad hace falta.
-        style={{ scrollbarGutter: "stable" }}
-        className={`${className} pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-transparent`}
+        // NO lleva el `className` del campo: sus medidas se copian del textarea
+        // en el efecto de arriba. Heredar la clase era justo lo que fallaba —
+        // parecía que las dos capas coincidían y no coincidían.
+        //
+        // `scrollbar-gutter: stable` sí va aquí y en el textarea: en cuanto el
+        // prompt es largo, el textarea saca barra de scroll y su texto cabe en
+        // menos ancho. El espejo, sin barra, partiría las líneas en otro sitio.
+        style={{ scrollbarGutter: "stable", color: "transparent" }}
+        className="pointer-events-none absolute inset-0 overflow-hidden rounded-xl border"
       >
         {trozos.map((p, i) =>
           p.accion ? (
-            <span key={i} className="rounded bg-violet/25 text-transparent ring-1 ring-violet/40">
+            <span key={i} className="rounded bg-violet/30" style={{ color: "transparent" }}>
               {p.t}
             </span>
           ) : (
@@ -218,7 +277,7 @@ export function EditorDePrompt({
         onKeyDown={(e) => { if (e.key === "Escape") setAbierto(false); }}
         placeholder={placeholder}
         style={{ scrollbarGutter: "stable" }}
-        className={`${className} relative !bg-transparent`}
+        className={`${className} relative`}
       />
 
       {abierto && modo === "etiquetas" && (

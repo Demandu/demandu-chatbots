@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Briefcase, ArrowLeft } from "lucide-react";
 import { anotarPaso } from "@/lib/equipo/asistencia";
+import { cerrarSesion } from "../salir";
 
 export const dynamic = "force-dynamic";
 
@@ -56,24 +57,30 @@ export default async function PanelLayout({ children }: { children: React.ReactN
         </div>
 
         <nav className="flex items-center gap-1.5">
-          <Link
-            href="/panel"
-            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+          {/* «Mis clientes» se marca como la pantalla ACTUAL. Antes era un
+              enlace normal a la misma página en la que ya estabas: al pulsarlo
+              no pasaba nada visible y se leía como un botón roto. Un enlace que
+              apunta a donde ya estás tiene que decirlo, no quedarse callado. */}
+          <span
+            aria-current="page"
+            className="rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white"
           >
             Mis clientes
-          </Link>
+          </span>
           <Link
             href="/crear-contrasena"
             className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
           >
             Cambiar mi contraseña
           </Link>
-          <Link
-            href="/login"
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Salir
-          </Link>
+          {/* UN FORMULARIO, NO UN ENLACE. Ver el comentario de `cerrarSesion`:
+              como enlace a /login no cerraba nada y dejaba a la persona dando
+              vueltas entre tres pantallas sin poder salir. */}
+          <form action={cerrarSesion}>
+            <button className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white">
+              <ArrowLeft className="h-3.5 w-3.5" /> Cerrar sesión
+            </button>
+          </form>
         </nav>
       </header>
 

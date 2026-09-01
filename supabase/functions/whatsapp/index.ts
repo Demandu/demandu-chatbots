@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "39";
+const VERSION_MOTOR = "40";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -2570,6 +2570,54 @@ function chooseFlow(entrantes: any[], text: string, isReturning: boolean, state:
  * estado tirando durante meses sin enterarnos. Lo que se entiende se normaliza
  * para poder consultarlo; lo demás se queda por si acaso.
  */
+/**
+ * DE DÓNDE VIENE CUANDO META NO LO DICE — Google, un banner, un QR.
+ *
+ * El objeto `referral` de Meta SOLO llega en los anuncios de «Click to
+ * WhatsApp» de Facebook e Instagram. Un anuncio de Google Ads que manda a un
+ * enlace `wa.me` llega como un mensaje normal: sin referral, sin nada. Ese
+ * lead es INVISIBLE para la atribución, y es dinero gastado que no se puede
+ * medir.
+ *
+ * La forma estándar de resolverlo es el propio enlace: `wa.me/507…?text=` deja
+ * el primer mensaje YA ESCRITO. Si ese texto lleva un código, el código llega
+ * con el primer mensaje.
+ *
+ * FORMATO: `[cmp:loquesea]` en cualquier parte del primer mensaje. Se eligió
+ * con corchetes y prefijo porque tiene que ser imposible de escribir por
+ * accidente: alguien que teclea «hola, vengo del anuncio» no puede acabar
+ * atribuido a una campaña que no existe.
+ *
+ * El código lo inventa el cliente al montar el anuncio: `[cmp:google-verano]`,
+ * `[cmp:volante-feria]`. Nosotros no elegimos sus nombres.
+ */
+function origenDelEnlace(texto: string | null | undefined): any | null {
+  const m = String(texto ?? "").match(/\[cmp:([\w .-]{1,60})\]/i);
+  if (!m) return null;
+
+  const codigo = m[1].trim();
+  if (!codigo) return null;
+
+  // Si el código empieza por el nombre de una plataforma conocida, se aprovecha
+  // para agrupar en el informe. Si no, va como «enlace» y el cliente igual ve
+  // su código: mejor agrupar de menos que inventarse un origen.
+  const bajo = codigo.toLowerCase();
+  const plataforma =
+    /^(g|google|gads|ga)[-_. ]/.test(bajo) || bajo === "google" ? "google"
+    : /^(tiktok|tt)[-_. ]/.test(bajo) ? "tiktok"
+    : /^(fb|facebook|ig|instagram|meta)[-_. ]/.test(bajo) ? "meta"
+    : "enlace";
+
+  return {
+    tipo: "enlace",
+    anuncio_id: codigo,
+    titular: codigo,
+    plataforma,
+    canal: "whatsapp",
+    visto_en: new Date().toISOString(),
+  };
+}
+
 function origenDelAnuncio(referral: any): any | null {
   if (!referral || typeof referral !== "object") return null;
 
@@ -2596,6 +2644,10 @@ function origenDelAnuncio(referral: any): any | null {
     url: texto(referral.source_url),
     ctwa_clid: clid,
     medio: texto(referral.media_type),
+    // META NO DICE si el anuncio se vio en Facebook o en Instagram: manda el
+    // mismo objeto para los dos. Separarlos aquí sería inventárselo, así que
+    // se agrupan como «meta» y el informe lo dice tal cual.
+    plataforma: "meta",
     // El texto que Meta pone ya escrito en el chat cuando alguien pulsa el
     // anuncio. Sirve para no volver a preguntar lo que el anuncio ya dijo.
     saludo: texto(referral.welcome_message?.text),
@@ -2954,11 +3006,6 @@ Deno.serve(async (req: Request) => {
       // interactivo más, pero no es una opción del menú: es un permiso, y de él
       // depende que llamar sea legal o sea el camino a que Meta cierre el
       // número. Por eso se reconoce aparte y se guarda antes de tocar el flujo.
-      // Meta lo manda en el primer mensaje después de pulsar el anuncio. Se
-      // mira SIEMPRE, no solo en el primero: si algún día lo repite en los
-      // siguientes, mejor tenerlo dos veces que perderlo una.
-      const origen = origenDelAnuncio(msg.referral);
-
       const permisoLlamada = msg.interactive?.type === "call_permission_reply"
         ? (msg.interactive?.call_permission_reply ?? null)
         : null;
@@ -3014,6 +3061,17 @@ Deno.serve(async (req: Request) => {
       // La comprobación es el propio INSERT: la clave primaria decide. Dos
       // reenvíos simultáneos no pueden ganar los dos, y no hay hueco entre
       // «miro si existe» y «lo escribo» por donde se cuele el segundo.
+      // ── DE DÓNDE VIENE ESTE LEAD ─────────────────────────────────────────
+      //
+      // Va aquí y no antes porque necesita `visible`: el código de campaña de
+      // un enlace `wa.me` viaja DENTRO del primer mensaje. Ponerlo más arriba
+      // lo dejaba usando una variable que todavía no existe — el compilador lo
+      // habría dejado pasar y habría reventado en producción.
+      //
+      // Primero lo que manda Meta (Facebook e Instagram); si no hay referral,
+      // el código del enlace, que es la única forma de atribuir Google.
+      const origen = origenDelAnuncio(msg.referral) ?? origenDelEnlace(visible ?? text);
+
       if (msg.id) {
         const { error: repetido } = await db.from("mensajes_vistos").insert({ wa_message_id: msg.id });
         if (repetido) {

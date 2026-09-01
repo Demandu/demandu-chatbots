@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { Filtros } from "@/components/analytics/Filtros";
 import { GraficaTiempo, BarrasHorizontales, Dona, ColumnasHora, SinDatos } from "@/components/analytics/Charts";
+import { Campanas, type ResumenDeCampanas } from "@/components/analytics/Campanas";
 import {
   numero, porcentaje, duracion, efectividadAgente, resultadosVacios,
   NOMBRE_CANAL, COLOR_CANAL, type Resultados, type Agrupacion,
@@ -47,7 +48,7 @@ export default async function ResultadosPage({
 
   // Todo el tablero llega en UNA consulta: si cada tarjeta pidiera lo suyo
   // serían ~15 viajes a la base cada vez que se mueve el filtro de fechas.
-  const [resBots, resDatos] = await Promise.all([
+  const [resBots, resDatos, resCampanas] = await Promise.all([
     sb.from("bots").select("id, name, channel").order("created_at"),
     orgId
       ? sb.rpc("analytics_overview", {
@@ -60,11 +61,27 @@ export default async function ResultadosPage({
           p_tz: tz,
         })
       : null,
+    // Aparte de `analytics_overview` a propósito: esto se pregunta por
+    // CONTACTOS (de dónde vino cada persona), y por eso NO recibe `p_bot` ni
+    // `p_channel` — un anuncio trae a alguien, y qué chatbot lo atendiera
+    // después no cambia quién lo trajo. Si fallara, el resto del tablero se
+    // sigue viendo: es una tarjeta más, no la pantalla.
+    orgId
+      ? sb.rpc("analytics_campanas", { p_org: orgId, p_desde: desde, p_hasta: hasta })
+      : null,
   ]);
 
   const bots = (resBots?.data ?? []) as { id: string; name: string; channel: string }[];
   const error = resDatos?.error ?? null;
   const r: Resultados = (resDatos?.data as Resultados) ?? resultadosVacios();
+  // Si esta consulta fallara, la tarjeta se dibuja vacía en vez de tumbar la
+  // pantalla entera: los otros quince números no tienen la culpa.
+  const campanas: ResumenDeCampanas = (resCampanas?.data as ResumenDeCampanas) ?? {
+    total_leads: 0,
+    total_con_campana: 0,
+    por_plataforma: [],
+    por_campana: [],
+  };
   // Los canales del selector salen de los chatbots que el cliente tiene, no de
   // los datos del periodo: si no, al filtrar por un canal se quedaría sin poder
   // volver a los demás.
@@ -237,6 +254,14 @@ export default async function ResultadosPage({
           <Tarjeta titulo="A qué horas te escriben" sub={`Hora de ${r.meta?.tz ?? tz}`}>
             <ColumnasHora datos={r.por_hora ?? []} />
           </Tarjeta>
+        </div>
+
+        {/* ── Publicidad ─────────────────────────────────────────────────── */}
+        {/* Justo debajo de «Por canal» porque responden la misma pregunta a
+            dos niveles: aquélla dice POR DÓNDE entró la gente (WhatsApp, web),
+            ésta dice QUIÉN LA MANDÓ (un anuncio, o nadie). */}
+        <div className="mb-6">
+          <Campanas datos={campanas} />
         </div>
 
         {/* ── Chatbots ───────────────────────────────────────────────────── */}
