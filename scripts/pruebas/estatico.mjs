@@ -1100,6 +1100,52 @@ describe("Qué flujo atiende", () => {
   });
 });
 
+// ─── Guardar tiene que decir que guardó ──────────────────────────────────────
+//
+// El 1 sep, Alex le dio a «Guardar configuración» en Lana IA y no pasó nada en
+// pantalla: misma página, mismos campos, cero señal. SÍ había guardado — en la
+// base estaban las cuatro herramientas—, pero él concluyó, con razón, que el
+// botón estaba roto. Un formulario que guarda en silencio es un formulario
+// roto aunque el dato llegue.
+describe("Guardar dice que guardó", () => {
+  // La señal EXACTA del caso bueno, no un prefijo. La primera versión de esta
+  // prueba comprobaba solo `?guardado=`, y seguía pasando al borrar el aviso
+  // de éxito porque el de error también lo contiene. Una prueba que pasa sin
+  // comparar lo que importa es peor que no tenerla.
+  const PANTALLAS = [
+    ["Lana IA", "src/app/(dashboard)/bots/[id]/ai/actions.ts", "src/app/(dashboard)/bots/[id]/ai/page.tsx", "guardado=si"],
+    ["Horario laboral", "src/app/(dashboard)/settings/actions.ts", "src/app/(dashboard)/settings/hours/page.tsx", "saved=1"],
+  ];
+
+  for (const [nombre, accion, pantalla, exito] of PANTALLAS) {
+    test(`${nombre}: la acción avisa y la pantalla lo enseña`, () => {
+      const a = fs.readFileSync(path.join(RAIZ, accion), "utf8");
+      const p = fs.readFileSync(path.join(RAIZ, pantalla), "utf8");
+      esperar(a.includes(`?${exito}`)).verdadero(
+        `${nombre}: al guardar BIEN hay que volver con la señal de éxito`,
+      );
+      esperar(p.includes("searchParams")).verdadero(
+        `${nombre}: la pantalla tiene que leer esa señal`,
+      );
+      esperar(/guardad|Guardad|guardó/.test(p)).verdadero(
+        `${nombre}: y decirlo con palabras que la persona entienda`,
+      );
+    });
+  }
+
+  test("Lana IA también avisa si NO se pudo guardar", () => {
+    // Peor que no avisar del éxito es no avisar del fallo: la persona se va
+    // creyendo que su bot quedó configurado.
+    const a = fs.readFileSync(path.join(RAIZ, "src/app/(dashboard)/bots/[id]/ai/actions.ts"), "utf8");
+    esperar(a.includes("if (error)")).verdadero(
+      "hay que mirar el error de la base, no descartarlo",
+    );
+    esperar(a.includes("guardado=no")).verdadero(
+      "y contárselo a quien acaba de pulsar Guardar",
+    );
+  });
+});
+
 // ─── El aviso de "no se está entregando" ─────────────────────────────────────
 describe("Avisos de la Bandeja", () => {
   test("el aviso de no entregado mira el ÚLTIMO envío, no cualquiera que falló", () => {

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { accionesDelPrompt } from "@/lib/ai/acciones";
 
@@ -54,6 +55,18 @@ export async function saveAiSettings(formData: FormData) {
     sistemaDescripcion: String(formData.get("sistemaDescripcion") ?? "").trim(),
   };
 
-  await createClient().from("bots").update({ ai }).eq("id", botId);
+  const { error } = await createClient().from("bots").update({ ai }).eq("id", botId);
+
   revalidatePath(`/bots/${botId}/ai`);
+
+  // DECIRLO. Antes esto guardaba y no pasaba NADA en pantalla: misma página,
+  // mismos campos, cero señal. El dueño del negocio le daba a Guardar, no veía
+  // nada y concluía que el botón estaba roto — cuando lo único roto era que
+  // nadie le contestaba. Y si de verdad falla, ahora también se entera, en vez
+  // de irse creyendo que quedó configurado.
+  if (error) {
+    console.error("[ia] no se pudo guardar la configuración:", error.message);
+    redirect(`/bots/${botId}/ai?guardado=no`);
+  }
+  redirect(`/bots/${botId}/ai?guardado=si`);
 }

@@ -12,7 +12,13 @@ import { Sparkles, BookOpen } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-export default async function BotAiPage({ params }: { params: { id: string } }) {
+export default async function BotAiPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams?: { guardado?: string };
+}) {
   const supabase = createClient();
   let { data: bot } = await supabase.from("bots").select("id, name, channel, ai").eq("id", params.id).maybeSingle();
   if (!bot) {
@@ -92,6 +98,25 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
             </div>
           </Link>
         </div>
+
+        {/* El aviso va ARRIBA del formulario y no junto al botón: al guardar,
+            la página vuelve al principio y un mensaje pegado al botón se
+            quedaría fuera de pantalla — que es lo mismo que no ponerlo.
+            Es HERMANO del formulario, así que lleva su propio margen: el
+            `col-span` de la rejilla no le aplicaría. */}
+        {searchParams?.guardado === "si" && (
+          <div className="mb-5 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
+            ✓ Configuración guardada.{" "}
+            {ai.herramientas?.length
+              ? `Tu asistente puede: ${ai.herramientas.join(", ")}.`
+              : "Tu asistente solo conversa: no marcaste ninguna acción."}
+          </div>
+        )}
+        {searchParams?.guardado === "no" && (
+          <div className="mb-5 rounded-xl border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm text-danger">
+            No se pudo guardar. Vuelve a intentarlo; si sigue pasando, avísanos.
+          </div>
+        )}
 
         <form action={saveAiSettings} className="grid grid-cols-1 gap-5 lg:grid-cols-3">
           <input type="hidden" name="bot_id" value={bot.id} />
