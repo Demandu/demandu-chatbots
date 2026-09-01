@@ -7,6 +7,7 @@
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
+import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { paisDesdeTelefono, bandera, nombrePais } from "../../src/lib/phoneCountry.ts";
 import { limpiarAtajo, rellenar, filtrar } from "../../src/lib/quickReplies.ts";
 import { enSilencio, debeAvisar, PREFS_DEFAULT } from "../../src/lib/notifications.ts";
@@ -477,6 +478,58 @@ describe("Leer una pagina web", () => {
     // Sin saltos, "Horario9 a 18Telefono" queda pegado y la IA lo lee mal.
     const { text } = htmlToText("<body><p>Horario</p><p>9 a 18</p><p>Telefono</p></body>");
     esperar(text.split("\n").length).mayorQue(2, "los parrafos deben quedar separados");
+  });
+});
+
+// ─── Las acciones «/» del prompt ─────────────────────────────────────────────
+/**
+ * El «/» del prompt enciende herramientas que ESCRIBEN en la ficha de los
+ * leads y transfieren conversaciones. Que se encienda de más es tan malo como
+ * que no se encienda: por eso las pruebas de lo que NO debe contar pesan más
+ * que las de lo que sí.
+ */
+describe("Acciones escritas con «/» en el prompt", () => {
+  test("reconoce una acción al principio y en medio del texto", () => {
+    esperar(accionesDelPrompt("/etiquetar como lead-alto")).igual(["etiquetar"]);
+    esperar(accionesDelPrompt("Si pide factura, /pasar_a_humano.")).igual(["pasar_a_humano"]);
+  });
+
+  test("no repite la misma acción", () => {
+    esperar(accionesDelPrompt("/etiquetar aquí y /etiquetar allá")).igual(["etiquetar"]);
+  });
+
+  test("una FECHA no enciende nada", () => {
+    // «Atendemos del 12/09 al 30/09» no puede activar herramientas.
+    esperar(accionesDelPrompt("Promoción del 12/09 al 30/09")).igual([]);
+  });
+
+  test("una DIRECCIÓN no enciende nada", () => {
+    // Ni aunque lleve el nombre de una acción dentro de la ruta.
+    esperar(accionesDelPrompt("Consulta https://misitio.com/etiquetar/precios")).igual([]);
+  });
+
+  test("una palabra inventada no enciende nada", () => {
+    // Pasó de verdad: un prompt pedía `crear_lead_hubspot`, que no existe.
+    esperar(accionesDelPrompt("/crear_lead_hubspot con el nombre")).igual([]);
+  });
+
+  test("una barra pegada a una letra no cuenta", () => {
+    esperar(accionesDelPrompt("cliente/etiquetar")).igual([]);
+    esperar(accionesDelPrompt("y/o /etiquetar")).igual(["etiquetar"]);
+  });
+
+  test("un prompt vacío o nulo no revienta", () => {
+    esperar(accionesDelPrompt("")).igual([]);
+    esperar(accionesDelPrompt(null)).igual([]);
+    esperar(accionesDelPrompt(undefined)).igual([]);
+  });
+
+  test("reconoce todas las acciones del catálogo", () => {
+    // Guardián: si alguien añade una acción al catálogo y no al motor, o al
+    // revés, esto lo destapa antes de que un cliente escriba una que no hace nada.
+    const texto = CLAVES_DE_ACCION.map((c) => `/${c}`).join(" ");
+    esperar(accionesDelPrompt(texto).sort()).igual([...CLAVES_DE_ACCION].sort());
+    esperar(CLAVES_DE_ACCION.length >= 6).verdadero("el catálogo se quedó corto");
   });
 });
 

@@ -8,7 +8,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "37";
+const VERSION_MOTOR = "38";
 
 /**
  * Diagnóstico de la IA del motor.
@@ -603,8 +603,51 @@ async function pasoElTopeDeIA(ctx: any): Promise<boolean> {
  *
  * Ver `herramientas.md` en esta misma carpeta para el porqué completo.
  */
+const CLAVES_DE_ACCION = [
+  "etiquetar", "pasar_a_humano", "guardar_dato",
+  "ver_horarios", "agendar_cita", "consultar_sistema",
+];
+
+/**
+ * Las acciones que menciona un prompt, escritas con «/».
+ *
+ * GEMELO de `accionesDelPrompt` en `src/lib/ai/acciones.ts`. Son dos porque
+ * son runtimes distintos; hay una prueba estática que falla si dejan de
+ * comportarse igual.
+ *
+ * POR QUÉ EL PROMPT MANDA. Antes había que escribir el criterio en el prompt Y
+ * acordarse de encender la herramienta en otra pantalla. Nadie se acuerda: se
+ * vio un prompt de dos páginas pidiendo etiquetar y transferir con CERO
+ * herramientas activadas. La IA solo podía hablar y no tenía forma de decirlo.
+ *
+ * La expresión es estricta a propósito: un prompt lleva fechas («12/09») y
+ * direcciones («https://…/x»). Si cualquier barra encendiera acciones, un
+ * cliente acabaría con herramientas que ESCRIBEN en las fichas de sus leads
+ * sin haberlas pedido.
+ */
+function accionesDelPrompt(prompt: string | null | undefined): string[] {
+  const texto = String(prompt ?? "");
+  if (!texto) return [];
+  const encontradas = new Set<string>();
+  for (const m of texto.matchAll(/(^|[\s(])\/([a-z_]+)/gm)) {
+    if (CLAVES_DE_ACCION.includes(m[2])) encontradas.add(m[2]);
+  }
+  return [...encontradas];
+}
+
 async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; contexto: string }> {
-  const quiere: string[] = Array.isArray(ai.herramientas) ? ai.herramientas : [];
+  // LO QUE PIDE EL PROMPT CUENTA IGUAL QUE LO MARCADO EN LA PANTALLA.
+  //
+  // Se unen en vez de sustituirse: quien ya tenía herramientas marcadas no
+  // pierde ninguna por escribir un prompt nuevo, y quien escribe `/etiquetar`
+  // no tiene que ir a otra pantalla a encenderlo.
+  //
+  // `ai.persona` es el prompt que de verdad se está usando: si el bloque del
+  // flujo trae el suyo, ya lo ha sustituido antes de llegar aquí. Así el «/»
+  // funciona igual escrito en la pantalla de Lana IA o dentro del bloque.
+  const marcadas: string[] = Array.isArray(ai.herramientas) ? ai.herramientas : [];
+  const escritas = accionesDelPrompt(ai.persona);
+  const quiere: string[] = [...new Set([...marcadas, ...escritas])];
   if (!quiere.length) return { tools: [], contexto: "" };
 
   const tools: any[] = [];

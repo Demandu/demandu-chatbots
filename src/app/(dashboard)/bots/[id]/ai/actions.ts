@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { accionesDelPrompt } from "@/lib/ai/acciones";
 
 /** Las herramientas que puede tener un agente. El motor conoce estos mismos nombres. */
 const HERRAMIENTAS = [
@@ -34,7 +35,17 @@ export async function saveAiSettings(formData: FormData) {
     // ── EL AGENTE ────────────────────────────────────────────────────────────
     // Qué puede HACER, además de hablar. Vacío = solo conversa, que es como se
     // comportaba antes de que existieran las herramientas.
-    herramientas: HERRAMIENTAS.filter((h) => formData.get(`h_${h}`) === "on"),
+    // Lo marcado en las casillas MÁS lo que pide el prompt con «/».
+    //
+    // Se unen porque son dos formas de decir lo mismo y ninguna debe pisar a
+    // la otra: quien marcó casillas no las pierde por escribir un prompt, y
+    // quien escribe `/etiquetar` no tiene que acordarse de venir a marcar
+    // nada. Antes hacían falta las dos cosas, y el resultado real fue un
+    // prompt de dos páginas pidiendo etiquetar con cero herramientas activas.
+    herramientas: [...new Set([
+      ...HERRAMIENTAS.filter((h) => formData.get(`h_${h}`) === "on"),
+      ...accionesDelPrompt(String(formData.get("persona") ?? "")),
+    ])],
     // Cuándo etiquetar, cuándo calificar, cuándo pasar con alguien. En español
     // y escrito por el cliente: es lo que hace que el mismo código sirva para
     // una clínica y para una inmobiliaria.

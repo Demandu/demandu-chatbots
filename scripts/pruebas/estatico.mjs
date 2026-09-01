@@ -915,6 +915,32 @@ describe("Agente de IA con herramientas", () => {
     );
   });
 
+  test("los dos motores encienden acciones desde el prompt igual", () => {
+    // El «/» del prompt está implementado dos veces (Deno y Node). Si uno
+    // reconociera una acción que el otro no, el mismo prompt haría cosas
+    // distintas en WhatsApp y en la web — la peor clase de diferencia, porque
+    // el cliente no tiene forma de verla.
+    const claves = (t) => {
+      const i = t.indexOf("CLAVES_DE_ACCION");
+      const j = t.indexOf("]", i);
+      return [...t.slice(i, j).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort();
+    };
+    const cat = fs.readFileSync(path.join(RAIZ, "src/lib/ai/acciones.ts"), "utf8");
+    const enWa = claves(wa);
+    esperar(enWa.length >= 6).verdadero(`leí ${enWa.length} acciones en el motor; el regex ya no casa`);
+
+    const enCatalogo = [...cat.matchAll(/clave: "([a-z_]+)"/g)].map((m) => m[1]).sort();
+    esperar(enCatalogo.length >= 6).verdadero("el catálogo se leyó vacío: el regex ya no casa");
+    esperar(JSON.stringify(enWa) === JSON.stringify(enCatalogo)).verdadero(
+      `el motor conoce [${enWa}] y el catálogo [${enCatalogo}]`,
+    );
+
+    // Y la expresión que las busca tiene que ser la misma en los dos sitios.
+    const patron = /\(\^\|\[\\s\(\]\)\\\/\(\[a-z_\]\+\)/;
+    esperar(patron.test(wa)).verdadero("el motor de WhatsApp no usa la expresión estricta");
+    esperar(patron.test(cat)).verdadero("el catálogo no usa la expresión estricta");
+  });
+
   test("ningún motor reparte por su cuenta", () => {
     // El reparto lo hace un disparador de la base (migración 0016 + 0064). Si
     // un motor además repartiera, habría dos repartos pisándose y nadie sabría

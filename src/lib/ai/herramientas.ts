@@ -1,5 +1,6 @@
 import "server-only";
 import { horariosLibres, agendar } from "@/lib/agenda";
+import { accionesDelPrompt } from "@/lib/ai/acciones";
 import { emitir } from "@/lib/salidas";
 
 /**
@@ -44,6 +45,8 @@ export type ContextoAgente = {
 /** Ajustes del agente que vienen de `bots.ai`. */
 export type AjustesAgente = {
   herramientas?: string[];
+  /** El prompt que se está usando de verdad. De aquí salen las acciones «/». */
+  persona?: string;
   criterios?: string;
   sistemaUrl?: string;
   sistemaDescripcion?: string;
@@ -80,7 +83,11 @@ export async function armarHerramientas(
   ctx: ContextoAgente,
   ai: AjustesAgente,
 ): Promise<{ tools: any[]; contexto: string }> {
-  const quiere: string[] = Array.isArray(ai.herramientas) ? ai.herramientas : [];
+  // LO QUE PIDE EL PROMPT CUENTA IGUAL QUE LO MARCADO EN LA PANTALLA. Ver
+  // `acciones.ts` para el porqué. Se unen: nadie pierde lo que ya tenía.
+  const marcadas: string[] = Array.isArray(ai.herramientas) ? ai.herramientas : [];
+  const escritas = accionesDelPrompt(ai.persona);
+  const quiere: string[] = [...new Set([...marcadas, ...escritas])];
   if (!quiere.length) return { tools: [], contexto: "" };
 
   const tools: any[] = [];

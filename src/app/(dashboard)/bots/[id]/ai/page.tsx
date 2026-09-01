@@ -4,6 +4,7 @@ import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
 import { LanaSays } from "@/components/Lana";
 import { AiTester } from "@/components/ai/AiTester";
+import { EditorDePrompt } from "@/components/EditorDePrompt";
 import { createClient } from "@/lib/supabase/server";
 import { AI_DEFAULTS, aiConfigured } from "@/lib/ai/answer";
 import { saveAiSettings } from "./actions";
@@ -29,6 +30,12 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
     .select("id", { count: "exact", head: true })
     .eq("bot_id", params.id)
     .eq("enabled", true);
+
+  // Las etiquetas REALES del cliente, para poder avisar en el editor si el
+  // prompt pide `/etiquetar` y no hay ninguna creada — que es una de esas
+  // configuraciones que fallan en silencio.
+  const { data: etiquetas } = await supabase.from("tags").select("name").order("name");
+  const nombresDeEtiquetas = ((etiquetas ?? []) as any[]).map((t) => t.name);
 
   const ai = { ...AI_DEFAULTS, ...(((bot as any).ai as any) ?? {}) };
   const lista = aiConfigured();
@@ -107,7 +114,7 @@ export default async function BotAiPage({ params }: { params: { id: string } }) 
                   {/* Un prompt de personalidad real ocupa varios párrafos. Con
                       80px se veían dos líneas y media y el texto quedaba
                       cortado a media palabra, como si se hubiera perdido. */}
-                  <textarea name="persona" defaultValue={ai.persona} className="input-l min-h-[190px]" />
+                  <EditorDePrompt name="persona" defaultValue={ai.persona} etiquetas={nombresDeEtiquetas} />
                   <p className="mt-1 text-[11px] text-ink-3">
                     Ej: “Eres Sofía, asistente de Pastelería La Dulce. Ayudas con pedidos y dudas de productos.”
                   </p>
