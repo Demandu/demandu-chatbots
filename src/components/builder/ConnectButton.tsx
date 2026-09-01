@@ -98,13 +98,51 @@ export function ConnectButton({
               </div>
             )}
 
-            {(channel === "instagram" || channel === "messenger") && (
+            {channel === "instagram" && (
+              <div className="space-y-3 text-sm text-ink-2">
+                <p>
+                  Se abrirá el permiso oficial de Meta. Inicia sesión con Facebook y{" "}
+                  <b className="text-ink">marca la página que tiene tu Instagram</b> — ahí es donde
+                  se cuelga la cuenta.
+                </p>
+
+                {/* LOS REQUISITOS VAN ANTES DEL BOTÓN, no en un error después.
+                    Si la cuenta no es profesional o no está ligada a una
+                    página, Meta devuelve una lista vacía y el cliente ve un
+                    fallo que no entiende. Decirlo aquí cuesta tres renglones y
+                    ahorra la llamada a soporte. */}
+                <div className="rounded-xl border border-linea bg-suave/50 p-3 text-[12px] leading-relaxed">
+                  <p className="mb-1 font-semibold text-ink">Antes de empezar, tu Instagram necesita:</p>
+                  <ul className="space-y-0.5">
+                    <li>· Ser cuenta <b className="text-ink">profesional</b> (de empresa o creador).</li>
+                    <li>· Estar <b className="text-ink">ligada a una página de Facebook</b>.</li>
+                    <li>· Que tú puedas administrar esa página.</li>
+                  </ul>
+                </div>
+
+                <a
+                  href={`/api/integrations/instagram/start?bot=${encodeURIComponent(botId)}`}
+                  className="btn-primary inline-flex w-full items-center justify-center gap-2"
+                >
+                  <Plug className="h-4 w-4" /> Conectar Instagram
+                </a>
+
+                <p className="text-[12px] leading-relaxed text-ink-3">
+                  Podrá responder mensajes directos, respuestas a tus historias y comentarios en tus
+                  publicaciones y reels.
+                </p>
+              </div>
+            )}
+
+            {channel === "messenger" && (
               <div className="space-y-3 text-sm text-ink-2">
                 <p className="text-ink-2">
-                  Conecta tu cuenta con Facebook para que el chatbot responda {channel === "instagram" ? "DM, historias y comentarios de Instagram" : "los mensajes y comentarios de tu página de Facebook"}.
+                  Conecta tu cuenta con Facebook para que el chatbot responda los mensajes y
+                  comentarios de tu página de Facebook.
                 </p>
                 <div className="rounded-xl border border-warning/50 bg-warning/10 p-3 text-[12px] text-ink-2">
-                  La conexión de {LABEL[channel]} estará disponible muy pronto. Escríbenos a soporte y la habilitamos para tu cuenta.
+                  La conexión de Messenger estará disponible muy pronto. Escríbenos a soporte y la
+                  habilitamos para tu cuenta.
                 </div>
               </div>
             )}

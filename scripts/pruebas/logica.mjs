@@ -11,6 +11,8 @@ import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
+import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
+import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
 import { paisDesdeTelefono, bandera, nombrePais } from "../../src/lib/phoneCountry.ts";
 import { limpiarAtajo, rellenar, filtrar } from "../../src/lib/quickReplies.ts";
 import { enSilencio, debeAvisar, PREFS_DEFAULT } from "../../src/lib/notifications.ts";
@@ -646,6 +648,236 @@ describe("Origen por enlace [cmp:...]", () => {
   test("mayúsculas y espacios no rompen la atribución", () => {
     esperar(origenDelEnlace("Hola [CMP:Google-Verano]")?.anuncio_id).igual("Google-Verano");
     esperar(origenDelEnlace("[cmp: gads-verano ]")?.anuncio_id).igual("gads-verano");
+  });
+});
+
+// ─── Qué llega por Instagram ─────────────────────────────────────────────────
+//
+// LOS JSON DE ABAJO SON LOS DE LA DOCUMENTACIÓN DE META, copiados tal cual el
+// 1 sep 2026, no inventados. Es la única forma de que estas pruebas signifiquen
+// algo: si me invento el formato, pruebo que mi código entiende mi invento.
+describe("Instagram: entender lo que llega", () => {
+  const NEGOCIO = "17841453763777297";
+
+  const sobre = (entry) => ({ object: "instagram", entry: [{ id: NEGOCIO, time: 1569262486134, ...entry }] });
+
+  test("un mensaje directo normal", () => {
+    const e = leerEventos(sobre({
+      messaging: [{
+        sender: { id: "SENDER" }, recipient: { id: NEGOCIO }, timestamp: 1569262485349,
+        message: { mid: "MID_1", text: "Hola, ¿cuánto cuesta?" },
+      }],
+    }));
+    esperar(e.length).igual(1);
+    esperar(e[0].tipo).igual("dm");
+    esperar(e[0].texto).igual("Hola, ¿cuánto cuesta?");
+    esperar(e[0].de).igual("SENDER");
+    esperar(e[0].cuentaNegocio).igual(NEGOCIO, "el id del entry es la cuenta del NEGOCIO, no de quien escribe");
+  });
+
+  test("EL ECO NO SE ATIENDE — esto es lo que evita el bucle infinito", () => {
+    // Instagram devuelve por el webhook los mensajes que manda el propio
+    // negocio. Sin descartarlos, el bot se lee, se contesta, se vuelve a leer
+    // y no para nunca. Es el error clásico de toda integración de Messenger, y
+    // el más caro: consume la cuota del cliente y le llena la Bandeja.
+    const e = leerEventos(sobre({
+      messaging: [{
+        sender: { id: NEGOCIO }, recipient: { id: "SENDER" }, timestamp: 1,
+        message: { mid: "MID_ECO", text: "Claro, cuesta $100", is_echo: true },
+      }],
+    }));
+    esperar(e.length).igual(0, "un eco del propio negocio no puede entrar como mensaje del cliente");
+  });
+
+  test("una respuesta a una historia se distingue de un DM", () => {
+    const e = leerEventos(sobre({
+      messaging: [{
+        sender: { id: "SENDER" }, recipient: { id: NEGOCIO }, timestamp: 1,
+        message: {
+          mid: "MID_2",
+          text: "me interesa",
+          reply_to: { story: { url: "https://cdn/story.jpg", id: "STORY_9" } },
+        },
+      }],
+    }));
+    esperar(e[0].tipo).igual("respuesta_historia");
+    esperar(e[0].historiaId).igual("STORY_9");
+    esperar(e[0].texto).igual("me interesa");
+  });
+
+  test("una mención en historia entra aunque no traiga texto", () => {
+    // No trae texto ninguno. Si el motor recibiera la cadena vacía no
+    // dispararía nada, y el cliente quiere justo eso: «me mencionas y te mando
+    // el catálogo».
+    const e = leerEventos(sobre({
+      messaging: [{
+        sender: { id: "SENDER" }, recipient: { id: NEGOCIO }, timestamp: 1,
+        message: {
+          mid: "MID_3",
+          attachments: [{ type: "story_mention", payload: { url: "https://cdn/m.jpg" } }],
+        },
+      }],
+    }));
+    esperar(e.length).igual(1);
+    esperar(e[0].tipo).igual("mencion_historia");
+    esperar(textoParaElFlujo(e[0]).length > 0).verdadero(
+      "sin texto el flujo no arrancaría: hace falta una palabra estable contra la que escribir un disparador",
+    );
+  });
+
+  test("un comentario en una publicación", () => {
+    const e = leerEventos(sobre({
+      changes: [{
+        field: "comments",
+        value: {
+          id: "COMENTARIO_1",
+          from: { id: "IGSID_7", username: "juanito" },
+          text: "PRECIO",
+          media: { id: "MEDIA_5", media_product_type: "FEED" },
+        },
+      }],
+    }));
+    esperar(e[0].tipo).igual("comentario");
+    esperar(e[0].comentarioId).igual("COMENTARIO_1");
+    esperar(e[0].mediaId).igual("MEDIA_5");
+    esperar(e[0].usuario).igual("juanito");
+    esperar(e[0].tipoDeMedia).igual("FEED");
+  });
+
+  test("el comentario también se entiende si Meta lo cuelga del entry", () => {
+    // La documentación lo enseña de las dos formas según la página. Apostar
+    // por una sola es firmar que el día que cambien, el cliente se queda sin
+    // comentarios y nadie sabe por qué.
+    const e = leerEventos({
+      object: "instagram",
+      entry: [{
+        id: NEGOCIO, time: 1,
+        field: "comments",
+        value: { id: "C2", from: { id: "U", username: "ana" }, text: "info", media: { id: "M" } },
+      }],
+    });
+    esperar(e.length).igual(1);
+    esperar(e[0].comentarioId).igual("C2");
+  });
+
+  test("EL BOT NO SE RESPONDE A SÍ MISMO EN PÚBLICO", () => {
+    // Cuando el bot contesta en público a un comentario, esa respuesta vuelve
+    // por el webhook como un comentario más. Sin esta guardia se contesta a sí
+    // mismo, en público, delante de todos los seguidores del cliente.
+    const e = leerEventos(sobre({
+      changes: [{
+        field: "comments",
+        value: { id: "C3", from: { id: NEGOCIO, username: "demandu.tech" }, text: "¡Te escribimos por DM!" },
+      }],
+    }));
+    esperar(e.length).igual(0, "un comentario del propio negocio no se atiende");
+  });
+
+  test("un comentario en vivo se distingue del normal", () => {
+    const e = leerEventos(sobre({
+      changes: [{ field: "live_comments", value: { id: "C4", from: { id: "U" }, text: "hola" } }],
+    }));
+    esperar(e[0].tipo).igual("comentario_vivo");
+  });
+
+  test("solo los DM y las historias abren conversación; un comentario no", () => {
+    // Hasta que la persona no contesta al DM, Instagram no deja escribirle.
+    // Meter el comentario en la Bandeja como una charla normal haría que el
+    // equipo intentara responder a alguien que no puede recibir.
+    const dm = leerEventos(sobre({ messaging: [{ sender: { id: "S" }, message: { mid: "m", text: "hola" } }] }))[0];
+    const com = leerEventos(sobre({ changes: [{ field: "comments", value: { id: "C", from: { id: "U" }, text: "x" } }] }))[0];
+    esperar(abreConversacion(dm)).verdadero();
+    esperar(abreConversacion(com)).falso("un comentario todavía no es una conversación");
+  });
+
+  test("las reacciones y los acuses de lectura no son mensajes", () => {
+    // Un corazón no es una pregunta. Contestarlo haría que el bot hablara solo.
+    //
+    // OJO CON CÓMO SE ESCRIBE ESTA PRUEBA. La primera versión mandaba estos
+    // avisos CON un `message` de texto vacío, así que los descartaba la
+    // guardia de «sin texto y sin adjuntos» y la guardia de reacciones no se
+    // ejercitaba nunca: la prueba pasaba igual con la guardia borrada. Se
+    // descubrió mutando el código a propósito, que es justo para lo que sirve.
+    //
+    // Ahora se manda la forma REAL (sin `message`) y además una reacción que sí
+    // trae texto, que es el caso en el que la guardia es lo único que separa
+    // «el cliente preguntó algo» de «el cliente puso un corazón».
+    for (const ruido of [
+      { sender: { id: "S" }, reaction: { mid: "m", action: "react", emoji: "❤️", reaction: "love" } },
+      { sender: { id: "S" }, read: { mid: "m", watermark: 1 } },
+      { sender: { id: "S" }, delivery: { mids: ["m"], watermark: 1 } },
+      { sender: { id: "S" }, reaction: { mid: "m", action: "react", emoji: "❤️" }, message: { mid: "m", text: "❤️" } },
+      { sender: { id: "S" }, read: { mid: "m" }, message: { mid: "m", text: "leído" } },
+    ]) {
+      esperar(leerEventos(sobre({ messaging: [ruido] })).length).igual(0, JSON.stringify(ruido).slice(0, 60));
+    }
+  });
+
+  test("basura y campos nuevos no revientan el webhook", () => {
+    // El día que Meta añada un campo, el webhook de un cliente no puede caerse.
+    for (const raro of [
+      null, undefined, {}, { object: "page", entry: [] }, { object: "instagram" },
+      { object: "instagram", entry: [{}] },
+      { object: "instagram", entry: [{ id: NEGOCIO, changes: [{ field: "invento_nuevo", value: { x: 1 } }] }] },
+      { object: "instagram", entry: [{ id: NEGOCIO, messaging: [{ sender: {} }] }] },
+    ]) {
+      esperar(Array.isArray(leerEventos(raro))).verdadero(`reventó con ${JSON.stringify(raro)}`);
+    }
+    esperar(leerEventos({ object: "instagram", entry: [{ id: NEGOCIO, changes: [{ field: "invento_nuevo" }] }] }).length)
+      .igual(0, "un campo que no conocemos se ignora, no se inventa un evento");
+  });
+
+  test("la firma de Meta: solo pasa la buena", () => {
+    // El webhook de Instagram es PÚBLICO y sin sesión: Meta llama desde sus
+    // servidores, así que no hay cookie ni RLS. Esta firma es lo único que
+    // impide que cualquiera invente mensajes de clientes, llene la Bandeja de
+    // un negocio con conversaciones falsas y le gaste la cuota de IA.
+    const cuerpo = JSON.stringify({ object: "instagram", entry: [{ id: NEGOCIO }] });
+    const secreto = "secreto-de-la-app";
+
+    esperar(firmaValida(cuerpo, firmarComoMeta(cuerpo, secreto), secreto)).verdadero(
+      "la firma correcta tiene que pasar",
+    );
+
+    const malas = [
+      [firmarComoMeta(cuerpo, "otro-secreto"), "firmado con otro secreto"],
+      [firmarComoMeta(cuerpo + " ", secreto), "el cuerpo cambió aunque sea un espacio"],
+      [null, "sin cabecera"],
+      [undefined, "cabecera indefinida"],
+      ["", "cabecera vacía"],
+      [firmarComoMeta(cuerpo, secreto).replace("sha256=", ""), "sin el prefijo sha256="],
+      ["sha256=" + "0".repeat(64), "todo ceros"],
+      ["sha256=no-es-hex-en-absoluto", "no es hexadecimal"],
+      ["sha256=abc", "hex demasiado corto"],
+      ["sha1=" + "0".repeat(40), "algoritmo viejo"],
+    ];
+    for (const [cabecera, porque] of malas) {
+      esperar(firmaValida(cuerpo, cabecera, secreto)).falso(`no debía pasar: ${porque}`);
+    }
+  });
+
+  test("sin secreto configurado NO se acepta nada", () => {
+    // La tentación es devolver `true` cuando falta el secreto «para que
+    // funcione en pruebas». Eso convertiría un despliegue mal configurado en un
+    // endpoint abierto a internet, y nadie se enteraría: todo seguiría
+    // pareciendo correcto desde fuera.
+    const cuerpo = "{}";
+    esperar(firmaValida(cuerpo, firmarComoMeta(cuerpo, ""), "")).falso(
+      "sin secreto no se puede verificar nada, así que no se acepta nada",
+    );
+  });
+
+  test("un webhook con varias cosas dentro las devuelve todas", () => {
+    // Meta agrupa. Atender solo la primera perdería mensajes en silencio.
+    const e = leerEventos(sobre({
+      messaging: [
+        { sender: { id: "A" }, message: { mid: "m1", text: "uno" } },
+        { sender: { id: "B" }, message: { mid: "m2", text: "dos" } },
+      ],
+      changes: [{ field: "comments", value: { id: "C9", from: { id: "U" }, text: "tres" } }],
+    }));
+    esperar(e.length).igual(3);
+    esperar(e.map((x) => x.texto).join(",")).igual("uno,dos,tres");
   });
 });
 

@@ -1596,6 +1596,83 @@ describe("Poder salir de la plataforma", () => {
   });
 });
 
+// ─── El webhook de Instagram ─────────────────────────────────────────────────
+describe("Instagram: la puerta de entrada", () => {
+  const firma = fs.readFileSync(path.join(RAIZ, "src/lib/canales/instagramFirma.ts"), "utf8");
+  // SIN COMENTARIOS, y esto ya me ha mordido dos veces hoy: el comentario que
+  // explica «no uses req.json() aquí» contiene esa llamada, y la prueba la
+  // encontraba y fallaba contra un código correcto. Una prueba que reacciona a
+  // la prosa no está mirando el código.
+  const ruta = sinComentarios(
+    fs.readFileSync(path.join(RAIZ, "src/app/api/webhooks/instagram/route.ts"), "utf8"),
+  );
+
+  test("la firma se compara en tiempo constante", () => {
+    // ESTA PRUEBA ES ESTÁTICA A PROPÓSITO, y es la única forma de vigilar esto.
+    // Se comprobó mutando el código: cambiar `timingSafeEqual` por `===` deja
+    // pasar TODAS las pruebas funcionales, porque el resultado es idéntico y lo
+    // único que cambia es cuánto tarda en darlo. Esa diferencia de
+    // microsegundos es justo lo que deja adivinar una firma byte a byte.
+    esperar(firma.includes("timingSafeEqual(mio, suyo)")).verdadero(
+      "la firma tiene que compararse con timingSafeEqual, nunca con === ni con localeCompare",
+    );
+  });
+
+  test("el cuerpo se lee CRUDO, no con req.json()", () => {
+    // El HMAC se calcula sobre los bytes exactos que mandó Meta. Parsear y
+    // volver a serializar cambia espacios y orden, y entonces una firma
+    // perfectamente válida se rechazaría: el webhook dejaría de funcionar
+    // entero y el motivo no se ve por ningún lado.
+    const i = ruta.indexOf("const crudo = await req.text()");
+    esperar(i > 0).verdadero("hay que leer el cuerpo como texto para poder verificar la firma");
+    const antes = ruta.slice(0, i);
+    esperar(antes.includes("req.json()")).falso(
+      "si se parsea antes de firmar, el HMAC ya no cuadra con lo que mandó Meta",
+    );
+  });
+
+  test("sin firma válida no se procesa nada", () => {
+    // El orden importa: primero la firma, después todo lo demás. Este endpoint
+    // es público y sin sesión; la firma es lo único que lo separa de un
+    // formulario abierto a internet.
+    const iFirma = ruta.indexOf("firmaValida(crudo");
+    const iLeer = ruta.indexOf("leerEventos(cuerpo)");
+    esperar(iFirma > 0 && iLeer > 0).verdadero("no encuentro la verificación o el procesado");
+    esperar(iFirma < iLeer).verdadero("la firma se comprueba ANTES de procesar, no después");
+  });
+
+  test("se contesta 200 aunque algo falle procesando", () => {
+    // Si Meta recibe un error, reintenta; y si reintenta muchas veces,
+    // DESACTIVA la suscripción del cliente. Un fallo tonto con un mensaje no
+    // puede acabar en «a este cliente le dejó de funcionar Instagram» sin que
+    // nadie sepa desde cuándo.
+    const i = ruta.indexOf("const eventos = leerEventos(cuerpo)");
+    esperar(ruta.slice(Math.max(0, i - 200), i).includes("try {")).verdadero(
+      "procesar va dentro de un try: un fallo no puede hacer que Meta desactive el webhook",
+    );
+  });
+
+  test("no se atiende dos veces el mismo mensaje", () => {
+    // Meta reintenta. Sin esto el bot contesta dos veces al mismo mensaje, que
+    // es de las cosas que más rápido hacen que un cliente pierda la confianza.
+    esperar(ruta.includes("mensajes_vistos")).verdadero(
+      "hace falta anotar el mensaje para no atenderlo en un reintento",
+    );
+  });
+
+  test("el turno de la respuesta privada se pide ANTES de enviar", () => {
+    // Meta permite UNA respuesta privada por comentario. Si se enviara primero
+    // y se anotara después, dos entregas del mismo webhook mandarían dos y la
+    // segunda se estrellaría — habiendo quemado el único disparo.
+    const iTurno = ruta.indexOf("tomar_turno_respuesta_privada");
+    const iEnvio = ruta.indexOf("responderEnPrivado(canal.ig_user_id");
+    esperar(iTurno > 0 && iEnvio > 0).verdadero("no encuentro el turno o el envío privado");
+    esperar(iTurno < iEnvio).verdadero(
+      "primero se pide el turno, después se envía: al revés se pierde el único disparo",
+    );
+  });
+});
+
 // ─── La barrera entre servidor y navegador ───────────────────────────────────
 describe("Servidor y navegador", () => {
   test("ningún componente de cliente importa un módulo de solo-servidor", () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { enviarTexto, enviarArchivo, type ResultadoEnvio } from "@/lib/canales/whatsappEnviar";
+import { enviarDm, enviarAdjuntoDm } from "@/lib/canales/instagramEnviar";
 
 export const dynamic = "force-dynamic";
 
@@ -85,9 +86,40 @@ export async function POST(req: Request) {
     if (!envio.ok) payload.no_entregado = { motivo: envio.error ?? "No se pudo enviar", code: envio.code ?? null };
   }
 
-  // Instagram y Messenger entran aquí cuando estén conectados. Hasta entonces
-  // se dice la verdad en vez de guardar en silencio algo que nadie recibió.
-  if (conv.channel === "instagram" || conv.channel === "messenger") {
+  // ── Instagram ────────────────────────────────────────────────────────────
+  //
+  // OJO CON LA VENTANA DE 24 HORAS. Instagram solo deja contestar dentro de las
+  // 24 h siguientes al último mensaje del cliente, y no hay plantillas como en
+  // WhatsApp para reabrirla: pasado ese plazo, no hay forma de escribirle. El
+  // agente tiene que enterarse en el momento, no descubrirlo por el silencio.
+  if (conv.channel === "instagram") {
+    const { data: canal } = await sb
+      .from("instagram_channels")
+      .select("ig_user_id, access_token")
+      .eq("org_id", conv.org_id)
+      .maybeSingle();
+
+    const igsid = String((conv as any).contact?.external_id ?? "");
+
+    let envio: ResultadoEnvio;
+    if (!canal?.ig_user_id || !canal?.access_token) {
+      envio = { ok: false, error: "Todavía no hay una cuenta de Instagram conectada en Conexión." };
+    } else if (!igsid) {
+      envio = { ok: false, error: "Este contacto no tiene identificador de Instagram." };
+    } else if (adjunto?.url) {
+      envio = await enviarAdjuntoDm(
+        canal.ig_user_id, canal.access_token, igsid, adjunto.url, adjunto.tipo ?? "",
+      );
+    } else {
+      envio = await enviarDm(canal.ig_user_id, canal.access_token, igsid, cuerpo);
+    }
+
+    if (!envio.ok) payload.no_entregado = { motivo: envio.error ?? "No se pudo enviar", code: envio.code ?? null };
+  }
+
+  // Messenger entra aquí cuando esté conectado. Hasta entonces se dice la
+  // verdad en vez de guardar en silencio algo que nadie recibió.
+  if (conv.channel === "messenger") {
     payload.no_entregado = {
       motivo: "Este canal todavía no está conectado, así que el cliente no recibió el mensaje.",
       code: null,

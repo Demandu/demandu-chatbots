@@ -15,7 +15,45 @@ const LABEL: Record<string, string> = {
   webchat: "tu sitio web",
 };
 
-export default async function BotInstallPage({ params }: { params: { id: string } }) {
+/**
+ * Lo que hay que decirle al cliente cuando vuelve de Meta.
+ *
+ * «Conectado» no es la única respuesta posible y fingir que sí sería lo peor:
+ * `sin_suscribir` significa que la cuenta quedó guardada pero NO va a llegar
+ * ni un mensaje. Un cliente que ve «listo» y se queda esperando mensajes
+ * tarda días en darse cuenta y llega enfadado, con razón.
+ */
+const AVISO_IG: Record<string, { tono: "bien" | "mal" | "ojo"; texto: string }> = {
+  conectado: { tono: "bien", texto: "Instagram quedó conectado. Escríbele un mensaje directo a tu cuenta para probarlo." },
+  cancelado: { tono: "ojo", texto: "No se conectó nada: cancelaste el permiso en Meta. Puedes intentarlo otra vez cuando quieras." },
+  sin_suscribir: {
+    tono: "mal",
+    texto: "La cuenta quedó guardada, pero Meta no aceptó activar los avisos, así que todavía NO van a llegar mensajes. Vuelve a intentarlo o escríbenos.",
+  },
+};
+const ERROR_IG: Record<string, string> = {
+  sin_cuentas:
+    "No encontramos ninguna cuenta de Instagram. Casi siempre es una de tres: la cuenta no es profesional, no está ligada a una página de Facebook, o no marcaste la página en la pantalla de Meta.",
+  cuenta_ya_conectada: "Esa cuenta de Instagram ya está conectada a otra organización de la plataforma.",
+  estado_invalido: "El enlace caducó o se abrió desde otro sitio. Vuelve a darle a Conectar.",
+  sin_configurar: "Falta terminar la configuración de Meta en el servidor. Escríbenos y lo dejamos listo.",
+  fallo_al_conectar: "Meta no completó la conexión. Vuelve a intentarlo en un momento.",
+};
+
+export default async function BotInstallPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
+  const s = (k: string) => {
+    const v = searchParams?.[k];
+    return typeof v === "string" ? v : "";
+  };
+  const avisoIg = AVISO_IG[s("ig")] ?? null;
+  const errorIg = ERROR_IG[s("error")] ?? null;
+
   const supabase = createClient();
   let { data: bot } = await supabase.from("bots").select("*").eq("id", params.id).maybeSingle();
   if (!bot) {
@@ -32,6 +70,12 @@ export default async function BotInstallPage({ params }: { params: { id: string 
   const { data: wa } = await supabase
     .from("whatsapp_channels")
     .select("display_number, phone_number_id, waba_id, access_token")
+    .eq("bot_id", params.id)
+    .maybeSingle();
+
+  const { data: ig } = await supabase
+    .from("instagram_channels")
+    .select("username, page_name, ig_user_id")
     .eq("bot_id", params.id)
     .maybeSingle();
 
@@ -56,15 +100,45 @@ export default async function BotInstallPage({ params }: { params: { id: string 
         </p>
 
         <div className="flex max-w-2xl flex-col gap-4">
+          {/* Lo que pasó al volver de Meta va ARRIBA DEL TODO. Sobre todo el
+              caso incómodo: cuenta guardada pero avisos sin activar, que se ve
+              igual que «conectado» y no lo es. */}
+          {avisoIg && (
+            <div
+              className={`rounded-2xl border p-4 text-sm leading-relaxed ${
+                avisoIg.tono === "bien"
+                  ? "border-success/40 bg-success/10 text-ink-2"
+                  : avisoIg.tono === "mal"
+                    ? "border-danger/40 bg-danger/10 text-ink-2"
+                    : "border-linea bg-suave/50 text-ink-2"
+              }`}
+            >
+              {avisoIg.texto}
+            </div>
+          )}
+          {errorIg && (
+            <div className="rounded-2xl border border-danger/40 bg-danger/5 p-4 text-sm leading-relaxed text-ink-2">
+              {errorIg}
+            </div>
+          )}
+
           {/* El diagnóstico va ARRIBA del botón: si algo está bloqueando los
               envíos, es lo primero que el cliente necesita ver. */}
           {diagnostico && <EstadoMeta d={diagnostico} />}
+
+          {channel === "instagram" && ig && (
+            <div className="rounded-2xl border border-success/40 bg-success/5 p-4 text-sm text-ink-2">
+              Conectado a{" "}
+              <b className="text-ink">{(ig as any).username ? `@${(ig as any).username}` : "tu cuenta"}</b>
+              {(ig as any).page_name ? <> · página <b className="text-ink">{(ig as any).page_name}</b></> : null}
+            </div>
+          )}
 
           <div className="card-l p-6">
             <ConnectButton
               channel={channel as any}
               botId={bot.id}
-              connected={!!wa}
+              connected={channel === "instagram" ? !!ig : !!wa}
               number={(wa as any)?.display_number ?? null}
             />
           </div>
