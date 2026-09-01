@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ACCIONES } from "@/lib/ai/acciones";
 
 /**
@@ -48,6 +48,7 @@ export function EditorDePrompt({
   className?: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const espejo = useRef<HTMLDivElement>(null);
   const [abierto, setAbierto] = useState(false);
   const [filtro, setFiltro] = useState("");
   const [modo, setModo] = useState<"acciones" | "etiquetas">("acciones");
@@ -59,6 +60,38 @@ export function EditorDePrompt({
     if (!controlado) setPropio(v);
     onValueChange?.(v);
   };
+
+  /**
+   * El texto partido en trozos, marcando dónde hay una acción.
+   *
+   * POR QUÉ UNA CAPA DETRÁS Y NO TEXTO DE COLOR. Un `<textarea>` no puede
+   * pintar partes de su propio contenido: o todo de un color, o nada. La
+   * técnica es poner DEBAJO un espejo del mismo texto, con la misma tipografía
+   * y los mismos márgenes, donde las acciones llevan fondo morado; encima va
+   * el textarea con el fondo transparente. Se ve el resaltado a través.
+   *
+   * Alineación al píxel o no sirve: espejo y textarea comparten la MISMA clase
+   * —mismo padding, mismo borde, mismo tamaño de letra— y se sincroniza el
+   * scroll. Cualquier diferencia se notaría como un resaltado corrido.
+   *
+   * Se marca la acción Y la palabra que la sigue, para que «/etiquetar
+   * lead-alto» se vea de una pieza: es una sola instrucción, no dos.
+   */
+  const trozos = useMemo(() => {
+    const partes: { t: string; accion?: boolean }[] = [];
+    let ultimo = 0;
+    for (const m of texto.matchAll(/(^|[\s(])\/([a-z_]+)([ \t]+[\wáéíóúñ-]+)?/gm)) {
+      const clave = m[2];
+      if (!ACCIONES.some((a) => a.clave === clave)) continue;
+      const desde = (m.index ?? 0) + m[1].length;
+      const hasta = desde + 1 + clave.length + (m[3]?.length ?? 0);
+      if (desde > ultimo) partes.push({ t: texto.slice(ultimo, desde) });
+      partes.push({ t: texto.slice(desde, hasta), accion: true });
+      ultimo = hasta;
+    }
+    partes.push({ t: texto.slice(ultimo) });
+    return partes;
+  }, [texto]);
 
   const usadas = new Set(
     [...texto.matchAll(/(^|[\s(])\/([a-z_]+)/gm)].map((m) => m[2]),
@@ -148,15 +181,44 @@ export function EditorDePrompt({
 
   return (
     <div className="relative">
+      {/* El espejo. `aria-hidden` porque para un lector de pantalla el texto
+          ya está en el textarea: leerlo dos veces sería peor que no marcarlo. */}
+      <div
+        ref={espejo}
+        aria-hidden
+        // `scrollbar-gutter: stable` en LOS DOS, y no es un detalle: en cuanto
+        // el prompt es largo, el textarea saca barra de scroll y su texto pasa
+        // a caber en menos ancho. El espejo, sin barra, partiría las líneas en
+        // otro sitio y el resaltado saldría corrido justo en los prompts
+        // largos — que son los únicos donde de verdad hace falta.
+        style={{ scrollbarGutter: "stable" }}
+        className={`${className} pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-transparent`}
+      >
+        {trozos.map((p, i) =>
+          p.accion ? (
+            <span key={i} className="rounded bg-violet/25 text-transparent ring-1 ring-violet/40">
+              {p.t}
+            </span>
+          ) : (
+            <span key={i}>{p.t}</span>
+          ),
+        )}
+        {/* Una línea de más: sin esto, al terminar el prompt con Enter el
+            espejo se queda una línea corto y el resaltado se desplaza. */}
+        {"\n"}
+      </div>
+
       <textarea
         ref={ref}
         name={name}
         value={texto}
         onChange={alEscribir}
+        onScroll={(e) => { if (espejo.current) espejo.current.scrollTop = e.currentTarget.scrollTop; }}
         onBlur={() => setTimeout(() => setAbierto(false), 150)}
         onKeyDown={(e) => { if (e.key === "Escape") setAbierto(false); }}
         placeholder={placeholder}
-        className={className}
+        style={{ scrollbarGutter: "stable" }}
+        className={`${className} relative !bg-transparent`}
       />
 
       {abierto && modo === "etiquetas" && (
