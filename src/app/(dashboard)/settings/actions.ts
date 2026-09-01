@@ -67,6 +67,48 @@ export async function deleteTag(formData: FormData) {
   revalidatePath("/settings/tags");
 }
 
+// ── Calificación automática ──────────────────────────────────────────────────
+/**
+ * «Si el ingreso es menos de 890, ponle lead-bajo.»
+ *
+ * ESTO NO ES UNA INSTRUCCIÓN PARA LA IA: es una regla que aplica la base en
+ * cuanto el dato entra en la ficha, lo escriba quien lo escriba. La IA solo
+ * tiene que capturar el número —que es lo que hace bien—; decidir la etiqueta
+ * ya no depende de que se acuerde.
+ */
+export async function crearReglaDeCalificacion(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+
+  const campo = s(formData.get("campo"));
+  const operador = s(formData.get("operador"));
+  const valor = s(formData.get("valor"));
+  const etiquetaId = s(formData.get("etiqueta_id"));
+  if (!campo || !operador || !etiquetaId) return;
+
+  await createClient().from("reglas_de_calificacion").insert({
+    org_id: orgId,
+    campo,
+    operador,
+    valor: valor || null,
+    etiqueta_id: etiquetaId,
+    // Las más nuevas mandan. Gana la primera regla que se cumple, así que el
+    // orden ES la regla: quien acaba de escribirla espera que pese más.
+    prioridad: Math.floor(Date.now() / 1000) % 100000,
+  });
+
+  revalidatePath("/settings/tags");
+}
+
+export async function quitarReglaDeCalificacion(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+  const id = s(formData.get("id"));
+  if (!id) return;
+  await createClient().from("reglas_de_calificacion").delete().eq("id", id).eq("org_id", orgId);
+  revalidatePath("/settings/tags");
+}
+
 // ── Reglas de reparto por etiqueta ───────────────────────────────────────────
 /**
  * «Si el lead es alto, que le toque a Darwin.»

@@ -1173,6 +1173,79 @@ describe("Qué flujo atiende", () => {
   });
 });
 
+// ─── Calificar sin depender del modelo ───────────────────────────────────────
+//
+// Pedirle a un modelo «etiqueta lead-bajo si gana menos de 890» funciona casi
+// siempre, y «casi» no sirve para una regla con dinero detrás. En la prueba del
+// 1 sep la IA capturó bien el ingreso (500) y aun así no etiquetó.
+describe("Calificación automática", () => {
+  const mig = fs.readFileSync(
+    path.join(RAIZ, "supabase/migrations/0066_calificacion_automatica.sql"), "utf8");
+
+  test("la regla la aplica la BASE, no el motor", () => {
+    // Si viviera en un motor, el otro no la aplicaría — y ya van tres veces que
+    // los dos motores se desincronizan.
+    esperar(mig.includes("create trigger contacts_calificar")).verdadero(
+      "tiene que dispararse solo al cambiar la ficha",
+    );
+    esperar(mig.includes("after insert or update of attributes, email, phone, name, company")).verdadero(
+      "tiene que mirar los DATOS, no las etiquetas",
+    );
+  });
+
+  test("etiquetar no vuelve a disparar la calificación", () => {
+    // `poner_etiqueta` solo toca `tags`; si el disparador escuchara `tags`,
+    // calificar provocaría calificar y sería un bucle infinito en producción.
+    const i = mig.indexOf("after insert or update of");
+    esperar(!/after insert or update of[^\n]*\btags\b/.test(mig.slice(i, i + 200))).verdadero(
+      "el disparador NO puede escuchar `tags`: se llamaría a sí mismo",
+    );
+    esperar(mig.includes("pg_trigger_depth() > 1")).verdadero(
+      "y hace falta el segundo cinturón por si alguien añade otro disparador",
+    );
+  });
+
+  test("sin dato NO se califica: desconocido no es lo mismo que bajo", () => {
+    // Sin esto, «menor que 890» se cumpliría para todo contacto nuevo y el
+    // primer mensaje de cualquiera lo marcaría como lead bajo.
+    esperar(mig.includes("if coalesce(trim(p_valor), '') = '' then return false; end if;")).verdadero(
+      "una ficha sin el dato no cumple ninguna comparación",
+    );
+  });
+
+  test("los números se leen aunque vengan sucios", () => {
+    // La gente escribe «1000 dolitas» y «$1,200.50». Comparar eso como texto
+    // diría que 1000 es menor que 900, porque "1" va antes que "9".
+    esperar(mig.includes("replace(p_valor, ',', '')")).verdadero(
+      "hay que quitar los separadores de miles antes de leer el número",
+    );
+    esperar(mig.includes("'-?[0-9]+\\.?[0-9]*'")).verdadero(
+      "hay que extraer el número del texto en vez de convertir la cadena entera",
+    );
+  });
+
+  test("una regla mal escrita no tumba la conversación", () => {
+    // `sinComentarios` quita comentarios de JavaScript; esto es SQL, donde
+    // empiezan por `--`. Entre `exception` y `return false` va la línea que
+    // explica el porqué, y sin quitarla el regex nunca llega al código.
+    const sinSQL = mig.replace(/^\s*--.*$/gm, "");
+    esperar(/exception when others then\s+return false;/.test(sinSQL)).verdadero(
+      "si la comparación revienta, se devuelve falso y el chat sigue",
+    );
+  });
+
+  test("la pantalla para escribirlas existe y está enchufada", () => {
+    const pantalla = fs.readFileSync(path.join(RAIZ, "src/app/(dashboard)/settings/tags/page.tsx"), "utf8");
+    esperar(pantalla.includes("<ReglasDeCalificacion")).verdadero(
+      "sin pantalla, la función existe y nadie puede usarla",
+    );
+    const acciones = fs.readFileSync(path.join(RAIZ, "src/app/(dashboard)/settings/actions.ts"), "utf8");
+    esperar(acciones.includes("reglas_de_calificacion")).verdadero(
+      "y hacen falta las acciones para crearlas y quitarlas",
+    );
+  });
+});
+
 // ─── Guardar tiene que decir que guardó ──────────────────────────────────────
 //
 // El 1 sep, Alex le dio a «Guardar configuración» en Lana IA y no pasó nada en

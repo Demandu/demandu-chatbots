@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createTag, deleteTag, agruparTag } from "../actions";
+import { ReglasDeCalificacion } from "@/components/ReglasDeCalificacion";
 import { Info } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +23,24 @@ export const dynamic = "force-dynamic";
  * una inmobiliaria no califican igual.
  */
 export default async function TagsPage() {
-  const { data } = await createClient().from("tags").select("*").order("created_at");
+  const sb = createClient();
+  const [{ data }, { data: campos }, { data: reglasRaw }] = await Promise.all([
+    sb.from("tags").select("*").order("created_at"),
+    sb.from("custom_attributes").select("key, name").order("sort"),
+    sb
+      .from("reglas_de_calificacion")
+      .select("id, campo, operador, valor, etiqueta:tags(name, color)")
+      .eq("activa", true)
+      .order("prioridad", { ascending: false }),
+  ]);
   const tags = (data ?? []) as any[];
+  const reglas = ((reglasRaw ?? []) as any[]).map((r) => ({
+    id: r.id as string,
+    campo: r.campo as string,
+    operador: r.operador as string,
+    valor: (r.valor ?? null) as string | null,
+    etiqueta: (r.etiqueta ?? null) as { name: string; color: string | null } | null,
+  }));
 
   // Los grupos que ya usa este cliente, para ofrecérselos y que no acabe con
   // «Calificacion», «calificación» y «Calificación » como tres grupos distintos.
@@ -116,6 +133,17 @@ export default async function TagsPage() {
 
       {tags.length === 0 && (
         <p className="text-sm text-ink-3">Aún no tienes etiquetas. Crea la primera arriba 👆</p>
+      )}
+
+      {/* Va DEBAJO de las etiquetas y no en otra pantalla: una regla solo se
+          entiende viendo las etiquetas que va a poner, y quien acaba de crear
+          «lead-bajo» está a un palmo de querer decir cuándo se pone. */}
+      {tags.length > 0 && (
+        <ReglasDeCalificacion
+          reglas={reglas}
+          campos={(campos ?? []) as any[]}
+          etiquetas={tags.map((t) => ({ id: t.id, name: t.name, grupo: t.grupo ?? null }))}
+        />
       )}
     </div>
   );
