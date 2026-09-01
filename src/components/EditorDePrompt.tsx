@@ -50,6 +50,7 @@ export function EditorDePrompt({
   const ref = useRef<HTMLTextAreaElement>(null);
   const [abierto, setAbierto] = useState(false);
   const [filtro, setFiltro] = useState("");
+  const [modo, setModo] = useState<"acciones" | "etiquetas">("acciones");
   const [propio, setPropio] = useState(defaultValue ?? "");
 
   const controlado = value !== undefined;
@@ -63,6 +64,8 @@ export function EditorDePrompt({
     [...texto.matchAll(/(^|[\s(])\/([a-z_]+)/gm)].map((m) => m[2]),
   );
 
+  const activas = ACCIONES.filter((a) => usadas.has(a.clave));
+
   const visibles = ACCIONES.filter(
     (a) => !filtro || a.clave.includes(filtro) || a.nombre.toLowerCase().includes(filtro),
   );
@@ -74,12 +77,53 @@ export function EditorDePrompt({
     return m ? m[1] : null;
   };
 
+  /**
+   * ¿El cursor está justo detrás de un `/etiquetar` recién puesto?
+   *
+   * ESTO CONTESTA «¿y cómo sabe qué etiqueta poner?». La respuesta corta es
+   * que el modelo solo puede elegir entre las etiquetas de ESTE cliente —el
+   * motor se las pasa como lista cerrada y rechaza cualquier otra—, pero
+   * CUÁNDO poner cada una lo decides tú escribiéndolo aquí. Así que en cuanto
+   * escribes `/etiquetar` te ofrecemos tus etiquetas de verdad, para que no
+   * tengas que acordarte del nombre exacto ni salir a otra pantalla a mirarlo.
+   */
+  const esperandoEtiqueta = (valor: string, cursor: number) => {
+    const antes = valor.slice(0, cursor);
+    return /(?:^|[\s(])\/etiquetar\s+([\wáéíóúñ-]*)$/i.test(antes);
+  };
+
   const alEscribir = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const v = e.target.value;
+    const cursor = e.target.selectionStart ?? v.length;
     setTexto(v);
-    const pendiente = barraAbierta(v, e.target.selectionStart ?? v.length);
-    setAbierto(pendiente !== null);
-    setFiltro(pendiente ?? "");
+
+    const pendiente = barraAbierta(v, cursor);
+    if (pendiente !== null) {
+      setModo("acciones");
+      setAbierto(true);
+      setFiltro(pendiente);
+      return;
+    }
+    if (etiquetas.length && esperandoEtiqueta(v, cursor)) {
+      const m = v.slice(0, cursor).match(/([\wáéíóúñ-]*)$/);
+      setModo("etiquetas");
+      setAbierto(true);
+      setFiltro((m?.[1] ?? "").toLowerCase());
+      return;
+    }
+    setAbierto(false);
+  };
+
+  const insertarEtiqueta = (nombre: string) => {
+    const el = ref.current;
+    if (!el) return;
+    const cursor = el.selectionStart ?? texto.length;
+    const antes = texto.slice(0, cursor).replace(/[\wáéíóúñ-]*$/, "");
+    const nuevo = `${antes}${nombre} ${texto.slice(cursor)}`;
+    setTexto(nuevo);
+    setAbierto(false);
+    const pos = antes.length + nombre.length + 1;
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(pos, pos); });
   };
 
   const insertar = (clave: string) => {
@@ -115,7 +159,28 @@ export function EditorDePrompt({
         className={className}
       />
 
-      {abierto && visibles.length > 0 && (
+      {abierto && modo === "etiquetas" && (
+        <div className="absolute left-2 right-2 z-20 mt-1 max-h-64 overflow-y-auto rounded-xl border border-linea bg-tarjeta p-1 shadow-xl">
+          <p className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-ink-3">
+            Tus etiquetas
+          </p>
+          {etiquetas
+            .filter((t) => !filtro || t.toLowerCase().includes(filtro))
+            .map((t) => (
+              <button
+                key={t}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); insertarEtiqueta(t); }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-ink transition hover:bg-suave"
+              >
+                <span className="h-2 w-2 flex-none rounded-full bg-violet" />
+                {t}
+              </button>
+            ))}
+        </div>
+      )}
+
+      {abierto && modo === "acciones" && visibles.length > 0 && (
         <div className="absolute left-2 right-2 z-20 mt-1 max-h-64 overflow-y-auto rounded-xl border border-linea bg-tarjeta p-1 shadow-xl">
           <p className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-ink-3">
             Acciones que puede ejecutar
@@ -146,23 +211,35 @@ export function EditorDePrompt({
         </div>
       )}
 
-      {/* Lo que el bot PUEDE hacer, leído del propio prompt. Es la comprobación
-          que faltaba: se ve de un vistazo si lo que pediste está encendido. */}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] text-ink-3">
-          Escribe <code className="rounded bg-suave px-1 font-mono text-violet">/</code> para insertar una acción.
-        </span>
-        {[...usadas].filter((u) => ACCIONES.some((a) => a.clave === u)).map((u) => (
-          <span key={u} className="rounded-full bg-success/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-exito">
-            /{u}
-          </span>
-        ))}
-      </div>
+      {/* LO QUE ESTE PROMPT ACTIVA, en una franja que se ve.
+          Antes esto eran unas etiquetitas discretas al pie y la queja fue
+          exacta: «no se nota que se guardó la acción». Escribir `/etiquetar`
+          enciende una herramienta que ESCRIBE en las fichas de los leads:
+          eso merece una confirmación que se lea, no un adorno. */}
+      {activas.length > 0 ? (
+        <div className="mt-2 rounded-lg border border-success/40 bg-success/10 px-2.5 py-2">
+          <p className="text-[11px] font-semibold text-exito">
+            ✓ Este asistente ya puede: {activas.map((a) => a.nombre).join(" · ")}
+          </p>
+          <p className="mt-0.5 text-[11px] text-ink-3">
+            Se activaron solas al escribirlas. No hace falta marcar nada más.
+          </p>
+        </div>
+      ) : (
+        <p className="mt-2 text-[11px] text-ink-3">
+          Escribe <code className="rounded bg-suave px-1 font-mono text-violet">/</code> para que además de
+          conversar pueda etiquetar, agendar o pasar con una persona.
+        </p>
+      )}
 
       {usadas.has("etiquetar") && etiquetas.length > 0 && (
-        <p className="mt-1 text-[11px] text-ink-3">
-          Tus etiquetas: {etiquetas.map((t) => <b key={t} className="text-ink-2">{t} </b>)}
-          — usa estos nombres exactos en el criterio.
+        <p className="mt-1.5 text-[11px] leading-relaxed text-ink-3">
+          Solo puede usar <b className="text-ink-2">tus</b> etiquetas —{" "}
+          {etiquetas.map((t) => (
+            <code key={t} className="mr-1 rounded bg-suave px-1 font-mono text-[10px] text-ink-2">{t}</code>
+          ))}
+          — y si se inventa otra, se rechaza. Escribe tú cuándo va cada una; al teclear{" "}
+          <code className="rounded bg-suave px-1 font-mono text-violet">/etiquetar</code> te las sugiere.
         </p>
       )}
       {usadas.has("etiquetar") && etiquetas.length === 0 && (
