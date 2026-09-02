@@ -350,6 +350,61 @@ describe("La solicitud de persona no se borra sola", () => {
   });
 });
 
+// ─── Subir archivos al almacén ───────────────────────────────────────────────
+describe("Adjuntos: la ruta del almacén", () => {
+  test("toda subida empieza por la organización", () => {
+    // ESTA PRUEBA EXISTE POR UN FALLO QUE NUNCA FUNCIONÓ NI UNA VEZ. La regla
+    // de seguridad del almacén mira la PRIMERA carpeta de la ruta:
+    //   foldername(name)[1]::uuid IN (auth_org_ids())
+    // La Bandeja subía a `inbox/<org>/…`, así que la primera carpeta era el
+    // texto "inbox", el cast a uuid fallaba y se rechazaban TODAS las subidas.
+    // El agente solo veía «No se pudo enviar el archivo. Inténtalo otra vez.»
+    //
+    // Cualquier ruta nueva que no empiece por la organización tiene el mismo
+    // destino, y sin esta prueba se descubre en producción — como esta vez.
+    const malas = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      const t = sinComentarios(texto);
+      if (!/storage\s*\n?\s*\.from\(\s*["']media["']\s*\)/.test(t.replace(/\s+/g, " "))) continue;
+      // Las plantillas de ruta que se pasan a .upload()
+      for (const m of t.matchAll(/(?:const|let)\s+\w+\s*=\s*`([^`]+)`/g)) {
+        const plantilla = m[1];
+        if (!/\$\{Date\.now\(\)\}/.test(plantilla)) continue; // no es una ruta de subida
+        if (!/^\$\{\s*orgId\s*[^}]*\}\//.test(plantilla)) {
+          malas.push(`${ruta} → "${plantilla}"`);
+        }
+      }
+    }
+    esperar(malas.join(", ")).igual(
+      "",
+      "una ruta del almacén que no empieza por la organización la rechaza SIEMPRE la regla de seguridad",
+    );
+  });
+
+  test("sin organización no se intenta subir", () => {
+    // `${orgId ?? "org"}` metía el texto "org" en la ruta, que tampoco es un
+    // uuid: mismo rechazo, y encima disfrazado de ruta válida.
+    const inbox = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8"),
+    );
+    esperar(/orgId \?\? ["']org["']/.test(inbox)).falso(
+      "un valor de respaldo que no sea un uuid rompe la regla igual, pero en silencio",
+    );
+    esperar(inbox.includes("if (!orgId)")).verdadero(
+      "sin organización hay que decirlo antes de subir nada",
+    );
+  });
+
+  test("el motivo del fallo llega al agente, no solo a la consola", () => {
+    // «Inténtalo otra vez» invita a repetir algo que a veces no puede
+    // funcionar nunca. El motivo tiene que verse en pantalla.
+    const inbox = fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8");
+    esperar(/setErrorEnvio\(motivoAdjunto\(crudo\)\)/.test(inbox)).verdadero(
+      "el error de subida tiene que traducirse y enseñarse, no tragarse",
+    );
+  });
+});
+
 // ─── Retomar una conversación con una plantilla ──────────────────────────────
 describe("Enviar una plantilla desde la Bandeja", () => {
   const inbox = fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8");

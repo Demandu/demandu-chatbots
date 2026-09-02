@@ -13,6 +13,30 @@ import { ResponderEnIdioma } from "./ResponderEnIdioma";
 import { EmojiPicker } from "./EmojiPicker";
 import { VistaAdjunto, TOPE_BYTES, pesoLegible, type Adjunto } from "./Adjunto";
 import { EnviarPlantilla } from "./EnviarPlantilla";
+
+/**
+ * Por qué no se pudo adjuntar, en cristiano.
+ *
+ * El mensaje crudo del almacén («new row violates row-level security policy»)
+ * no le dice nada a quien atiende una conversación, y «inténtalo otra vez» es
+ * peor: invita a repetir algo que a veces no puede funcionar nunca.
+ */
+function motivoAdjunto(crudo: string): string {
+  const t = crudo.toLowerCase();
+  if (t.includes("row-level security") || t.includes("unauthorized") || t.includes("403")) {
+    return "Tu cuenta no tiene permiso para subir archivos a esta organización. Escríbenos y lo revisamos.";
+  }
+  if (t.includes("payload too large") || t.includes("413") || t.includes("maximum allowed size")) {
+    return "El archivo pesa demasiado para el almacén. El máximo son 25 MB.";
+  }
+  if (t.includes("already exists")) {
+    return "Ya hay un archivo con ese nombre. Vuelve a intentarlo.";
+  }
+  if (t.includes("failed to fetch") || t.includes("network")) {
+    return "Se cortó la conexión mientras se subía. Comprueba tu internet e inténtalo otra vez.";
+  }
+  return "No se pudo enviar el archivo. Si vuelve a pasar, escríbenos y lo miramos.";
+}
 import { rellenar, type RespuestaRapida } from "@/lib/quickReplies";
 import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
@@ -431,10 +455,29 @@ export function InboxClient({
       return;
     }
 
+    // Sin organización no hay ruta válida posible (ver abajo). Se dice antes de
+    // subir nada, en vez de fallar a mitad con un error del SDK.
+    if (!orgId) {
+      setErrorEnvio("No pude identificar tu organización. Recarga la página e inténtalo otra vez.");
+      return;
+    }
+
     setSubiendo(file.name);
     try {
       const limpio = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
-      const ruta = `inbox/${orgId ?? "org"}/${sel.id}/${Date.now()}-${limpio}`;
+
+      // LA ORGANIZACIÓN VA LA PRIMERA, Y NO ES UN CAPRICHO DE ORDEN.
+      //
+      // La regla de seguridad del almacén comprueba la PRIMERA carpeta de la
+      // ruta: `foldername(name)[1]::uuid IN (auth_org_ids())`. Esta ruta era
+      // `inbox/<org>/…`, así que la primera carpeta era el texto "inbox", el
+      // cast a uuid fallaba y el almacén rechazaba TODAS las subidas. Adjuntar
+      // un archivo desde la Bandeja no funcionó nunca, y el único síntoma era
+      // «No se pudo enviar el archivo. Inténtalo otra vez.» — que invita a
+      // reintentar algo que no puede funcionar.
+      //
+      // El constructor ya lo hacía bien (`${orgId}/…`); esto lo alinea.
+      const ruta = `${orgId}/inbox/${sel.id}/${Date.now()}-${limpio}`;
 
       const { error: errSubida } = await sb.storage
         .from("media")
@@ -464,8 +507,13 @@ export function InboxClient({
       setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, handoff_requested_at: null } : c)));
       loadConvos();
     } catch (e: any) {
-      console.error("[bandeja] no se pudo adjuntar:", e?.message);
-      setErrorEnvio("No se pudo enviar el archivo. Inténtalo otra vez.");
+      // EL MOTIVO IMPORTA. La versión anterior decía siempre «inténtalo otra
+      // vez» y mandaba la causa a la consola, donde no la ve nadie. Con la ruta
+      // mal, reintentar no podía funcionar nunca — y el agente lo intentaba una
+      // y otra vez sin que quedara rastro de por qué fallaba.
+      const crudo = String(e?.message ?? "");
+      console.error("[bandeja] no se pudo adjuntar:", crudo);
+      setErrorEnvio(motivoAdjunto(crudo));
     } finally {
       setSubiendo(null);
     }
