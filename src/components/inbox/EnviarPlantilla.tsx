@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { X, Send, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { lanzarAviso } from "@/components/notifications/Toasts";
 
 /**
  * Mandar una plantilla aprobada desde la Bandeja.
@@ -109,6 +110,27 @@ export function EnviarPlantilla({
         setEnviando(false);
         return;
       }
+
+      // ¿Y si WhatsApp la rechazó en el momento? El servidor guarda el mensaje
+      // igual pero MARCADO, así que aquí hay que mirar la marca en vez de dar
+      // por bueno el 200: es la diferencia entre «se guardó» y «se envió».
+      const fallo = j?.mensaje?.payload?.no_entregado;
+      if (fallo) {
+        setError(fallo.motivo ?? "WhatsApp no aceptó la plantilla.");
+        setEnviando(false);
+        onEnviada(j?.mensaje);
+        return;
+      }
+
+      // ACEPTADA NO ES ENTREGADA, y decir «envío exitoso» a secas sería repetir
+      // la mentira que acabamos de quitar: WhatsApp contesta que la acepta y
+      // avisa DESPUÉS si no pudo entregarla. Se dice lo que de verdad pasó, y
+      // dónde mirar si falla — que es donde ahora sí queda marcado.
+      lanzarAviso({
+        titulo: "Plantilla enviada ✅",
+        cuerpo:
+          "WhatsApp la aceptó. Si no consigue entregarla, en un momento verás el motivo marcado en la conversación.",
+      });
       onEnviada(j?.mensaje);
       onCerrar();
     } catch {

@@ -1057,13 +1057,26 @@ export function InboxClient({
                     {clock(m.created_at)}
                     {out && !m.payload?.no_entregado && <CheckCheck className="h-3 w-3" />}
                   </span>
+                  {/* EL MOTIVO SE LEE, NO SE ADIVINA.
+                      Antes «No se entregó» llevaba la explicación en el `title`
+                      del navegador: hay que pasar el ratón por encima para
+                      verla, y en un teléfono eso no existe. El agente veía que
+                      algo falló y no sabía si reintentar, cambiar de plantilla
+                      o llamar por teléfono — que son tres arreglos distintos.
+                      Ahora el porqué está escrito debajo. */}
                   {m.payload?.no_entregado && (
                     <span
-                      className="mt-1 flex items-center gap-1 text-[10.5px] font-semibold"
+                      className="mt-1 flex flex-col gap-0.5 text-[10.5px] font-semibold"
                       style={{ color: "#c02b31" }}
-                      title={m.payload.no_entregado.motivo}
                     >
-                      <AlertTriangle className="h-3 w-3" /> No se entregó
+                      <span className="flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" /> No se entregó
+                      </span>
+                      {m.payload.no_entregado.motivo && (
+                        <span className="font-normal leading-snug opacity-90">
+                          {m.payload.no_entregado.motivo}
+                        </span>
+                      )}
                     </span>
                   )}
                 </div>

@@ -583,6 +583,51 @@ describe("Enviar una plantilla desde la Bandeja", () => {
     );
   });
 
+  test("al enviar se confirma, y sin prometer la entrega", () => {
+    // El agente necesita saber que salió. Pero decir «envío exitoso» a secas
+    // sería repetir la mentira que se acaba de quitar: WhatsApp ACEPTA el
+    // mensaje y avisa después si no pudo entregarlo.
+    esperar(modal.includes("lanzarAviso(")).verdadero("hace falta confirmar el envío");
+    const i = modal.indexOf("lanzarAviso(");
+    const bloque = modal.slice(i, i + 400);
+    esperar(/exitoso|entregad[oa] con éxito/i.test(bloque)).falso(
+      "no se puede prometer una entrega que WhatsApp todavía no ha confirmado",
+    );
+    esperar(/acept/i.test(bloque)).verdadero(
+      "hay que decir lo que de verdad pasó: WhatsApp la aceptó",
+    );
+  });
+
+  test("si WhatsApp la rechaza en el momento, no se dice que salió", () => {
+    // El servidor guarda el mensaje MARCADO cuando Meta lo rechaza. Dar por
+    // bueno el 200 enseñaría «enviada» sobre un mensaje que nadie recibió.
+    esperar(/const fallo = j\?\.mensaje\?\.payload\?\.no_entregado/.test(modal)).verdadero(
+      "hay que mirar la marca del mensaje, no solo el código HTTP",
+    );
+  });
+
+  test("el motivo del fallo se lee en la conversación", () => {
+    // Estaba solo en el `title` del navegador: hay que pasar el ratón, y en un
+    // teléfono eso no existe. Reintentar, cambiar de plantilla o llamar son
+    // tres arreglos distintos, y sin el motivo no se puede elegir.
+    // SIN COMENTARIOS: el comentario que explica este mismo arreglo contiene
+    // las palabras «No se entregó» y «title», así que anclarse en el texto
+    // crudo encuentra la prosa en vez del código. Es la cuarta vez que este
+    // archivo tropieza con lo mismo.
+    const inbox = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8"),
+    );
+    const i = inbox.indexOf("No se entregó");
+    esperar(i > 0).verdadero("no encuentro la marca de no entregado");
+    const bloque = inbox.slice(Math.max(0, i - 500), i + 400);
+    esperar(/title=\{m\.payload\.no_entregado\.motivo\}/.test(bloque)).falso(
+      "el motivo no puede vivir solo en un tooltip",
+    );
+    esperar(/\{m\.payload\.no_entregado\.motivo\}/.test(bloque)).verdadero(
+      "el motivo tiene que pintarse en pantalla",
+    );
+  });
+
   test("en la Bandeja se guarda lo que LEE la persona", () => {
     // Guardar «📨 Plantilla xyz» dejaría al agente sin saber qué le dijo al
     // lead, y la siguiente respuesta del lead sin ningún contexto.
