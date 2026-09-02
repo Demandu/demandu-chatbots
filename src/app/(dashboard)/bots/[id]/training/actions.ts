@@ -57,17 +57,24 @@ export async function importFromUrl(formData: FormData) {
   const url = String(formData.get("url") ?? "").trim();
   if (!orgId || !botId || !url) return;
 
-  const base = `/bots/${botId}/training`;
+  // SE VUELVE A LA PESTAÑA DESDE LA QUE SE PULSÓ. Sin el `?t=web`, importar una
+  // página devolvía al Resumen: el cliente perdía de vista la lista de fuentes
+  // que acababa de cambiar y creía que no había pasado nada.
+  // `ruta` es la dirección a secas —lo que necesita `revalidatePath`— y `base`
+  // ya lleva la pestaña. Los avisos se pegan con `&` porque `base` YA tiene una
+  // interrogación: con `?` saldría `?t=web?error=…` y el aviso no se leería.
+  const ruta = `/bots/${botId}/training`;
+  const base = `${ruta}?t=web`;
   const page = await fetchPageText(url);
 
   if (!page.ok) {
-    redirect(`${base}?error=${encodeURIComponent(page.error)}`);
+    redirect(`${base}&error=${encodeURIComponent(page.error)}`);
   }
 
   // ¿Cabe en el plan del cliente?
   const quota = await checkQuota(createClient(), orgId, Buffer.byteLength(page.text, "utf8"));
   if (!quota.ok) {
-    redirect(`${base}?error=${encodeURIComponent(quota.message)}`);
+    redirect(`${base}&error=${encodeURIComponent(quota.message)}`);
   }
 
   const n = await ingestText({
@@ -82,8 +89,8 @@ export async function importFromUrl(formData: FormData) {
     replaceSourceName: true,
   });
 
-  revalidatePath(base);
-  redirect(n > 0 ? `${base}?imported=${n}` : `${base}?error=${encodeURIComponent("No se pudo guardar el contenido.")}`);
+  revalidatePath(ruta);
+  redirect(n > 0 ? `${base}&imported=${n}` : `${base}&error=${encodeURIComponent("No se pudo guardar el contenido.")}`);
 }
 
 /** Borra de golpe todo lo que vino de una misma fuente. */

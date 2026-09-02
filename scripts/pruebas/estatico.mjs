@@ -350,6 +350,72 @@ describe("La solicitud de persona no se borra sola", () => {
   });
 });
 
+// ─── El entrenamiento por pestañas ───────────────────────────────────────────
+describe("Entrenamiento: pestañas", () => {
+  const pagina = fs.readFileSync(
+    path.join(SRC, "app/(dashboard)/bots/[id]/training/page.tsx"), "utf8",
+  );
+  const acciones = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/training/actions.ts"), "utf8"),
+  );
+  const nav = fs.readFileSync(path.join(SRC, "components/bots/EntrenamientoNav.tsx"), "utf8");
+
+  test("una pestaña inventada no deja la pantalla en blanco", () => {
+    // `?t=loquesea` llega desde la barra de direcciones, y de ahí puede venir
+    // cualquier cosa. Sin este respaldo, la página no pintaría ninguna sección.
+    esperar(/PESTANAS\.some\(\(p\) => p\.clave === pedida\) \? pedida : "resumen"/.test(sinComentarios(pagina)))
+      .verdadero("hay que caer al resumen cuando la pestaña no existe");
+  });
+
+  test("los avisos se pegan con & y no con ?", () => {
+    // LA TRAMPA: `base` ya lleva `?t=web`, así que `${base}?error=` produce
+    // `?t=web?error=…` y el aviso NO se lee — la importación parecería no
+    // haber hecho nada. Se coló al escribir esto y saltó al releer.
+    esperar(/\$\{base\}\?(error|imported)=/.test(acciones)).falso(
+      "con `?` sobre una dirección que ya tiene interrogación, el aviso se pierde",
+    );
+    esperar(/\$\{base\}&(error|imported)=/.test(acciones)).verdadero(
+      "los avisos van con & porque `base` ya trae la pestaña",
+    );
+  });
+
+  test("revalidatePath recibe la ruta, no la dirección con pestaña", () => {
+    // `revalidatePath` espera una RUTA. Pasarle `?t=web` no refresca nada y el
+    // cliente ve la lista vieja después de importar.
+    esperar(/revalidatePath\(ruta\)/.test(acciones)).verdadero(
+      "revalidatePath necesita la ruta a secas",
+    );
+    esperar(/revalidatePath\(base\)/.test(acciones)).falso(
+      "`base` lleva query: revalidarlo no refresca la pantalla",
+    );
+  });
+
+  test("las pestañas son enlaces, no estado de JavaScript", () => {
+    // Así se comparten, funciona el botón de atrás y sobreviven a recargar.
+    esperar(nav.includes("useState")).falso("las pestañas no pueden vivir en estado de cliente");
+    esperar(/href=\{`\/bots\/\$\{botId\}\/training\?t=\$\{p\.clave\}`\}/.test(nav)).verdadero(
+      "cada pestaña tiene que ser una dirección propia",
+    );
+  });
+
+  test("lo que no existe se marca, no se esconde ni se finge", () => {
+    // Una pestaña que no hace nada es peor que no tenerla: el cliente entra, no
+    // pasa nada, y escribe a soporte. Misma regla que la conexión de Messenger.
+    esperar(/pronto: true/.test(nav)).verdadero("las pestañas sin construir tienen que marcarse");
+    esperar(pagina.includes("Todavía no está disponible")).verdadero(
+      "hay que decir que no está y qué hacer mientras tanto",
+    );
+  });
+
+  test("las preguntas sin responder son las de ESTE chatbot", () => {
+    // El RPC devuelve las de todos. Mezclarlas aquí distrae de lo que hay que
+    // enseñarle a este bot en concreto.
+    esperar(/filter\(\(p\) => p\.bot_id === params\.id\)/.test(pagina)).verdadero(
+      "hay que filtrar por el chatbot de la pantalla",
+    );
+  });
+});
+
 // ─── Subir archivos al almacén ───────────────────────────────────────────────
 describe("Adjuntos: la ruta del almacén", () => {
   test("toda subida empieza por la organización", () => {
