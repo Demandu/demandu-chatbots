@@ -56,13 +56,34 @@ export async function POST(req: Request) {
   // válida se rechazaría. Esto solo se puede hacer bien una vez.
   const crudo = await req.text();
 
-  const secreto = process.env.META_APP_SECRET ?? "";
-  if (!secreto) {
-    console.error("[ig webhook] falta META_APP_SECRET: no se puede verificar nada");
+  // ── QUIÉN FIRMA ESTO ─────────────────────────────────────────────────────
+  //
+  // LA APP DE INSTAGRAM, NO LA DE FACEBOOK. Son dos apps distintas con dos
+  // claves distintas, y este webhook lo manda la de Instagram — la misma con la
+  // que el cliente inició sesión. Verificar con la de Facebook rechaza
+  // ABSOLUTAMENTE TODO con un 401.
+  //
+  // Y ese 401 es el fallo más silencioso de toda la plataforma: Meta cree que
+  // entregó, la pantalla dice «conectado», y no llega ni un mensaje. Nos costó
+  // una tarde. Por eso abajo se deja constancia cuando una firma no cuadra.
+  //
+  // Se aceptan las dos claves porque el canal de Messenger, cuando exista,
+  // llegará firmado por la de Facebook a este mismo sitio. Ambas son NUESTRAS:
+  // aceptar cualquiera de las dos no abre la puerta a nadie.
+  const claves = [
+    ["instagram", process.env.INSTAGRAM_APP_SECRET ?? ""],
+    ["facebook", process.env.META_APP_SECRET ?? ""],
+  ].filter(([, s]) => s) as [string, string][];
+
+  if (!claves.length) {
+    console.error("[ig webhook] no hay ninguna clave de app: no se puede verificar nada");
     return new NextResponse("no configurado", { status: 503 });
   }
-  if (!firmaValida(crudo, req.headers.get("x-hub-signature-256"), secreto)) {
-    console.error("[ig webhook] firma inválida");
+
+  const cabecera = req.headers.get("x-hub-signature-256");
+  const cual = claves.find(([, s]) => firmaValida(crudo, cabecera, s));
+  if (!cual) {
+    await firmaNoCuadra(crudo, cabecera, claves.map(([n]) => n));
     return new NextResponse("firma inválida", { status: 401 });
   }
 
@@ -307,6 +328,48 @@ async function atenderComentario(
   // El resto del flujo NO se manda: hasta que la persona no conteste al DM,
   // Instagram no deja mandarle nada más. Mandarlo en público sería peor: son
   // mensajes escritos para una conversación privada.
+}
+
+/**
+ * Llegó un aviso que no pasa la firma.
+ *
+ * ESTE APUNTE VALE MÁS QUE TODOS LOS DEMÁS. Un 401 aquí es indistinguible,
+ * desde fuera, de que Instagram no esté mandando nada: Meta reintenta un rato y
+ * después DESACTIVA la suscripción del cliente. El cliente ve «conectado» y no
+ * recibe un solo mensaje, para siempre, sin ningún error en ninguna pantalla.
+ *
+ * Se apunta con QUÉ claves se intentó y un trozo del cuerpo, para poder
+ * distinguir «la clave es la que no toca» de «esto no lo mandó Meta». El cuerpo
+ * se recorta y NUNCA se apunta la firma ni ninguna clave.
+ */
+async function firmaNoCuadra(
+  crudo: string, cabecera: string | null, probadas: string[],
+): Promise<void> {
+  console.error("[ig webhook] firma inválida; probadas:", probadas.join(", "));
+  try {
+    const admin = createAdminClient();
+    const hace10min = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: yaApuntado } = await admin
+      .from("conexiones_fallidas")
+      .select("id")
+      .eq("canal", "instagram")
+      .eq("paso", "webhook_firma")
+      .gte("created_at", hace10min)
+      .limit(1)
+      .maybeSingle();
+    if (yaApuntado) return;
+
+    await admin.from("conexiones_fallidas").insert({
+      org_id: null,
+      canal: "instagram",
+      paso: "webhook_firma",
+      detalle:
+        `probadas=[${probadas.join(",")}] trae_cabecera=${!!cabecera} ` +
+        `cuerpo=${crudo.slice(0, 200)}`.slice(0, 900),
+    });
+  } catch (err) {
+    console.error("[ig webhook] tampoco pude anotar la firma inválida:", err);
+  }
 }
 
 /**

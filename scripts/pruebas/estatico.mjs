@@ -1849,6 +1849,46 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("la firma se comprueba con la clave de INSTAGRAM", () => {
+    // LA APP QUE MANDA ESTE WEBHOOK ES LA DE INSTAGRAM, no la de Facebook: son
+    // dos apps con dos claves distintas. Verificar solo con la de Facebook
+    // rechaza todo con un 401 — y ese 401 es invisible: Meta cree que entregó,
+    // la pantalla dice «conectado», y no llega ni un mensaje. Pasó de verdad.
+    esperar(ruta.includes("INSTAGRAM_APP_SECRET")).verdadero(
+      "el webhook de Instagram tiene que aceptar la clave de la app de Instagram",
+    );
+    const i = ruta.indexOf("INSTAGRAM_APP_SECRET");
+    const j = ruta.indexOf("META_APP_SECRET");
+    esperar(j > 0 && i < j).verdadero(
+      "la de Instagram va primero: es la que firma este canal, la otra es el respaldo",
+    );
+  });
+
+  test("una firma que no cuadra deja rastro", () => {
+    // Un 401 solo en consola es un fallo perfecto: Meta reintenta, después
+    // DESACTIVA la suscripción del cliente, y no queda nada que mirar porque
+    // los registros de Netlify solo se transmiten en vivo.
+    esperar(ruta.includes("webhook_firma")).verdadero(
+      "rechazar por firma tiene que quedar apuntado en la base, no solo en consola",
+    );
+    const i = ruta.indexOf("firma inválida\", { status: 401 }");
+    esperar(i > 0).verdadero("no encuentro el rechazo por firma");
+    esperar(ruta.slice(Math.max(0, i - 200), i).includes("firmaNoCuadra")).verdadero(
+      "hay que anotar ANTES de contestar 401",
+    );
+  });
+
+  test("ni la firma ni las claves acaban en el apunte", () => {
+    // El apunte se guarda en la base y lo puede leer quien entre a diagnosticar.
+    // Sirve saber QUÉ claves se probaron —por su nombre— y un trozo del cuerpo;
+    // jamás el valor de una clave ni la firma que mandó Meta.
+    const cuerpo = ruta.slice(ruta.indexOf("async function firmaNoCuadra"));
+    const hasta = cuerpo.indexOf("\n}");
+    const fn = cuerpo.slice(0, hasta);
+    esperar(/\$\{\s*cabecera\s*\}/.test(fn)).falso("la firma de Meta no se guarda");
+    esperar(/APP_SECRET/.test(fn)).falso("ninguna clave puede aparecer en el apunte");
+  });
+
   test("un chatbot no se queda con dos cuentas de Instagram", () => {
     // LA CLAVE ÚNICA ES `ig_user_id`, NO `bot_id`, así que nada impedía que un
     // chatbot acabara con dos. Y pasó de verdad: al corregir el identificador,
