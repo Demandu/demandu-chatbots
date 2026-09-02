@@ -533,6 +533,56 @@ describe("Enviar una plantilla desde la Bandeja", () => {
     );
   });
 
+  test("«aceptado» no se confunde con «entregado»", () => {
+    // EL FALLO REAL: Meta contesta 200 al ACEPTAR el mensaje, no al
+    // entregarlo. La entrega la avisa después por el webhook de estados, con
+    // el identificador `wamid`. Sin guardarlo, ese aviso no se puede casar con
+    // ningún mensaje y se descarta: la Bandeja enseña «enviado» para siempre.
+    // Pasó con la primera plantilla enviada desde la Bandeja.
+    const env = sinComentarios(
+      fs.readFileSync(path.join(SRC, "lib/canales/whatsappEnviar.ts"), "utf8"),
+    );
+    esperar(/j\?\.messages\?\.\[0\]\?\.id/.test(env)).verdadero(
+      "hay que quedarse con el identificador que devuelve Meta",
+    );
+    esperar(/payload\.wamid = envio\.wamid/.test(ruta)).verdadero(
+      "y guardarlo en el mensaje, o el aviso de entrega no tiene a qué referirse",
+    );
+  });
+
+  test("el motor marca el mensaje cuando Meta dice que falló", () => {
+    // `handleStatuses` solo miraba difusiones y seguimientos: lo que manda un
+    // agente desde la Bandeja quedaba fuera y su fallo se perdía en silencio.
+    const wa = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+    );
+    const i = wa.indexOf('if (s === "failed")');
+    esperar(i > 0).verdadero("no encuentro el manejo del estado fallido");
+    esperar(wa.slice(i, i + 600).includes("marcarMensajeFallido")).verdadero(
+      "los mensajes de la Bandeja también tienen que marcarse",
+    );
+    esperar(/\.eq\("payload->>wamid", wamid\)/.test(wa)).verdadero(
+      "se busca por el identificador de Meta guardado en el mensaje",
+    );
+    // Y el índice que hace que esa búsqueda no recorra la tabla entera.
+    const mig = fs.readFileSync(
+      path.join(RAIZ, "supabase/migrations/0069_estado_de_entrega_en_la_bandeja.sql"), "utf8",
+    );
+    esperar(mig.includes("messages_wamid_idx")).verdadero(
+      "sin índice, cada aviso de entrega recorre la tabla de mensajes entera",
+    );
+  });
+
+  test("el motivo de la no entrega se explica, no se copia de Meta", () => {
+    // 131049 es el más común y el más confuso: Meta decidió no entregar una
+    // plantilla de marketing. No se arregla reintentando, y decir «failed» a
+    // secas hace que el agente reintente hasta rendirse.
+    const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+    esperar(wa.includes("case 131049:")).verdadero(
+      "hay que explicar el rechazo por calidad: es el que más despista",
+    );
+  });
+
   test("en la Bandeja se guarda lo que LEE la persona", () => {
     // Guardar «📨 Plantilla xyz» dejaría al agente sin saber qué le dijo al
     // lead, y la siguiente respuesta del lead sin ningún contexto.

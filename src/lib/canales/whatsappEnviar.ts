@@ -14,7 +14,20 @@
 
 const GRAPH = "https://graph.facebook.com/v20.0";
 
-export type ResultadoEnvio = { ok: boolean; error?: string; code?: number };
+export type ResultadoEnvio = {
+  ok: boolean;
+  error?: string;
+  code?: number;
+  /**
+   * El identificador que da Meta al aceptar el mensaje (`wamid.…`).
+   *
+   * Es la ÚNICA forma de casar después el aviso de entrega: Meta dice si el
+   * mensaje llegó, falló o se leyó por el webhook de estados, y ese aviso solo
+   * trae este identificador. Sin guardarlo, un fallo posterior no se puede
+   * atribuir a ningún mensaje y desaparece.
+   */
+  wamid?: string;
+};
 
 /** El texto que Meta devuelve es para desarrolladores; esto es para el cliente. */
 export function motivoMeta(code: number, mensaje: string): string {
@@ -46,7 +59,21 @@ async function waPost(pnid: string, token: string, payload: any): Promise<Result
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ messaging_product: "whatsapp", ...payload }),
     });
-    if (res.ok) return { ok: true };
+    if (res.ok) {
+      // SE GUARDA EL IDENTIFICADOR QUE DEVUELVE META, y no es un detalle.
+      //
+      // Que Meta conteste 200 significa «lo acepto», NO «llegó». La entrega
+      // real la avisa después por el webhook de estados, y ese aviso viene
+      // identificado por este `wamid`. Sin guardarlo no hay forma de casar el
+      // aviso con el mensaje, y un fallo posterior se pierde: la Bandeja
+      // seguiría enseñando «enviado» para siempre.
+      //
+      // Pasó exactamente eso con la primera plantilla enviada desde la Bandeja:
+      // Meta la aceptó, no llegó nunca, y en pantalla figuraba como enviada.
+      const j = await res.json().catch(() => ({} as any));
+      const wamid = j?.messages?.[0]?.id;
+      return wamid ? { ok: true, wamid: String(wamid) } : { ok: true };
+    }
 
     const cuerpo = await res.text().catch(() => "");
     console.error("[wa envío]", res.status, cuerpo.slice(0, 300));

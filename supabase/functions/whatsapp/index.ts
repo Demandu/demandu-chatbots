@@ -19,7 +19,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "41";
+const VERSION_MOTOR = "42";
 
 // ─── La firma de Meta ────────────────────────────────────────────────────────
 //
@@ -2755,6 +2755,71 @@ function json(o: any) { return new Response(JSON.stringify(o), { headers: { "Con
 
 // ---- estados de entrega (difusiones) ----
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3, replied: 4 };
+/**
+ * Marca en la Bandeja un mensaje que Meta ACEPTÓ y después no pudo entregar.
+ *
+ * EL AGUJERO QUE TAPA. `handleStatuses` solo miraba difusiones y seguimientos.
+ * Lo que manda un agente desde la Bandeja —un texto, un archivo, una
+ * plantilla— quedaba fuera: Meta contestaba 200 al enviarlo, se guardaba como
+ * enviado, y si media hora después avisaba de que no se pudo entregar, ese
+ * aviso se descartaba en silencio. En pantalla seguía figurando como enviado
+ * PARA SIEMPRE.
+ *
+ * Y ese es justo el caso más caro: el agente cree que retomó la conversación
+ * con una plantilla, y en realidad el lead no recibió nada.
+ *
+ * EL MOTIVO SE GUARDA TAL CUAL LO DA META y además traducido. El código
+ * importa: 131049 («para mantener la calidad del ecosistema») significa que
+ * Meta decidió no entregar una plantilla de marketing a esa persona, y no se
+ * arregla reintentando — se arregla mandando otra cosa.
+ */
+async function marcarMensajeFallido(db: any, wamid: string, st: any) {
+  try {
+    const e = st?.errors?.[0] ?? {};
+    const code = Number(e?.code ?? 0);
+    const { data: fila } = await db
+      .from("messages")
+      .select("id, payload")
+      .eq("payload->>wamid", wamid)
+      .maybeSingle();
+    if (!fila) return;
+
+    const payload = { ...(fila.payload ?? {}) };
+    payload.no_entregado = {
+      motivo: motivoDeEntrega(code, e?.title ?? e?.message ?? ""),
+      code: code || null,
+      meta: String(e?.title ?? e?.message ?? "").slice(0, 200),
+    };
+    await db.from("messages").update({ payload }).eq("id", fila.id);
+  } catch (err) {
+    console.error("[estados] no pude marcar el mensaje:", err);
+  }
+}
+
+/** Por qué no llegó, en cristiano y no en el idioma de Meta. */
+function motivoDeEntrega(code: number, crudo: string): string {
+  switch (code) {
+    case 131049:
+      return "WhatsApp decidió no entregar este mensaje para no saturar a la persona. Suele pasar con plantillas de marketing: prueba con una plantilla de utilidad o espera a que te escriba.";
+    case 131047:
+      return "Pasaron más de 24 horas desde su último mensaje, así que solo se le puede escribir con una plantilla aprobada.";
+    case 131026:
+      return "Ese número no puede recibir mensajes: puede que no tenga WhatsApp o que no acepte mensajes de empresas.";
+    case 470:
+    case 131051:
+      return "WhatsApp rechazó el mensaje por su contenido o su formato.";
+    case 132000:
+    case 132001:
+      return "La plantilla no coincide con la aprobada (nombre, idioma o número de datos). Revísala en Plantillas.";
+    case 133010:
+      return "El número del negocio no está registrado correctamente en WhatsApp.";
+    default:
+      return crudo
+        ? `WhatsApp no pudo entregarlo: ${crudo}`
+        : "WhatsApp aceptó el mensaje pero no pudo entregarlo.";
+  }
+}
+
 async function handleStatuses(db: any, statuses: any[]) {
   for (const st of statuses) {
     const wamid = st?.id;
@@ -2765,6 +2830,8 @@ async function handleStatuses(db: any, statuses: any[]) {
       const err = st?.errors?.[0]?.title ?? st?.errors?.[0]?.message ?? "failed";
       await db.from("campaign_recipients").update({ status: "failed", error: err }).eq("wa_message_id", wamid);
       await db.from("drip_sends").update({ status: "failed", error: err }).eq("wa_message_id", wamid);
+      // Y LOS MENSAJES DE LA BANDEJA, que hasta ahora se quedaban fuera.
+      await marcarMensajeFallido(db, wamid, st);
       continue;
     }
     if (!(s in STATUS_RANK)) continue;

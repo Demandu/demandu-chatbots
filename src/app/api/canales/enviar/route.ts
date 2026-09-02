@@ -166,6 +166,10 @@ export async function POST(req: Request) {
     }
 
     if (!envio.ok) payload.no_entregado = { motivo: envio.error ?? "No se pudo enviar", code: envio.code ?? null };
+    // ACEPTADO NO ES ENTREGADO. Se guarda el identificador de Meta para poder
+    // casar después su aviso de entrega y marcar el mensaje si falló. Ver
+    // `handleStatuses` en el motor.
+    else if (envio.wamid) payload.wamid = envio.wamid;
   }
 
   // ── Instagram ────────────────────────────────────────────────────────────
