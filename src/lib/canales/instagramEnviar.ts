@@ -28,9 +28,14 @@
  *
  * No es intercambiable con `graph.facebook.com`: cada camino de Meta tiene el
  * suyo, y usar el equivocado devuelve un error de permisos que hace perder
- * horas buscando un permiso que no falta. Aquí se usa el camino de Facebook
- * Login de Instagram —el porqué está en la cabecera de
+ * horas buscando un permiso que no falta. Aquí se usa «Instagram API con inicio
+ * de sesión de Instagram» —el cliente entra con su cuenta, sin página de
+ * Facebook; el porqué está en la cabecera de
  * `src/lib/integrations/instagram.ts`— y por tanto este anfitrión.
+ *
+ * EL ID QUE SE PASA A ESTAS FUNCIONES es el de la CUENTA PROFESIONAL, no el que
+ * devuelve el canje del código. Son dos identificadores distintos; cuál es cuál
+ * está explicado en `conectarConCodigo`.
  */
 const GRAPH = "https://graph.instagram.com/v23.0";
 

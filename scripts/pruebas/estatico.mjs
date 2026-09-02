@@ -1816,6 +1816,56 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("la suscripción va contra «me», no contra el id", () => {
+    // ESTE ES EL ÚNICO ENDPOINT DEL CAMINO QUE NO ACEPTA EL ID. Con el id
+    // contesta «Object with ID … does not exist, cannot be loaded due to
+    // missing permissions, or does not support this operation»: nombra tres
+    // causas y la buena es la tercera, así que se busca un permiso que no
+    // falta. La cuenta queda guardada y no llega ni un mensaje.
+    const integ = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8"),
+    );
+    esperar(integ.includes("/me/subscribed_apps")).verdadero(
+      "suscribir tiene que ir contra `me`: el token ya dice de qué cuenta hablamos",
+    );
+    esperar(/\$\{\s*\w*[iI]g\w*Id\s*\}\/subscribed_apps/.test(integ)).falso(
+      "volvió el id en la ruta de suscripción: eso es exactamente lo que fallaba",
+    );
+  });
+
+  test("se guarda el id de la CUENTA, no el que devuelve el canje", () => {
+    // DOS IDENTIFICADORES QUE SE PARECEN Y NO SON LO MISMO. El canje devuelve
+    // el id de la app; los endpoints y los avisos del webhook usan el de la
+    // cuenta profesional, que viene de `/me?fields=user_id`. Guardar el
+    // primero deja una conexión que parece buena y por la que no entra nada.
+    const integ = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8"),
+    );
+    esperar(/me\?fields=user_id,username/.test(integ)).verdadero(
+      "hay que preguntarle a Meta el id de la cuenta, no dar por bueno el del canje",
+    );
+    esperar(/igUserId:\s*idDeLaCuenta\s*\|\|\s*igUserId/.test(integ)).verdadero(
+      "el id de la cuenta tiene que MANDAR sobre el del canje, con este de respaldo",
+    );
+  });
+
+  test("un aviso para una cuenta desconocida deja rastro", () => {
+    // El `return` silencioso de un webhook sin canal es por donde se cae el
+    // fallo más difícil de ver: la pantalla dice «conectado», Meta dice que
+    // entregó, y no pasa nada. Sin apunte no queda nada que mirar.
+    const wh = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/app/api/webhooks/instagram/route.ts"), "utf8"),
+    );
+    esperar(wh.includes("webhook_sin_cuenta")).verdadero(
+      "hay que anotar el id que mandó Meta cuando no encontramos la cuenta",
+    );
+    const i = wh.indexOf("if (!canal)");
+    esperar(i > 0).verdadero("no encuentro la salida silenciosa del webhook");
+    esperar(wh.slice(i, i + 160).includes("noHayCanal")).verdadero(
+      "esa salida tiene que dejar constancia antes de volverse silenciosa",
+    );
+  });
+
   test("se suscribe la CUENTA de Instagram, no ninguna página", () => {
     // Suscribir el id equivocado devuelve éxito y no llega ni un mensaje: el
     // fallo más desconcertante de toda la integración, porque todo dice

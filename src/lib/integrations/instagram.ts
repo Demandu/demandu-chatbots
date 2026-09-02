@@ -174,9 +174,25 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
   const segundos = Number(j2?.expires_in ?? 0);
   const caduca = segundos > 0 ? new Date(Date.now() + segundos * 1000).toISOString() : null;
 
-  // El nombre de usuario es para que la Bandeja no muestre un número largo. Si
-  // falla, la conexión sigue siendo válida: no se tumba por un adorno.
+  // ── 3. Quién es esta cuenta, de verdad ───────────────────────────────────
+  //
+  // AQUÍ HAY DOS IDENTIFICADORES DISTINTOS Y CONFUNDIRLOS SALE CARO.
+  //
+  // El canje devuelve un `user_id` que es el id DE LA APP (app-scoped): sirve
+  // para saber que es la misma persona entre sesiones, y para poco más.
+  // `/me?fields=user_id` devuelve el id de la CUENTA PROFESIONAL de Instagram,
+  // que es el que usan de verdad los endpoints (`/{IG_ID}/messages`) y el que
+  // viene en los avisos del webhook.
+  //
+  // Guardar el primero donde hacía falta el segundo da el error más
+  // desconcertante de Meta: «Object with ID … does not exist, cannot be loaded
+  // due to missing permissions, or does not support this operation» — tres
+  // causas en una frase, y ninguna es la de verdad. Pasó aquí, al suscribir.
+  //
+  // Si esta llamada falla nos quedamos con el del canje: una conexión a medias
+  // es mejor que ninguna, y el diagnóstico del webhook dirá si no cuadra.
   let username: string | null = null;
+  let idDeLaCuenta = "";
   try {
     const r3 = await fetch(
       `${GRAPH}/v23.0/me?fields=user_id,username&access_token=${encodeURIComponent(token)}`,
@@ -184,13 +200,16 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
     );
     const j3 = await r3.json();
     username = j3?.username ?? null;
-  } catch { /* el adorno no manda */ }
+    if (j3?.user_id != null) idDeLaCuenta = String(j3.user_id);
+  } catch { /* nos quedamos con el del canje */ }
 
   const permisos = Array.isArray(dato?.permissions)
     ? dato.permissions.map((x: any) => String(x))
     : String(dato?.permissions ?? "").split(",").filter(Boolean);
 
-  return { igUserId, username, token, caduca, permisos };
+  // El de la cuenta profesional MANDA sobre el del canje. Ver el comentario de
+  // arriba: son dos identificadores distintos y este es el que usa Meta.
+  return { igUserId: idDeLaCuenta || igUserId, username, token, caduca, permisos };
 }
 
 /**
@@ -264,14 +283,20 @@ function formaDelCodigo(code: string): string {
  * guardada y no llegaba un solo mensaje.
  */
 export async function suscribirCuenta(
-  igUserId: string, token: string,
+  _igUserId: string, token: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const p = new URLSearchParams({
       subscribed_fields: "messages,messaging_postbacks,message_reactions,comments,live_comments",
       access_token: token,
     });
-    const r = await fetch(`${GRAPH}/v23.0/${igUserId}/subscribed_apps?${p.toString()}`, {
+    // VA CONTRA `me`, NO CONTRA EL ID DE LA CUENTA. Es el único endpoint de este
+    // camino que no acepta el id: con él contesta «Object with ID … does not
+    // exist, cannot be loaded due to missing permissions, or does not support
+    // this operation» — y de las tres causas que nombra, la buena es la
+    // tercera. Se perdió una tarde con eso. El token ya dice de qué cuenta
+    // hablamos, así que `me` no es un atajo: es lo correcto.
+    const r = await fetch(`${GRAPH}/v23.0/me/subscribed_apps?${p.toString()}`, {
       method: "POST",
     });
     const j = await r.json().catch(() => ({}));

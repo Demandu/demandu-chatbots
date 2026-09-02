@@ -105,8 +105,15 @@ async function atender(e: EventoInstagram): Promise<void> {
     .maybeSingle();
 
   // Una cuenta que nadie conectó no es un error: puede ser una suscripción
-  // vieja de Meta. Se ignora en silencio.
-  if (!canal) return;
+  // vieja de Meta. Pero SE DEJA CONSTANCIA, porque este `return` es también por
+  // donde se cae el fallo más difícil de ver de toda la integración: si el id
+  // que manda Meta no es el que guardamos al conectar, todo parece bien —la
+  // pantalla dice «conectado», Meta dice que entregó el aviso— y no pasa
+  // absolutamente nada. Sin este apunte no queda ni rastro que mirar.
+  if (!canal) {
+    await noHayCanal(admin, e.cuentaNegocio);
+    return;
+  }
 
   // NO ATENDER DOS VECES. Meta reintenta los webhooks, y un reintento haría
   // que el bot contestara dos veces al mismo mensaje. Se reutiliza la misma
@@ -300,6 +307,50 @@ async function atenderComentario(
   // El resto del flujo NO se manda: hasta que la persona no conteste al DM,
   // Instagram no deja mandarle nada más. Mandarlo en público sería peor: son
   // mensajes escritos para una conversación privada.
+}
+
+/**
+ * Llegó un aviso para una cuenta que no tenemos.
+ *
+ * Se apunta el id que mandó Meta AL LADO de los que sí tenemos guardados, que
+ * es justo la comparación que hace falta y la que no se puede hacer de memoria:
+ * son dos números largos que se parecen. Si son distintos, el fallo es que
+ * guardamos el identificador equivocado al conectar.
+ *
+ * NUNCA LANZA y no toca la respuesta: esto es diagnóstico. Y no se repite el
+ * apunte si ya hay uno reciente del mismo id — Meta reintenta, y no queremos
+ * llenar la tabla con la misma línea.
+ */
+async function noHayCanal(admin: any, idQueMandoMeta: string): Promise<void> {
+  try {
+    const hace10min = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: yaApuntado } = await admin
+      .from("conexiones_fallidas")
+      .select("id")
+      .eq("canal", "instagram")
+      .eq("paso", "webhook_sin_cuenta")
+      .gte("created_at", hace10min)
+      .limit(1)
+      .maybeSingle();
+    if (yaApuntado) return;
+
+    const { data: cuentas } = await admin
+      .from("instagram_channels")
+      .select("ig_user_id, username")
+      .limit(5);
+    const guardadas = ((cuentas as any[]) ?? [])
+      .map((c) => `${c.ig_user_id}(@${c.username ?? "?"})`)
+      .join(" ") || "ninguna";
+
+    await admin.from("conexiones_fallidas").insert({
+      org_id: null,
+      canal: "instagram",
+      paso: "webhook_sin_cuenta",
+      detalle: `meta mandó id=${idQueMandoMeta} · guardadas=${guardadas}`.slice(0, 900),
+    });
+  } catch (err) {
+    console.error("[ig webhook] no pude anotar la cuenta desconocida:", err);
+  }
 }
 
 // ─── Piezas compartidas ──────────────────────────────────────────────────────
