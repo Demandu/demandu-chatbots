@@ -1,14 +1,107 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") ?? "demandu_wa_2026";
+/**
+ * SIN VALOR POR DEFECTO, Y ESO IMPORTA. Antes decía `?? "demandu_wa_2026"`: un
+ * token escrito en el repositorio, o sea público. Con él, cualquiera podía dar
+ * de alta el webhook en su propia app de Meta y —peor— abrir `?diag=<token>`,
+ * que enseña el diagnóstico de la IA.
+ *
+ * Ahora, si la variable no está en Supabase, `VERIFY_TOKEN` queda vacío y las
+ * comprobaciones de abajo fallan cerrado: el alta del webhook no funciona y el
+ * diagnóstico tampoco. Es incómodo y es lo correcto — un token en blanco no
+ * puede coincidir con nada.
+ */
+const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") ?? "";
 const GRAPH = "https://graph.facebook.com/v20.0";
 
 /**
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "40";
+const VERSION_MOTOR = "41";
+
+// ─── La firma de Meta ────────────────────────────────────────────────────────
+//
+// ESTE ENDPOINT ESTUVO ABIERTO A INTERNET. Atendía POST sin comprobar
+// absolutamente nada: ni firma, ni token, ni cabecera. Y la dirección no es
+// ningún secreto — `NEXT_PUBLIC_SUPABASE_URL` viaja al navegador en cada carga
+// de la plataforma, y el resto es `/functions/v1/whatsapp`. Con eso, cualquiera
+// podía inventarse mensajes entrantes de cualquier cliente, meterlos en su
+// Bandeja, disparar los flujos, gastar la cuota de IA que paga Demandu y
+// provocar envíos a números elegidos por él. Sin ninguna credencial.
+//
+// La función está desplegada con `verify_jwt: false` y TIENE que estarlo,
+// porque Meta no manda credenciales de Supabase. Así que la firma no es «una»
+// barrera: es la única posible.
+const APP_SECRET = Deno.env.get("META_APP_SECRET") ?? "";
+
+/**
+ * CÓMO SE ESTRENA ESTO SIN DEJAR MUDOS A LOS CLIENTES.
+ *
+ * Encender la comprobación de golpe sobre un webhook con tráfico real es una
+ * apuesta: si el secreto no fuera exactamente el que firma, se rechazarían
+ * TODOS los mensajes de TODOS los clientes, y el síntoma sería el peor posible
+ * —el bot deja de contestar y nadie sabe por qué—. Y Meta, tras varios
+ * rechazos, desactiva la suscripción.
+ *
+ *   "observar" (por defecto): comprueba y APUNTA lo que no cuadra, pero deja
+ *                             pasar. Sirve para ver, con tráfico de verdad, si
+ *                             el secreto es el bueno.
+ *   "exigir":                 rechaza con 401. Se pone SOLO cuando «observar»
+ *                             lleva un rato sin apuntar nada.
+ *
+ * El valor por defecto es el prudente a propósito: si alguien despliega esto
+ * sin leer, no tumba a nadie. La deuda de seguridad se cierra al pasar a
+ * "exigir", y hasta entonces queda a la vista en la tabla de fallos.
+ */
+const MODO_FIRMA = (Deno.env.get("WA_FIRMA") ?? "observar").trim().toLowerCase();
+
+/**
+ * ¿Firmó Meta este cuerpo con nuestra clave?
+ *
+ * SE ESCRIBE SUELTA Y SIN DEPENDENCIAS A PROPÓSITO: así las pruebas la pueden
+ * extraer de este archivo y ejecutarla de verdad, firmando bien y firmando mal.
+ * Una barrera de seguridad que no se puede probar es una barrera que nadie sabe
+ * si funciona — y esta ya estuvo ausente meses sin que saltara nada.
+ */
+async function firmaDeMetaValida(
+  crudo: string, cabecera: string | null | undefined, secreto: string,
+): Promise<boolean> {
+  // Sin secreto no se valida NADA. Devolver `true` aquí «para que funcione»
+  // convertiría un despliegue mal configurado en el mismo endpoint abierto que
+  // se está tapando, y nadie se enteraría porque todo seguiría pareciendo bien.
+  if (!secreto) return false;
+  if (typeof cabecera !== "string" || !cabecera.startsWith("sha256=")) return false;
+
+  const hex = cabecera.slice(7);
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length !== 64) return false;
+
+  try {
+    const llave = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secreto),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mio = new Uint8Array(
+      await crypto.subtle.sign("HMAC", llave, new TextEncoder().encode(crudo)),
+    );
+    const suyo = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < suyo.length; i++) suyo[i] = parseInt(hex.substr(i * 2, 2), 16);
+    if (mio.length !== suyo.length) return false;
+
+    // COMPARACIÓN EN TIEMPO CONSTANTE. Un `===` o un bucle que corta al primer
+    // byte distinto deja adivinar la firma byte a byte midiendo cuánto tarda.
+    // Aquí se recorren SIEMPRE los 32 bytes y se acumula la diferencia.
+    let diferencia = 0;
+    for (let i = 0; i < mio.length; i++) diferencia |= mio[i] ^ suyo[i];
+    return diferencia === 0;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Diagnóstico de la IA del motor.
@@ -2934,12 +3027,69 @@ async function retomarEspera(db: any, esperaId: string, testigo: string) {
   return json({ ok: true, retomada: true });
 }
 
+/**
+ * Deja constancia de una entrega que no pasa la firma.
+ *
+ * ES LO QUE CONVIERTE «observar» EN ALGO ÚTIL. Mientras el modo sea observar,
+ * esta tabla es la respuesta a la única pregunta que importa antes de exigir:
+ * ¿el secreto que hay puesto es de verdad el que firma? Si pasa un rato con
+ * tráfico real y no hay ni un apunte, se puede exigir sin miedo.
+ *
+ * Y en "exigir" sigue haciendo falta: un 401 solo en consola es invisible —los
+ * registros no se guardan— y Meta, tras varios rechazos, DESACTIVA la
+ * suscripción del cliente sin que aparezca un error en ninguna pantalla.
+ *
+ * NUNCA LANZA y no guarda ni la firma ni el secreto: solo la forma de lo que
+ * llegó. Se apunta como mucho uno cada diez minutos, porque Meta reintenta y
+ * esto es una pista, no un archivo de registro.
+ */
+async function anotarFirmaMala(crudo: string, cabecera: string | null): Promise<void> {
+  console.error(`[wa firma] no cuadra (modo=${MODO_FIRMA}); hay_secreto=${!!APP_SECRET}`);
+  try {
+    const db = admin();
+    const hace10min = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: yaApuntado } = await db
+      .from("conexiones_fallidas")
+      .select("id")
+      .eq("canal", "whatsapp")
+      .eq("paso", "webhook_firma")
+      .gte("created_at", hace10min)
+      .limit(1)
+      .maybeSingle();
+    if (yaApuntado) return;
+
+    await db.from("conexiones_fallidas").insert({
+      org_id: null,
+      canal: "whatsapp",
+      paso: "webhook_firma",
+      detalle:
+        `modo=${MODO_FIRMA} hay_secreto=${!!APP_SECRET} secreto_largo=${APP_SECRET.length} ` +
+        `trae_cabecera=${!!cabecera} cuerpo=${crudo.slice(0, 200)}`.slice(0, 900),
+    });
+  } catch (e) {
+    console.error("[wa firma] tampoco pude anotarlo:", e);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
   if (req.method === "GET") {
     // Comprobación de versión: no expone nada, solo dice qué código corre.
     if (url.searchParams.has("version")) return json({ version: VERSION_MOTOR });
+
+    // ── OJO CON EL TOKEN VACÍO ───────────────────────────────────────────────
+    //
+    // Al quitar el valor por defecto, `VERIFY_TOKEN` puede quedar en "". Y en
+    // JavaScript `"" === ""` es CIERTO: sin este `if`, una petición con
+    // `?diag=` (el parámetro presente y vacío) coincidiría y enseñaría el
+    // diagnóstico a cualquiera. Cerrar un agujero abriendo otro más pequeño
+    // sigue siendo abrir un agujero.
+    if (!VERIFY_TOKEN) {
+      console.error("[wa] falta WHATSAPP_VERIFY_TOKEN: no se puede verificar nada por GET");
+      return new Response("no configurado", { status: 503 });
+    }
+
     // Diagnóstico de la IA. Detrás del token del webhook: no es para clientes.
     if (url.searchParams.get("diag") === VERIFY_TOKEN) return json(await diagnosticoIA());
     if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === VERIFY_TOKEN) {
@@ -2949,16 +3099,37 @@ Deno.serve(async (req: Request) => {
   }
 
   if (req.method === "POST") {
+    // EL CUERPO SE LEE COMO TEXTO, NO CON `req.json()`. El HMAC se calcula
+    // sobre los bytes exactos que mandó Meta: parsear y volver a serializar
+    // cambia espacios y orden, y entonces una firma perfectamente válida se
+    // rechazaría. Esto solo se puede hacer bien una vez, y va primero.
+    const crudo = await req.text();
     let body: any;
-    try { body = await req.json(); } catch { return json({ ok: true }); }
+    try { body = JSON.parse(crudo); } catch { return json({ ok: true }); }
 
     // El reloj de la base viene a despertar una conversación dormida.
+    //
+    // ESTA VÍA NO LA FIRMA META y no debe exigírsele firma: la llama Postgres,
+    // no Meta. Se autoriza con su propio testigo de un solo uso, que es lo
+    // correcto para ella. Exigirle la firma de Meta dejaría todas las esperas
+    // largas sin retomar —y el «recuérdaselo en 2 h» no llegaría nunca.
     if (url.searchParams.has("continuar")) {
       try {
         return await retomarEspera(admin(), String(body?.espera ?? ""), String(body?.testigo ?? ""));
       } catch (e) {
         console.error("[espera] falló al retomar:", e);
         return json({ ok: false }, 500);
+      }
+    }
+
+    // ── Todo lo demás dice venir de Meta: hay que comprobarlo ────────────────
+    if (!(await firmaDeMetaValida(crudo, req.headers.get("x-hub-signature-256"), APP_SECRET))) {
+      await anotarFirmaMala(crudo, req.headers.get("x-hub-signature-256"));
+      // En "exigir" se corta aquí. En "observar" se sigue, para poder estrenar
+      // la comprobación sobre tráfico real sin arriesgarse a dejar mudos a
+      // todos los clientes si el secreto no fuera el que firma.
+      if (MODO_FIRMA === "exigir") {
+        return new Response("firma inválida", { status: 401 });
       }
     }
 

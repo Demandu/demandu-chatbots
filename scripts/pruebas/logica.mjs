@@ -6,6 +6,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
@@ -878,6 +879,104 @@ describe("Instagram: entender lo que llega", () => {
     }));
     esperar(e.length).igual(3);
     esperar(e.map((x) => x.texto).join(",")).igual("uno,dos,tres");
+  });
+});
+
+// ─── La firma del webhook de WhatsApp ────────────────────────────────────────
+//
+// ESTE ENDPOINT ESTUVO ABIERTO A INTERNET durante meses: atendía POST sin
+// comprobar nada. La barrera nueva se prueba EJECUTÁNDOLA de verdad —firmando
+// bien y firmando mal— y no buscando palabras en el archivo. Una prueba que
+// solo comprobara que existe la palabra «firma» habría pasado igual con la
+// comprobación rota, que es exactamente el peligro de una barrera de seguridad.
+describe("WhatsApp: la firma de Meta", () => {
+  const fuente = fs.readFileSync(
+    path.join(import.meta.dirname, "../../supabase/functions/whatsapp/index.ts"),
+    "utf8",
+  );
+  const desde = fuente.indexOf("async function firmaDeMetaValida");
+  if (desde < 0) throw new Error("no encuentro firmaDeMetaValida en el motor de WhatsApp");
+  const resto = fuente.slice(desde);
+  const fin = resto.slice(1).search(/\n(?:function|const|async function|type|interface) /);
+  const cuerpo = resto.slice(0, fin > 0 ? fin + 1 : resto.length);
+  // Deno es TypeScript; aquí solo estorban las anotaciones.
+  const firmaDeMetaValida = new Function(
+    `${cuerpo
+      .replace(/:\s*Promise<boolean>/g, "")
+      .replace(/:\s*string \| null \| undefined/g, "")
+      .replace(/:\s*string/g, "")}; return firmaDeMetaValida;`,
+  )();
+
+  const SECRETO = "0123456789abcdef0123456789abcdef";
+  const CUERPO = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ id: "wamid.X" }] } }] }] });
+
+  // La firma que mandaría Meta, calculada aparte con el crypto de Node: si la
+  // calculara con la misma función que estoy probando, la prueba se estaría
+  // dando la razón a sí misma.
+  const firmarComoMeta = (texto, clave) =>
+    "sha256=" + crypto.createHmac("sha256", clave).update(texto, "utf8").digest("hex");
+
+  test("acepta una firma de verdad", async () => {
+    esperar(await firmaDeMetaValida(CUERPO, firmarComoMeta(CUERPO, SECRETO), SECRETO)).verdadero(
+      "una firma correcta tiene que pasar, o el webhook deja mudos a todos los clientes",
+    );
+  });
+
+  test("rechaza si el cuerpo fue manipulado", async () => {
+    // El ataque real: la firma es de un cuerpo y el cuerpo es otro.
+    const firma = firmarComoMeta(CUERPO, SECRETO);
+    const manipulado = CUERPO.replace("wamid.X", "wamid.Y");
+    esperar(await firmaDeMetaValida(manipulado, firma, SECRETO)).falso(
+      "cambiar el cuerpo tiene que invalidar la firma",
+    );
+  });
+
+  test("rechaza una firma hecha con otro secreto", async () => {
+    const otra = firmarComoMeta(CUERPO, "ffffffffffffffffffffffffffffffff");
+    esperar(await firmaDeMetaValida(CUERPO, otra, SECRETO)).falso(
+      "quien no tiene la clave no puede firmar",
+    );
+  });
+
+  test("sin secreto no valida NADA", async () => {
+    // Un despliegue sin el secreto puesto NO puede comportarse como si todo
+    // estuviera firmado: eso deja el endpoint igual de abierto que antes, y
+    // encima pareciendo protegido.
+    esperar(await firmaDeMetaValida(CUERPO, firmarComoMeta(CUERPO, SECRETO), "")).falso(
+      "sin secreto hay que fallar cerrado",
+    );
+  });
+
+  test("rechaza cabeceras ausentes o con mala pinta", async () => {
+    const malas = [
+      null, undefined, "", "sha1=abc", "abc",
+      "sha256=", "sha256=zz", "sha256=" + "a".repeat(63), "sha256=" + "a".repeat(65),
+    ];
+    for (const c of malas) {
+      esperar(await firmaDeMetaValida(CUERPO, c, SECRETO)).falso(
+        `${JSON.stringify(c)} no debía pasar`,
+      );
+    }
+  });
+
+  test("una firma válida de OTRO cuerpo no sirve para este", async () => {
+    // Reutilizar una firma capturada es el ataque más obvio.
+    const firmaDeOtro = firmarComoMeta(JSON.stringify({ entry: [] }), SECRETO);
+    esperar(await firmaDeMetaValida(CUERPO, firmaDeOtro, SECRETO)).falso(
+      "una firma solo vale para el cuerpo con el que se calculó",
+    );
+  });
+
+  test("no corta al primer byte distinto", () => {
+    // NINGUNA PRUEBA FUNCIONAL PUEDE VIGILAR ESTO: comparar con `===` da el
+    // mismo resultado y solo cambia CUÁNTO tarda, que es justo lo que deja
+    // adivinar una firma byte a byte. Por eso se lee el código.
+    esperar(/diferencia \|= mio\[i\] \^ suyo\[i\]/.test(cuerpo)).verdadero(
+      "la comparación tiene que recorrer todos los bytes y acumular la diferencia",
+    );
+    esperar(/return\s+diferencia === 0/.test(cuerpo)).verdadero(
+      "el veredicto sale de la diferencia acumulada, no de un corte anticipado",
+    );
   });
 });
 

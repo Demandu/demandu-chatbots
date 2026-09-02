@@ -612,6 +612,108 @@ describe("Catálogo de componentes", () => {
 });
 
 // ─── Reenvíos de Meta ────────────────────────────────────────────────────────
+describe("WhatsApp: quién puede llamar al webhook", () => {
+  // ESTE ENDPOINT ESTUVO ABIERTO A INTERNET. Atendía POST sin comprobar nada:
+  // ni firma, ni token, ni cabecera. Y la dirección no es secreta —
+  // `NEXT_PUBLIC_SUPABASE_URL` viaja al navegador en cada carga—, así que
+  // cualquiera podía inventarse mensajes de cualquier cliente, meterlos en su
+  // Bandeja, disparar los flujos y gastar la cuota de IA que paga Demandu.
+  const wa = sinComentarios(
+    fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+  );
+
+  test("el cuerpo se lee CRUDO antes de nada", () => {
+    // El HMAC va sobre los bytes exactos que mandó Meta. Parsear y volver a
+    // serializar cambia espacios y orden, y una firma válida se rechazaría.
+    const i = wa.indexOf('req.method === "POST"');
+    esperar(i > 0).verdadero("no encuentro el manejador POST");
+    const bloque = wa.slice(i, i + 700);
+    esperar(bloque.includes("await req.text()")).verdadero(
+      "hay que leer el cuerpo como texto para poder verificar la firma",
+    );
+    esperar(/await req\.json\(\)/.test(bloque)).falso(
+      "si se parsea antes de firmar, el HMAC ya no cuadra con lo que mandó Meta",
+    );
+  });
+
+  test("la firma se comprueba ANTES de procesar el mensaje", () => {
+    const iFirma = wa.indexOf("firmaDeMetaValida(crudo");
+    const iProcesa = wa.indexOf("body?.entry?.[0]?.changes?.[0]?.value");
+    esperar(iFirma > 0 && iProcesa > 0).verdadero("no encuentro la firma o el procesado");
+    esperar(iFirma < iProcesa).verdadero(
+      "comprobar después de procesar no sirve de nada: el daño ya está hecho",
+    );
+  });
+
+  test("el reloj de la base NO necesita la firma de Meta", () => {
+    // A `?continuar=` lo llama Postgres, no Meta, y se autoriza con su propio
+    // testigo de un solo uso. Exigirle la firma de Meta dejaría todas las
+    // esperas largas sin retomar: el «recuérdaselo en 2 h» no llegaría nunca.
+    const iContinuar = wa.indexOf('url.searchParams.has("continuar")');
+    const iFirma = wa.indexOf("firmaDeMetaValida(crudo");
+    esperar(iContinuar > 0 && iFirma > iContinuar).verdadero(
+      "la vía del reloj tiene que resolverse ANTES de exigir la firma de Meta",
+    );
+    esperar(wa.slice(iContinuar, iFirma).includes("testigo")).verdadero(
+      "esa vía sigue autorizándose con su testigo",
+    );
+  });
+
+  test("se puede estrenar sin dejar mudos a los clientes", () => {
+    // Encender la comprobación de golpe sobre tráfico real es una apuesta: si
+    // el secreto no fuera el que firma, se rechazarían TODOS los mensajes de
+    // TODOS los clientes. El modo por defecto tiene que ser el prudente.
+    esperar(wa.includes("WA_FIRMA")).verdadero("hace falta poder observar antes de exigir");
+    const m = wa.match(/Deno\.env\.get\("WA_FIRMA"\)\s*\?\?\s*"([a-z]+)"/);
+    esperar(m?.[1]).igual(
+      "observar",
+      "el valor por defecto tiene que ser observar: desplegar esto sin leer no puede tumbar a nadie",
+    );
+    esperar(/MODO_FIRMA === "exigir"/.test(wa)).verdadero(
+      "solo se rechaza en modo exigir",
+    );
+  });
+
+  test("una firma que no cuadra queda apuntada", () => {
+    // Es lo que hace útil el modo observar —dice si el secreto es el bueno— y
+    // sigue haciendo falta al exigir: un 401 solo en consola es invisible, y
+    // Meta acaba DESACTIVANDO la suscripción del cliente sin avisar a nadie.
+    esperar(wa.includes("anotarFirmaMala")).verdadero("hay que dejar constancia");
+    const i = wa.indexOf("async function anotarFirmaMala");
+    const fn = wa.slice(i, i + 1400);
+    esperar(fn.includes("webhook_firma")).verdadero("se apunta en la tabla de fallos");
+    esperar(/\$\{\s*cabecera\s*\}/.test(fn)).falso("la firma de Meta no se guarda");
+    esperar(/\$\{\s*APP_SECRET\s*\}/.test(fn)).falso("el secreto NUNCA se guarda");
+    esperar(fn.includes("APP_SECRET.length")).verdadero(
+      "del secreto se apunta el largo, que es lo que sirve para diagnosticar sin filtrarlo",
+    );
+  });
+
+  test("el token de verificación no está escrito en el repositorio", () => {
+    // Estaba: `?? "demandu_wa_2026"`. Un token público con el que cualquiera
+    // podía dar de alta el webhook y abrir `?diag=`, que enseña el diagnóstico.
+    esperar(wa.includes("demandu_wa_2026")).falso(
+      "un token por defecto en el repositorio es un token público",
+    );
+    esperar(/WHATSAPP_VERIFY_TOKEN"\)\s*\?\?\s*""/.test(wa)).verdadero(
+      "sin la variable hay que fallar cerrado, no caer a un valor conocido",
+    );
+  });
+
+  test("un token vacío no abre el diagnóstico a cualquiera", () => {
+    // LA TRAMPA AL QUITAR EL VALOR POR DEFECTO: en JavaScript `"" === ""` es
+    // CIERTO, así que con el token vacío una petición con `?diag=` coincidiría
+    // y enseñaría el diagnóstico. Cerrar un agujero abriendo otro no vale.
+    const iGet = wa.indexOf('req.method === "GET"');
+    const iDiag = wa.indexOf('url.searchParams.get("diag")');
+    esperar(iGet > 0 && iDiag > iGet).verdadero("no encuentro el diagnóstico");
+    const antes = wa.slice(iGet, iDiag);
+    esperar(/if \(!VERIFY_TOKEN\)/.test(antes)).verdadero(
+      "hay que cortar ANTES si el token está vacío",
+    );
+  });
+});
+
 describe("Reenvíos del webhook", () => {
   const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
 
