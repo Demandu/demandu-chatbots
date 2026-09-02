@@ -123,8 +123,10 @@ async function anotarFallo(orgId: string | null, paso: string, detalle: string):
       canal: "instagram",
       paso,
       // Se recorta: los mensajes de Meta a veces traen un volcado entero, y
-      // esto es una pista, no un archivo de registro.
-      detalle: String(detalle ?? "").slice(0, 500),
+      // esto es una pista, no un archivo de registro. 900 y no 500 porque el
+      // diagnóstico va al FINAL del mensaje —después del texto de Meta, que ya
+      // es largo— y cortarlo antes desperdiciaría el intento entero.
+      detalle: String(detalle ?? "").slice(0, 900),
     });
   } catch (e) {
     console.error("[ig callback] tampoco pude anotar el fallo:", e);

@@ -106,11 +106,12 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
 
   // ── 1. Código → token corto (1 hora) ─────────────────────────────────────
   // Va como formulario, NO como JSON: este punto de conexión rechaza JSON.
+  const retorno = urlDeRetorno(req);
   const cuerpo = new URLSearchParams({
     client_id: appId,
     client_secret: secreto,
     grant_type: "authorization_code",
-    redirect_uri: urlDeRetorno(req),
+    redirect_uri: retorno,
     code,
   });
   const r1 = await fetch(CANJE, {
@@ -131,11 +132,33 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
     //
     // NUNCA se incluye el secreto ni el código: van en la petición, no en el
     // error, y este texto acaba guardado en la base.
+    // LA FORMA DE LO QUE SE MANDÓ, NUNCA SU CONTENIDO.
+    //
+    // Meta contesta «Error validating verification code… asegúrate de que tu
+    // redirect_uri sea idéntica» para varias causas distintas: la URI, un
+    // código ya usado, y unas credenciales que no validan. Comprobamos que la
+    // URI registrada coincidía carácter a carácter y aun así salía ese
+    // mensaje, así que hay que ver qué se está mandando de verdad.
+    //
+    // Del secreto solo se apunta el LARGO y si viene con espacios pegados —un
+    // salto de línea al copiar y pegar es de las causas más comunes y de las
+    // más difíciles de ver a ojo. El valor no se escribe nunca: esto acaba
+    // guardado en la base.
+    const forma = [
+      `uri=${retorno}`,
+      `app=${appId}`,
+      `secreto_largo=${secreto.length}`,
+      `secreto_sin_espacios=${secreto === secreto.trim()}`,
+      `code_largo=${code.length}`,
+      `code_limpio=${/^[A-Za-z0-9_-]+$/.test(code)}`,
+    ].join(" ");
+
     const partes = [
       `HTTP ${r1.status}`,
       j1?.error_type ? `tipo=${j1.error_type}` : "",
       j1?.code != null ? `code=${j1.code}` : "",
       j1?.error_message ?? j1?.error?.message ?? "",
+      `— enviado: ${forma}`,
     ].filter(Boolean);
     throw new Error(partes.join(" · ") || "Instagram no devolvió el token");
   }

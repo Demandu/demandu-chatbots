@@ -1755,6 +1755,28 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("el secreto de la app NUNCA puede acabar en un mensaje de error", () => {
+    // Los fallos de conexión se guardan en la base para poder diagnosticarlos
+    // después. Eso es útil y es justo lo que hizo falta aquí — pero convierte
+    // cualquier dato metido en un mensaje de error en un dato ALMACENADO. Del
+    // secreto se apunta su largo y si trae espacios pegados; su valor, jamás.
+    const integ = fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8");
+
+    // El único sitio donde la variable puede aparecer es en el cuerpo de la
+    // petición a Meta. En ninguna plantilla de texto.
+    const enPlantillas = [...integ.matchAll(/`[^`]*`/g)]
+      .map((m) => m[0])
+      .filter((t) => /\$\{\s*secreto\s*\}/.test(t));
+    esperar(enPlantillas.join(" | ")).igual(
+      "",
+      "el valor del secreto se está interpolando en un texto: acabaría guardado en la base",
+    );
+
+    esperar(integ.includes("secreto_largo=${secreto.length}")).verdadero(
+      "del secreto se apunta el largo, que es lo que sirve para diagnosticar sin filtrarlo",
+    );
+  });
+
   test("el login solo arranca desde el dominio registrado en Meta", () => {
     // ESTA PRUEBA EXISTE POR UN FALLO REAL. La misma plataforma responde en
     // varios dominios a la vez —el propio, el de la rama de Netlify, el de
