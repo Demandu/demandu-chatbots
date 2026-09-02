@@ -505,6 +505,11 @@ async function correrElFlujo(
     aiSettings: (bot as any).ai ?? null,
     atajos: (bot as any).shortcuts ?? null,
     flowName: (elegido as any).name ?? null,
+    // LAS GUARDA ESTA RUTA, NO EL MOTOR. Aquí se manda por la API de Meta y se
+    // apunta si la entrega falló; el motor no puede saber eso. Con los dos
+    // guardando, cada respuesta del bot salía DUPLICADA en la Bandeja — al
+    // cliente le llegaba una sola vez, pero el equipo veía dos.
+    guardarEnBandeja: false,
     iaDeRespaldo: (bot as any).ai?.enabled !== false && (bot as any).ai?.fallback_flujo !== false,
     ofreciAgente: estado.ofreciAgente === true,
   });

@@ -369,8 +369,22 @@ export function chooseWebFlow(entrantes: any[], text: string, isReturning: boole
  *
  * OJO: `payload` es NOT NULL con default '{}' — nunca mandar null aquí,
  * porque invalida el insert completo y el bot "contesta" sin quedar registrado.
+ *
+ * NO TODOS LOS CANALES QUIEREN ESTO. El widget de la web SÍ: no hay nada que
+ * «enviar», el visitante ve lo que haya en `messages`. Instagram y WhatsApp NO:
+ * ellos mandan el mensaje por la API de Meta y lo guardan ELLOS, porque solo
+ * ellos saben si la entrega falló y con qué motivo — y eso hay que apuntarlo.
+ *
+ * Guardar en los dos sitios dejaba cada respuesta del bot DUPLICADA en la
+ * Bandeja de Instagram: al cliente le llegaba una sola vez, pero el equipo veía
+ * dos, y con la conversación llena parece que el bot se volvió loco. Se
+ * descubrió mirando los renglones de la base, no la pantalla.
  */
-async function guardarSalida(ctx: Ctx, opts: { admin: any; conversationId: string; orgId: string }) {
+async function guardarSalida(
+  ctx: Ctx,
+  opts: { admin: any; conversationId: string; orgId: string; guardarEnBandeja?: boolean },
+) {
+  if (opts.guardarEnBandeja === false) return;
   if (!ctx.out.length) return;
   const { error } = await opts.admin.from("messages").insert(
     ctx.out.map((m) => ({
@@ -406,6 +420,17 @@ export async function runWebFlow(opts: {
   ofreciAgente?: boolean;
   /** Analítica: nombre del flujo, para que el histórico no quede anónimo. */
   flowName?: string | null;
+  /**
+   * ¿Guarda el motor las respuestas en la Bandeja? Por defecto SÍ, que es lo
+   * que necesita el widget de la web: allí no hay nada que enviar y el
+   * visitante lee lo que haya en `messages`.
+   *
+   * Los canales de Meta pasan `false` y las guardan ellos, porque solo ellos
+   * saben si Meta aceptó la entrega — y un mensaje que no llegó tiene que
+   * quedar MARCADO, no como uno normal. Si los dos guardan, el equipo ve cada
+   * respuesta del bot dos veces.
+   */
+  guardarEnBandeja?: boolean;
 }): Promise<{
   vars: Record<string, string>;
   awaiting: Awaiting;

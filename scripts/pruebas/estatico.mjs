@@ -1849,6 +1849,25 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("las respuestas del bot no se guardan dos veces", () => {
+    // EL MOTOR GUARDA EN LA BANDEJA PARA EL WIDGET DE LA WEB, donde no hay nada
+    // que «enviar» y el visitante lee lo que haya en `messages`. Instagram
+    // manda por la API de Meta y guarda ÉL, porque solo él sabe si la entrega
+    // falló. Con los dos guardando, cada respuesta salía duplicada en la
+    // Bandeja: al cliente le llegaba una vez y el equipo veía dos.
+    esperar(ruta.includes("guardarEnBandeja: false")).verdadero(
+      "el canal de Instagram tiene que decirle al motor que no guarde: guarda él",
+    );
+    const motor = fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8");
+    esperar(/opts\.guardarEnBandeja === false/.test(sinComentarios(motor))).verdadero(
+      "el motor tiene que respetar esa opción, o la bandera no sirve de nada",
+    );
+    // Y que siga guardando por defecto: el widget de la web depende de ello.
+    esperar(/guardarEnBandeja\?:\s*boolean/.test(motor)).verdadero(
+      "la opción es opcional a propósito: sin ella, el motor guarda, que es lo que necesita la web",
+    );
+  });
+
   test("la firma se comprueba con la clave de INSTAGRAM", () => {
     // LA APP QUE MANDA ESTE WEBHOOK ES LA DE INSTAGRAM, no la de Facebook: son
     // dos apps con dos claves distintas. Verificar solo con la de Facebook
