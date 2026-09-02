@@ -1755,6 +1755,35 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("el canje va como multipart y se lee de data[0]", () => {
+    // ESTAS DOS LÍNEAS COSTARON TRES INTENTOS FALLIDOS, y las dos salen de la
+    // misma causa: construí el canje leyendo una página de documentación que se
+    // cortó justo en el paso 2.
+    //
+    // 1. El ejemplo de Meta usa `curl -F`, que es multipart. Mandándolo
+    //    urlencoded, la redirect_uri viaja percent-codificada y Meta la compara
+    //    sin decodificar: nunca casa. Y el error que devuelve culpa a la URI,
+    //    que estaba perfectamente bien — por eso se buscó tanto en el sitio
+    //    equivocado.
+    //
+    // 2. La respuesta viene envuelta en `data[0]`. Leerla de la raíz haría que
+    //    un canje CORRECTO se tratara como fallido: el problema real ya estaría
+    //    resuelto y el síntoma seguiría siendo el mismo.
+    const integ = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8"),
+    );
+
+    esperar(integ.includes("new FormData()")).verdadero(
+      "el canje tiene que ir como multipart/form-data, igual que el ejemplo de Meta",
+    );
+    esperar(/CANJE[\s\S]{0,200}x-www-form-urlencoded/.test(integ)).falso(
+      "urlencoded hace que Meta rechace la redirect_uri aunque esté bien configurada",
+    );
+    esperar(integ.includes("Array.isArray(j1?.data) ? (j1.data[0]")).verdadero(
+      "el token viene dentro de data[0], no en la raíz de la respuesta",
+    );
+  });
+
   test("el secreto de la app NUNCA puede acabar en un mensaje de error", () => {
     // Los fallos de conexión se guardan en la base para poder diagnosticarlos
     // después. Eso es útil y es justo lo que hizo falta aquí — pero convierte

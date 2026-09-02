@@ -107,22 +107,40 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
   // ── 1. Código → token corto (1 hora) ─────────────────────────────────────
   // Va como formulario, NO como JSON: este punto de conexión rechaza JSON.
   const retorno = urlDeRetorno(req);
-  const cuerpo = new URLSearchParams({
-    client_id: appId,
-    client_secret: secreto,
-    grant_type: "authorization_code",
-    redirect_uri: retorno,
-    code,
-  });
-  const r1 = await fetch(CANJE, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: cuerpo.toString(),
-    cache: "no-store",
-  });
+
+  // VA COMO `multipart/form-data`, NO COMO `x-www-form-urlencoded`, y esto
+  // costó tres intentos fallidos averiguarlo.
+  //
+  // El ejemplo de Meta usa `curl -F`, que es multipart. Mandándolo urlencoded,
+  // la `redirect_uri` viaja percent-codificada (`https%3A%2F%2F…`) y Meta la
+  // compara aparentemente sin decodificar contra la registrada: nunca casan.
+  // El error que devuelve es «Error validating verification code. Please make
+  // sure your redirect_uri is identical to the one you used in the OAuth
+  // dialog request» — que suena a que la URI está mal configurada, cuando en
+  // realidad estaba bien y lo que fallaba era el formato del envío.
+  //
+  // No se pone `Content-Type` a mano: `fetch` lo escribe con el separador que
+  // corresponde. Ponerlo rompe la petición.
+  const form = new FormData();
+  form.append("client_id", appId);
+  form.append("client_secret", secreto);
+  form.append("grant_type", "authorization_code");
+  form.append("redirect_uri", retorno);
+  form.append("code", code);
+
+  const r1 = await fetch(CANJE, { method: "POST", body: form, cache: "no-store" });
   const j1 = await r1.json().catch(() => ({}));
-  const tokenCorto = j1?.access_token as string | undefined;
-  const igUserId = j1?.user_id != null ? String(j1.user_id) : "";
+
+  // LA RESPUESTA VIENE ENVUELTA EN `data[0]`, no en la raíz:
+  //   { "data": [ { "access_token": "...", "user_id": "...", "permissions": "..." } ] }
+  //
+  // Leerla de la raíz haría que un canje CORRECTO se tratara como fallido —
+  // el peor tipo de error, porque el problema real ya estaría resuelto y
+  // seguiríamos viendo el mismo síntoma. Se aceptan las dos formas: la
+  // documentada y la plana, por si Meta cambia de opinión.
+  const dato = Array.isArray(j1?.data) ? (j1.data[0] ?? {}) : j1;
+  const tokenCorto = dato?.access_token as string | undefined;
+  const igUserId = dato?.user_id != null ? String(dato.user_id) : "";
   if (!tokenCorto || !igUserId) {
     // EL MENSAJE LLEVA TODO LO QUE META DIGA, y a propósito: este es el punto
     // donde más cosas pueden fallar y todas se parecen desde fuera —el secreto
@@ -187,9 +205,10 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
     username = j3?.username ?? null;
   } catch { /* el adorno no manda */ }
 
-  const permisos = Array.isArray(j1?.permissions)
-    ? j1.permissions.map((x: any) => String(x))
-    : String(j1?.permissions ?? "").split(",").filter(Boolean);
+  // Del MISMO sitio que el token: también viene dentro de `data[0]`.
+  const permisos = Array.isArray(dato?.permissions)
+    ? dato.permissions.map((x: any) => String(x))
+    : String(dato?.permissions ?? "").split(",").filter(Boolean);
 
   return { igUserId, username, token, caduca, permisos };
 }
