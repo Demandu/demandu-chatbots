@@ -101,28 +101,25 @@ export function ConnectButton({
             {channel === "instagram" && (
               <div className="space-y-3 text-sm text-ink-2">
                 <p>
-                  Se abrirá el permiso oficial de Meta. Inicia sesión con Facebook y{" "}
-                  <b className="text-ink">marca la página que tiene tu Instagram ligado</b> — sin
-                  marcarla, Meta no nos deja ver la cuenta.
+                  Se abrirá el permiso oficial de Instagram. Entra con la cuenta del negocio y
+                  autoriza. <b className="text-ink">No necesitas página de Facebook.</b>
                 </p>
 
                 {/* LOS REQUISITOS VAN ANTES DEL BOTÓN, no en un error después.
-                    Si la cuenta no es profesional o no está ligada a la página,
-                    Meta devuelve una lista vacía y el cliente ve un fallo que no
-                    entiende. Decirlo aquí cuesta tres renglones y ahorra la
-                    llamada a soporte. */}
+                    Con este camino solo hace falta UNA cosa: que la cuenta sea
+                    profesional. Si no lo es, Instagram corta el permiso a mitad
+                    y el cliente vuelve con un fallo que no explica nada.
+                    Decirlo aquí cuesta tres renglones y ahorra la llamada a
+                    soporte. */}
                 <div className="rounded-xl border border-linea bg-suave/50 p-3 text-[12px] leading-relaxed">
-                  <p className="mb-1 font-semibold text-ink">Antes de empezar, comprueba que:</p>
+                  <p className="mb-1 font-semibold text-ink">Lo único que hace falta:</p>
                   <ul className="space-y-0.5">
                     <li>
-                      · Tu Instagram sea <b className="text-ink">cuenta profesional</b> — de empresa
-                      o de creador. Se cambia en la app de Instagram, en Configuración → Tipo de
-                      cuenta.
+                      · Que tu Instagram sea <b className="text-ink">cuenta profesional</b> — de
+                      empresa o de creador. Se cambia en la app de Instagram, en Configuración →
+                      Tipo de cuenta.
                     </li>
-                    <li>
-                      · Esté <b className="text-ink">ligado a una página de Facebook</b> que tú
-                      administres.
-                    </li>
+                    <li>· Entrar con esa cuenta, no con tu Instagram personal.</li>
                   </ul>
                 </div>
 

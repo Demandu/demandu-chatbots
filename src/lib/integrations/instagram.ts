@@ -2,51 +2,61 @@
  * Conectar una cuenta de Instagram.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * QUÉ CAMINO SE USA Y POR QUÉ. Meta tiene DOS integraciones con nombres casi
- * iguales para lo mismo:
+ * CAMINO: «Instagram API con inicio de sesión de Instagram». El cliente entra
+ * con SU cuenta de Instagram y ya está. **No necesita página de Facebook.**
  *
- *   · «Instagram API con Instagram Login» — la persona entra con su cuenta de
- *     Instagram, sin páginas de por medio.
- *   · «Instagram API con Facebook Login» — ES LA QUE USAMOS. La persona entra
- *     con Facebook y elige la página que tiene su Instagram ligado.
+ * ESO NO ES UNA PREFERENCIA, ES EL REQUISITO DEL NEGOCIO: la mayoría de los
+ * clientes de esta plataforma no tienen página de Facebook, y el camino que
+ * pasa por páginas convierte cada alta en una llamada a soporte explicándole a
+ * alguien cómo crear y ligar una página que no quiere.
  *
- * SE INTENTÓ PRIMERO EL DE INSTAGRAM LOGIN y no cuajó en esta app: el canje del
- * código devolvía siempre un error del dialecto de Facebook aunque todo lo
- * enviado fuera correcto (URI idéntica, App ID de Instagram, secreto de 32
- * caracteres sin espacios). Esta app es de tipo Negocios y está construida
- * sobre «Inicio de sesión con Facebook para empresas» — es lo que usa WhatsApp
- * — y ese es el camino con el que se lleva bien.
+ * SE PROBÓ EL CAMINO DE FACEBOOK y funcionaba —conectaba, guardaba el token—
+ * pero exigía la página. Se descartó por eso, no por fallar.
  *
- * LO QUE ESTO LE CUESTA AL CLIENTE: su Instagram tiene que estar ligado a una
- * página de Facebook. Es un requisito más al dar de alta, y se dice en la
- * pantalla de conexión antes de empezar, no en un error después.
+ * ESTOS PARÁMETROS ESTÁN COPIADOS DE UNA INTEGRACIÓN QUE FUNCIONA. Se capturó
+ * la URL real que genera BotPenguin (el proveedor al que esta plataforma
+ * sustituye) al pulsar su «Login with Instagram», y usa exactamente esto:
  *
- * LAS CREDENCIALES SON LAS DE FACEBOOK, las mismas que ya usa WhatsApp
- * (`NEXT_PUBLIC_META_APP_ID` y `META_APP_SECRET`). Ya no hace falta el par de
- * Instagram: una cosa menos que configurar y una menos que equivocar.
+ *   https://www.instagram.com/oauth/authorize
+ *     client_id=<app de Instagram>
+ *     redirect_uri=<la de vuelta>
+ *     response_type=code
+ *     scope=instagram_business_basic,
+ *           instagram_business_manage_comments,
+ *           instagram_business_manage_messages
+ *
+ * Y NADA MÁS. Sin `force_reauth`, sin `enable_fb_login`. Los intentos
+ * anteriores añadían esos dos y el canje del código fallaba con un error que
+ * culpaba a la `redirect_uri` estando la URI correcta. Si alguien vuelve a
+ * añadirlos «por seguridad», que lo pruebe de punta a punta antes.
+ *
+ * CREDENCIALES: las de la app de INSTAGRAM (`NEXT_PUBLIC_INSTAGRAM_APP_ID` e
+ * `INSTAGRAM_APP_SECRET`), que NO son las de Facebook que usa WhatsApp. Están
+ * en Panel de apps → Instagram → Configuración de la API con inicio de sesión
+ * con Instagram.
+ *
+ * TRES ANFITRIONES DISTINTOS, y no son intercambiables:
+ *   www.instagram.com/oauth/authorize     → pedir permiso
+ *   api.instagram.com/oauth/access_token  → canjear el código
+ *   graph.instagram.com                   → todo lo demás
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const GRAPH = "https://graph.facebook.com/v21.0";
-const DIALOGO = "https://www.facebook.com/v21.0/dialog/oauth";
+const AUTORIZAR = "https://www.instagram.com/oauth/authorize";
+const CANJE = "https://api.instagram.com/oauth/access_token";
+const GRAPH = "https://graph.instagram.com";
 
 /**
- * La configuración de «Inicio de sesión con Facebook para empresas» que define
- * qué activos y qué permisos se piden. Se creó a mano en el panel de Meta con:
- * activos Páginas + Cuentas de Instagram, token de usuario, y los permisos
- * `instagram_basic`, `instagram_manage_messages`, `instagram_manage_comments`,
- * `pages_show_list`, `pages_manage_metadata`, `pages_read_engagement`.
- *
- * CON `config_id` NO SE MANDA `scope`: los permisos los define la
- * configuración, no la URL. Mandar los dos es lo que hace que Meta ignore uno
- * de ellos sin avisar.
- *
- * El valor por defecto está escrito aquí a propósito: es una constante de la
- * plataforma —la misma para todos los clientes, y pública— y tenerlo aquí
- * evita otra vuelta de «añade una variable y vuelve a publicar». Se puede
- * sobrescribir por entorno el día que haga falta.
+ * Los mismos tres que pide la integración que funciona. Meta ofrece además
+ * `..._content_publish` y `..._manage_insights`: no se piden, porque cada
+ * permiso extra hay que justificarlo con vídeo en la revisión de la app y uno
+ * que no se usa es imposible de justificar.
  */
-const CONFIG_ID = process.env.NEXT_PUBLIC_META_CONFIG_ID_IG ?? "1071969529023369";
+export const PERMISOS_INSTAGRAM = [
+  "instagram_business_basic",
+  "instagram_business_manage_comments",
+  "instagram_business_manage_messages",
+].join(",");
 
 export function origenPublico(req: Request): string {
   const env = process.env.NEXT_PUBLIC_SITE_URL;
@@ -57,144 +67,176 @@ export function origenPublico(req: Request): string {
   return `${proto}://${host}`;
 }
 
-/**
- * TIENE QUE COINCIDIR AL CARÁCTER con una de las «URI de redireccionamiento de
- * OAuth válidas» del panel de Meta. Meta compara la cadena entera.
- */
+/** Tiene que coincidir AL CARÁCTER con la URI registrada en el panel. */
 export function urlDeRetorno(req: Request): string {
   return `${origenPublico(req)}/api/integrations/instagram/callback`;
 }
 
 export function urlDeConsentimiento(req: Request, state: string): string {
   const p = new URLSearchParams({
-    client_id: process.env.NEXT_PUBLIC_META_APP_ID ?? "",
-    config_id: CONFIG_ID,
+    client_id: process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID ?? "",
     redirect_uri: urlDeRetorno(req),
     response_type: "code",
+    scope: PERMISOS_INSTAGRAM,
+    // La integración de referencia manda `state: null`. Aquí SÍ se manda: es lo
+    // que impide que un enlace preparado por otro conecte la cuenta de un
+    // extraño a esta organización. Es un parámetro documentado y Meta lo
+    // devuelve tal cual; no participa en el canje.
     state,
   });
-  return `${DIALOGO}?${p.toString()}`;
+  return `${AUTORIZAR}?${p.toString()}`;
 }
 
 export type CuentaConectada = {
   igUserId: string;
   username: string | null;
-  pageId: string;
-  pageName: string | null;
-  /** El token DE LA PÁGINA: es con el que se manda y se recibe. */
   token: string;
   caduca: string | null;
   permisos: string[];
 };
 
 /**
- * Canjea el código y encuentra la cuenta de Instagram del cliente.
+ * Canjea el código por un token de LARGA duración, en dos pasos.
  *
- * TRES LLAMADAS, y las tres hacen falta:
- *   1. código → token de usuario (corto)
- *   2. token corto → token de usuario de LARGA duración
- *   3. token largo → las páginas del cliente y el Instagram ligado a cada una
- *
- * EL PASO 2 NO ES OPCIONAL aunque el token corto ya funcione. Los tokens de
- * página que se derivan de un token de usuario de larga duración **no
- * caducan**; los derivados de uno corto mueren en una hora. Saltárselo daría
- * una conexión que funciona en la demo y se cae esa misma tarde, sin ningún
- * error que lo explique.
+ * EL SEGUNDO PASO NO ES OPCIONAL. El canje directo devuelve un token de UNA
+ * HORA. Guardarlo sería una bomba de relojería: funcionaría en la demo y se
+ * caería esa misma tarde, sin ningún error que lo explicara.
  */
 export async function conectarConCodigo(req: Request, code: string): Promise<CuentaConectada> {
-  const appId = process.env.NEXT_PUBLIC_META_APP_ID ?? "";
-  const secreto = process.env.META_APP_SECRET ?? "";
-  if (!appId || !secreto) throw new Error("Faltan las credenciales de Meta en el servidor");
+  const appId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID ?? "";
+  const secreto = process.env.INSTAGRAM_APP_SECRET ?? "";
+  if (!appId || !secreto) throw new Error("Faltan las credenciales de Instagram en el servidor");
 
   const retorno = urlDeRetorno(req);
 
-  // ── 1. Código → token de usuario ─────────────────────────────────────────
-  const p1 = new URLSearchParams({
-    client_id: appId,
-    client_secret: secreto,
-    redirect_uri: retorno,
-    code,
-  });
-  const r1 = await fetch(`${GRAPH}/oauth/access_token?${p1.toString()}`, { cache: "no-store" });
+  // ── 1. Código → token corto (1 hora) ─────────────────────────────────────
+  //
+  // VA COMO `multipart/form-data`: el ejemplo de Meta usa `curl -F`, que es
+  // multipart. No se pone `Content-Type` a mano — `fetch` lo escribe con el
+  // separador que corresponde, y ponerlo rompe la petición.
+  const form = new FormData();
+  form.append("client_id", appId);
+  form.append("client_secret", secreto);
+  form.append("grant_type", "authorization_code");
+  form.append("redirect_uri", retorno);
+  form.append("code", code);
+
+  const r1 = await fetch(CANJE, { method: "POST", body: form, cache: "no-store" });
   const j1 = await r1.json().catch(() => ({}));
-  const tokenCorto = j1?.access_token as string | undefined;
-  if (!tokenCorto) {
-    // La forma de lo enviado, nunca su contenido: del secreto solo el largo y
-    // si trae espacios pegados. Esto acaba guardado en la base.
-    const forma = `uri=${retorno} app=${appId} secreto_largo=${secreto.length} secreto_sin_espacios=${secreto === secreto.trim()} code_largo=${code.length}`;
+
+  // LA RESPUESTA VIENE ENVUELTA EN `data[0]`, no en la raíz. Leerla de la raíz
+  // haría que un canje CORRECTO se tratara como fallido — el peor error
+  // posible, porque el problema real ya estaría resuelto y el síntoma seguiría
+  // siendo el mismo. Se aceptan las dos formas por si Meta cambia.
+  const dato = Array.isArray(j1?.data) ? (j1.data[0] ?? {}) : j1;
+  const tokenCorto = dato?.access_token as string | undefined;
+  const igUserId = dato?.user_id != null ? String(dato.user_id) : "";
+
+  if (!tokenCorto || !igUserId) {
+    // La FORMA de lo enviado, nunca su contenido: del secreto solo el largo, si
+    // trae espacios pegados, y si es EL MISMO que el de Facebook. Esto acaba
+    // guardado en la base.
+    //
+    // LO DEL SECRETO REPETIDO NO ES PARANOIA. Las dos claves —la de la app de
+    // Facebook y la de la app de Instagram— son 32 caracteres hexadecimales:
+    // indistinguibles a ojo, y están una debajo de la otra en el panel. Pegar
+    // la que no es da EXACTAMENTE este error, y el error culpa a la
+    // `redirect_uri`, así que se pierden horas comprobando una URI que está
+    // bien. Comparar los dos valores no revela ninguno: es un sí o un no.
+    const mismoQueFacebook = !!secreto && secreto === (process.env.META_APP_SECRET ?? "");
+    const forma = `uri=${retorno} app=${appId} secreto_largo=${secreto.length} secreto_sin_espacios=${secreto === secreto.trim()} secreto_es_el_de_facebook=${mismoQueFacebook} code_largo=${code.length}`;
     throw new Error(
-      [`HTTP ${r1.status}`, j1?.error?.type, j1?.error?.code, j1?.error?.message, `— enviado: ${forma}`]
-        .filter(Boolean).join(" · "),
+      [
+        `HTTP ${r1.status}`,
+        j1?.error_type ? `tipo=${j1.error_type}` : "",
+        j1?.code != null ? `code=${j1.code}` : "",
+        j1?.error_message ?? j1?.error?.message ?? "",
+        `— enviado: ${forma}`,
+      ].filter(Boolean).join(" · "),
     );
   }
 
-  // ── 2. Token corto → token de usuario de larga duración ──────────────────
+  // ── 2. Token corto → token de 60 días ────────────────────────────────────
   const p2 = new URLSearchParams({
-    grant_type: "fb_exchange_token",
-    client_id: appId,
+    grant_type: "ig_exchange_token",
     client_secret: secreto,
-    fb_exchange_token: tokenCorto,
+    access_token: tokenCorto,
   });
-  const r2 = await fetch(`${GRAPH}/oauth/access_token?${p2.toString()}`, { cache: "no-store" });
+  const r2 = await fetch(`${GRAPH}/access_token?${p2.toString()}`, { cache: "no-store" });
   const j2 = await r2.json().catch(() => ({}));
-  const tokenLargo = (j2?.access_token as string | undefined) ?? tokenCorto;
+  const token = (j2?.access_token as string | undefined) ?? tokenCorto;
   const segundos = Number(j2?.expires_in ?? 0);
   const caduca = segundos > 0 ? new Date(Date.now() + segundos * 1000).toISOString() : null;
 
-  // ── 3. Las páginas del cliente, y el Instagram de cada una ───────────────
-  const r3 = await fetch(
-    `${GRAPH}/me/accounts?fields=id,name,access_token,instagram_business_account{id,username}&limit=100&access_token=${encodeURIComponent(tokenLargo)}`,
-    { cache: "no-store" },
-  );
-  const j3 = await r3.json().catch(() => ({}));
-  if (j3?.error) throw new Error(j3.error?.message ?? "Meta no devolvió las páginas");
-
-  // Una página sin Instagram ligado no sirve aquí, y no es un error: mucha
-  // gente tiene páginas sueltas. Se filtran en silencio.
-  const conIg = ((j3?.data as any[]) ?? []).filter(
-    (p) => p?.instagram_business_account?.id && p?.access_token,
-  );
-  if (!conIg.length) {
-    throw new Error(
-      "SIN_CUENTAS: ninguna de las páginas autorizadas tiene una cuenta de Instagram ligada",
+  // El nombre de usuario es para que la Bandeja no muestre un número largo. Si
+  // falla, la conexión sigue siendo válida: no se tumba por un adorno.
+  let username: string | null = null;
+  try {
+    const r3 = await fetch(
+      `${GRAPH}/v23.0/me?fields=user_id,username&access_token=${encodeURIComponent(token)}`,
+      { cache: "no-store" },
     );
-  }
+    const j3 = await r3.json();
+    username = j3?.username ?? null;
+  } catch { /* el adorno no manda */ }
 
-  // Se conecta la primera. Elegir entre varias es una pantalla más; cuando
-  // algún cliente tenga dos, aquí es donde va.
-  const p = conIg[0];
-  return {
-    igUserId: String(p.instagram_business_account.id),
-    username: p.instagram_business_account.username ?? null,
-    pageId: String(p.id),
-    pageName: p.name ?? null,
-    token: String(p.access_token),
-    caduca,
-    permisos: [],
-  };
+  const permisos = Array.isArray(dato?.permissions)
+    ? dato.permissions.map((x: any) => String(x))
+    : String(dato?.permissions ?? "").split(",").filter(Boolean);
+
+  return { igUserId, username, token, caduca, permisos };
 }
 
 /**
- * Suscribe la app a los avisos de esa página.
+ * Suscribe la app a los avisos de ESA cuenta.
  *
  * SIN ESTO NO LLEGA NADA, y es el paso que más veces se olvida. Configurar el
  * webhook en el panel de Meta solo dice **a dónde** mandar los avisos; esta
  * llamada dice **de quién**. El síntoma cuando falta es el más desconcertante
  * que existe: la pantalla dice «conectado» y el webhook no suena jamás.
+ *
+ * META VALIDA LOS NOMBRES UNO A UNO y, si uno solo está mal, RECHAZA LA LISTA
+ * ENTERA. Ya pasó con `messaging_referral` en singular: la cuenta quedaba
+ * guardada y no llegaba un solo mensaje.
  */
 export async function suscribirCuenta(
-  pageId: string, pageToken: string,
+  igUserId: string, token: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const p = new URLSearchParams({
-      subscribed_fields: "messages,messaging_postbacks,message_reactions,messaging_referral",
-      access_token: pageToken,
+      subscribed_fields: "messages,messaging_postbacks,message_reactions,comments,live_comments",
+      access_token: token,
     });
-    const r = await fetch(`${GRAPH}/${pageId}/subscribed_apps?${p.toString()}`, { method: "POST" });
+    const r = await fetch(`${GRAPH}/v23.0/${igUserId}/subscribed_apps?${p.toString()}`, {
+      method: "POST",
+    });
     const j = await r.json().catch(() => ({}));
     if (j?.success === true) return { ok: true };
-    return { ok: false, error: j?.error?.message ?? "Meta no confirmó la suscripción" };
+    return { ok: false, error: j?.error?.message ?? "Instagram no confirmó la suscripción" };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? "No se pudo suscribir la página" };
+    return { ok: false, error: e?.message ?? "No se pudo suscribir la cuenta" };
+  }
+}
+
+/**
+ * Renueva un token de 60 días por otros 60.
+ *
+ * PENDIENTE: no la llama nadie todavía. Hace falta una tarea programada que la
+ * ejecute sobre los 50 días. Mientras no exista, una cuenta conectada deja de
+ * funcionar a los dos meses.
+ */
+export async function renovarToken(token: string): Promise<{ token: string; caduca: string } | null> {
+  try {
+    const p = new URLSearchParams({ grant_type: "ig_refresh_token", access_token: token });
+    const r = await fetch(`${GRAPH}/refresh_access_token?${p.toString()}`, { cache: "no-store" });
+    const j = await r.json();
+    if (!j?.access_token) return null;
+    const segundos = Number(j?.expires_in ?? 0);
+    return {
+      token: j.access_token as string,
+      caduca: new Date(Date.now() + (segundos || 60 * 86400) * 1000).toISOString(),
+    };
+  } catch {
+    return null;
   }
 }

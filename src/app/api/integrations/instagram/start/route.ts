@@ -26,9 +26,10 @@ export async function GET(req: Request) {
   const botId = new URL(req.url).searchParams.get("bot") ?? "";
   const destino = botId ? `${origen}/bots/${botId}/install` : `${origen}/settings/integrations`;
 
-  // Las MISMAS credenciales que ya usa WhatsApp: este camino va por Facebook
-  // Login, así que no hace falta el par aparte de Instagram.
-  if (!process.env.NEXT_PUBLIC_META_APP_ID || !process.env.META_APP_SECRET) {
+  // SON LAS DE INSTAGRAM, NO LAS DE FACEBOOK. La app de Meta tiene dos
+  // identificadores distintos y WhatsApp usa el otro; mezclarlos da un
+  // «client_id inválido» que en ningún sitio dice que existen dos.
+  if (!process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID || !process.env.INSTAGRAM_APP_SECRET) {
     return NextResponse.redirect(`${destino}?error=sin_configurar`);
   }
 

@@ -32,8 +32,6 @@ const AVISO_IG: Record<string, { tono: "bien" | "mal" | "ojo"; texto: string }> 
   },
 };
 const ERROR_IG: Record<string, string> = {
-  sin_cuentas:
-    "Autorizaste correctamente, pero ninguna de las páginas que marcaste tiene una cuenta de Instagram ligada. Revisa dos cosas: que tu Instagram sea cuenta profesional (en la app de Instagram: Configuración → Tipo de cuenta), y que esté ligado a tu página de Facebook. Después vuelve a intentarlo.",
   cuenta_ya_conectada: "Esa cuenta de Instagram ya está conectada a otra organización de la plataforma.",
   estado_invalido: "El enlace caducó o se abrió desde otro sitio. Vuelve a darle a Conectar.",
   // ESTOS DOS SON PROBLEMAS NUESTROS, NO DEL CLIENTE, y por eso dicen lo mismo
@@ -84,9 +82,11 @@ export default async function BotInstallPage({
     .eq("bot_id", params.id)
     .maybeSingle();
 
+  // `page_name` no se pide: con este camino no hay página de Facebook y la
+  // columna siempre viene vacía. Enseñarla solo podía confundir.
   const { data: ig } = await supabase
     .from("instagram_channels")
-    .select("username, page_name, ig_user_id")
+    .select("username, ig_user_id")
     .eq("bot_id", params.id)
     .maybeSingle();
 
@@ -141,7 +141,6 @@ export default async function BotInstallPage({
             <div className="rounded-2xl border border-success/40 bg-success/5 p-4 text-sm text-ink-2">
               Conectado a{" "}
               <b className="text-ink">{(ig as any).username ? `@${(ig as any).username}` : "tu cuenta"}</b>
-              {(ig as any).page_name ? <> · página <b className="text-ink">{(ig as any).page_name}</b></> : null}
             </div>
           )}
 

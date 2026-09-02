@@ -35,3 +35,8 @@ next-env.d.ts
 
 # archivos empaquetados
 *.zip
+
+# Papelera de trabajo. El puente con el Mac no puede borrar archivos, así que
+# lo que sobra se mueve aquí en vez de borrarse — pero no tiene que viajar al
+# repositorio: `publish.sh` hace `git add -A` y se lo llevaría todo.
+_to_delete/

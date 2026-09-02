@@ -24,15 +24,15 @@
  */
 
 /**
- * EL ANFITRIÓN ES `graph.facebook.com`, y se manda con el TOKEN DE LA PÁGINA.
+ * EL ANFITRIÓN ES `graph.instagram.com`, con el token de la CUENTA.
  *
- * No es intercambiable con `graph.instagram.com`: cada camino de Meta tiene el
+ * No es intercambiable con `graph.facebook.com`: cada camino de Meta tiene el
  * suyo, y usar el equivocado devuelve un error de permisos que hace perder
  * horas buscando un permiso que no falta. Aquí se usa el camino de Facebook
- * Login —el porqué está en la cabecera de `src/lib/integrations/instagram.ts`—
- * y por tanto este anfitrión y el token de la página.
+ * Login de Instagram —el porqué está en la cabecera de
+ * `src/lib/integrations/instagram.ts`— y por tanto este anfitrión.
  */
-const GRAPH = "https://graph.facebook.com/v21.0";
+const GRAPH = "https://graph.instagram.com/v23.0";
 
 export type ResultadoEnvio = { ok: boolean; error?: string; code?: number };
 

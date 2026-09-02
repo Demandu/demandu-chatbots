@@ -15,9 +15,9 @@ export const dynamic = "force-dynamic";
  * TRES COSAS TIENEN QUE SALIR BIEN, y si falla la tercera hay que DECIRLO en
  * vez de enseñar un «conectado» que miente:
  *
- *   1. Canjear el código por un token.
- *   2. Encontrar la cuenta de Instagram ligada a alguna de sus páginas.
- *   3. SUSCRIBIR LA PÁGINA a nuestra app. Este es el que más se olvida y el
+ *   1. Canjear el código por un token corto.
+ *   2. Cambiarlo por uno de 60 días — si no, la conexión muere en una hora.
+ *   3. SUSCRIBIR LA CUENTA a nuestra app. Este es el que más se olvida y el
  *      que da el síntoma más desconcertante: todo dice «conectado» y no llega
  *      ni un mensaje, porque configurar el webhook en el panel de Meta solo
  *      dice «a dónde», no «de quién».
@@ -84,11 +84,11 @@ export async function GET(req: Request) {
         bot_id: botId || null,
         ig_user_id: c.igUserId,
         username: c.username,
-        // La página SÍ importa en este camino: el token con el que se manda y
-        // se recibe es el de la página, y la suscripción al webhook también va
-        // por ella.
-        page_id: c.pageId,
-        page_name: c.pageName,
+        // Con Instagram Login no hay página de Facebook de por medio: el
+        // cliente entra con su cuenta y ya está. La columna existe para el otro
+        // camino y aquí se queda vacía a propósito, no por descuido.
+        page_id: null,
+        page_name: null,
         access_token: c.token,
         token_caduca: c.caduca,
         permisos: c.permisos,
@@ -105,9 +105,8 @@ export async function GET(req: Request) {
       return NextResponse.redirect(`${destino}?error=cuenta_ya_conectada`);
     }
 
-    // El paso que nadie recuerda hasta que no llega ningún mensaje. Va por la
-    // PÁGINA, que es de quien cuelga la cuenta en este camino.
-    const sus = await suscribirCuenta(c.pageId, c.token);
+    // El paso que nadie recuerda hasta que no llega ningún mensaje.
+    const sus = await suscribirCuenta(c.igUserId, c.token);
     if (!sus.ok) {
       await anotarFallo(orgId, "suscribir", sus.error ?? "");
       // Queda guardada —la conexión existe— pero se dice la verdad: todavía no
@@ -119,13 +118,6 @@ export async function GET(req: Request) {
   } catch (e: any) {
     const mensaje = e?.message ?? String(e);
     await anotarFallo(orgId, "canjear", mensaje);
-    // El caso más frecuente merece su propio mensaje: la persona autorizó, pero
-    // ninguna de sus páginas tiene un Instagram ligado. Decirle «no se pudo
-    // conectar» la dejaría sin saber qué arreglar, cuando la solución está en
-    // su mano y son dos minutos.
-    if (mensaje.startsWith("SIN_CUENTAS")) {
-      return NextResponse.redirect(`${destino}?error=sin_cuentas`);
-    }
     return NextResponse.redirect(`${destino}?error=fallo_al_conectar`);
   }
 }
