@@ -1849,6 +1849,24 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
+  test("un chatbot no se queda con dos cuentas de Instagram", () => {
+    // LA CLAVE ÚNICA ES `ig_user_id`, NO `bot_id`, así que nada impedía que un
+    // chatbot acabara con dos. Y pasó de verdad: al corregir el identificador,
+    // la cuenta se guardó con el id bueno y la fila del id viejo se quedó,
+    // ambas diciendo ser la misma @cuenta. La pantalla de Conexión las busca
+    // con `maybeSingle()`, que con dos filas revienta.
+    const cb = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/app/api/integrations/instagram/callback/route.ts"), "utf8"),
+    );
+    const i = cb.indexOf(".delete()");
+    esperar(i > 0).verdadero("al conectar hay que retirar la cuenta anterior de ese chatbot");
+    const bloque = cb.slice(Math.max(0, i - 300), i + 200);
+    esperar(bloque.includes('.eq("bot_id"')).verdadero("el borrado tiene que ir acotado al chatbot");
+    esperar(bloque.includes('.neq("ig_user_id"')).verdadero(
+      "y tiene que EXCLUIR la que se acaba de guardar: si no, se borra a sí misma",
+    );
+  });
+
   test("un aviso para una cuenta desconocida deja rastro", () => {
     // El `return` silencioso de un webhook sin canal es por donde se cae el
     // fallo más difícil de ver: la pantalla dice «conectado», Meta dice que

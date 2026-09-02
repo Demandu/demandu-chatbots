@@ -105,6 +105,26 @@ export async function GET(req: Request) {
       return NextResponse.redirect(`${destino}?error=cuenta_ya_conectada`);
     }
 
+    // ── Un chatbot, UNA cuenta de Instagram ──────────────────────────────────
+    //
+    // La clave única es `ig_user_id`, no `bot_id`, así que nada impedía que un
+    // mismo chatbot acabara con dos cuentas colgando. Y pasó: al arreglar el
+    // identificador, la cuenta se guardó con el id bueno y la fila del id viejo
+    // se quedó ahí. Las dos decían ser la misma `@cuenta`.
+    //
+    // NO ES COSMÉTICO. La pantalla de Conexión busca la cuenta del chatbot con
+    // `maybeSingle()`, que con dos filas revienta; y el motor podría contestar
+    // con un token que ya no vale. También es lo que pasa cuando alguien
+    // reconecta con OTRA cuenta de Instagram: la anterior tiene que irse, no
+    // quedarse de fantasma.
+    if (botId) {
+      await sb
+        .from("instagram_channels")
+        .delete()
+        .eq("bot_id", botId)
+        .neq("ig_user_id", c.igUserId);
+    }
+
     // El paso que nadie recuerda hasta que no llega ningún mensaje.
     const sus = await suscribirCuenta(c.igUserId, c.token);
     if (!sus.ok) {
