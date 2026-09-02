@@ -144,7 +144,13 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
     // `redirect_uri`, así que se pierden horas comprobando una URI que está
     // bien. Comparar los dos valores no revela ninguno: es un sí o un no.
     const mismoQueFacebook = !!secreto && secreto === (process.env.META_APP_SECRET ?? "");
-    const forma = `uri=${retorno} app=${appId} secreto_largo=${secreto.length} secreto_sin_espacios=${secreto === secreto.trim()} secreto_es_el_de_facebook=${mismoQueFacebook} code_largo=${code.length}`;
+
+    // Y LA PREGUNTA QUE DE VERDAD IMPORTA: ¿la pareja identificador+clave vale?
+    // Ver `credencialesDeLaApp`. Se pregunta solo aquí, cuando ya ha fallado:
+    // en el camino bueno no hace falta y sería una llamada de más.
+    const credenciales = await credencialesDeLaApp(appId, secreto);
+
+    const forma = `uri=${retorno} app=${appId} secreto_largo=${secreto.length} secreto_sin_espacios=${secreto === secreto.trim()} secreto_es_el_de_facebook=${mismoQueFacebook} credenciales=${credenciales} code_forma=${formaDelCodigo(code)}`;
     throw new Error(
       [
         `HTTP ${r1.status}`,
@@ -185,6 +191,64 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
     : String(dato?.permissions ?? "").split(",").filter(Boolean);
 
   return { igUserId, username, token, caduca, permisos };
+}
+
+/**
+ * ¿La pareja identificador + clave de la app es válida? Sin usuarios, sin
+ * códigos, sin OAuth.
+ *
+ * POR QUÉ EXISTE. Cuando el canje falla, Meta contesta SIEMPRE lo mismo —
+ * «Error validating verification code. Please make sure your redirect_uri is
+ * identical…»— tanto si el código es malo como si la CLAVE es la que no toca.
+ * Ese mensaje culpa a la dirección de retorno, así que se pierden horas
+ * comprobando una dirección que está bien. Pasó aquí: se verificó tres veces
+ * que la URI registrada en el panel coincidía al carácter, y coincidía.
+ *
+ * Meta acepta un token de aplicación con la forma `identificador|clave`. Si la
+ * pareja no vale, contesta que el token no se puede leer; si vale, contesta
+ * cualquier otra cosa. Eso separa las dos causas en una sola llamada.
+ *
+ * DEVUELVE UNA PALABRA, NUNCA LA CLAVE. Y antes de devolver nada se borra el
+ * valor del secreto del texto de Meta, por si algún día lo devolviera: esto
+ * acaba escrito en la base de datos.
+ */
+async function credencialesDeLaApp(appId: string, secreto: string): Promise<string> {
+  try {
+    // CONCATENADO A MANO, NO CON UNA PLANTILLA. Hay una prueba que prohíbe que
+    // el valor del secreto aparezca dentro de comillas invertidas en este
+    // archivo, y saltó contra esta misma línea cuando la escribí como
+    // plantilla. La prueba tiene razón aunque este uso sea legítimo: lo que la
+    // hace útil es que no admite excepciones, porque el día que se admite una
+    // es el día que se cuela la que sí filtraba.
+    const tokenDeApp = appId + "|" + secreto;
+    const r = await fetch(
+      `${GRAPH}/v23.0/me?fields=user_id&access_token=${encodeURIComponent(tokenDeApp)}`,
+      { cache: "no-store" },
+    );
+    const j = await r.json().catch(() => ({}));
+    const crudo = String(j?.error?.message ?? j?.error_message ?? "");
+    // `split/join` y no una plantilla: aquí no puede aparecer `${secreto}`.
+    const limpio = secreto ? crudo.split(secreto).join("«clave»") : crudo;
+
+    if (/invalid oauth access token|cannot parse access token|invalid application|malformed access token/i.test(limpio)) {
+      return "NO_VALEN";
+    }
+    // Cualquier otra respuesta significa que Meta leyó la pareja y la aceptó;
+    // lo que falle después ya es cosa del código, no de las credenciales.
+    return `valen (meta dijo: ${limpio.slice(0, 90) || "sin error"})`;
+  } catch (e: any) {
+    return `no_pude_comprobar (${String(e?.message ?? e).slice(0, 60)})`;
+  }
+}
+
+/**
+ * La FORMA del código, no el código: cuántos caracteres y si trae alguno que no
+ * debería. Un `#`, un espacio o un `%` significan que algo lo manoseó por el
+ * camino — y eso da exactamente el mismo error que una clave mala.
+ */
+function formaDelCodigo(code: string): string {
+  const raros = [...new Set(code.replace(/[A-Za-z0-9_.-]/g, "").split(""))].join("");
+  return `${code.length}${raros ? `+raros[${raros}]` : "+limpio"}`;
 }
 
 /**

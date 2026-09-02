@@ -1865,7 +1865,15 @@ describe("Instagram: la puerta de entrada", () => {
     // después. Eso es útil y es justo lo que hizo falta aquí — pero convierte
     // cualquier dato metido en un mensaje de error en un dato ALMACENADO. Del
     // secreto se apunta su largo y si trae espacios pegados; su valor, jamás.
-    const integ = fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8");
+    // SIN COMENTARIOS, Y ESTA ES LA TERCERA VEZ QUE HACE FALTA EN ESTE ARCHIVO.
+    // Los comentarios llevan comillas invertidas para citar código, y al buscar
+    // plantillas en el texto crudo una comilla de un comentario se empareja con
+    // otra del código de más abajo: nace una «plantilla» que no existe y la
+    // prueba falla contra código correcto. Una alarma que suena sola enseña a
+    // ignorar las alarmas, que es peor que no tenerla.
+    const integ = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8"),
+    );
 
     // El único sitio donde la variable puede aparecer es en el cuerpo de la
     // petición a Meta. En ninguna plantilla de texto.
