@@ -12,6 +12,7 @@ import { RespuestasRapidas } from "./RespuestasRapidas";
 import { ResponderEnIdioma } from "./ResponderEnIdioma";
 import { EmojiPicker } from "./EmojiPicker";
 import { VistaAdjunto, TOPE_BYTES, pesoLegible, type Adjunto } from "./Adjunto";
+import { EnviarPlantilla } from "./EnviarPlantilla";
 import { rellenar, type RespuestaRapida } from "@/lib/quickReplies";
 import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
@@ -152,6 +153,8 @@ export function InboxClient({
   // Si el idioma lo eligió el agente, no se le dice "detectado por sus
   // mensajes": sería mentirle sobre de dónde salió el dato.
   const [idiomaAMano, setIdiomaAMano] = useState(false);
+  /** La ventana para retomar la conversación con una plantilla aprobada. */
+  const [abrirPlantilla, setAbrirPlantilla] = useState(false);
   // Adjuntos: subida en curso y si hay algo arrastrándose por encima del chat.
   const [subiendo, setSubiendo] = useState<string | null>(null);
   const [arrastrando, setArrastrando] = useState(false);
@@ -1063,14 +1066,34 @@ export function InboxClient({
                 <b className="text-white">Pasaron más de 24 horas</b> desde el último mensaje de esta persona.
                 WhatsApp ya no permite escribirle libremente — solo se puede retomar con una plantilla aprobada.
               </p>
-              <a
-                href={sel.bot_id ? `/bots/${sel.bot_id}/templates` : "/bots"}
+              {/* ANTES ESTO ERA UN ENLACE, y por eso no hacía lo que decía.
+                  Llevaba a la pantalla de GESTIÓN de plantillas —donde se crean
+                  y se mandan a aprobar—, no a mandarle una a esta persona. Y si
+                  la conversación no tenía chatbot, caía a "/bots" y dejaba al
+                  agente en la lista de chatbots sin ninguna explicación. Ahora
+                  es lo que su texto promete: elegir una aprobada y enviarla. */}
+              <button
+                onClick={() => setAbrirPlantilla(true)}
                 className="flex-none rounded-lg px-3 py-1.5 text-xs font-bold text-white"
                 style={{ backgroundColor: "#6E42FF" }}
               >
                 Enviar una plantilla
-              </a>
+              </button>
             </div>
+          )}
+
+          {abrirPlantilla && sel && (
+            <EnviarPlantilla
+              conversacionId={sel.id}
+              botId={sel.bot_id ?? null}
+              onCerrar={() => setAbrirPlantilla(false)}
+              onEnviada={(m) => {
+                // El mensaje enviado entra en la conversación al momento. Sin
+                // esto el agente manda la plantilla y no ve nada hasta el
+                // siguiente refresco: vuelve a pulsar, y manda dos.
+                if (m) setMessages((prev) => [...prev, m as Message]);
+              }}
+            />
           )}
 
   {/* Composer (estilo WhatsApp Web · Demandu) */}

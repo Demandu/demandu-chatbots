@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { enviarTexto, enviarArchivo, type ResultadoEnvio } from "@/lib/canales/whatsappEnviar";
+import { enviarTexto, enviarArchivo, enviarPlantilla, type ResultadoEnvio } from "@/lib/canales/whatsappEnviar";
 import { enviarDm, enviarAdjuntoDm } from "@/lib/canales/instagramEnviar";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +23,23 @@ export const dynamic = "force-dynamic";
  * EL CANAL WEB NO ENVÍA NADA aquí a propósito: ahí el widget sondea, y mandar
  * también por otro camino duplicaría cada mensaje.
  */
+/**
+ * El texto de la plantilla con los datos ya puestos: lo que va a leer la
+ * persona. `{{1}}` es el primer valor, `{{2}}` el segundo, y así.
+ *
+ * Si algún hueco se quedara sin valor se deja el `{{n}}` a la vista en vez de
+ * borrarlo: un texto con un hueco visible se detecta de un vistazo, mientras
+ * que una frase a la que le falta una palabra parece correcta y engaña.
+ */
+function textoDeLaPlantilla(cuerpo: string | null, valores: string[]): string {
+  const base = String(cuerpo ?? "").trim();
+  if (!base) return "(plantilla sin texto)";
+  return base.replace(/\{\{\s*(\d+)\s*\}\}/g, (entero, n) => {
+    const v = valores[Number(n) - 1];
+    return v && String(v).trim() ? String(v) : entero;
+  });
+}
+
 export async function POST(req: Request) {
   const sb = createClient();
 
@@ -31,12 +48,13 @@ export async function POST(req: Request) {
   } = await sb.auth.getUser();
   if (!user) return NextResponse.json({ error: "Inicia sesión." }, { status: 401 });
 
-  const { conversacion, texto, adjunto, original, idioma } = await req
+  const { conversacion, texto, adjunto, original, idioma, plantilla } = await req
     .json()
     .catch(() => ({} as any));
 
   const cuerpo = String(texto ?? "").trim();
-  if (!conversacion || (!cuerpo && !adjunto?.url)) {
+  const nombrePlantilla = String(plantilla?.nombre ?? "").trim();
+  if (!conversacion || (!cuerpo && !adjunto?.url && !nombrePlantilla)) {
     return NextResponse.json({ error: "Falta el mensaje." }, { status: 400 });
   }
 
@@ -55,6 +73,62 @@ export async function POST(req: Request) {
   if (original) payload.original = original;
   if (idioma) payload.idioma = idioma;
 
+  // ── La plantilla se comprueba AQUÍ, contra la base ──────────────────────
+  //
+  // NO NOS FIAMOS DE LO QUE MANDE EL NAVEGADOR. El nombre de la plantilla y sus
+  // valores vienen del cliente, y de ahí puede venir cualquier cosa. Se busca
+  // la plantilla con RLS puesto —así solo aparece si es de esta organización— y
+  // se exige que esté APROBADA: mandar una que no lo está es un rechazo seguro
+  // de Meta, y el agente se quedaría creyendo que reabrió la conversación.
+  //
+  // También se cuenta el número de variables. Si no coinciden, Meta rechaza el
+  // envío entero con un error que no dice cuál falta; comprobarlo aquí permite
+  // decírselo al agente en cristiano y antes de gastar el intento.
+  let plantillaOk: { name: string; language: string; body: string | null } | null = null;
+  if (nombrePlantilla) {
+    if (conv.channel !== "whatsapp") {
+      return NextResponse.json(
+        { error: "Las plantillas son de WhatsApp: este canal no las usa." },
+        { status: 400 },
+      );
+    }
+
+    const { data: fila } = await sb
+      .from("whatsapp_templates")
+      .select("name, language, status, body, variables")
+      .eq("org_id", conv.org_id)
+      .eq("name", nombrePlantilla)
+      .eq("language", String(plantilla?.idioma ?? ""))
+      .maybeSingle();
+
+    if (!fila) {
+      return NextResponse.json({ error: "No encuentro esa plantilla." }, { status: 404 });
+    }
+    if (String(fila.status ?? "").toUpperCase() !== "APPROVED") {
+      return NextResponse.json(
+        { error: "Esa plantilla todavía no está aprobada por Meta, así que no se puede enviar." },
+        { status: 400 },
+      );
+    }
+
+    const valores = Array.isArray(plantilla?.valores) ? plantilla.valores.map((v: any) => String(v ?? "")) : [];
+    const faltan = Number(fila.variables ?? 0);
+    if (valores.filter((v: string) => v.trim()).length !== faltan) {
+      return NextResponse.json(
+        {
+          error:
+            faltan === 0
+              ? "Esta plantilla no lleva datos que rellenar."
+              : `Esta plantilla necesita ${faltan} dato${faltan === 1 ? "" : "s"} y no puede quedar ninguno en blanco.`,
+        },
+        { status: 400 },
+      );
+    }
+
+    plantillaOk = { name: fila.name, language: fila.language, body: fila.body ?? null };
+    payload.plantilla = { nombre: fila.name, idioma: fila.language, valores };
+  }
+
   // ── Entrega por el canal que toque ──────────────────────────────────────
   if (conv.channel === "whatsapp") {
     const { data: canal } = await sb
@@ -71,6 +145,14 @@ export async function POST(req: Request) {
       envio = { ok: false, error: "Todavía no hay un número de WhatsApp conectado en Conexión." };
     } else if (!para) {
       envio = { ok: false, error: "Este contacto no tiene un número de WhatsApp guardado." };
+    } else if (plantillaOk) {
+      // La plantilla va primero: es lo único que WhatsApp acepta fuera de la
+      // ventana de 24 h, que es justo cuando el agente la necesita.
+      envio = await enviarPlantilla(
+        canal.phone_number_id, canal.access_token, para,
+        plantillaOk.name, plantillaOk.language,
+        (payload.plantilla?.valores ?? []) as string[],
+      );
     } else if (adjunto?.url) {
       envio = await enviarArchivo(
         canal.phone_number_id, canal.access_token, para,
@@ -133,7 +215,11 @@ export async function POST(req: Request) {
       org_id: conv.org_id,
       direction: "outbound",
       sender: "agent",
-      body: cuerpo || adjunto?.nombre || "",
+      // CON LA PLANTILLA SE GUARDA LO QUE LEE LA PERSONA, no «📨 Plantilla
+      // xyz». El agente tiene que ver en la conversación exactamente el texto
+      // que recibió el cliente: si no, no sabe qué le dijo y la siguiente
+      // respuesta del lead no tiene contexto ninguno.
+      body: plantillaOk ? textoDeLaPlantilla(plantillaOk.body, payload.plantilla.valores) : (cuerpo || adjunto?.nombre || ""),
       ...(Object.keys(payload).length ? { payload } : {}),
     })
     .select("id,direction,sender,body,created_at,payload")

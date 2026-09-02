@@ -69,6 +69,37 @@ export function enviarTexto(pnid: string, token: string, to: string, body: strin
 }
 
 /**
+ * Manda una plantilla aprobada.
+ *
+ * ES LA ÚNICA FORMA DE REABRIR UNA CONVERSACIÓN. Pasadas 24 horas desde el
+ * último mensaje de la persona, WhatsApp no deja escribirle texto libre: la
+ * plantilla aprobada es la puerta, y sin ella el lead queda incomunicado para
+ * siempre.
+ *
+ * LOS VALORES VAN EN ORDEN y tienen que ser EXACTAMENTE tantos como {{1}},
+ * {{2}}… tenga el cuerpo aprobado. Si sobran o faltan, Meta rechaza el envío
+ * entero con un error que no dice cuál falta. Quien llama a esto ya lo
+ * comprobó contra la plantilla guardada; aquí solo se manda.
+ *
+ * Un salto de línea dentro de un valor también hace que Meta lo rechace, así
+ * que se aplanan: es preferible un texto en una línea a un mensaje no enviado.
+ */
+export function enviarPlantilla(
+  pnid: string, token: string, to: string,
+  nombre: string, idioma: string, valores: string[],
+) {
+  const template: any = { name: nombre, language: { code: idioma || "es" } };
+  const limpios = (valores ?? []).map((v) => String(v ?? "").replace(/\s*\n\s*/g, " ").trim());
+  if (limpios.length) {
+    template.components = [{
+      type: "body",
+      parameters: limpios.map((v) => ({ type: "text", text: v })),
+    }];
+  }
+  return waPost(pnid, token, { to, type: "template", template });
+}
+
+/**
  * Manda un archivo. El tipo se decide por el MIME real, no por la extensión:
  * un cliente puede renombrar un .pdf a .jpg y WhatsApp rechazaría el envío
  * entero por incoherente.

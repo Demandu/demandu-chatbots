@@ -350,6 +350,89 @@ describe("La solicitud de persona no se borra sola", () => {
   });
 });
 
+// ─── Retomar una conversación con una plantilla ──────────────────────────────
+describe("Enviar una plantilla desde la Bandeja", () => {
+  const inbox = fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8");
+  const modal = fs.readFileSync(path.join(SRC, "components/inbox/EnviarPlantilla.tsx"), "utf8");
+  const ruta = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/api/canales/enviar/route.ts"), "utf8"),
+  );
+
+  test("el botón ENVÍA, no lleva a otra pantalla", () => {
+    // EL FALLO REAL: «Enviar una plantilla» era un enlace a la pantalla de
+    // gestión de plantillas —donde se crean y se mandan a aprobar—, no a
+    // mandarle una a esa persona. Y si la conversación no tenía chatbot, caía
+    // a "/bots" y dejaba al agente en la lista de chatbots, sin explicación.
+    const i = inbox.indexOf("Enviar una plantilla");
+    esperar(i > 0).verdadero("no encuentro el botón de plantilla");
+    const bloque = sinComentarios(inbox.slice(Math.max(0, i - 700), i));
+    esperar(/href=\{sel\.bot_id \?/.test(bloque)).falso(
+      "volvió el enlace: un botón que promete enviar no puede navegar a otro sitio",
+    );
+    esperar(bloque.includes("setAbrirPlantilla(true)")).verdadero(
+      "el botón tiene que abrir la ventana de envío",
+    );
+  });
+
+  test("una conversación sin chatbot no se queda sin plantillas", () => {
+    // Es exactamente el caso que falló. Sin `bot_id` hay que enseñar las
+    // aprobadas de la organización, no dejar al agente sin nada que hacer.
+    esperar(/if \(botId\) q = q\.eq\("bot_id", botId\)/.test(modal)).verdadero(
+      "el filtro por chatbot tiene que ser opcional",
+    );
+  });
+
+  test("solo se ofrecen plantillas APROBADAS", () => {
+    // Meta rechaza en el momento cualquier otra, y el agente se quedaría
+    // creyendo que reabrió la conversación sin que llegara nada.
+    esperar(/\.eq\("status", "APPROVED"\)/.test(modal)).verdadero(
+      "la lista tiene que filtrar por aprobadas",
+    );
+  });
+
+  test("el servidor NO se fía de lo que manda el navegador", () => {
+    // El nombre de la plantilla y sus valores vienen del cliente. Si el
+    // servidor los reenviara a Meta sin comprobar, cualquiera podría mandar
+    // plantillas de otra organización o sin aprobar.
+    const i = ruta.indexOf("whatsapp_templates");
+    esperar(i > 0).verdadero("el servidor no está comprobando la plantilla contra la base");
+    const bloque = ruta.slice(i - 200, i + 700);
+    esperar(bloque.includes('.eq("org_id", conv.org_id)')).verdadero(
+      "la plantilla tiene que ser de la organización de esa conversación",
+    );
+    esperar(/APPROVED/.test(bloque)).verdadero("hay que exigir que esté aprobada");
+  });
+
+  test("no se manda una plantilla con huecos sin rellenar", () => {
+    // Meta rechaza el envío entero si el número de valores no cuadra, con un
+    // error que no dice cuál falta. Comprobarlo antes ahorra el intento y
+    // permite decírselo al agente en cristiano.
+    esperar(ruta.includes("fila.variables")).verdadero(
+      "hay que comparar los valores con las variables de la plantilla guardada",
+    );
+  });
+
+  test("en la Bandeja se guarda lo que LEE la persona", () => {
+    // Guardar «📨 Plantilla xyz» dejaría al agente sin saber qué le dijo al
+    // lead, y la siguiente respuesta del lead sin ningún contexto.
+    // SE BUSCA EL USO, NO LA DECLARACIÓN. La primera versión de esta prueba
+    // buscaba «textoDeLaPlantilla(» a secas y casaba con la propia función, así
+    // que pasaba aunque el `body:` guardara otra cosa. Se descubrió mutando.
+    esperar(/body:\s*plantillaOk\s*\?\s*textoDeLaPlantilla\(/.test(ruta)).verdadero(
+      "el cuerpo guardado tiene que ser el texto con los datos puestos",
+    );
+  });
+
+  test("un hueco sin valor se queda a la vista, no se borra", () => {
+    // Una frase a la que le falta una palabra parece correcta y engaña; un
+    // {{2}} a la vista se detecta de un vistazo.
+    const fn = ruta.slice(ruta.indexOf("function textoDeLaPlantilla"));
+    esperar(fn.slice(0, 400).includes("entero")).verdadero(
+      "si no hay valor hay que dejar el hueco visible",
+    );
+  });
+});
+
 // ─── Modelo de IA ────────────────────────────────────────────────────────────
 describe("Modelo de IA", () => {
   // POR QUÉ EXISTE ESTA PRUEBA: cuando el nombre del modelo caduca, la API
