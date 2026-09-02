@@ -54,6 +54,26 @@ export async function GET(req: Request) {
   const orgId = await getCurrentOrgId();
   if (!orgId) return NextResponse.redirect(`${origen}/login`);
 
+  // ── Sonda: ¿cuántas veces se entra aquí con el MISMO código? ─────────────
+  //
+  // Facebook devuelve «Error validating verification code… asegúrate de que tu
+  // redirect_uri sea idéntica» TAMBIÉN cuando el código ya se canjeó. Es su
+  // mensaje para «este código no vale», y culpa a la URI aunque la URI esté
+  // bien — cosa que ya se comprobó tres veces.
+  //
+  // Si algo llama a esta ruta dos veces (una precarga del navegador, un
+  // reintento de la CDN), la primera llamada quema el código y la segunda —la
+  // que ve la persona— falla siempre. Desde fuera es indistinguible de un
+  // problema de configuración.
+  //
+  // Se apunta una huella del código, NO el código: seis caracteres y su largo
+  // bastan para saber si son dos llamadas del mismo o dos intentos distintos.
+  await anotarFallo(
+    orgId,
+    "entrada",
+    `huella=${code.slice(0, 6)}…${code.length} agente=${(req.headers.get("user-agent") ?? "").slice(0, 40)} proposito=${req.headers.get("sec-purpose") ?? "-"}`,
+  );
+
   try {
     const c = await conectarConCodigo(req, code);
 
