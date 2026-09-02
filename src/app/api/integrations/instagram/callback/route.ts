@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import {
   origenPublico, conectarConCodigo, suscribirCuenta,
@@ -80,14 +81,14 @@ export async function GET(req: Request) {
       // El caso que importa: `ig_user_id` es único en toda la plataforma, así
       // que si otra organización ya conectó esa cuenta, esto falla — y debe
       // fallar. Dos negocios no pueden recibir los mensajes de la misma cuenta.
-      console.error("[ig callback] no pude guardar el canal:", error.message);
+      await anotarFallo(orgId, "guardar", error.message);
       return NextResponse.redirect(`${destino}?error=cuenta_ya_conectada`);
     }
 
     // El paso que nadie recuerda hasta que no llega ningún mensaje.
     const sus = await suscribirCuenta(c.igUserId, c.token);
     if (!sus.ok) {
-      console.error("[ig callback] la página no quedó suscrita:", sus.error);
+      await anotarFallo(orgId, "suscribir", sus.error ?? "");
       // Queda guardada —la conexión existe— pero se dice la verdad: todavía no
       // va a llegar nada. Un «conectado» a secas sería mentira.
       return NextResponse.redirect(`${destino}?ig=sin_suscribir`);
@@ -95,7 +96,37 @@ export async function GET(req: Request) {
 
     return NextResponse.redirect(`${destino}?ig=conectado`);
   } catch (e: any) {
-    console.error("[ig callback]", e?.message ?? e);
+    await anotarFallo(orgId, "canjear", e?.message ?? String(e));
     return NextResponse.redirect(`${destino}?error=fallo_al_conectar`);
+  }
+}
+
+/**
+ * Deja constancia de por qué falló un intento de conexión.
+ *
+ * POR QUÉ NO BASTA CON `console.error`. Los registros de Netlify solo se
+ * transmiten en vivo: si nadie está mirando la consola en ese preciso momento,
+ * el error se pierde para siempre. Cuando un cliente escribe «no me conecta»
+ * media hora después, no hay absolutamente nada que consultar — que es
+ * exactamente lo que nos pasó al conectar la primera cuenta.
+ *
+ * NUNCA LANZA. Esto es diagnóstico: si falla el propio apunte del fallo, lo
+ * último que puede hacer es tapar el fallo original.
+ */
+async function anotarFallo(orgId: string | null, paso: string, detalle: string): Promise<void> {
+  console.error(`[ig callback] ${paso}:`, detalle);
+  try {
+    // Con la llave de servicio: la sesión del cliente puede leer sus fallos,
+    // pero escribirlos es cosa del servidor.
+    await createAdminClient().from("conexiones_fallidas").insert({
+      org_id: orgId,
+      canal: "instagram",
+      paso,
+      // Se recorta: los mensajes de Meta a veces traen un volcado entero, y
+      // esto es una pista, no un archivo de registro.
+      detalle: String(detalle ?? "").slice(0, 500),
+    });
+  } catch (e) {
+    console.error("[ig callback] tampoco pude anotar el fallo:", e);
   }
 }

@@ -123,7 +123,21 @@ export async function conectarConCodigo(req: Request, code: string): Promise<Cue
   const tokenCorto = j1?.access_token as string | undefined;
   const igUserId = j1?.user_id != null ? String(j1.user_id) : "";
   if (!tokenCorto || !igUserId) {
-    throw new Error(j1?.error_message ?? j1?.error?.message ?? "Instagram no devolvió el token");
+    // EL MENSAJE LLEVA TODO LO QUE META DIGA, y a propósito: este es el punto
+    // donde más cosas pueden fallar y todas se parecen desde fuera —el secreto
+    // equivocado (es fácil pegar el de Facebook en vez del de Instagram), un
+    // código ya usado, una URI que no coincide. Sin el detalle de Meta, las
+    // tres son «no se pudo conectar» y hay que adivinar.
+    //
+    // NUNCA se incluye el secreto ni el código: van en la petición, no en el
+    // error, y este texto acaba guardado en la base.
+    const partes = [
+      `HTTP ${r1.status}`,
+      j1?.error_type ? `tipo=${j1.error_type}` : "",
+      j1?.code != null ? `code=${j1.code}` : "",
+      j1?.error_message ?? j1?.error?.message ?? "",
+    ].filter(Boolean);
+    throw new Error(partes.join(" · ") || "Instagram no devolvió el token");
   }
 
   // ── 2. Token corto → token de 60 días ────────────────────────────────────
