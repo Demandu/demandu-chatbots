@@ -1660,49 +1660,56 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
-  test("se usa el camino de Instagram Login, no el de Facebook", () => {
-    // ESTA PRUEBA VIGILA UNA DECISIÓN DE NEGOCIO, no un detalle técnico. Meta
-    // tiene dos integraciones con nombres casi iguales; se eligió la de
-    // Instagram Login porque así el CLIENTE NO NECESITA PÁGINA DE FACEBOOK, y
-    // muchas PYMES de LATAM tienen el Instagram vivo y la página abandonada.
-    // Quien vuelva al camino de Facebook estará reintroduciendo esa fricción
-    // en cada alta sin querer.
+  test("el consentimiento va con config_id y SIN scope", () => {
+    // En «Inicio de sesión con Facebook para empresas», los permisos los define
+    // la CONFIGURACIÓN del panel, no la URL. Mandar `config_id` y `scope` a la
+    // vez hace que Meta ignore uno de los dos sin avisar — y entonces el
+    // cliente autoriza menos permisos de los que hacen falta, la conexión
+    // «funciona», y falla más tarde al mandar el primer mensaje.
     const integ = sinComentarios(
       fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8"),
     );
-    esperar(integ.includes("https://www.instagram.com/oauth/authorize")).verdadero(
-      "el permiso se pide en instagram.com, no en facebook.com",
-    );
-    esperar(integ.includes("NEXT_PUBLIC_INSTAGRAM_APP_ID")).verdadero(
-      "este camino usa el App ID de INSTAGRAM, que no es el de Facebook que usa WhatsApp",
-    );
-    esperar(/me\/accounts/.test(integ)).falso(
-      "`/me/accounts` es del camino de páginas de Facebook: aquí no hay páginas",
+    const i = integ.indexOf("export function urlDeConsentimiento");
+    const bloque = integ.slice(i, i + 600);
+    esperar(bloque.includes("config_id")).verdadero("los permisos vienen de la configuración del panel");
+    esperar(/scope\s*:/.test(bloque)).falso("con config_id no se manda scope: Meta ignoraría uno de los dos");
+    esperar(bloque.includes("NEXT_PUBLIC_META_APP_ID")).verdadero(
+      "este camino usa las credenciales de Facebook, las mismas que WhatsApp",
     );
   });
 
-  test("el envío va a graph.instagram.com, no a graph.facebook.com", () => {
-    // Con un token de Instagram Login, `graph.facebook.com` responde con un
-    // error de permisos — que hace perder horas buscando un permiso que no
-    // falta, cuando lo que falla es el dominio.
+  test("el envío va con el token de la página, por graph.facebook.com", () => {
+    // Cada camino de Meta tiene su anfitrión. Con el token de página,
+    // `graph.instagram.com` responde con un error de permisos que hace perder
+    // horas buscando un permiso que no falta.
     const env = sinComentarios(
       fs.readFileSync(path.join(RAIZ, "src/lib/canales/instagramEnviar.ts"), "utf8"),
     );
-    esperar(env.includes("https://graph.instagram.com")).verdadero("el anfitrión tiene que ser graph.instagram.com");
-    esperar(env.includes("graph.facebook.com")).falso("graph.facebook.com rechaza el token de Instagram Login");
+    esperar(env.includes("https://graph.facebook.com")).verdadero("el anfitrión tiene que ser graph.facebook.com");
+    esperar(env.includes("graph.instagram.com")).falso("ese anfitrión es del otro camino y rechaza el token de página");
   });
 
-  test("el token que se guarda es el de 60 días, no el de una hora", () => {
-    // El canje directo devuelve un token de UNA HORA. Guardarlo sería una
-    // bomba de relojería: funciona en la demo y se cae sola esa misma tarde,
-    // sin ningún error que lo explique.
-    const integ = fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8");
-    esperar(integ.includes("ig_exchange_token")).verdadero(
-      "hay que cambiar el token corto por el largo antes de guardarlo",
+  test("el token de página se deriva de uno de LARGA duración", () => {
+    // ESTO ES UNA BOMBA DE RELOJERÍA SI SE HACE MAL. Los tokens de página
+    // derivados de un token de usuario de larga duración NO CADUCAN; los
+    // derivados del token corto mueren en una hora. Saltarse el canje daría una
+    // conexión que funciona en la demo y se cae esa misma tarde, sin ningún
+    // error que lo explique.
+    const integ = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8"),
     );
-    const iCorto = integ.indexOf("const tokenCorto");
-    const iLargo = integ.indexOf("ig_exchange_token");
-    esperar(iCorto > 0 && iLargo > iCorto).verdadero("el canje largo va después de obtener el corto");
+    // SE BUSCA EL `grant_type`, no la cadena suelta: `fb_exchange_token` es
+    // TAMBIÉN el nombre de un parámetro dos líneas más abajo, así que buscarla
+    // a secas hacía que esta prueba pasara con el canje desactivado. Se
+    // descubrió mutando el código, que es exactamente para lo que sirve.
+    esperar(/grant_type:\s*"fb_exchange_token"/.test(integ)).verdadero(
+      "hay que cambiar el token corto por el largo ANTES de pedir las páginas",
+    );
+    const iLargo = integ.search(/grant_type:\s*"fb_exchange_token"/);
+    const iPaginas = integ.indexOf("me/accounts");
+    esperar(iLargo > 0 && iPaginas > iLargo).verdadero(
+      "las páginas se piden con el token largo: con el corto, sus tokens caducan en una hora",
+    );
   });
 
   test("se suscribe la cuenta, no solo se guarda", () => {
@@ -1755,32 +1762,19 @@ describe("Instagram: la puerta de entrada", () => {
     );
   });
 
-  test("el canje va como multipart y se lee de data[0]", () => {
-    // ESTAS DOS LÍNEAS COSTARON TRES INTENTOS FALLIDOS, y las dos salen de la
-    // misma causa: construí el canje leyendo una página de documentación que se
-    // cortó justo en el paso 2.
-    //
-    // 1. El ejemplo de Meta usa `curl -F`, que es multipart. Mandándolo
-    //    urlencoded, la redirect_uri viaja percent-codificada y Meta la compara
-    //    sin decodificar: nunca casa. Y el error que devuelve culpa a la URI,
-    //    que estaba perfectamente bien — por eso se buscó tanto en el sitio
-    //    equivocado.
-    //
-    // 2. La respuesta viene envuelta en `data[0]`. Leerla de la raíz haría que
-    //    un canje CORRECTO se tratara como fallido: el problema real ya estaría
-    //    resuelto y el síntoma seguiría siendo el mismo.
-    const integ = sinComentarios(
-      fs.readFileSync(path.join(RAIZ, "src/lib/integrations/instagram.ts"), "utf8"),
+  test("se suscribe la PÁGINA, que es de quien cuelga la cuenta", () => {
+    // En este camino la cuenta de Instagram cuelga de una página de Facebook, y
+    // la suscripción al webhook va por la página, no por la cuenta. Suscribir
+    // el id equivocado devuelve éxito y no llega ni un mensaje: el fallo más
+    // desconcertante de toda la integración, porque todo dice «conectado».
+    const cb = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "src/app/api/integrations/instagram/callback/route.ts"), "utf8"),
     );
-
-    esperar(integ.includes("new FormData()")).verdadero(
-      "el canje tiene que ir como multipart/form-data, igual que el ejemplo de Meta",
+    esperar(cb.includes("suscribirCuenta(c.pageId")).verdadero(
+      "se suscribe la página (`pageId`), no la cuenta de Instagram",
     );
-    esperar(/CANJE[\s\S]{0,200}x-www-form-urlencoded/.test(integ)).falso(
-      "urlencoded hace que Meta rechace la redirect_uri aunque esté bien configurada",
-    );
-    esperar(integ.includes("Array.isArray(j1?.data) ? (j1.data[0]")).verdadero(
-      "el token viene dentro de data[0], no en la raíz de la respuesta",
+    esperar(cb.includes("page_id: c.pageId")).verdadero(
+      "hay que guardar la página: el token y el webhook dependen de ella",
     );
   });
 
