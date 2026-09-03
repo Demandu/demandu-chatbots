@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Clock, Crown,
+  Store,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,10 @@ const MAIN = [
   { href: "/inbox/programados", label: "En espera", icon: Clock },
   { href: "/crm", label: "Embudo", icon: KanbanSquare },
   { href: "/contacts", label: "Contactos", icon: Users },
+  // La tienda va en Principal y no en Ajustes porque no es una configuración:
+  // es un sitio donde se trabaja todos los días —cargar productos, agotar,
+  // cambiar precios— igual que la Bandeja o el Embudo.
+  { href: "/tienda", label: "Tienda", icon: Store },
 ];
 
 const CONFIG = [

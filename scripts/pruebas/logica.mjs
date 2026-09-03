@@ -12,6 +12,7 @@ import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero } from "../../src/lib/tienda/variedades.ts";
+import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
 import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
@@ -1081,6 +1082,74 @@ describe("Tienda: variedades con recargo", () => {
     esperar(comoDinero(160000)).igual("$1600.00");
     esperar(comoDinero(5)).igual("$0.05", "los centavos sueltos no se pierden");
     esperar(comoDinero(0)).igual("$0.00");
+  });
+});
+
+describe("Tienda: la dirección pública", () => {
+  test("un nombre de negocio se convierte en una dirección usable", () => {
+    esperar(aDireccion("Paws at Home")).igual("paws-at-home");
+    esperar(aDireccion("  Pizza  &  Pasta  ")).igual("pizza-pasta");
+  });
+
+  test("los acentos y las mayúsculas no llegan al enlace", () => {
+    // «panadería» y «panaderia» tienen que llevar al MISMO sitio: nadie
+    // escribe la tilde al teclear una dirección, y menos al dictarla.
+    esperar(aDireccion("Panadería Ñam")).igual("panaderia-nam");
+    esperar(aDireccion("PAWSATHOME")).igual("pawsathome");
+  });
+
+  test("la dirección solo lleva letras, números y guiones por dentro", () => {
+    // La base exige `^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$`. Limpiar no puede
+    // INVENTAR letras —de «x» no salen tres— así que lo que se garantiza aquí
+    // es la FORMA; del largo mínimo se encarga `direccionValida` antes de
+    // guardar, para que el cliente lea una explicación y no un error de
+    // Postgres en inglés.
+    for (const entrada of [
+      "Paws at Home", "---hola---", "Tienda 2026!!!", "a".repeat(80),
+      "Café — Panamá", "  --  x  --  ", "el/la--tienda_2",
+    ]) {
+      const d = aDireccion(entrada);
+      esperar(/^[a-z0-9-]*$/.test(d)).verdadero(`«${entrada}» dio «${d}»`);
+      esperar(d.startsWith("-") || d.endsWith("-")).falso(`«${entrada}» dio «${d}»`);
+      esperar(d.length <= 50).verdadero(`«${entrada}» dio «${d}»`);
+      // Y lo que sí llega a tres caracteres tiene que pasar la regla entera.
+      if (d.length >= 3) esperar(direccionValida(d)).verdadero(`«${entrada}» dio «${d}»`);
+    }
+  });
+
+  test("lo que se queda demasiado corto se para ANTES de guardar", () => {
+    // «  --  x  --  » se limpia a «x», un solo carácter, y eso la base lo
+    // rechaza. Quien tiene que frenarlo es la validación de la acción, con un
+    // mensaje que se entiende — no un reventón al insertar.
+    esperar(aDireccion("  --  x  --  ")).igual("x");
+    esperar(direccionValida("x")).falso();
+  });
+
+  test("recortar a 50 no deja un guion colgando", () => {
+    // AQUÍ ESTÁ LA TRAMPA: el corte se hace DESPUÉS de meter los guiones, así
+    // que puede caer justo encima de uno y dejar «...abc-», que la base
+    // rechaza. Por eso se vuelve a limpiar el final después de cortar.
+    const largo = "a".repeat(49) + " " + "b".repeat(20);
+    const d = aDireccion(largo);
+    esperar(d.endsWith("-")).falso("no puede acabar en guion");
+    esperar(direccionValida(d)).verdadero(d);
+    esperar(d.length <= 50).verdadero();
+  });
+
+  test("lo que no da una dirección da vacío, no basura", () => {
+    for (const v of ["", "   ", "!!!", "---", null, undefined]) {
+      esperar(aDireccion(v)).igual("");
+    }
+  });
+
+  test("una dirección demasiado corta NO se acepta", () => {
+    // Dos letras no encajan en la regla de la base. Se rechaza aquí, con un
+    // mensaje que se entiende, en vez de dejar que reviente al guardar.
+    esperar(direccionValida("ab")).falso();
+    esperar(direccionValida("abc")).verdadero();
+    esperar(direccionValida("-abc")).falso("no puede empezar con guion");
+    esperar(direccionValida("abc-")).falso("ni acabar con guion");
+    esperar(direccionValida("ABC")).falso("mayúsculas no");
   });
 });
 

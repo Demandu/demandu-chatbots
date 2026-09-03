@@ -2619,4 +2619,49 @@ describe("Servidor y navegador", () => {
   });
 });
 
+// ─── El menú de la izquierda ─────────────────────────────────────────────────
+describe("El menú lleva a alguna parte", () => {
+  // TODAS las direcciones que existen de verdad, sacadas de los `page.tsx`.
+  // Los grupos entre paréntesis —«(dashboard)»— no salen en la dirección: son
+  // solo carpetas para compartir marco.
+  const APP = path.join(SRC, "app");
+  const RUTAS = new Set(
+    listar(APP, /^page\.tsx$/).map((f) =>
+      "/" +
+      path
+        .relative(APP, path.dirname(f))
+        .split(path.sep)
+        .filter((s) => s && !/^\(.*\)$/.test(s))
+        .join("/"),
+    ),
+  );
+
+  test("cada opción del menú abre una pantalla que existe", () => {
+    // POR QUÉ ESTA PRUEBA: añadir una opción al menú y olvidar la pantalla no
+    // da error al compilar. Se ve en producción, cuando un cliente pulsa y le
+    // sale un 404 dentro de su propia plataforma.
+    const side = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/Sidebar.tsx"), "utf8"),
+    );
+    const rotas = [];
+    for (const m of side.matchAll(/href:\s*"(\/[^"]*)"/g)) {
+      const href = m[1];
+      // Una dirección con parte variable la resuelve Next; aquí solo se
+      // comprueban las fijas, que son todas las del menú.
+      const encaja = [...RUTAS].some(
+        (r) => r === href || r.split("/").length === href.split("/").length && r.includes("["),
+      );
+      if (!encaja) rotas.push(href);
+    }
+    esperar(rotas.join(", ")).igual("", "el menú apunta a pantallas que no existen");
+  });
+
+  test("la Tienda está en el menú", () => {
+    const side = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/Sidebar.tsx"), "utf8"),
+    );
+    esperar(/href:\s*"\/tienda"/.test(side)).verdadero("no hay acceso a la Tienda desde el menú");
+  });
+});
+
 process.exit(await correrPruebas());
