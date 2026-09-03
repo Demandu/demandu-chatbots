@@ -13,6 +13,7 @@ import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero } from "../../src/lib/tienda/variedades.ts";
 import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
+import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender } from "../../src/lib/tienda/config.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
 import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
@@ -1150,6 +1151,106 @@ describe("Tienda: la dirección pública", () => {
     esperar(direccionValida("-abc")).falso("no puede empezar con guion");
     esperar(direccionValida("abc-")).falso("ni acabar con guion");
     esperar(direccionValida("ABC")).falso("mayúsculas no");
+  });
+});
+
+describe("Tienda: cómo se ve y qué pregunta", () => {
+  test("una configuración vacía sigue dando una tienda que se puede pintar", () => {
+    // LA CONFIGURACIÓN VIVE EN UN `jsonb` que pudo escribir una versión
+    // anterior, un importador o alguien con la consola abierta. Si el
+    // escaparate confiara en que están todas las claves, un campo que falta
+    // sería una tienda EN BLANCO para un cliente de verdad.
+    for (const entrada of [null, undefined, {}, "no soy un objeto", 42]) {
+      const c = leerConfig(entrada);
+      esperar(colorValido(c.colores.principal)).verdadero();
+      esperar(colorValido(c.colores.fondo)).verdadero();
+      esperar(c.moneda.length > 0).verdadero();
+      esperar(c.preguntas.length > 0).verdadero("un formulario sin preguntas no recoge un pedido");
+    }
+  });
+
+  test("un color roto no tumba la tienda: se usa el de siempre", () => {
+    // Alguien escribe «azul» o «#GGG» y la tienda entera se quedaría sin
+    // pintar. Vale más una tienda con el color por defecto que ninguna.
+    const c = leerConfig({ colores: { principal: "azul", acento: "#F5247D", fondo: "#GGGGGG" } });
+    esperar(c.colores.principal).igual(CONFIG_POR_DEFECTO.colores.principal);
+    esperar(c.colores.acento).igual("#F5247D", "el que SÍ es válido se respeta");
+    esperar(c.colores.fondo).igual(CONFIG_POR_DEFECTO.colores.fondo);
+  });
+
+  test("el teléfono se guarda como lo quiere WhatsApp", () => {
+    // «+507 6238-1138» rompe el enlace de wa.me EN SILENCIO: abre y no
+    // encuentra a nadie. Nadie se entera hasta que un cliente se queja.
+    esperar(soloDigitos("+507 6238-1138")).igual("50762381138");
+    esperar(soloDigitos("(507) 6238 1138")).igual("50762381138");
+    esperar(leerConfig({ whatsapp: { numero: "+507 6238-1138" } }).whatsapp.numero).igual("50762381138");
+    esperar(soloDigitos(null)).igual("");
+  });
+
+  test("una lista sin opciones se convierte en texto libre", () => {
+    // Un desplegable vacío es una pregunta que NO se puede contestar, y si es
+    // obligatoria el cliente se queda encerrado sin poder pedir.
+    const c = leerConfig({
+      preguntas: [{ id: "pago", etiqueta: "Forma de Pago", tipo: "lista", opciones: [] }],
+    });
+    esperar(c.preguntas[0].tipo).igual("texto");
+    const b = leerConfig({
+      preguntas: [{ id: "pago", etiqueta: "Forma de Pago", tipo: "lista", opciones: ["Yappy", "Efectivo"] }],
+    });
+    esperar(b.preguntas[0].tipo).igual("lista");
+    esperar(b.preguntas[0].opciones.join("|")).igual("Yappy|Efectivo");
+  });
+
+  test("una pregunta sin etiqueta se descarta", () => {
+    // Pintaría un campo en blanco que el cliente tiene que rellenar sin saber
+    // qué le están preguntando.
+    const c = leerConfig({
+      preguntas: [
+        { id: "a", etiqueta: "Nombre completo", tipo: "texto", obligatoria: true },
+        { id: "b", etiqueta: "   ", tipo: "texto" },
+        { id: "c", etiqueta: "Nombre PH", tipo: "texto", obligatoria: true },
+      ],
+    });
+    esperar(c.preguntas.length).igual(2);
+    esperar(c.preguntas.map((p) => p.etiqueta).join("|")).igual("Nombre completo|Nombre PH");
+  });
+
+  test("una pregunta sin id no se queda sin id", () => {
+    // El id es lo que se guarda con el pedido. Sin él, dos respuestas se
+    // pisarían y el pedido llegaría incompleto.
+    const c = leerConfig({ preguntas: [{ etiqueta: "Nombre del perro" }, { etiqueta: "Raza" }] });
+    esperar(c.preguntas[0].id).igual("pregunta_1");
+    esperar(c.preguntas[1].id).igual("pregunta_2");
+    esperar(c.preguntas[0].id === c.preguntas[1].id).falso("dos preguntas no pueden compartir id");
+  });
+
+  test("una tienda sin WhatsApp NO está lista para vender", () => {
+    // EL FALLO MÁS CARO DE TODOS, porque no se ve: la tienda queda preciosa,
+    // el cliente llena el carrito, pulsa el botón y no pasa nada.
+    const sin = leerConfig({ titulo: "Paws at Home" });
+    esperar(loQueFaltaParaVender(sin).length > 0).verdadero();
+    esperar(loQueFaltaParaVender(sin).join(" ").includes("WhatsApp")).verdadero();
+
+    const corto = leerConfig({ titulo: "Paws at Home", whatsapp: { numero: "62381" } });
+    esperar(loQueFaltaParaVender(corto).join(" ").includes("código de país")).verdadero();
+
+    const lista = leerConfig({ titulo: "Paws at Home", whatsapp: { numero: "+507 6238-1138" } });
+    esperar(loQueFaltaParaVender(lista)).igual([]);
+  });
+
+  test("un banner sin imagen no se pinta", () => {
+    const c = leerConfig({
+      banners: [{ imagen_url: "https://x/1.png", enlace: "https://x" }, { imagen_url: "  " }, {}],
+    });
+    esperar(c.banners.length).igual(1);
+    esperar(c.banners[0].imagen_url).igual("https://x/1.png");
+  });
+
+  test("el mínimo de pedido es un entero de centavos, nunca negativo", () => {
+    esperar(leerConfig({ minimo_pedido: 1500 }).minimo_pedido).igual(1500);
+    esperar(leerConfig({ minimo_pedido: -5 }).minimo_pedido).igual(0);
+    esperar(leerConfig({ minimo_pedido: "no" }).minimo_pedido).igual(0);
+    esperar(leerConfig({ minimo_pedido: 10.6 }).minimo_pedido).igual(11, "medio centavo no existe");
   });
 });
 
