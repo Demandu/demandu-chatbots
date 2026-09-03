@@ -3237,6 +3237,52 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
       "el mensaje del pedido pagado tiene que armarse en el servidor",
     );
   });
+
+  test("el pedido entra a la Bandeja con dueño, no suelto", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // AQUÍ SE CORTABA EL RECORRIDO. El cliente mandaba su pedido por WhatsApp,
+    // el mensaje entraba a la Bandeja como texto cualquiera, y el pedido vivía
+    // en otra pantalla sin relación con esa conversación. Nadie quedaba
+    // encargado: el negocio ataba a mano el chat, el pedido y el cobro.
+    //
+    // Es justo lo que ninguna tienda suelta puede hacer, y era la tesis de
+    // meter la tienda dentro de la plataforma.
+    // ─────────────────────────────────────────────────────────────────────────
+    const mig = path.join(RAIZ, "supabase/migrations/0078_pedido_entra_a_la_bandeja.sql");
+    esperar(fs.existsSync(mig)).verdadero("falta el enlace entre el pedido y la conversación");
+    const sql = fs.readFileSync(mig, "utf8").replace(/--.*$/gm, "");
+
+    esperar(/on\s+public\.messages/.test(sql)).verdadero(
+      "el enlace tiene que dispararse al entrar el mensaje",
+    );
+    esperar(/conversacion_id/.test(sql)).verdadero("el pedido no se ata a su conversación");
+    esperar(/assignee_member_id/.test(sql)).verdadero("nadie queda encargado del pedido");
+
+    // VA EN LA BASE Y NO EN EL MOTOR: es la regla que ya fijó el reparto, para
+    // que valga igual en WhatsApp y en el widget web sin duplicarla.
+    esperar(/direction\s*<>\s*'inbound'/.test(sql)).verdadero(
+      "se dispararía también con lo que manda el negocio, que repite el mismo código",
+    );
+  });
+
+  test("el código del pedido viaja SIEMPRE en el mensaje", () => {
+    // Es lo único que permite reconocer el pedido al llegar a la Bandeja. Si
+    // solo viajara dentro del enlace de cobro, una tienda que cobra al recibir
+    // mandaría un texto que nadie puede relacionar con nada.
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/api/tienda/pedido/route.ts"), "utf8"),
+    );
+    const iCodigo = t.indexOf("Código: ");
+    esperar(iCodigo > 0).verdadero("el mensaje no lleva el código del pedido");
+
+    // Y va FUERA del trozo condicional del cobro: lo que se añade solo cuando
+    // la tienda cobra en línea termina en `: []),`, y el código va después.
+    const iFinDelCondicional = t.lastIndexOf(": []),");
+    esperar(iFinDelCondicional > 0).verdadero("cambió la forma del mensaje, revisa esta prueba");
+    esperar(iCodigo > iFinDelCondicional).verdadero(
+      "el código está dentro del trozo del cobro: una tienda que cobra al recibir mandaría un mensaje que nadie puede relacionar con su pedido",
+    );
+  });
 });
 
 process.exit(await correrPruebas());

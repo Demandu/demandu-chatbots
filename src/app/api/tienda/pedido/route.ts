@@ -191,6 +191,12 @@ export async function POST(req: Request) {
     ...(cobro.yappy
       ? ["", "Dale clic para pagar con Yappy:", enlaceDePago(tienda.slug, ped.codigo)]
       : []),
+    // EL CÓDIGO VIAJA SIEMPRE, cobre la tienda o no. Es lo que reconoce el
+    // mensaje al llegar a la Bandeja y lo que ata la conversación con el
+    // pedido: sin él, el cliente escribe y el negocio recibe un texto suelto
+    // que nadie relaciona con nada.
+    "",
+    `Código: ${ped.codigo}`,
   ].join("\n");
 
   // Se ata a su persona antes de contestar: el pedido y su ficha se crean en el

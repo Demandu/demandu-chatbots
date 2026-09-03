@@ -109,6 +109,55 @@ export async function cambiarDireccion(_e: Estado, fd: FormData): Promise<Estado
   };
 }
 
+/**
+ * Quién se encarga de los pedidos de esta tienda.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * VA POR TIENDA Y NO POR ORGANIZACIÓN. Un cliente con dos negocios tiene dos
+ * encargados, y el reparto general no sabe distinguirlos: le da el chat a quien
+ * menos carga tenga, que puede ser alguien que no sabe nada de esa tienda.
+ *
+ * VACÍO NO ES «NADIE»: es el reparto automático de siempre. Dejarlo sin dueño
+ * sería peor que cualquier elección.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function cambiarEncargado(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  const quien = s(fd.get("atiende_id"));
+  const sb = createClient();
+
+  // Se comprueba que la persona sea del equipo de esta organización: un id
+  // suelto en el formulario no puede asignarle los pedidos a alguien de otro
+  // cliente.
+  if (quien) {
+    const { data: miembro } = await sb
+      .from("team_members")
+      .select("id")
+      .eq("id", quien)
+      .eq("org_id", t.org_id)
+      .maybeSingle();
+    if (!miembro) return { ok: false, mensaje: "Esa persona no está en tu equipo." };
+  }
+
+  const { error } = await sb
+    .from("tiendas")
+    .update({ atiende_id: quien || null })
+    .eq("id", tiendaId);
+
+  if (error) return { ok: false, mensaje: "No se pudo guardar el encargado." };
+
+  revalidatePath(`/tienda/${tiendaId}`);
+  return {
+    ok: true,
+    mensaje: quien
+      ? "Guardado. Los pedidos nuevos le llegan asignados."
+      : "Guardado. Los pedidos irán al reparto automático.",
+  };
+}
+
 /* ── Diseño ────────────────────────────────────────────────────────────────── */
 
 export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {

@@ -10,6 +10,7 @@ import { Productos, type Producto } from "@/components/tienda/Productos";
 import { EditorDiseno } from "@/components/tienda/EditorDiseno";
 import { Cobros } from "@/components/tienda/Cobros";
 import { Direccion } from "@/components/tienda/Direccion";
+import { EncargadoDePedidos } from "@/components/tienda/EncargadoDePedidos";
 import { Pedidos, type PedidoEnLista } from "@/components/tienda/Pedidos";
 import {
   guardarDiseno,
@@ -19,6 +20,7 @@ import {
   cambiarEstadoPedido,
   probarYappy,
   cambiarDireccion,
+  cambiarEncargado,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -33,7 +35,7 @@ export default async function TiendaDetallePage({
   const sb = createClient();
   const { data: tienda } = await sb
     .from("tiendas")
-    .select("id,nombre,slug,activa,bot_id,config")
+    .select("id,nombre,slug,activa,bot_id,config,atiende_id")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -83,6 +85,11 @@ export default async function TiendaDetallePage({
           .eq("tienda_id", params.id)
           .order("created_at", { ascending: false })
           .limit(200)
+      : { data: [] };
+
+  const { data: equipo } =
+    activa === "pedidos"
+      ? await sb.from("team_members").select("id,name,available").order("name")
       : { data: [] };
 
   const pedidos: PedidoEnLista[] = ((pedidosCrudos ?? []) as Record<string, unknown>[]).map((p) => ({
@@ -181,6 +188,15 @@ export default async function TiendaDetallePage({
 
         <div className="mt-6">
           <TiendaNav tiendaId={params.id} activa={activa} />
+
+          {activa === "pedidos" && (
+            <EncargadoDePedidos
+              tiendaId={params.id}
+              atiendeId={(tienda as any).atiende_id ?? null}
+              equipo={(equipo ?? []) as { id: string; name: string | null; available: boolean }[]}
+              accion={cambiarEncargado}
+            />
+          )}
 
           {activa === "pedidos" && (
             <Pedidos
