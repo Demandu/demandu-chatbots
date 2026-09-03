@@ -1,7 +1,9 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { leerConfig } from "@/lib/tienda/config";
+import { direccionAnterior } from "@/lib/tienda/direccion-anterior";
+import { enlaceDeTienda } from "@/lib/tienda/direccion";
 import { sanearGrupos } from "@/lib/tienda/variedades";
 import { Escaparate, type ProductoPublico } from "@/components/tienda/Escaparate";
 
@@ -53,6 +55,17 @@ export async function generateMetadata({
 
 export default async function TiendaPublicaPage({ params }: { params: { slug: string } }) {
   const tienda = await traerTienda(params.slug);
+
+  // ¿ES UNA DIRECCIÓN VIEJA? El negocio pudo cambiarla, y lo que ya repartió
+  // —el enlace de su Instagram, los enlaces de cobro en los chats— sigue
+  // apuntando a la de antes. Se lleva a la nueva en vez de dar 404.
+  if (!tienda) {
+    const ahora = await direccionAnterior(params.slug);
+    // Se manda a la dirección COMPLETA: así funciona igual se llegue desde el
+    // dominio de tiendas o desde la plataforma, que enruta distinto.
+    if (ahora) redirect(enlaceDeTienda(ahora));
+  }
+
   if (!tienda || !tienda.activa) notFound();
 
   const sb = createClient();

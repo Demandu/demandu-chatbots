@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { aCentavos, sanearGrupos } from "@/lib/tienda/variedades";
 import { leerConfig, sanearPreguntas, soloDigitos, type ConfigTienda } from "@/lib/tienda/config";
-import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
+import { DOMINIO_TIENDAS, aDireccion, direccionValida, enlaceLegible } from "@/lib/tienda/direccion";
 import { esAmbiente, validarComercio } from "@/lib/tienda/yappy";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
@@ -30,6 +30,83 @@ async function tiendaDelUsuario(tiendaId: string) {
     .maybeSingle();
   if (!data || data.org_id !== orgId) return null;
   return data as { id: string; org_id: string; slug: string; config: unknown };
+}
+
+/* ── La dirección de la tienda ─────────────────────────────────────────────── */
+
+/**
+ * Cambiar lo que va después de la barra.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL DOMINIO NO SE TOCA —es de la plataforma— PERO EL NOMBRE ES DEL NEGOCIO, y
+ * alguien se va a equivocar al elegirlo. Sin esta pantalla, esa equivocación
+ * dura para siempre.
+ *
+ * LA DIRECCIÓN VIEJA NO SE TIRA: se guarda y sigue llevando a la tienda. Está
+ * pegada en biografías de Instagram, en estados de WhatsApp, y —lo que de
+ * verdad importa— DENTRO DE LOS ENLACES DE COBRO que ya están en el chat de
+ * cada cliente. Cambiar la dirección sin guardar la anterior mata esos cobros
+ * sin un solo aviso: el cliente abre el enlace, no ve nada, y nadie se entera
+ * de que ese dinero no va a entrar.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function cambiarDireccion(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  const nueva = aDireccion(s(fd.get("slug")));
+  if (!direccionValida(nueva)) {
+    return { ok: false, mensaje: "La dirección necesita al menos 3 letras o números." };
+  }
+  if (nueva === t.slug) {
+    return { ok: true, mensaje: "Esa ya es su dirección." };
+  }
+
+  const sb = createClient();
+
+  // ¿La tuvo otra tienda antes? Si una dirección abandonada quedara libre, otro
+  // negocio podría quedarse con el tráfico —y con los cobros— del primero.
+  const { data: previa } = await sb
+    .from("tienda_direcciones_previas")
+    .select("tienda_id")
+    .eq("slug", nueva)
+    .maybeSingle();
+
+  if (previa && previa.tienda_id !== tiendaId) {
+    return { ok: false, mensaje: `La dirección «${nueva}» ya estuvo en uso. Prueba con otra.` };
+  }
+
+  const { error } = await sb.from("tiendas").update({ slug: nueva }).eq("id", tiendaId);
+  if (error) {
+    if ((error as { code?: string }).code === "23505") {
+      return {
+        ok: false,
+        mensaje: `La dirección «${nueva}» ya está ocupada. Prueba con otra, por ejemplo ${nueva}-pty.`,
+      };
+    }
+    return { ok: false, mensaje: "No se pudo cambiar la dirección." };
+  }
+
+  // LA VIEJA SE GUARDA DESPUÉS DE QUE EL CAMBIO SALIÓ BIEN. Al revés, un cambio
+  // fallido dejaría apuntada como «anterior» una dirección que sigue siendo la
+  // actual, y la tienda se redirigiría a sí misma.
+  await sb
+    .from("tienda_direcciones_previas")
+    .upsert(
+      { slug: t.slug, tienda_id: tiendaId, org_id: t.org_id },
+      { onConflict: "slug" },
+    );
+
+  // Si vuelve a una dirección que ya tuvo, deja de ser «anterior».
+  await sb.from("tienda_direcciones_previas").delete().eq("slug", nueva);
+
+  revalidatePath(`/tienda/${tiendaId}`);
+  revalidatePath("/tienda");
+  return {
+    ok: true,
+    mensaje: `Listo. Su dirección es ${enlaceLegible(nueva)} — y la anterior sigue llevando aquí, así que los enlaces repartidos no se rompen.`,
+  };
 }
 
 /* ── Diseño ────────────────────────────────────────────────────────────────── */

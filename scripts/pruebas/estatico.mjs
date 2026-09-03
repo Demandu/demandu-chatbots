@@ -3154,6 +3154,41 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
       "el dominio se lee sin tener en cuenta el proxy que hay delante",
     );
   });
+
+  test("cambiar la dirección NO puede romper los enlaces repartidos", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Dentro de cada enlace de cobro que ya está en el chat de un cliente va la
+    // dirección de la tienda del día en que se mandó. Si el negocio la cambia y
+    // la vieja deja de llevar aquí, esos cobros mueren en silencio: el cliente
+    // abre el enlace, no ve nada, y nadie se entera de que ese dinero no entra.
+    // ─────────────────────────────────────────────────────────────────────────
+    const acciones = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"),
+    );
+    esperar(acciones.includes("cambiarDireccion")).verdadero("no se puede cambiar la dirección");
+    esperar(acciones.includes("tienda_direcciones_previas")).verdadero(
+      "al cambiar la dirección no se guarda la anterior: los enlaces repartidos quedarían muertos",
+    );
+
+    // Y las dos puertas públicas tienen que llevar de la vieja a la nueva.
+    for (const r of ["app/t/[slug]/page.tsx", "app/t/[slug]/pagar/[codigo]/page.tsx"]) {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, r), "utf8"));
+      esperar(t.includes("direccionAnterior(")).verdadero(
+        `${r} contesta 404 a una dirección vieja en vez de llevar a la nueva`,
+      );
+    }
+  });
+
+  test("una dirección abandonada no la puede reclamar otro negocio", () => {
+    // Quedarse con la dirección vieja de otro es quedarse con su tráfico y con
+    // los enlaces de cobro que tenga repartidos.
+    const crear = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/actions.ts"), "utf8"),
+    );
+    esperar(crear.includes("tienda_direcciones_previas")).verdadero(
+      "al crear una tienda no se comprueban las direcciones que ya estuvieron en uso",
+    );
+  });
 });
 
 process.exit(await correrPruebas());

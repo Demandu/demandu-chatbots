@@ -1,8 +1,10 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { leerConfig } from "@/lib/tienda/config";
 import { cobroPublico } from "@/lib/tienda/cobro-publico";
+import { direccionAnterior } from "@/lib/tienda/direccion-anterior";
+import { enlaceDePago } from "@/lib/tienda/direccion";
 import { comoDinero } from "@/lib/tienda/variedades";
 import { estadoDelCobro } from "@/lib/tienda/cobro";
 import { PaginaDePago } from "@/components/tienda/PaginaDePago";
@@ -48,6 +50,15 @@ export default async function PagarPedidoPage({
     .select("id,nombre,slug,activa,config")
     .eq("slug", params.slug.toLowerCase())
     .maybeSingle();
+
+  // AQUÍ IMPORTA MÁS QUE EN NINGÚN SITIO: dentro de este enlace hay un cobro
+  // pendiente que ya está en el chat de alguien. Si el negocio cambió de
+  // dirección, se le lleva a la nueva; un 404 aquí es dinero que no entra y
+  // nadie se entera.
+  if (!tienda) {
+    const ahora = await direccionAnterior(params.slug);
+    if (ahora) redirect(enlaceDePago(ahora, codigo));
+  }
 
   if (!tienda || !tienda.activa) notFound();
 

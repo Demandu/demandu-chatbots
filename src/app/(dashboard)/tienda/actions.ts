@@ -31,7 +31,25 @@ export async function crearTienda(
 
   const botId = s(formData.get("bot_id"));
 
-  const { error } = await createClient().from("tiendas").insert({
+  const sb = createClient();
+
+  // UNA DIRECCIÓN ABANDONADA NO QUEDA LIBRE. Si otro negocio pudiera tomarla,
+  // se quedaría con el tráfico —y con los enlaces de cobro— del que la tuvo
+  // antes, que siguen vivos en los chats de sus clientes.
+  const { data: usada } = await sb
+    .from("tienda_direcciones_previas")
+    .select("slug")
+    .eq("slug", slug)
+    .maybeSingle();
+
+  if (usada) {
+    return {
+      ok: false,
+      mensaje: `La dirección «${slug}» ya estuvo en uso. Prueba con otra, por ejemplo ${slug}-pty.`,
+    };
+  }
+
+  const { error } = await sb.from("tiendas").insert({
     org_id: orgId,
     nombre,
     slug,

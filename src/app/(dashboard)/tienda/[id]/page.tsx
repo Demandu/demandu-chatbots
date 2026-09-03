@@ -9,6 +9,7 @@ import { TiendaNav, esPestana } from "@/components/tienda/TiendaNav";
 import { Productos, type Producto } from "@/components/tienda/Productos";
 import { EditorDiseno } from "@/components/tienda/EditorDiseno";
 import { Cobros } from "@/components/tienda/Cobros";
+import { Direccion } from "@/components/tienda/Direccion";
 import { Pedidos, type PedidoEnLista } from "@/components/tienda/Pedidos";
 import {
   guardarDiseno,
@@ -17,6 +18,7 @@ import {
   guardarCobros,
   cambiarEstadoPedido,
   probarYappy,
+  cambiarDireccion,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -197,6 +199,15 @@ export default async function TiendaDetallePage({
               guardar={guardarProductos}
               vaciar={vaciarCatalogo}
             />
+          )}
+
+          {/* LA DIRECCIÓN VA ARRIBA DEL DISEÑO. Es lo que se comparte y lo que
+              alguien va a querer arreglar el primer día; los colores y el logo
+              se tocan después. */}
+          {activa === "diseno" && (
+            <div className="mb-4 max-w-2xl">
+              <Direccion tiendaId={params.id} slug={tienda.slug} accion={cambiarDireccion} />
+            </div>
           )}
 
           {activa === "diseno" && (
