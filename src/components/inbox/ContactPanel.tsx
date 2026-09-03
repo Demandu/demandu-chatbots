@@ -5,6 +5,7 @@ import { Phone, Mail, User, Building2, Tag as TagIcon, Sparkles, Check, StickyNo
 import { createClient } from "@/lib/supabase/client";
 import { bandera, nombrePais, paisDesdeTelefono } from "@/lib/phoneCountry";
 import { NotasPostIt } from "./NotasPostIt";
+import { ComprasDelContacto } from "@/components/tienda/ComprasDelContacto";
 
 export type ContactoFicha = {
   id: string;
@@ -226,6 +227,12 @@ export function ContactPanel({
           </div>
         </div>
       </div>
+
+      {/* ── QUÉ HA COMPRADO ──────────────────────────────────────────────
+          Va antes de «de dónde vino» porque pesa más: de qué anuncio llegó
+          importa la primera vez; cuántas veces ha comprado importa todas las
+          demás. Si nunca compró, este bloque no se pinta. */}
+      <ComprasDelContacto contactoId={contact.id} />
 
       {/* ── DE DÓNDE VINO ────────────────────────────────────────────────
           Va ARRIBA de los atributos y de las etiquetas a propósito: es lo

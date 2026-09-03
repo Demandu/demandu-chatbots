@@ -5,6 +5,8 @@ import { sanearGrupos } from "@/lib/tienda/variedades";
 import { recalcularPedido, type LineaPedida, type ProductoDelCatalogo } from "@/lib/tienda/recalcular";
 import { textoDelPedido, type LineaCarrito } from "@/lib/tienda/pedido";
 import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
+import { aWhatsapp, telefonoUtil } from "@/lib/tienda/telefono";
+import { paisDesdeTelefono } from "@/lib/phoneCountry";
 import {
   aliasValido,
   codigoDePedido,
@@ -190,6 +192,11 @@ export async function POST(req: Request) {
     }),
   ].join("\n");
 
+  // ENLAZAR AL CONTACTO VA ANTES DEL COBRO a propósito: si Yappy tarda o falla,
+  // el pedido ya quedó atado a su persona. Al revés, un fallo del banco dejaría
+  // el pedido huérfano en el CRM para siempre.
+  await enlazarContacto();
+
   const yappy = cuerpo?.pago === "yappy" ? await cobrarConYappy() : null;
 
   return NextResponse.json({
@@ -200,6 +207,84 @@ export async function POST(req: Request) {
     rechazos,
     ...(yappy ?? {}),
   });
+
+  /**
+   * Atar el pedido a la persona que lo hizo.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ES LA PIEZA QUE HACE QUE ESTO SEA UN CRM Y NO UNA LISTA DE PEDIDOS. Sin
+   * `contacto_id`, «cuántas veces compró», «cuánto gasta» y «qué le gusta» no
+   * se pueden calcular — y lo peor es que NO SE PUEDEN RECUPERAR DESPUÉS: un
+   * pedido viejo sin contacto ya no sabe de quién era, salvo adivinando por el
+   * teléfono que escribió a mano.
+   *
+   * SE BUSCA POR EL NÚMERO EN FORMATO WHATSAPP porque es el mismo con el que el
+   * motor guarda a quien escribe. Así, quien pide en la tienda y luego manda el
+   * mensaje es UNA persona, no dos fichas.
+   *
+   * TODO ESTO ES «SI SE PUEDE». Un pedido sin contacto sigue siendo un pedido
+   * que hay que preparar: fallar aquí no puede tumbar la venta.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async function enlazarContacto() {
+    try {
+      const preguntaTel = config.preguntas.find((p) => p.tipo === "telefono");
+      const crudo = preguntaTel
+        ? (respuestas.find((r) => r.id === preguntaTel.id)?.valor ?? "")
+        : "";
+
+      const tel = aWhatsapp(crudo, config.whatsapp.numero);
+      if (!telefonoUtil(tel)) return;
+
+      const { data: existe } = await sb
+        .from("contacts")
+        .select("id,name")
+        .eq("org_id", tienda!.org_id)
+        .eq("channel", "whatsapp")
+        .eq("external_id", tel)
+        .maybeSingle();
+
+      // El nombre solo se pone si la ficha no tenía: lo que el negocio escribió
+      // a mano vale más que lo que el cliente tecleó de prisa en un formulario.
+      const nombre = nombreDelPedido();
+
+      let contactoId = existe?.id ?? null;
+      if (contactoId) {
+        if (nombre && !existe?.name) {
+          await sb.from("contacts").update({ name: nombre }).eq("id", contactoId);
+        }
+      } else {
+        const { data: creado } = await sb
+          .from("contacts")
+          .insert({
+            org_id: tienda!.org_id,
+            channel: "whatsapp",
+            external_id: tel,
+            phone: tel,
+            country: paisDesdeTelefono(tel),
+            ...(nombre ? { name: nombre } : {}),
+          })
+          .select("id")
+          .single();
+        contactoId = creado?.id ?? null;
+      }
+
+      if (contactoId) await sb.from("pedidos").update({ contacto_id: contactoId }).eq("id", ped.id);
+    } catch {
+      /* un pedido sin contacto sigue siendo un pedido */
+    }
+  }
+
+  /** El nombre que puso en el formulario, si hay una pregunta que lo pida. */
+  function nombreDelPedido(): string {
+    const limpia = (t: string) =>
+      t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const p = config.preguntas.find(
+      (q) => q.tipo !== "lista" && limpia(q.etiqueta).includes("nombre"),
+    );
+    if (!p) return "";
+    return (respuestas.find((r) => r.id === p.id)?.valor ?? "").trim().slice(0, 120);
+  }
 
   /**
    * Preparar el cobro con Yappy.

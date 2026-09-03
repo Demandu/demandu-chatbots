@@ -3035,6 +3035,34 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
       "lib/tienda/cobro.ts tiene que poder correr en el navegador",
     );
   });
+
+  test("cada pedido nuevo intenta atarse a su contacto", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ESTO NO SE PUEDE ARREGLAR DESPUÉS. Un pedido que entra sin `contacto_id`
+    // ya no sabe de quién era: el historial, la frecuencia y el ticket de esa
+    // persona quedan incompletos para siempre. Es barato hacerlo en el momento
+    // y imposible reconstruirlo luego, así que se protege con una prueba.
+    // ─────────────────────────────────────────────────────────────────────────
+    const ruta = path.join(SRC, "app/api/tienda/pedido/route.ts");
+    const t = sinComentarios(fs.readFileSync(ruta, "utf8"));
+
+    esperar(t.includes("contacto_id")).verdadero("el pedido no se ata a ningún contacto");
+    esperar(t.includes("aWhatsapp(")).verdadero(
+      "el teléfono tiene que normalizarse igual que en WhatsApp, o la persona queda partida en dos fichas",
+    );
+  });
+
+  test("el teléfono del pedido se normaliza en UN solo sitio", () => {
+    // Dos normalizaciones distintas es exactamente cómo se crean dos fichas
+    // para la misma persona, y eso se nota cuando ya hay cien contactos.
+    const malos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta.endsWith("lib/tienda/telefono.ts")) continue;
+      if (ruta.endsWith("lib/phoneCountry.ts")) continue;
+      if (/replace\(\s*\/\^507/.test(sinComentarios(texto))) malos.push(ruta);
+    }
+    esperar(malos.join(", ")).igual("", "hay prefijos de país escritos a mano fuera de telefono.ts");
+  });
 });
 
 process.exit(await correrPruebas());

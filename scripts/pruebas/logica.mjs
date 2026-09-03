@@ -22,6 +22,8 @@ import {
   claveDeFirma, firmaIpn, ipnValido, esAmbiente, PAGOS_YAPPY, API_YAPPY, CDN_YAPPY,
 } from "../../src/lib/tienda/yappy.ts";
 import { estadoDelCobro, VENTANA_COBRO_MIN } from "../../src/lib/tienda/cobro.ts";
+import { aWhatsapp, telefonoUtil } from "../../src/lib/tienda/telefono.ts";
+import { metricasDeCliente, comoFrecuencia, SIN_COMPRAS } from "../../src/lib/tienda/metricas.ts";
 import { claveDeLinea, precioUnitario, totalDeLinea, totalDelCarrito, cuantasUnidades, faltaElegir, faltaContestar, textoDelPedido, enlaceDeWhatsapp } from "../../src/lib/tienda/pedido.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
@@ -2048,6 +2050,160 @@ describe("Tienda: un cobro sin respuesta no se da por vivo para siempre", () => 
     // debe: no es lo mismo perseguir un pago que nunca entró que uno devuelto.
     esperar(estadoDelCobro("anulado", haceMinutos(1), ahora)).igual("anulado");
     esperar(estadoDelCobro("anulado", null, ahora)).igual("anulado");
+  });
+});
+
+describe("Tienda: el pedido se ata a la persona que lo hizo", () => {
+  // ───────────────────────────────────────────────────────────────────────────
+  // ES EL ESLABÓN QUE NO SE PUEDE REHACER. Si un pedido entra sin contacto, más
+  // adelante ya no se sabe de quién era, y ese cliente queda fuera de todas las
+  // métricas para siempre. Por eso el número se normaliza IGUAL que lo hace el
+  // motor de WhatsApp: si no, cada persona acaba partida en dos fichas, una que
+  // compra y otra que escribe.
+  // ───────────────────────────────────────────────────────────────────────────
+  const TIENDA_PA = "50761112222";
+
+  test("un número local se completa con el país de la tienda", () => {
+    for (const v of ["61234567", "6123-4567", "6123 4567", "(6123) 4567"]) {
+      esperar(aWhatsapp(v, TIENDA_PA)).igual("50761234567");
+    }
+  });
+
+  test("un número que ya viene completo no se toca", () => {
+    esperar(aWhatsapp("50761234567", TIENDA_PA)).igual("50761234567");
+    esperar(aWhatsapp("+507 6123-4567", TIENDA_PA)).igual("50761234567");
+  });
+
+  test("un cliente de OTRO país no se convierte en local", () => {
+    // Una panadería panameña también le vende a alguien con número colombiano.
+    // Ponerle 507 delante crearía un contacto que no existe y una conversación
+    // que nunca va a llegar.
+    esperar(aWhatsapp("573001234567", TIENDA_PA)).igual("573001234567");
+    esperar(aWhatsapp("+52 55 1234 5678", TIENDA_PA)).igual("525512345678");
+  });
+
+  test("el cero de marcado nacional no se cuela", () => {
+    esperar(aWhatsapp("0061234567", TIENDA_PA)).igual("50761234567");
+  });
+
+  test("sin país de referencia NO se inventa un contacto", () => {
+    // Mejor un pedido sin contacto que un contacto equivocado: ese ensucia la
+    // Bandeja de alguien de verdad.
+    esperar(aWhatsapp("61234567", "")).igual("");
+    esperar(aWhatsapp("61234567", "no-es-un-numero")).igual("");
+  });
+
+  test("lo que no es un teléfono no crea ficha", () => {
+    esperar(telefonoUtil("50761234567")).verdadero();
+    esperar(telefonoUtil("1234")).falso();
+    esperar(telefonoUtil("")).falso();
+    esperar(telefonoUtil("5076123456789012345")).falso();
+    esperar(telefonoUtil("507-6123-4567")).falso();
+  });
+});
+
+describe("Tienda: lo que este cliente vale", () => {
+  const dia = (n) => new Date(Date.UTC(2026, 0, n)).toISOString();
+  const pedido = (n, total, estado = "entregado", lineas = []) => ({
+    created_at: dia(n),
+    estado,
+    total,
+    lineas,
+  });
+
+  test("sin pedidos no hay métricas que enseñar", () => {
+    esperar(metricasDeCliente([]).pedidos).igual(0);
+    esperar(metricasDeCliente(null).pedidos).igual(0);
+    esperar(metricasDeCliente([{ created_at: "no es fecha", estado: "recibido", total: 100 }]).pedidos).igual(0);
+  });
+
+  test("el gasto y el ticket salen de lo que sí se vendió", () => {
+    const m = metricasDeCliente([pedido(1, 1000), pedido(8, 2000), pedido(15, 3000)]);
+    esperar(m.gastado).igual(6000);
+    esperar(m.ticket).igual(2000);
+    esperar(m.pedidos).igual(3);
+    esperar(m.entregados).igual(3);
+  });
+
+  test("UN PEDIDO CANCELADO NO ES DINERO, pero tampoco se esconde", () => {
+    // Meterlo en el gasto infla el ticket y hace parecer bueno a quien no lo
+    // es; borrarlo del todo oculta a quien cancela la mitad de lo que pide.
+    const m = metricasDeCliente([pedido(1, 1000), pedido(2, 9000, "cancelado")]);
+    esperar(m.gastado).igual(1000);
+    esperar(m.ticket).igual(1000);
+    esperar(m.cancelados).igual(1);
+    esperar(m.pedidos).igual(2);
+    esperar(m.volvio).falso();
+  });
+
+  test("volver es haber comprado dos veces, no dos visitas", () => {
+    esperar(metricasDeCliente([pedido(1, 1000)]).volvio).falso();
+    esperar(metricasDeCliente([pedido(1, 1000), pedido(9, 1000)]).volvio).verdadero();
+  });
+
+  test("con un solo pedido NO se inventa una frecuencia", () => {
+    // «Cada 0 días» sería mentir con un número.
+    //
+    // SE COMPRUEBA QUE SEA EXACTAMENTE `null`, no «algo parecido a null»: al
+    // comparar valores serializados, un NaN se ve igual que un null, y NaN es
+    // justo lo que sale de dividir entre cero intervalos. Esta prueba pasaba
+    // con el fallo dentro hasta que la mutación lo enseñó.
+    const f = metricasDeCliente([pedido(1, 1000)]).frecuencia;
+    esperar(f === null).verdadero("la frecuencia de un solo pedido tiene que ser null");
+  });
+
+  test("la frecuencia es el promedio entre la primera y la última", () => {
+    // 1, 8, 15 y 22 de enero: tres intervalos de siete días.
+    const m = metricasDeCliente([pedido(22, 100), pedido(1, 100), pedido(15, 100), pedido(8, 100)]);
+    esperar(m.frecuencia).igual(7);
+    esperar(m.primera.slice(0, 10)).igual("2026-01-01");
+    esperar(m.ultima.slice(0, 10)).igual("2026-01-22");
+  });
+
+  test("el favorito es lo que más se lleva, no lo último que pidió", () => {
+    const m = metricasDeCliente([
+      pedido(1, 100, "entregado", [{ nombre: "Saco 30 lb", cantidad: 2, precio: 50 }]),
+      pedido(8, 100, "entregado", [
+        { nombre: "Saco 30 lb", cantidad: 1, precio: 50 },
+        { nombre: "Collar", cantidad: 1, precio: 50 },
+      ]),
+    ]);
+    esperar(m.favoritos[0].nombre).igual("Saco 30 lb");
+    esperar(m.favoritos[0].unidades).igual(3);
+    esperar(m.favoritos[0].veces).igual(2);
+    esperar(m.favoritos[1].nombre).igual("Collar");
+  });
+
+  test("dos unidades en una compra no cuentan como dos compras", () => {
+    const m = metricasDeCliente([
+      pedido(1, 100, "entregado", [
+        { nombre: "Saco", cantidad: 1, precio: 50 },
+        { nombre: "Saco", cantidad: 1, precio: 50 },
+      ]),
+    ]);
+    esperar(m.favoritos[0].unidades).igual(2);
+    esperar(m.favoritos[0].veces).igual(1);
+  });
+
+  test("lo que compró en un pedido cancelado no es su favorito", () => {
+    const m = metricasDeCliente([
+      pedido(1, 100, "cancelado", [{ nombre: "Nunca llegó", cantidad: 9, precio: 50 }]),
+      pedido(2, 100, "entregado", [{ nombre: "Sí compró", cantidad: 1, precio: 50 }]),
+    ]);
+    esperar(m.favoritos.length).igual(1);
+    esperar(m.favoritos[0].nombre).igual("Sí compró");
+  });
+
+  test("la frecuencia se dice en palabras, no en días sueltos", () => {
+    esperar(comoFrecuencia(null)).igual("");
+    esperar(comoFrecuencia(7)).igual("cada semana");
+    esperar(comoFrecuencia(30)).igual("cada mes");
+    esperar(comoFrecuencia(400)).igual("muy de vez en cuando");
+  });
+
+  test("la ficha vacía existe y no rompe nada", () => {
+    esperar(SIN_COMPRAS.pedidos).igual(0);
+    esperar(SIN_COMPRAS.favoritos.length).igual(0);
   });
 });
 

@@ -31,6 +31,20 @@ const PREFIJOS: Record<string, string> = {
 
 const ORDENADOS = Object.keys(PREFIJOS).sort((a, b) => b.length - a.length);
 
+/**
+ * El prefijo internacional que reconocemos en este número, o null.
+ *
+ * Se expone aparte del país porque hay quien necesita el prefijo en sí —para
+ * completar un número local que el cliente escribió sin él— y deducirlo otra
+ * vez desde el ISO obligaría a mantener la misma tabla dos veces.
+ */
+export function prefijoDesdeTelefono(phone?: string | null): string | null {
+  const n = String(phone ?? "").replace(/\D/g, "");
+  if (!n) return null;
+  for (const p of ORDENADOS) if (n.startsWith(p)) return p;
+  return null;
+}
+
 /** Devuelve el código ISO-2 del país, o null si no lo reconocemos. */
 export function paisDesdeTelefono(phone?: string | null): string | null {
   const n = String(phone ?? "").replace(/\D/g, "");
