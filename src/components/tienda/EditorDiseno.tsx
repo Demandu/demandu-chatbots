@@ -49,22 +49,39 @@ export function EditorDiseno({
   tiendaId,
   slug,
   config,
+  categoriasEnUso,
   accion,
 }: {
   tiendaId: string;
   slug: string;
   config: ConfigTienda;
+  /** Las que de verdad tienen productos, sacadas del catálogo. */
+  categoriasEnUso: string[];
   accion: (e: Estado, fd: FormData) => Promise<Estado>;
 }) {
   const [estado, enviar] = useFormState(accion, { ok: false, mensaje: "" });
   const [titulo, setTitulo] = useState(config.titulo);
   const [wa, setWa] = useState(config.whatsapp.numero);
 
+  // LAS CATEGORÍAS NO SE ESCRIBEN AQUÍ: salen del catálogo, que es donde el
+  // negocio ya las puso. Escribirlas otra vez es garantizar que un día no
+  // coincidan y una categoría entera desaparezca del escaparate.
+  const [fotos, setFotos] = useState<Record<string, string>>(() =>
+    Object.fromEntries(config.categorias.map((c) => [c.nombre, c.imagen_url ?? ""])),
+  );
+
   const faltaWhatsapp = !wa.trim();
 
   return (
     <form action={enviar} className="grid gap-5 lg:grid-cols-[1fr_320px]">
       <input type="hidden" name="tienda_id" value={tiendaId} />
+      <input
+        type="hidden"
+        name="categorias"
+        value={JSON.stringify(
+          categoriasEnUso.map((n) => ({ nombre: n, imagen_url: (fotos[n] ?? "").trim() })),
+        )}
+      />
 
       <div className="grid gap-5">
         {/* ── Identidad ── */}
@@ -125,6 +142,44 @@ export function EditorDiseno({
             placeholder={"https://…/promo.jpg | https://wa.me/507…"}
             className="input-l font-mono text-xs"
           />
+        </section>
+
+        {/* ── Categorías ── */}
+        <section className="card p-4">
+          <h2 className="font-semibold text-ink">Categorías</h2>
+          <p className="mb-3 mt-1 text-sm text-ink-2">
+            Salen solas de tus productos. Aquí solo les pones foto — es lo primero que ve quien
+            entra, porque la tienda abre mostrando las categorías cerradas.
+          </p>
+
+          {categoriasEnUso.length === 0 ? (
+            <p className="text-sm text-ink-2">
+              Todavía no hay categorías. Ponles una a tus productos en la pestaña Productos y
+              aparecerán aquí.
+            </p>
+          ) : (
+            <div className="grid gap-2">
+              {categoriasEnUso.map((n) => (
+                <div key={n} className="flex items-center gap-3">
+                  {fotos[n]?.trim() ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={fotos[n]} alt="" className="h-10 w-10 flex-none rounded-full object-cover" />
+                  ) : (
+                    <span className="grid h-10 w-10 flex-none place-items-center rounded-full border border-dashed border-linea-2 text-[10px] text-ink-3">
+                      foto
+                    </span>
+                  )}
+                  <span className="w-40 flex-none truncate text-sm font-semibold text-ink">{n}</span>
+                  <input
+                    value={fotos[n] ?? ""}
+                    onChange={(e) => setFotos((f) => ({ ...f, [n]: e.target.value }))}
+                    placeholder="https://…/logo-de-la-marca.png"
+                    className="input-l flex-1"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* ── Colores ── */}

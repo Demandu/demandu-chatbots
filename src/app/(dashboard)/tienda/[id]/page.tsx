@@ -63,6 +63,15 @@ export default async function TiendaDetallePage({
     .eq("proveedor", "yappy")
     .neq("secreto", "");
 
+  // Las categorías que de verdad tienen productos, en el orden del catálogo.
+  const categoriasEnUso = [
+    ...new Set(
+      ((prods ?? []) as { categoria: string | null }[])
+        .map((p) => (p.categoria ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+
   return (
     <>
       <Topbar
@@ -144,6 +153,7 @@ export default async function TiendaDetallePage({
               tiendaId={params.id}
               slug={tienda.slug}
               config={configConNombre}
+              categoriasEnUso={categoriasEnUso}
               accion={guardarDiseno}
             />
           )}

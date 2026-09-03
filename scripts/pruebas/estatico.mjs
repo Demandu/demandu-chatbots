@@ -2744,6 +2744,24 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("la tienda abre por categorías, no soltando todo el catálogo", () => {
+    // ESTA ES LA FORMA QUE SUS CLIENTES YA SABEN USAR, copiada de la tienda que
+    // llevan años usando: cabecera, banner, y las categorías CERRADAS con su
+    // foto. Con noventa y seis productos, soltarlos de golpe es una pared de
+    // fotos donde no se encuentra nada — y encima obliga a reaprender algo que
+    // ya sabían.
+    const esc = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/Escaparate.tsx"), "utf8"),
+    );
+    esperar(esc.includes("estaAbierta")).verdadero("las categorías no se pueden abrir y cerrar");
+    esperar(/Boolean\(q\)/.test(esc)).verdadero(
+      "buscando hay que abrirlo todo, o los resultados quedan escondidos y la búsqueda parece rota",
+    );
+    esperar(esc.includes("tieneRecargos")).verdadero(
+      "sin «Desde», un producto con opciones que cobran de más enseña un precio que no es el que se paga",
+    );
+  });
+
   test("el dominio de las tiendas se escribe en UN solo sitio", () => {
     // YA CAMBIÓ UNA VEZ (`shop` → `store`) antes de tener un cliente encima. Si
     // el nombre estuviera repartido por las pantallas, el día que vuelva a

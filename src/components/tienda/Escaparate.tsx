@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Search, ShoppingBag, Plus, Minus, ArrowLeft } from "lucide-react";
+import { Search, ShoppingBag, Plus, Minus, ArrowLeft, ChevronDown } from "lucide-react";
 import { comoDinero, type GrupoVariedad } from "@/lib/tienda/variedades";
 import type { ConfigTienda } from "@/lib/tienda/config";
 import {
@@ -30,22 +30,38 @@ export type ProductoPublico = {
 };
 
 /**
+ * ¿Desde cuánto sale este producto?
+ *
+ * Cuando hay opciones que cobran de más, el precio de la ficha NO es lo que se
+ * va a pagar. La tienda actual lo resuelve con «Desde $16,35» y es lo correcto:
+ * enseñar el precio pelado y que en el carrito aparezca otro es la forma más
+ * rápida de que alguien se sienta engañado y abandone el pedido.
+ */
+function tieneRecargos(p: ProductoPublico): boolean {
+  return (p.variedades ?? []).some((g) => (g.opciones ?? []).some((o) => o.recargo > 0));
+}
+
+/**
  * La tienda que ve el cliente.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * SE PINTA CON LOS COLORES DEL NEGOCIO, NO CON LOS DE DEMANDU. Quien entra aquí
- * viene de un enlace en la biografía de Instagram de una panadería: si la
- * página se parece a un panel de software, la persona duda de si está en el
- * sitio correcto — y esa duda se paga en pedidos que no se hacen.
+ * LA ESTRUCTURA ESTÁ COPIADA DE LA TIENDA QUE YA FUNCIONA, no inventada:
+ * cabecera con logo y nombre, banner, y debajo LAS CATEGORÍAS CERRADAS, cada
+ * una con su foto redonda. Se abre una y sale su listado.
  *
- * TODO EN UNA SOLA PÁGINA y sin cuenta: el carrito vive en memoria y el pedido
- * sale por WhatsApp. Pedir registro en una tienda de barrio es perder al
- * cliente en la primera pantalla.
+ * POR QUÉ CERRADAS Y NO TODO A LA VEZ: este catálogo tiene noventa y seis
+ * productos. Soltarlos de golpe en una parrilla es una pared de fotos donde no
+ * se encuentra nada; con cuatro marcas a la vista, el cliente sabe dónde está
+ * parado desde el primer segundo. Y esa es además la forma en que sus clientes
+ * ya saben usar la tienda: cambiarla sin motivo es hacerles reaprender.
  *
- * EL PEDIDO SE MANDA DESDE EL WHATSAPP DEL CLIENTE. Eso significa que llega al
- * número del negocio como un mensaje entrante de verdad — con su teléfono, su
- * nombre y su historial— así que entra en la Bandeja como conversación. Es lo
- * que ninguna tienda suelta puede hacer.
+ * SE PINTA CON LOS COLORES DEL NEGOCIO, no con los de Demandu: quien entra
+ * viene del enlace en la biografía de Instagram de una veterinaria, y si esto
+ * parece un panel de software, duda de si está en el sitio correcto.
+ *
+ * EL PEDIDO SALE DESDE EL WHATSAPP DEL CLIENTE, así que llega al número del
+ * negocio como mensaje entrante de verdad y entra en la Bandeja como
+ * conversación. Es lo que ninguna tienda suelta puede hacer.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function Escaparate({
@@ -58,14 +74,15 @@ export function Escaparate({
   const c = config.colores;
   const [busca, setBusca] = useState("");
   const [buscando, setBuscando] = useState(false);
+  const [abiertas, setAbiertas] = useState<Set<string>>(new Set());
   const [abierto, setAbierto] = useState<ProductoPublico | null>(null);
   const [carrito, setCarrito] = useState<LineaCarrito[]>([]);
   const [verCarrito, setVerCarrito] = useState(false);
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [aviso, setAviso] = useState("");
 
+  const q = busca.trim().toLowerCase();
   const visibles = useMemo(() => {
-    const q = busca.trim().toLowerCase();
     if (!q) return productos;
     return productos.filter(
       (p) =>
@@ -73,19 +90,37 @@ export function Escaparate({
         (p.descripcion ?? "").toLowerCase().includes(q) ||
         (p.categoria ?? "").toLowerCase().includes(q),
     );
-  }, [productos, busca]);
+  }, [productos, q]);
 
-  // Las categorías salen del catálogo y respetan el orden en que se cargaron:
-  // el negocio decidió ese orden y casi siempre significa algo.
-  const porCategoria = useMemo(() => {
+  // Las categorías salen del catálogo, en el orden en que el negocio cargó los
+  // productos: ese orden lo decidió alguien y casi siempre significa algo.
+  const grupos = useMemo(() => {
     const mapa = new Map<string, ProductoPublico[]>();
     for (const p of visibles) {
-      const k = p.categoria?.trim() || "";
+      const k = (p.categoria ?? "").trim();
       if (!mapa.has(k)) mapa.set(k, []);
       mapa.get(k)!.push(p);
     }
-    return [...mapa.entries()];
+    const sueltos = mapa.get("") ?? [];
+    mapa.delete("");
+    return { conCategoria: [...mapa.entries()], sueltos };
   }, [visibles]);
+
+  const fotoDe = (nombre: string) =>
+    config.categorias.find((x) => x.nombre === nombre)?.imagen_url ?? "";
+
+  // BUSCANDO SE ABRE TODO. Si no, los resultados quedan escondidos dentro de
+  // acordeones cerrados y la búsqueda parece rota.
+  const estaAbierta = (nombre: string) =>
+    Boolean(q) || abiertas.has(nombre) || grupos.conCategoria.length === 1;
+
+  const alternar = (nombre: string) =>
+    setAbiertas((s) => {
+      const n = new Set(s);
+      if (n.has(nombre)) n.delete(nombre);
+      else n.add(nombre);
+      return n;
+    });
 
   const total = totalDelCarrito(carrito);
   const unidades = cuantasUnidades(carrito);
@@ -94,29 +129,19 @@ export function Escaparate({
   const agregar = (linea: LineaCarrito) =>
     setCarrito((xs) => {
       const i = xs.findIndex((x) => x.clave === linea.clave);
-      if (i >= 0) {
-        return xs.map((x, j) => (j === i ? { ...x, cantidad: x.cantidad + linea.cantidad } : x));
-      }
+      if (i >= 0) return xs.map((x, j) => (j === i ? { ...x, cantidad: x.cantidad + linea.cantidad } : x));
       return [...xs, linea];
     });
 
   const cambiarCantidad = (clave: string, delta: number) =>
     setCarrito((xs) =>
-      xs
-        .map((x) => (x.clave === clave ? { ...x, cantidad: x.cantidad + delta } : x))
-        .filter((x) => x.cantidad > 0),
+      xs.map((x) => (x.clave === clave ? { ...x, cantidad: x.cantidad + delta } : x)).filter((x) => x.cantidad > 0),
     );
 
   const enviar = () => {
     const falta = faltaContestar(config.preguntas, respuestas);
-    if (falta.length) {
-      setAviso(`Falta ${falta.join(", ")}.`);
-      return;
-    }
-    if (bajoMinimo) {
-      setAviso(`El pedido mínimo es ${comoDinero(config.minimo_pedido, config.moneda)}.`);
-      return;
-    }
+    if (falta.length) return setAviso(`Falta ${falta.join(", ")}.`);
+    if (bajoMinimo) return setAviso(`El pedido mínimo es ${comoDinero(config.minimo_pedido, config.moneda)}.`);
     const texto = textoDelPedido({
       tienda: config.titulo,
       lineas: carrito,
@@ -124,195 +149,204 @@ export function Escaparate({
       preguntas: config.preguntas,
       moneda: config.moneda,
     });
-    // `_blank` porque en el móvil abre WhatsApp y deja la tienda atrás: si el
-    // cliente vuelve, su carrito sigue donde estaba.
     window.open(enlaceDeWhatsapp(config.whatsapp.numero, texto), "_blank");
   };
 
+  const waConsultas = config.whatsapp.numero
+    ? `https://wa.me/${config.whatsapp.numero}?text=${encodeURIComponent("Hola, tengo una consulta")}`
+    : "";
+
   return (
-    <div style={{ backgroundColor: c.fondo, color: c.texto, minHeight: "100vh" }}>
-      {/* ── Cabecera ── */}
-      <header style={{ backgroundColor: c.principal }} className="px-4 py-3">
-        <div className="mx-auto flex max-w-3xl items-center gap-3">
+    <div style={{ backgroundColor: c.fondo, color: c.texto, minHeight: "100vh", paddingBottom: 86 }}>
+      {/* ── Cabecera: logo y nombre ── */}
+      <header style={{ backgroundColor: c.principal }} className="px-4 py-4">
+        <div className="mx-auto flex max-w-4xl items-center gap-3">
           {config.logo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={config.logo_url}
-              alt={config.titulo}
-              className="h-10 w-10 flex-none rounded-xl bg-white/10 object-cover"
-            />
+            <img src={config.logo_url} alt={config.titulo} className="h-11 w-11 flex-none rounded-full object-cover" />
           ) : null}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-bold text-white">{config.titulo}</p>
-            {config.contacto.horario && (
-              <p className="truncate text-[11px] text-white/70">{config.contacto.horario}</p>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setBuscando((v) => !v)}
-            className="grid h-9 w-9 flex-none place-items-center rounded-full text-white/90"
-            style={{ backgroundColor: "rgba(255,255,255,.14)" }}
-            aria-label="Buscar"
-          >
-            <Search className="h-4 w-4" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setVerCarrito(true)}
-            className="relative grid h-9 w-9 flex-none place-items-center rounded-full text-white"
-            style={{ backgroundColor: "rgba(255,255,255,.14)" }}
-            aria-label="Ver el pedido"
-          >
-            <ShoppingBag className="h-4 w-4" />
-            {unidades > 0 && (
-              <span
-                className="absolute -right-1 -top-1 grid h-5 min-w-[20px] place-items-center rounded-full px-1 text-[11px] font-bold text-white"
-                style={{ backgroundColor: c.acento }}
-              >
-                {unidades}
-              </span>
-            )}
-          </button>
+          <p className="truncate text-lg font-bold text-white">{config.titulo}</p>
         </div>
-
-        {buscando && (
-          <div className="mx-auto mt-2 max-w-3xl">
-            <input
-              autoFocus
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar en la tienda…"
-              className="w-full rounded-xl border-0 px-3 py-2 text-sm outline-none"
-              style={{ backgroundColor: "rgba(255,255,255,.92)", color: "#111" }}
-            />
-          </div>
-        )}
       </header>
 
+      {/* ── Banner principal ── */}
       {config.portada_url && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={config.portada_url} alt="" className="h-36 w-full object-cover sm:h-52" />
+        <img src={config.portada_url} alt="" className="h-40 w-full object-cover sm:h-64" />
       )}
 
-      {/* ── Banners ── */}
       {config.banners.length > 0 && (
-        <div className="mx-auto flex max-w-3xl gap-3 overflow-x-auto px-4 pt-4">
+        <div className="mx-auto flex max-w-4xl gap-3 overflow-x-auto px-4 pt-4">
           {config.banners.map((b, i) => {
             const img = (
               // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={b.imagen_url}
-                alt={b.alt ?? ""}
-                className="h-32 w-[85vw] max-w-md flex-none rounded-2xl object-cover sm:w-80"
-              />
+              <img src={b.imagen_url} alt={b.alt ?? ""} className="h-32 w-[85vw] max-w-md flex-none rounded-2xl object-cover sm:w-96" />
             );
             return b.enlace ? (
-              <a key={i} href={b.enlace} target="_blank" rel="noopener noreferrer" className="flex-none">
-                {img}
-              </a>
+              <a key={i} href={b.enlace} target="_blank" rel="noopener noreferrer" className="flex-none">{img}</a>
             ) : (
-              <span key={i} className="flex-none">
-                {img}
-              </span>
+              <span key={i} className="flex-none">{img}</span>
             );
           })}
         </div>
       )}
 
-      {/* ── Catálogo ── */}
-      <main className="mx-auto max-w-3xl px-4 pb-32 pt-4">
+      {buscando && (
+        <div className="mx-auto max-w-4xl px-4 pt-4">
+          <input
+            autoFocus
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar en la tienda…"
+            className="w-full rounded-xl border px-3 py-2.5 text-sm outline-none"
+            style={{ borderColor: "rgba(0,0,0,.15)", backgroundColor: "transparent", color: c.texto }}
+          />
+        </div>
+      )}
+
+      {/* ── Categorías ── */}
+      <main className="mx-auto max-w-4xl px-4 pt-4">
         {visibles.length === 0 && (
-          <p className="py-10 text-center text-sm opacity-60">
-            {busca ? "No encontramos nada con eso." : "Esta tienda todavía no tiene productos."}
+          <p className="py-12 text-center text-sm opacity-60">
+            {q ? "No encontramos nada con eso." : "Esta tienda todavía no tiene productos."}
           </p>
         )}
 
-        {porCategoria.map(([cat, items]) => (
-          <section key={cat || "sin-categoria"} className="mb-7">
-            {cat && (
-              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide" style={{ opacity: 0.65 }}>
-                {cat}
-              </h2>
-            )}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {items.map((p) => {
-                const agotado = p.stock === 0;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    disabled={agotado}
-                    onClick={() => setAbierto(p)}
-                    className="overflow-hidden rounded-2xl text-left transition disabled:opacity-50"
-                    style={{ backgroundColor: "rgba(0,0,0,.04)" }}
+        {grupos.sueltos.length > 0 && (
+          <div className="mb-2">
+            {grupos.sueltos.map((p) => (
+              <FilaProducto key={p.id} p={p} config={config} onAbrir={() => setAbierto(p)} />
+            ))}
+          </div>
+        )}
+
+        {grupos.conCategoria.map(([nombre, items]) => {
+          const abiertaEsta = estaAbierta(nombre);
+          const foto = fotoDe(nombre);
+          return (
+            <section key={nombre} style={{ borderBottom: "1px solid rgba(0,0,0,.10)" }}>
+              <button
+                type="button"
+                onClick={() => alternar(nombre)}
+                className="flex w-full items-center gap-3 py-3 text-left"
+              >
+                {foto ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={foto}
+                    alt=""
+                    className="h-14 w-14 flex-none rounded-full object-cover"
+                    style={{ border: "1px solid rgba(0,0,0,.12)" }}
+                  />
+                ) : (
+                  <span
+                    className="grid h-14 w-14 flex-none place-items-center rounded-full text-lg font-bold"
+                    style={{ border: "1px solid rgba(0,0,0,.12)", color: c.principal }}
                   >
-                    {p.imagen_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={p.imagen_url} alt={p.nombre} className="aspect-square w-full object-cover" />
-                    ) : (
-                      <span className="grid aspect-square w-full place-items-center text-xs opacity-40">
-                        sin foto
-                      </span>
-                    )}
-                    <span className="block p-2.5">
-                      <span className="block text-sm font-semibold leading-tight">{p.nombre}</span>
-                      <span className="mt-1 flex items-baseline gap-1.5">
-                        <span className="text-base font-bold" style={{ color: c.acento }}>
-                          {comoDinero(p.precio, config.moneda)}
-                        </span>
-                        {p.precio_anterior ? (
-                          <span className="text-[11px] line-through opacity-50">
-                            {comoDinero(p.precio_anterior, config.moneda)}
-                          </span>
-                        ) : null}
-                      </span>
-                      {agotado && <span className="mt-1 block text-[11px] opacity-60">Agotado</span>}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ))}
+                    {nombre.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-base font-bold">{nombre}</span>
+                  <span className="block text-xs opacity-55">
+                    {items.length} {items.length === 1 ? "producto" : "productos"}
+                  </span>
+                </span>
+                <ChevronDown
+                  className="h-5 w-5 flex-none opacity-60 transition-transform"
+                  style={{ transform: abiertaEsta ? "rotate(180deg)" : "none" }}
+                />
+              </button>
+
+              {abiertaEsta && (
+                <div className="pb-3">
+                  {items.map((p) => (
+                    <FilaProducto key={p.id} p={p} config={config} onAbrir={() => setAbierto(p)} />
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
       </main>
 
       {/* ── Pie ── */}
-      <footer className="px-4 pb-28 text-center text-xs" style={{ opacity: 0.6 }}>
-        {config.contacto.direccion && <p>{config.contacto.direccion}</p>}
+      <footer className="mt-8 px-4 py-8 text-center text-sm" style={{ backgroundColor: c.principal, color: "rgba(255,255,255,.85)" }}>
+        <p className="font-bold text-white">{config.titulo}</p>
+        {waConsultas && (
+          <>
+            <p className="mt-1 text-xs">Consultas al</p>
+            <a
+              href={waConsultas}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mx-auto mt-2 grid h-9 w-9 place-items-center rounded-lg"
+              style={{ backgroundColor: c.whatsapp }}
+              aria-label="Escribir por WhatsApp"
+            >
+              <IconoWhatsapp className="h-5 w-5" />
+            </a>
+          </>
+        )}
+        {config.contacto.horario && <p className="mt-3 text-xs">{config.contacto.horario}</p>}
+        {config.contacto.direccion && <p className="mt-1 text-xs">{config.contacto.direccion}</p>}
         {config.contacto.instagram && (
-          <p className="mt-1">
+          <p className="mt-1 text-xs">
             <a
               href={`https://instagram.com/${config.contacto.instagram.replace(/^@/, "")}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="underline"
             >
               {config.contacto.instagram}
             </a>
           </p>
         )}
-        {config.pie && <p className="mt-1">{config.pie}</p>}
-        <p className="mt-2 opacity-70">Hecho con demandu.tech</p>
+        {config.pie && <p className="mt-1 text-xs">{config.pie}</p>}
+        <p className="mt-2 text-xs opacity-70">Powered By demandu.tech</p>
       </footer>
 
-      {/* ── Barra del pedido, siempre a la vista cuando hay algo ── */}
-      {unidades > 0 && !verCarrito && !abierto && (
-        <div className="fixed inset-x-0 bottom-0 z-30 p-3">
-          <button
-            type="button"
-            onClick={() => setVerCarrito(true)}
-            className="mx-auto flex w-full max-w-3xl items-center justify-between rounded-2xl px-4 py-3 font-bold text-white shadow-lg"
-            style={{ backgroundColor: c.whatsapp }}
-          >
-            <span>
-              {unidades} {unidades === 1 ? "producto" : "productos"}
-            </span>
-            <span>Ver pedido · {comoDinero(total, config.moneda)}</span>
-          </button>
-        </div>
+      {/* ── Barra de abajo: buscar y carrito, como en la tienda de siempre ── */}
+      <nav
+        className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-around px-4"
+        style={{
+          backgroundColor: c.principal,
+          paddingTop: 12,
+          paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setBuscando((v) => !v)}
+          className="grid h-9 w-14 place-items-center text-white/90"
+          aria-label="Buscar"
+        >
+          <Search className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setVerCarrito(true)}
+          className="flex h-9 items-center gap-2 px-3 text-white"
+          aria-label="Ver el pedido"
+        >
+          <ShoppingBag className="h-5 w-5" />
+          <span className="text-sm font-bold">{unidades}</span>
+          {unidades > 0 && <span className="text-sm font-bold">· {comoDinero(total, config.moneda)}</span>}
+        </button>
+      </nav>
+
+      {/* El botón flotante de WhatsApp, que en la tienda de siempre es por donde
+          entra la mitad de las consultas. */}
+      {waConsultas && !abierto && !verCarrito && (
+        <a
+          href={waConsultas}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="fixed bottom-24 right-4 z-30 grid h-14 w-14 place-items-center rounded-full shadow-lg"
+          style={{ backgroundColor: c.whatsapp }}
+          aria-label="Escribir por WhatsApp"
+        >
+          <IconoWhatsapp className="h-8 w-8" />
+        </a>
       )}
 
       {abierto && (
@@ -328,165 +362,100 @@ export function Escaparate({
       )}
 
       {verCarrito && (
-        <div className="fixed inset-0 z-40 flex flex-col" style={{ backgroundColor: c.fondo }}>
-          <header
-            className="flex flex-none items-center gap-3 px-4 py-3"
-            style={{ backgroundColor: c.principal }}
-          >
-            <button
-              type="button"
-              onClick={() => setVerCarrito(false)}
-              className="text-white"
-              aria-label="Volver"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-            <p className="font-bold text-white">Tu pedido</p>
-          </header>
-
-          <div className="flex-1 overflow-y-auto px-4 py-4">
-            <div className="mx-auto max-w-3xl">
-              {carrito.length === 0 && (
-                <p className="py-10 text-center text-sm opacity-60">Todavía no has agregado nada.</p>
-              )}
-
-              {carrito.map((l) => (
-                <div key={l.clave} className="mb-3 rounded-2xl p-3" style={{ backgroundColor: "rgba(0,0,0,.04)" }}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold">{l.nombre}</p>
-                      {l.elegidas.map((e, i) => (
-                        <p key={i} className="text-xs opacity-70">
-                          {e.grupo}: {e.texto}
-                          {e.recargo ? ` (+${comoDinero(e.recargo, config.moneda)})` : ""}
-                        </p>
-                      ))}
-                      {l.nota && <p className="mt-0.5 text-xs italic opacity-70">{l.nota}</p>}
-                    </div>
-                    <p className="flex-none text-sm font-bold">
-                      {comoDinero(totalDeLinea(l), config.moneda)}
-                    </p>
-                  </div>
-
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => cambiarCantidad(l.clave, -1)}
-                      className="grid h-7 w-7 place-items-center rounded-full"
-                      style={{ backgroundColor: "rgba(0,0,0,.08)" }}
-                      aria-label="Quitar uno"
-                    >
-                      <Minus className="h-3.5 w-3.5" />
-                    </button>
-                    <span className="w-6 text-center text-sm font-bold">{l.cantidad}</span>
-                    <button
-                      type="button"
-                      onClick={() => cambiarCantidad(l.clave, 1)}
-                      className="grid h-7 w-7 place-items-center rounded-full text-white"
-                      style={{ backgroundColor: c.principal }}
-                      aria-label="Agregar uno"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              {carrito.length > 0 && (
-                <>
-                  <p className="mb-4 mt-5 flex items-baseline justify-between text-lg font-bold">
-                    <span>Total</span>
-                    <span style={{ color: c.acento }}>{comoDinero(total, config.moneda)}</span>
-                  </p>
-
-                  {bajoMinimo && (
-                    <p className="mb-4 rounded-xl p-3 text-sm" style={{ backgroundColor: "rgba(245,158,11,.15)" }}>
-                      El pedido mínimo es {comoDinero(config.minimo_pedido, config.moneda)}. Te
-                      faltan {comoDinero(config.minimo_pedido - total, config.moneda)}.
-                    </p>
-                  )}
-
-                  {/* EL FORMULARIO DEL NEGOCIO, no uno nuestro: cada tienda
-                      pregunta lo suyo (el PH, el apartamento, la forma de pago). */}
-                  <div className="grid gap-3">
-                    {config.preguntas.map((p) => (
-                      <div key={p.id}>
-                        <label className="mb-1 block text-xs font-semibold opacity-70">
-                          {p.etiqueta}
-                          {p.obligatoria && " *"}
-                        </label>
-                        {p.tipo === "lista" ? (
-                          <select
-                            value={respuestas[p.id] ?? ""}
-                            onChange={(e) => setRespuestas((r) => ({ ...r, [p.id]: e.target.value }))}
-                            className="w-full rounded-xl border px-3 py-2 text-sm"
-                            style={{ borderColor: "rgba(0,0,0,.15)", backgroundColor: "transparent", color: c.texto }}
-                          >
-                            <option value="">Elige…</option>
-                            {(p.opciones ?? []).map((o) => (
-                              <option key={o} value={o}>
-                                {o}
-                              </option>
-                            ))}
-                          </select>
-                        ) : p.tipo === "parrafo" ? (
-                          <textarea
-                            rows={2}
-                            value={respuestas[p.id] ?? ""}
-                            onChange={(e) => setRespuestas((r) => ({ ...r, [p.id]: e.target.value }))}
-                            className="w-full rounded-xl border px-3 py-2 text-sm"
-                            style={{ borderColor: "rgba(0,0,0,.15)", backgroundColor: "transparent", color: c.texto }}
-                          />
-                        ) : (
-                          <input
-                            type={p.tipo === "telefono" ? "tel" : "text"}
-                            inputMode={p.tipo === "telefono" ? "tel" : undefined}
-                            value={respuestas[p.id] ?? ""}
-                            onChange={(e) => setRespuestas((r) => ({ ...r, [p.id]: e.target.value }))}
-                            placeholder={p.ayuda ?? ""}
-                            className="w-full rounded-xl border px-3 py-2 text-sm"
-                            style={{ borderColor: "rgba(0,0,0,.15)", backgroundColor: "transparent", color: c.texto }}
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  {aviso && (
-                    <p className="mt-3 text-sm font-semibold" style={{ color: "#dc2626" }}>
-                      {aviso}
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          {carrito.length > 0 && (
-            <div className="flex-none p-3" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
-              <button
-                type="button"
-                onClick={enviar}
-                className="mx-auto block w-full max-w-3xl rounded-2xl py-3.5 text-center font-bold text-white shadow-lg"
-                style={{ backgroundColor: c.whatsapp }}
-              >
-                {config.whatsapp.texto_boton}
-              </button>
-            </div>
-          )}
-        </div>
+        <VistaCarrito
+          config={config}
+          carrito={carrito}
+          total={total}
+          bajoMinimo={bajoMinimo}
+          respuestas={respuestas}
+          setRespuestas={setRespuestas}
+          aviso={aviso}
+          onCantidad={cambiarCantidad}
+          onCerrar={() => setVerCarrito(false)}
+          onEnviar={enviar}
+        />
       )}
     </div>
   );
 }
 
 /**
- * La ficha de un producto: aquí se eligen las opciones.
+ * Un producto dentro de su categoría.
  *
- * NO DEJA AGREGAR SI FALTA ALGO OBLIGATORIO, y dice qué falta. Un pedido sin el
- * tamaño obliga al negocio a llamar al cliente, y esa llamada es donde se
- * pierden los pedidos pequeños: no contestan y no se prepara nada.
+ * ES UNA FILA, NO UNA TARJETA EN PARRILLA: con noventa y seis productos, las
+ * filas se recorren con el pulgar y se comparan de un vistazo; una parrilla de
+ * fotos obliga a leer en zigzag. La foto va pequeña y a la izquierda, como en
+ * la tienda que ya usan sus clientes.
  */
+function FilaProducto({
+  p,
+  config,
+  onAbrir,
+}: {
+  p: ProductoPublico;
+  config: ConfigTienda;
+  onAbrir: () => void;
+}) {
+  const agotado = p.stock === 0;
+  return (
+    <button
+      type="button"
+      disabled={agotado}
+      onClick={onAbrir}
+      className="flex w-full items-center gap-3 py-2.5 text-left disabled:opacity-45"
+      style={{ borderTop: "1px solid rgba(0,0,0,.06)" }}
+    >
+      {p.imagen_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={p.imagen_url} alt="" className="h-16 w-16 flex-none rounded-xl object-cover" />
+      ) : (
+        <span
+          className="grid h-16 w-16 flex-none place-items-center rounded-xl text-[10px] opacity-40"
+          style={{ backgroundColor: "rgba(0,0,0,.05)" }}
+        >
+          sin foto
+        </span>
+      )}
+
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold leading-snug">{p.nombre}</span>
+        {p.descripcion && (
+          <span className="mt-0.5 block text-xs leading-snug opacity-60" style={{
+            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+          }}>
+            {p.descripcion}
+          </span>
+        )}
+        {agotado && <span className="mt-0.5 block text-xs font-semibold opacity-70">Agotado</span>}
+      </span>
+
+      <span className="flex-none text-right">
+        {/* «Desde» cuando hay opciones que cobran de más: enseñar el precio
+            pelado y que en el carrito salga otro es como se pierde la
+            confianza de un cliente en un segundo. */}
+        {tieneRecargos(p) && <span className="block text-[10px] opacity-60">Desde</span>}
+        <span className="block text-sm font-bold" style={{ color: config.colores.acento }}>
+          {comoDinero(p.precio, config.moneda)}
+        </span>
+        {p.precio_anterior ? (
+          <span className="block text-[11px] line-through opacity-45">
+            {comoDinero(p.precio_anterior, config.moneda)}
+          </span>
+        ) : null}
+      </span>
+    </button>
+  );
+}
+
+function IconoWhatsapp({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="#fff" className={className} aria-hidden="true">
+      <path d="M17.47 14.38c-.3-.15-1.75-.86-2.02-.96-.27-.1-.47-.15-.67.15-.2.3-.77.96-.94 1.16-.17.2-.35.22-.64.07-.3-.15-1.25-.46-2.38-1.47-.88-.78-1.47-1.75-1.64-2.05-.17-.3-.02-.46.13-.6.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.6-.92-2.2-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.01-1.04 2.47s1.06 2.86 1.21 3.06c.15.2 2.1 3.2 5.08 4.49.71.3 1.26.49 1.69.63.71.22 1.36.19 1.87.12.57-.09 1.75-.72 2-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35zM12.04 2c-5.5 0-9.96 4.46-9.96 9.96 0 1.76.46 3.42 1.27 4.86L2 22l5.32-1.39a9.9 9.9 0 0 0 4.72 1.2h.01c5.5 0 9.96-4.46 9.96-9.96S17.54 2 12.04 2zm0 18.02h-.01a8.2 8.2 0 0 1-4.18-1.15l-.3-.18-3.16.83.84-3.08-.2-.32a8.18 8.18 0 0 1-1.25-4.36c0-4.54 3.7-8.24 8.25-8.24 2.2 0 4.27.86 5.83 2.42a8.19 8.19 0 0 1 2.41 5.83c0 4.54-3.7 8.25-8.23 8.25z" />
+    </svg>
+  );
+}
+
+/** La ficha: aquí se eligen las opciones. */
 function FichaProducto({
   producto,
   config,
@@ -509,14 +478,12 @@ function FichaProducto({
     setElegidas((xs) => {
       const yaEsta = xs.some((e) => e.grupo === g.nombre && e.texto === texto);
       if (g.modo === "una") {
-        // Una sola: elegir otra SUSTITUYE, no suma. Sumar dos tamaños haría un
-        // pedido imposible de preparar.
+        // Elegir otra SUSTITUYE. Sumar dos tamaños haría un pedido imposible.
         return [...xs.filter((e) => e.grupo !== g.nombre), { grupo: g.nombre, texto, recargo }];
       }
       if (yaEsta) return xs.filter((e) => !(e.grupo === g.nombre && e.texto === texto));
-      if (g.modo === "hasta_completar") {
-        const cuantas = xs.filter((e) => e.grupo === g.nombre).length;
-        if (cuantas >= (g.cantidad ?? 0)) return xs;
+      if (g.modo === "hasta_completar" && xs.filter((e) => e.grupo === g.nombre).length >= (g.cantidad ?? 0)) {
+        return xs;
       }
       return [...xs, { grupo: g.nombre, texto, recargo }];
     });
@@ -534,10 +501,7 @@ function FichaProducto({
 
   const agregar = () => {
     const falta = faltaElegir(producto.variedades, elegidas);
-    if (falta.length) {
-      setAviso(`Elige ${falta.join(" y ")}.`);
-      return;
-    }
+    if (falta.length) return setAviso(`Elige ${falta.join(" y ")}.`);
     onAgregar(linea);
   };
 
@@ -551,7 +515,7 @@ function FichaProducto({
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl">
+        <div className="mx-auto max-w-2xl">
           {producto.imagen_url && (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={producto.imagen_url} alt={producto.nombre} className="aspect-square w-full object-cover sm:aspect-[2/1]" />
@@ -594,9 +558,7 @@ function FichaProducto({
                           }}
                         >
                           <span>{o.texto}</span>
-                          {o.recargo ? (
-                            <span className="opacity-70">+{comoDinero(o.recargo, config.moneda)}</span>
-                          ) : null}
+                          {o.recargo ? <span className="opacity-70">+{comoDinero(o.recargo, config.moneda)}</span> : null}
                         </button>
                       );
                     })}
@@ -641,11 +603,7 @@ function FichaProducto({
               </button>
             </div>
 
-            {aviso && (
-              <p className="mt-3 text-sm font-semibold" style={{ color: "#dc2626" }}>
-                {aviso}
-              </p>
-            )}
+            {aviso && <p className="mt-3 text-sm font-semibold" style={{ color: "#dc2626" }}>{aviso}</p>}
           </div>
         </div>
       </div>
@@ -654,13 +612,174 @@ function FichaProducto({
         <button
           type="button"
           onClick={agregar}
-          className="mx-auto flex w-full max-w-3xl items-center justify-between rounded-2xl px-4 py-3.5 font-bold text-white shadow-lg"
+          className="mx-auto flex w-full max-w-2xl items-center justify-between rounded-2xl px-4 py-3.5 font-bold text-white shadow-lg"
           style={{ backgroundColor: c.principal }}
         >
           <span>Agregar</span>
           <span>{comoDinero(precioUnitario(linea) * cantidad, config.moneda)}</span>
         </button>
       </div>
+    </div>
+  );
+}
+
+function VistaCarrito({
+  config,
+  carrito,
+  total,
+  bajoMinimo,
+  respuestas,
+  setRespuestas,
+  aviso,
+  onCantidad,
+  onCerrar,
+  onEnviar,
+}: {
+  config: ConfigTienda;
+  carrito: LineaCarrito[];
+  total: number;
+  bajoMinimo: boolean;
+  respuestas: Record<string, string>;
+  setRespuestas: (f: (r: Record<string, string>) => Record<string, string>) => void;
+  aviso: string;
+  onCantidad: (clave: string, delta: number) => void;
+  onCerrar: () => void;
+  onEnviar: () => void;
+}) {
+  const c = config.colores;
+  const campo = {
+    borderColor: "rgba(0,0,0,.15)",
+    backgroundColor: "transparent",
+    color: c.texto,
+  } as const;
+
+  return (
+    <div className="fixed inset-0 z-40 flex flex-col" style={{ backgroundColor: c.fondo, color: c.texto }}>
+      <header className="flex flex-none items-center gap-3 px-4 py-3" style={{ backgroundColor: c.principal }}>
+        <button type="button" onClick={onCerrar} className="text-white" aria-label="Volver">
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <p className="font-bold text-white">Tu pedido</p>
+      </header>
+
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div className="mx-auto max-w-2xl">
+          {carrito.length === 0 && <p className="py-10 text-center text-sm opacity-60">Todavía no has agregado nada.</p>}
+
+          {carrito.map((l) => (
+            <div key={l.clave} className="mb-3 rounded-2xl p-3" style={{ backgroundColor: "rgba(0,0,0,.04)" }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{l.nombre}</p>
+                  {l.elegidas.map((e, i) => (
+                    <p key={i} className="text-xs opacity-70">
+                      {e.grupo}: {e.texto}
+                      {e.recargo ? ` (+${comoDinero(e.recargo, config.moneda)})` : ""}
+                    </p>
+                  ))}
+                  {l.nota && <p className="mt-0.5 text-xs italic opacity-70">{l.nota}</p>}
+                </div>
+                <p className="flex-none text-sm font-bold">{comoDinero(totalDeLinea(l), config.moneda)}</p>
+              </div>
+
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onCantidad(l.clave, -1)}
+                  className="grid h-7 w-7 place-items-center rounded-full"
+                  style={{ backgroundColor: "rgba(0,0,0,.08)" }}
+                  aria-label="Quitar uno"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+                <span className="w-6 text-center text-sm font-bold">{l.cantidad}</span>
+                <button
+                  type="button"
+                  onClick={() => onCantidad(l.clave, 1)}
+                  className="grid h-7 w-7 place-items-center rounded-full text-white"
+                  style={{ backgroundColor: c.principal }}
+                  aria-label="Agregar uno"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {carrito.length > 0 && (
+            <>
+              <p className="mb-4 mt-5 flex items-baseline justify-between text-lg font-bold">
+                <span>Total</span>
+                <span style={{ color: c.acento }}>{comoDinero(total, config.moneda)}</span>
+              </p>
+
+              {bajoMinimo && (
+                <p className="mb-4 rounded-xl p-3 text-sm" style={{ backgroundColor: "rgba(245,158,11,.15)" }}>
+                  El pedido mínimo es {comoDinero(config.minimo_pedido, config.moneda)}. Te faltan{" "}
+                  {comoDinero(config.minimo_pedido - total, config.moneda)}.
+                </p>
+              )}
+
+              <div className="grid gap-3">
+                {config.preguntas.map((p) => (
+                  <div key={p.id}>
+                    <label className="mb-1 block text-xs font-semibold opacity-70">
+                      {p.etiqueta}
+                      {p.obligatoria && " *"}
+                    </label>
+                    {p.tipo === "lista" ? (
+                      <select
+                        value={respuestas[p.id] ?? ""}
+                        onChange={(e) => setRespuestas((r) => ({ ...r, [p.id]: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-2 text-sm"
+                        style={campo}
+                      >
+                        <option value="">Elige…</option>
+                        {(p.opciones ?? []).map((o) => (
+                          <option key={o} value={o}>{o}</option>
+                        ))}
+                      </select>
+                    ) : p.tipo === "parrafo" ? (
+                      <textarea
+                        rows={2}
+                        value={respuestas[p.id] ?? ""}
+                        onChange={(e) => setRespuestas((r) => ({ ...r, [p.id]: e.target.value }))}
+                        className="w-full rounded-xl border px-3 py-2 text-sm"
+                        style={campo}
+                      />
+                    ) : (
+                      <input
+                        type={p.tipo === "telefono" ? "tel" : "text"}
+                        inputMode={p.tipo === "telefono" ? "tel" : undefined}
+                        value={respuestas[p.id] ?? ""}
+                        onChange={(e) => setRespuestas((r) => ({ ...r, [p.id]: e.target.value }))}
+                        placeholder={p.ayuda ?? ""}
+                        className="w-full rounded-xl border px-3 py-2 text-sm"
+                        style={campo}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {aviso && <p className="mt-3 text-sm font-semibold" style={{ color: "#dc2626" }}>{aviso}</p>}
+            </>
+          )}
+        </div>
+      </div>
+
+      {carrito.length > 0 && (
+        <div className="flex-none p-3" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
+          <button
+            type="button"
+            onClick={onEnviar}
+            className="mx-auto block w-full max-w-2xl rounded-2xl py-3.5 text-center font-bold text-white shadow-lg"
+            style={{ backgroundColor: c.whatsapp }}
+          >
+            {config.whatsapp.texto_boton}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

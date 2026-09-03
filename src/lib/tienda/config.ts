@@ -42,6 +42,19 @@ export type PreguntaPedido = {
   ayuda?: string;
 };
 
+/**
+ * Una categoría, con su imagen.
+ *
+ * LOS NOMBRES NO SE GUARDAN AQUÍ: salen de los productos, que es donde el
+ * negocio ya los escribió. Repetirlos en dos sitios garantiza que un día no
+ * coincidan y una categoría entera desaparezca del escaparate. Aquí solo vive
+ * lo que los productos no saben: su foto.
+ */
+export type CategoriaTienda = {
+  nombre: string;
+  imagen_url?: string;
+};
+
 export type BannerTienda = {
   imagen_url: string;
   /** Adónde lleva al pulsarlo. Vacío = no lleva a ninguna parte. */
@@ -58,6 +71,9 @@ export type ConfigTienda = {
   portada_url?: string;
   /** Rotan solos. Vacío = no se pinta la franja. */
   banners: BannerTienda[];
+
+  /** La foto de cada categoría. Sin foto, la categoría se pinta igual. */
+  categorias: CategoriaTienda[];
 
   colores: {
     /** Botones, precios, lo que hay que mirar. */
@@ -114,6 +130,7 @@ export type ConfigTienda = {
 export const CONFIG_POR_DEFECTO: ConfigTienda = {
   titulo: "",
   banners: [],
+  categorias: [],
   colores: {
     principal: "#00043C",
     acento: "#F5247D",
@@ -201,6 +218,14 @@ export function leerConfig(crudo: unknown): ConfigTienda {
             imagen_url: b.imagen_url.trim(),
             ...(b.enlace ? { enlace: String(b.enlace) } : {}),
             ...(b.alt ? { alt: String(b.alt) } : {}),
+          }))
+      : [],
+    categorias: Array.isArray(c.categorias)
+      ? (c.categorias as CategoriaTienda[])
+          .filter((x) => x && typeof x.nombre === "string" && x.nombre.trim())
+          .map((x) => ({
+            nombre: x.nombre.trim(),
+            ...(x.imagen_url ? { imagen_url: String(x.imagen_url).trim() } : {}),
           }))
       : [],
     colores: {

@@ -51,12 +51,21 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
 
   const preguntas = leerPreguntasEscritas(s(fd.get("preguntas")));
 
+  // Llega como JSON desde la pantalla; `leerConfig` lo sanea más abajo.
+  let categorias: unknown = [];
+  try {
+    categorias = JSON.parse(s(fd.get("categorias")) || "[]");
+  } catch {
+    categorias = previa.categorias;
+  }
+
   const nueva: ConfigTienda = leerConfig({
     ...previa,
     titulo: s(fd.get("titulo")),
     logo_url: s(fd.get("logo_url")),
     portada_url: s(fd.get("portada_url")),
     banners,
+    categorias,
     colores: {
       principal: s(fd.get("color_principal")),
       acento: s(fd.get("color_acento")),
