@@ -8,7 +8,7 @@ import { TiendaNav, esPestana } from "@/components/tienda/TiendaNav";
 import { Productos, type Producto } from "@/components/tienda/Productos";
 import { EditorDiseno } from "@/components/tienda/EditorDiseno";
 import { Cobros } from "@/components/tienda/Cobros";
-import { guardarDiseno, guardarProducto, borrarProducto, guardarCobros } from "./actions";
+import { guardarDiseno, guardarProductos, guardarCobros } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -122,8 +122,7 @@ export default async function TiendaDetallePage({
               tiendaId={params.id}
               productos={(prods ?? []) as Producto[]}
               moneda={config.moneda}
-              guardar={guardarProducto}
-              borrar={borrarProducto}
+              guardar={guardarProductos}
             />
           )}
 

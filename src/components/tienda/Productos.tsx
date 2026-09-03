@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
-import { Plus, Pencil, EyeOff, X } from "lucide-react";
+import { Plus, Trash2, ClipboardPaste, X } from "lucide-react";
 import { comoDinero, type GrupoVariedad } from "@/lib/tienda/variedades";
-import { escribirGrupos } from "@/lib/tienda/escritura";
+import { escribirGrupos, leerGruposEscritos } from "@/lib/tienda/escritura";
+import { leerPegado } from "@/lib/tienda/pegar";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
 
 export type Producto = {
@@ -20,304 +21,407 @@ export type Producto = {
   variedades: GrupoVariedad[];
 };
 
-function Guardar({ texto }: { texto: string }) {
-  const { pending } = useFormStatus();
-  return (
-    <button className="btn-primary" disabled={pending}>
-      {pending ? "Guardando…" : texto}
-    </button>
-  );
+/** Una fila mientras se edita: todo texto, porque es lo que hay en las casillas. */
+type Fila = {
+  /** Vacío = producto nuevo, todavía sin guardar. */
+  id: string;
+  nombre: string;
+  descripcion: string;
+  categoria: string;
+  precio: string;
+  precio_anterior: string;
+  stock: string;
+  oculto: boolean;
+  imagen_url: string;
+  variedades: string;
+};
+
+const dinero = (c: number | null) => (c === null || c === 0 ? "" : (c / 100).toFixed(2));
+
+function aFila(p: Producto): Fila {
+  return {
+    id: p.id,
+    nombre: p.nombre,
+    descripcion: p.descripcion ?? "",
+    categoria: p.categoria ?? "",
+    precio: dinero(p.precio),
+    precio_anterior: dinero(p.precio_anterior),
+    stock: p.stock === null ? "" : String(p.stock),
+    oculto: p.oculto,
+    imagen_url: p.imagen_url ?? "",
+    variedades: escribirGrupos(p.variedades),
+  };
 }
 
-function Borrar() {
+const FILA_VACIA: Fila = {
+  id: "",
+  nombre: "",
+  descripcion: "",
+  categoria: "",
+  precio: "",
+  precio_anterior: "",
+  stock: "",
+  oculto: false,
+  imagen_url: "",
+  variedades: "",
+};
+
+function Guardar({ cuantos }: { cuantos: number }) {
   const { pending } = useFormStatus();
   return (
-    <button
-      className="text-sm font-semibold text-danger transition hover:opacity-80"
-      disabled={pending}
-    >
-      {pending ? "Borrando…" : "Borrar"}
+    <button className="btn-primary" disabled={pending || cuantos === 0}>
+      {pending
+        ? "Guardando…"
+        : cuantos === 0
+          ? "Sin cambios"
+          : `Guardar ${cuantos} cambio${cuantos === 1 ? "" : "s"}`}
     </button>
   );
 }
 
 /**
- * El catálogo de una tienda.
+ * El catálogo, como una hoja de cálculo.
  *
- * LOS PRECIOS SE ESCRIBEN EN DINERO Y SE GUARDAN EN CENTAVOS. Aquí se enseñan
- * con dos decimales siempre: «12.5» y «12.50» son el mismo número para el
- * programa, pero solo uno de los dos parece un precio.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ANTES ERA UNA VENTANITA POR PRODUCTO Y ESTABA MAL. Con cincuenta productos,
+ * abrir, escribir, guardar y cerrar cincuenta veces no lo hace nadie: se
+ * abandona a la mitad y el catálogo se queda en la hoja vieja para siempre. La
+ * forma correcta de editar una tabla es una tabla.
  *
- * LAS VARIEDADES SE ESCRIBEN IGUAL QUE EN LA HOJA que ya usan. Es la decisión
- * que hace que migrar una tienda sea copiar y pegar en vez de rehacerla
- * producto por producto.
+ * Y SE PUEDE PEGAR DESDE GOOGLE SHEETS. Al copiar celdas, el portapapeles trae
+ * texto separado por tabulaciones; eso significa que migrar una tienda entera
+ * es seleccionar, copiar, pegar — sin integración, sin permisos y sin que la
+ * hoja tenga que ser pública.
+ *
+ * SE GUARDA TODO DE UNA VEZ, no casilla por casilla. Guardar en cada tecla
+ * convierte una corrección en cincuenta escrituras y, cuando la red falla a
+ * mitad de camino, deja el catálogo a medio cambiar sin que nadie lo sepa. Aquí
+ * lo que no se ha guardado se ve marcado, y se guarda cuando el negocio decide.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function Productos({
   tiendaId,
   productos,
   moneda,
   guardar,
-  borrar,
 }: {
   tiendaId: string;
   productos: Producto[];
   moneda: string;
   guardar: (e: Estado, fd: FormData) => Promise<Estado>;
-  borrar: (e: Estado, fd: FormData) => Promise<Estado>;
 }) {
-  // `null` = cerrado; `{}` = nuevo; un producto = editando ese.
-  const [editando, setEditando] = useState<Partial<Producto> | null>(null);
-  const [estado, enviarGuardar] = useFormState(guardar, { ok: false, mensaje: "" });
-  const [estadoBorrar, enviarBorrar] = useFormState(borrar, { ok: false, mensaje: "" });
+  const originales = useMemo(() => productos.map(aFila), [productos]);
+  const [filas, setFilas] = useState<Fila[]>(originales);
+  const [borradas, setBorradas] = useState<string[]>([]);
+  const [pegando, setPegando] = useState(false);
+  const [texto, setTexto] = useState("");
+  const [estado, enviar] = useFormState(guardar, { ok: false, mensaje: "" });
 
-  const categorias = [...new Set(productos.map((p) => p.categoria).filter(Boolean))] as string[];
+  const porId = useMemo(() => new Map(originales.map((f) => [f.id, f])), [originales]);
+  const cambiada = (f: Fila) => {
+    if (!f.id) return f.nombre.trim() !== "";
+    const o = porId.get(f.id);
+    return !o || JSON.stringify(o) !== JSON.stringify(f);
+  };
+  const pendientes = filas.filter(cambiada).length + borradas.length;
+
+  const set = (i: number, campo: keyof Fila, valor: string | boolean) =>
+    setFilas((f) => f.map((x, j) => (j === i ? { ...x, [campo]: valor } : x)));
+
+  const quitar = (i: number) => {
+    const f = filas[i];
+    if (f.id) setBorradas((b) => [...b, f.id]);
+    setFilas((xs) => xs.filter((_, j) => j !== i));
+  };
+
+  const pegar = () => {
+    const nuevas = leerPegado(texto).map((p) => ({
+      id: "",
+      nombre: p.nombre,
+      descripcion: p.descripcion,
+      categoria: p.categoria,
+      precio: dinero(p.precio),
+      precio_anterior: dinero(p.precio_anterior),
+      stock: p.stock === null ? "" : String(p.stock),
+      oculto: p.oculto,
+      imagen_url: p.imagen_url,
+      variedades: escribirGrupos(p.variedades),
+    }));
+    if (!nuevas.length) return;
+    // SE AÑADEN, NO SE SUSTITUYE. Pegar encima borraría en un segundo un
+    // catálogo entero por una selección equivocada, y sin manera de deshacer.
+    setFilas((f) => [...f.filter((x) => x.nombre.trim() || x.id), ...nuevas]);
+    setTexto("");
+    setPegando(false);
+  };
+
+  const categorias = [...new Set(filas.map((f) => f.categoria).filter(Boolean))];
+  const total = filas.reduce((s, f) => {
+    const n = Number(String(f.precio).replace(",", "."));
+    return s + (Number.isFinite(n) ? Math.round(n * 100) : 0);
+  }, 0);
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <form action={enviar}>
+      <input type="hidden" name="tienda_id" value={tiendaId} />
+      {/* La tabla entera viaja como un solo campo. Un `input` por casilla serían
+          quinientos campos en el formulario y ningún control sobre el orden. */}
+      <input type="hidden" name="filas" value={JSON.stringify(filas)} />
+      <input type="hidden" name="borradas" value={JSON.stringify(borradas)} />
+
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-2">
-          {productos.length === 0
-            ? "Todavía no hay productos."
-            : `${productos.length} producto${productos.length === 1 ? "" : "s"}`}
+          {filas.length} producto{filas.length === 1 ? "" : "s"}
           {categorias.length > 0 && ` · ${categorias.length} categoría${categorias.length === 1 ? "" : "s"}`}
+          {filas.length > 0 && ` · catálogo de ${comoDinero(total, moneda)} en precios de lista`}
         </p>
-        <button type="button" className="btn-primary" onClick={() => setEditando({})}>
-          <Plus className="h-4 w-4" /> Agregar producto
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="btn-soft" onClick={() => setPegando(true)}>
+            <ClipboardPaste className="h-4 w-4" /> Pegar desde una hoja
+          </button>
+          <button
+            type="button"
+            className="btn-soft"
+            onClick={() => setFilas((f) => [...f, { ...FILA_VACIA }])}
+          >
+            <Plus className="h-4 w-4" /> Fila
+          </button>
+          <Guardar cuantos={pendientes} />
+        </div>
       </div>
 
-      {(estado.mensaje || estadoBorrar.mensaje) && !editando && (
-        <p
-          className={`mb-3 text-sm ${
-            estado.ok || estadoBorrar.ok ? "text-emerald-400" : "text-danger"
-          }`}
-        >
-          {estado.mensaje || estadoBorrar.mensaje}
+      {estado.mensaje && (
+        <p className={`mb-3 text-sm ${estado.ok ? "text-emerald-400" : "text-danger"}`}>
+          {estado.mensaje}
         </p>
       )}
 
-      {productos.length === 0 ? (
+      {pendientes > 0 && (
+        <p className="mb-3 text-xs text-warning">
+          Tienes {pendientes} cambio{pendientes === 1 ? "" : "s"} sin guardar. Si sales ahora, se
+          pierden.
+        </p>
+      )}
+
+      {filas.length === 0 ? (
         <div className="rounded-2xl border border-linea-2 bg-tarjeta p-5 text-sm leading-relaxed text-ink-2">
-          <b className="text-ink">Empieza por un producto.</b>
+          <b className="text-ink">Trae tu catálogo de una vez.</b>
           <p className="mt-1">
-            Si ya tienes tu catálogo en una hoja de cálculo, escríbelo aquí igual que allá — las
-            variedades con su recargo entre llaves funcionan tal cual: <code>Pollo, Salmón {"{2.50}"}</code>.
+            Abre tu hoja de cálculo, selecciona las filas de productos con sus encabezados, copia, y
+            pulsa <b className="text-ink">Pegar desde una hoja</b>. Se entienden tus columnas tal y
+            como están: Nombre, Descripcion, Variedades, Variedades2, Precio, Ocultar, Categoria…
           </p>
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {productos.map((p) => (
-            <div key={p.id} className="card flex flex-col p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate font-semibold text-ink">{p.nombre}</p>
-                  {p.categoria && <p className="truncate text-xs text-ink-2">{p.categoria}</p>}
-                </div>
-                {p.oculto && (
-                  <span className="flex flex-none items-center gap-1 rounded-full bg-surface-border px-2 py-0.5 text-[11px] font-semibold text-ink-2">
-                    <EyeOff className="h-3 w-3" /> oculto
-                  </span>
-                )}
-              </div>
-
-              <p className="mt-2 flex items-baseline gap-2">
-                <span className="text-lg font-bold text-ink">{comoDinero(p.precio, moneda)}</span>
-                {p.precio_anterior ? (
-                  <span className="text-xs text-ink-2 line-through">
-                    {comoDinero(p.precio_anterior, moneda)}
-                  </span>
-                ) : null}
-              </p>
-
-              <p className="mt-1 text-xs text-ink-2">
-                {p.stock === null
-                  ? "sin control de existencias"
-                  : p.stock === 0
-                    ? "agotado"
-                    : `${p.stock} en existencia`}
-                {p.variedades?.length ? ` · ${p.variedades.length} grupo${p.variedades.length === 1 ? "" : "s"} de variedades` : ""}
-              </p>
-
-              <button
-                type="button"
-                onClick={() => setEditando(p)}
-                className="mt-3 inline-flex items-center gap-1.5 self-start text-xs font-semibold text-violet transition hover:opacity-80"
-              >
-                <Pencil className="h-3 w-3" /> Editar
-              </button>
-            </div>
-          ))}
+        <div className="overflow-x-auto rounded-2xl border border-linea">
+          <table className="w-full min-w-[1100px] border-collapse text-sm">
+            <thead>
+              <tr className="bg-tarjeta text-left text-xs font-semibold uppercase tracking-wide text-ink-2">
+                <th className="px-2 py-2">Nombre</th>
+                <th className="px-2 py-2">Descripción</th>
+                <th className="px-2 py-2">Categoría</th>
+                <th className="w-24 px-2 py-2">Precio</th>
+                <th className="w-24 px-2 py-2">Antes</th>
+                <th className="w-20 px-2 py-2">Stock</th>
+                <th className="w-16 px-2 py-2" title="Escóndelo del escaparate sin borrarlo">
+                  Ocultar
+                </th>
+                <th className="px-2 py-2">Foto</th>
+                <th className="px-2 py-2">Variedades</th>
+                <th className="w-10 px-2 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {filas.map((f, i) => {
+                const nueva = !f.id;
+                const editada = cambiada(f);
+                return (
+                  <tr
+                    key={f.id || `nueva-${i}`}
+                    className="border-t border-linea align-top"
+                    style={
+                      editada
+                        ? { backgroundColor: nueva ? "rgba(16,185,129,.07)" : "rgba(245,158,11,.07)" }
+                        : undefined
+                    }
+                  >
+                    <td className="p-1">
+                      <input
+                        value={f.nombre}
+                        onChange={(e) => set(i, "nombre", e.target.value)}
+                        className="w-full min-w-[160px] rounded-md border border-transparent bg-transparent px-1.5 py-1 text-ink outline-none focus:border-linea-2 focus:bg-tarjeta"
+                        placeholder="Nombre del producto"
+                      />
+                    </td>
+                    <td className="p-1">
+                      <textarea
+                        rows={1}
+                        value={f.descripcion}
+                        onChange={(e) => set(i, "descripcion", e.target.value)}
+                        className="w-full min-w-[180px] resize-y rounded-md border border-transparent bg-transparent px-1.5 py-1 text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
+                      />
+                    </td>
+                    <td className="p-1">
+                      <input
+                        value={f.categoria}
+                        onChange={(e) => set(i, "categoria", e.target.value)}
+                        list="cats-tienda"
+                        className="w-full min-w-[110px] rounded-md border border-transparent bg-transparent px-1.5 py-1 text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
+                      />
+                    </td>
+                    <td className="p-1">
+                      <input
+                        value={f.precio}
+                        onChange={(e) => set(i, "precio", e.target.value)}
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-right text-ink outline-none focus:border-linea-2 focus:bg-tarjeta"
+                      />
+                    </td>
+                    <td className="p-1">
+                      <input
+                        value={f.precio_anterior}
+                        onChange={(e) => set(i, "precio_anterior", e.target.value)}
+                        inputMode="decimal"
+                        className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-right text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
+                      />
+                    </td>
+                    <td className="p-1">
+                      <input
+                        value={f.stock}
+                        onChange={(e) => set(i, "stock", e.target.value)}
+                        inputMode="numeric"
+                        placeholder="—"
+                        title="Vacío = sin control de existencias. 0 = agotado."
+                        className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-right text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
+                      />
+                    </td>
+                    <td className="p-1 text-center">
+                      <input
+                        type="checkbox"
+                        checked={f.oculto}
+                        onChange={(e) => set(i, "oculto", e.target.checked)}
+                        className="mt-1.5 h-4 w-4"
+                        style={{ accentColor: "#6E42FF" }}
+                      />
+                    </td>
+                    <td className="p-1">
+                      <input
+                        value={f.imagen_url}
+                        onChange={(e) => set(i, "imagen_url", e.target.value)}
+                        placeholder="https://…"
+                        className="w-full min-w-[120px] rounded-md border border-transparent bg-transparent px-1.5 py-1 text-xs text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
+                      />
+                    </td>
+                    <td className="p-1">
+                      <textarea
+                        rows={1}
+                        value={f.variedades}
+                        onChange={(e) => set(i, "variedades", e.target.value)}
+                        placeholder="Sabor | una | Pollo, Salmón {2.50}"
+                        title="Grupo | cómo se elige | opciones. Entre llaves, lo que suma al precio."
+                        className="w-full min-w-[200px] resize-y rounded-md border border-transparent bg-transparent px-1.5 py-1 font-mono text-[11px] text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
+                      />
+                      {/* Lo que el cliente va a ver de verdad, contado en corto:
+                          la línea escrita es cómoda para editar pero difícil de
+                          revisar de un vistazo. */}
+                      {f.variedades.trim() && (
+                        <p className="px-1.5 pt-0.5 text-[10px] text-ink-3">
+                          {leerGruposEscritos(f.variedades)
+                            .map((g) => `${g.nombre}: ${g.opciones.length}`)
+                            .join(" · ") || "no se entiende: revisa las barras"}
+                        </p>
+                      )}
+                    </td>
+                    <td className="p-1 text-center">
+                      <button
+                        type="button"
+                        onClick={() => quitar(i)}
+                        className="mt-1 text-ink-3 transition hover:text-danger"
+                        title="Quitar esta fila"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <datalist id="cats-tienda">
+            {categorias.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
         </div>
       )}
 
-      {editando && (
+      {filas.length > 0 && (
+        <p className="mt-3 text-xs text-ink-2">
+          Verde = producto nuevo. Ámbar = con cambios sin guardar. Las variedades se escriben{" "}
+          <code className="text-ink">Grupo | una · varias · hasta completar 3 | Opción, Otra {"{2.50}"}</code>.
+        </p>
+      )}
+
+      {pegando && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-linea bg-tarjeta p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="font-display text-lg font-bold text-ink">
-                {editando.id ? "Editar producto" : "Nuevo producto"}
-              </h2>
+          <div className="w-full max-w-2xl rounded-2xl border border-linea bg-tarjeta p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-ink">Pegar desde una hoja</h2>
               <button
                 type="button"
-                onClick={() => setEditando(null)}
+                onClick={() => setPegando(false)}
                 className="text-ink-2 transition hover:text-ink"
                 aria-label="Cerrar"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
-
-            <form
-              action={(fd) => {
-                enviarGuardar(fd);
-                setEditando(null);
+            <p className="mb-3 text-sm text-ink-2">
+              En tu hoja, selecciona los productos <b className="text-ink">con la fila de
+              encabezados</b>, copia, y pega aquí. Se reconocen tus nombres de columna tal y como
+              están.
+            </p>
+            <textarea
+              autoFocus
+              rows={8}
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              onPaste={(e) => {
+                const t = e.clipboardData.getData("text/plain");
+                if (t) {
+                  e.preventDefault();
+                  setTexto(t);
+                }
               }}
-              className="grid gap-3"
-            >
-              <input type="hidden" name="tienda_id" value={tiendaId} />
-              {editando.id && <input type="hidden" name="producto_id" value={editando.id} />}
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="sm:col-span-2">
-                  <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre</label>
-                  <input name="nombre" required defaultValue={editando.nombre ?? ""} className="input-l" />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-ink-2">Precio</label>
-                  <input
-                    name="precio"
-                    defaultValue={editando.precio ? (editando.precio / 100).toFixed(2) : ""}
-                    placeholder="12.50"
-                    className="input-l"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-ink-2">
-                    Antes costaba (opcional)
-                  </label>
-                  <input
-                    name="precio_anterior"
-                    defaultValue={
-                      editando.precio_anterior ? (editando.precio_anterior / 100).toFixed(2) : ""
-                    }
-                    placeholder="15.00"
-                    className="input-l"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-ink-2">Categoría</label>
-                  <input
-                    name="categoria"
-                    defaultValue={editando.categoria ?? ""}
-                    placeholder="Royal Canin"
-                    className="input-l"
-                    list="categorias-tienda"
-                  />
-                  <datalist id="categorias-tienda">
-                    {categorias.map((c) => (
-                      <option key={c} value={c} />
-                    ))}
-                  </datalist>
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-ink-2">
-                    Existencias (vacío = sin control)
-                  </label>
-                  <input
-                    name="stock"
-                    inputMode="numeric"
-                    defaultValue={editando.stock ?? ""}
-                    className="input-l"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="mb-1.5 block text-xs font-semibold text-ink-2">
-                    Enlace de la foto
-                  </label>
-                  <input
-                    name="imagen_url"
-                    defaultValue={editando.imagen_url ?? ""}
-                    placeholder="https://…/producto.jpg"
-                    className="input-l"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="mb-1.5 block text-xs font-semibold text-ink-2">
-                    Descripción
-                  </label>
-                  <textarea
-                    name="descripcion"
-                    rows={2}
-                    defaultValue={editando.descripcion ?? ""}
-                    className="input-l"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-ink-2">
-                  Variedades — una por línea
-                </label>
-                <textarea
-                  name="variedades"
-                  rows={3}
-                  defaultValue={escribirGrupos(editando.variedades ?? [])}
-                  placeholder={"Tamaño | una | 5 lbs., 15 lbs. {3}\nSabor | hasta completar 3 | Pollo, Salmón {2.50}"}
-                  className="input-l font-mono text-xs"
-                />
-                <p className="mt-1.5 text-xs text-ink-2">
-                  Nombre del grupo, cómo se elige (<code className="text-ink">una</code>,{" "}
-                  <code className="text-ink">varias</code> o{" "}
-                  <code className="text-ink">hasta completar 3</code>) y las opciones. Entre llaves,
-                  lo que suma esa opción al precio.
-                </p>
-              </div>
-
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
-                <input
-                  type="checkbox"
-                  name="oculto"
-                  defaultChecked={editando.oculto ?? false}
-                  className="h-4 w-4"
-                  style={{ accentColor: "#6E42FF" }}
-                />
-                Esconderlo del escaparate (sin borrarlo)
-              </label>
-
-              <div className="mt-2 flex items-center gap-3">
-                <Guardar texto={editando.id ? "Guardar cambios" : "Agregar producto"} />
-                <button
-                  type="button"
-                  onClick={() => setEditando(null)}
-                  className="text-sm text-ink-2 transition hover:text-ink"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </form>
-
-            {editando.id && (
-              <form
-                action={(fd) => {
-                  enviarBorrar(fd);
-                  setEditando(null);
-                }}
-                className="mt-4 border-t border-linea pt-3"
+              placeholder={"Nombre\tPrecio\tCategoria\nCroquetas\t12.50\tRoyal Canin"}
+              className="input-l font-mono text-xs"
+            />
+            <p className="mt-2 text-xs text-ink-2">
+              {texto.trim()
+                ? `Se van a agregar ${leerPegado(texto).length} producto(s). Se suman a los que ya tienes; no se borra nada.`
+                : "Nada pegado todavía."}
+            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={pegar}
+                disabled={leerPegado(texto).length === 0}
               >
-                <input type="hidden" name="tienda_id" value={tiendaId} />
-                <input type="hidden" name="producto_id" value={editando.id} />
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs text-ink-2">
-                    Borrar es para siempre. Para sacarlo del escaparate y conservarlo, usa
-                    «esconderlo».
-                  </p>
-                  <Borrar />
-                </div>
-              </form>
-            )}
+                Agregar a la tabla
+              </button>
+              <button
+                type="button"
+                onClick={() => setPegando(false)}
+                className="text-sm text-ink-2 transition hover:text-ink"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}
-    </div>
+    </form>
   );
 }

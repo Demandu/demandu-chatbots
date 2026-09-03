@@ -102,68 +102,140 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
 
 /* ── Productos ─────────────────────────────────────────────────────────────── */
 
-export async function guardarProducto(_e: Estado, fd: FormData): Promise<Estado> {
+/** Una fila tal y como sale de la tabla: todo texto, como en las casillas. */
+type FilaCruda = {
+  id?: string;
+  nombre?: string;
+  descripcion?: string;
+  categoria?: string;
+  precio?: string;
+  precio_anterior?: string;
+  stock?: string;
+  oculto?: boolean;
+  imagen_url?: string;
+  variedades?: string;
+};
+
+/**
+ * Guarda la tabla entera de una vez.
+ *
+ * SE VALIDA AQUÍ, FILA POR FILA, aunque la pantalla ya lo haga: lo que llega es
+ * un texto que manda el navegador y podría venir de cualquier parte. La
+ * pantalla es una comodidad; esto es la puerta.
+ *
+ * TODO O NADA NO ES POSIBLE contra Supabase sin una transacción, así que se
+ * guarda por partes y SE CUENTA lo que entró. Si algo falla a mitad, el mensaje
+ * dice cuántos se guardaron en vez de decir «error» y dejar al negocio sin
+ * saber si su catálogo está a medias.
+ */
+export async function guardarProductos(_e: Estado, fd: FormData): Promise<Estado> {
   const tiendaId = s(fd.get("tienda_id"));
   const t = await tiendaDelUsuario(tiendaId);
   if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
 
-  const nombre = s(fd.get("nombre"));
-  if (!nombre) return { ok: false, mensaje: "El producto necesita un nombre." };
-
-  const precio = aCentavos(s(fd.get("precio")));
-  const anteriorCrudo = s(fd.get("precio_anterior"));
-  const precio_anterior = anteriorCrudo ? aCentavos(anteriorCrudo) : null;
-
-  // Un «antes» que no es mayor que el precio no es una oferta: es un tachón
-  // que hace desconfiar. Se descarta en vez de pintarlo.
-  const anteriorValido = precio_anterior && precio_anterior > precio ? precio_anterior : null;
-
-  const stockCrudo = s(fd.get("stock"));
-  const fila = {
-    org_id: t.org_id,
-    tienda_id: tiendaId,
-    nombre,
-    descripcion: s(fd.get("descripcion")) || null,
-    categoria: s(fd.get("categoria")) || null,
-    precio,
-    precio_anterior: anteriorValido,
-    oculto: fd.get("oculto") === "on",
-    // Vacío = sin control de existencias. Cero = agotado de verdad.
-    stock: stockCrudo === "" ? null : Math.max(0, Math.round(Number(stockCrudo) || 0)),
-    imagen_url: s(fd.get("imagen_url")) || null,
-    variedades: leerGruposEscritos(s(fd.get("variedades"))),
-    updated_at: new Date().toISOString(),
-  };
+  let filas: FilaCruda[] = [];
+  let borradas: string[] = [];
+  try {
+    filas = JSON.parse(s(fd.get("filas")) || "[]");
+    borradas = JSON.parse(s(fd.get("borradas")) || "[]");
+  } catch {
+    return { ok: false, mensaje: "No se entendió la tabla. Recarga la página e inténtalo de nuevo." };
+  }
+  if (!Array.isArray(filas)) filas = [];
+  if (!Array.isArray(borradas)) borradas = [];
 
   const sb = createClient();
-  const id = s(fd.get("producto_id"));
-  const { error } = id
-    ? await sb.from("tienda_productos").update(fila).eq("id", id).eq("tienda_id", tiendaId)
-    : await sb.from("tienda_productos").insert(fila);
 
-  if (error) return { ok: false, mensaje: "No se pudo guardar el producto." };
+  // BORRAR PRIMERO, y siempre acotado a esta tienda: un id de otra tienda en la
+  // lista no puede llevarse por delante el producto de otro cliente.
+  let borrados = 0;
+  const idsABorrar = borradas.map((x) => String(x)).filter(Boolean);
+  if (idsABorrar.length) {
+    const { error } = await sb
+      .from("tienda_productos")
+      .delete()
+      .in("id", idsABorrar)
+      .eq("tienda_id", tiendaId);
+    if (!error) borrados = idsABorrar.length;
+  }
+
+  const preparar = (f: FilaCruda, orden: number) => {
+    const nombre = String(f.nombre ?? "").trim();
+    const precio = aCentavos(String(f.precio ?? ""));
+    const antesCrudo = String(f.precio_anterior ?? "").trim();
+    const antes = antesCrudo ? aCentavos(antesCrudo) : 0;
+    const stockCrudo = String(f.stock ?? "").trim();
+    const stockNum = Number(stockCrudo.replace(/[^\d-]/g, ""));
+    return {
+      org_id: t.org_id,
+      tienda_id: tiendaId,
+      nombre,
+      descripcion: String(f.descripcion ?? "").trim() || null,
+      categoria: String(f.categoria ?? "").trim() || null,
+      precio,
+      // Un «antes» que no supera al precio no es una oferta: es un tachón que
+      // hace desconfiar.
+      precio_anterior: antes > precio ? antes : null,
+      oculto: f.oculto === true,
+      // Vacío = sin control de existencias. Cero = agotado de verdad.
+      stock:
+        stockCrudo === "" || !Number.isFinite(stockNum) ? null : Math.max(0, Math.round(stockNum)),
+      imagen_url: String(f.imagen_url ?? "").trim() || null,
+      variedades: leerGruposEscritos(String(f.variedades ?? "")),
+      orden,
+      updated_at: new Date().toISOString(),
+    };
+  };
+
+  // UNA FILA SIN NOMBRE NO ES UN PRODUCTO. Se ignora en silencio en vez de
+  // fallar: casi siempre es la fila en blanco que quedó al final.
+  const conNombre = filas
+    .map((f, i) => ({ f, orden: i }))
+    .filter(({ f }) => String(f.nombre ?? "").trim());
+
+  const nuevas = conNombre.filter(({ f }) => !String(f.id ?? "").trim());
+  const existentes = conNombre.filter(({ f }) => String(f.id ?? "").trim());
+
+  let guardados = 0;
+  let fallos = 0;
+
+  if (nuevas.length) {
+    const { error } = await sb
+      .from("tienda_productos")
+      .insert(nuevas.map(({ f, orden }) => preparar(f, orden)));
+    if (error) fallos += nuevas.length;
+    else guardados += nuevas.length;
+  }
+
+  // Las que ya existen van una a una: Supabase no tiene un update en lote con
+  // valores distintos por fila, y un upsert por id arrastraría columnas que
+  // esta pantalla no toca.
+  for (const { f, orden } of existentes) {
+    const { error } = await sb
+      .from("tienda_productos")
+      .update(preparar(f, orden))
+      .eq("id", String(f.id))
+      .eq("tienda_id", tiendaId);
+    if (error) fallos++;
+    else guardados++;
+  }
 
   revalidatePath(`/tienda/${tiendaId}`);
-  return { ok: true, mensaje: id ? "Producto actualizado." : `«${nombre}» agregado.` };
-}
 
-export async function borrarProducto(_e: Estado, fd: FormData): Promise<Estado> {
-  const tiendaId = s(fd.get("tienda_id"));
-  const t = await tiendaDelUsuario(tiendaId);
-  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+  if (fallos) {
+    return {
+      ok: false,
+      mensaje: `Se guardaron ${guardados}, pero ${fallos} no. Revisa esas filas y vuelve a guardar.`,
+    };
+  }
 
-  const id = s(fd.get("producto_id"));
-  if (!id) return { ok: false, mensaje: "No sé qué producto borrar." };
-
-  const { error } = await createClient()
-    .from("tienda_productos")
-    .delete()
-    .eq("id", id)
-    .eq("tienda_id", tiendaId);
-
-  if (error) return { ok: false, mensaje: "No se pudo borrar." };
-  revalidatePath(`/tienda/${tiendaId}`);
-  return { ok: true, mensaje: "Producto borrado." };
+  const partes: string[] = [];
+  if (guardados) partes.push(`${guardados} producto${guardados === 1 ? "" : "s"} guardado${guardados === 1 ? "" : "s"}`);
+  if (borrados) partes.push(`${borrados} borrado${borrados === 1 ? "" : "s"}`);
+  return {
+    ok: true,
+    mensaje: partes.length ? `${partes.join(" y ")}.` : "No había nada que guardar.",
+  };
 }
 
 /* ── Cobros ────────────────────────────────────────────────────────────────── */

@@ -15,6 +15,7 @@ import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero } from "../../
 import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender } from "../../src/lib/tienda/config.ts";
 import { leerPreguntasEscritas, escribirPreguntas, leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
+import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
 import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
@@ -1326,6 +1327,105 @@ describe("Tienda: lo que se escribe a mano", () => {
   test("las variedades también cuadran de ida y vuelta", () => {
     const texto = "Tamaño | una | 5 lbs., 15 lbs. {3.00}\nSabor | hasta completar 3 | Pollo, Salmón {2.50}";
     esperar(escribirGrupos(leerGruposEscritos(texto))).igual(texto);
+  });
+});
+
+describe("Tienda: pegar el catálogo desde una hoja", () => {
+  // La cabecera REAL de la hoja que ya usan, con sus nombres tal cual.
+  const CABECERA =
+    "Nombre\tDescripcion\tVariedades\tVariedades2\tVariedades2 Modo\tVariedades2 Cantidad\tVariedades3\tPrecio\tPrecio Anterior\tOcultar\tCategoria";
+
+  test("se entienden las columnas de la hoja que ya usan", () => {
+    // SIN ESTO NO HAY MIGRACIÓN. Cargar cincuenta productos a mano no lo hace
+    // nadie: se abandona a la mitad y la tienda se queda en la hoja vieja.
+    const p = leerPegado(
+      CABECERA +
+        "\nCroquetas\tPara adulto\t5 lbs., 15 lbs. {3}\tPollo, Salmón {2.50}\tHASTA COMPLETAR\t3\t\t12.50\t15.00\t\tRoyal Canin",
+    );
+    esperar(p.length).igual(1);
+    esperar(p[0].nombre).igual("Croquetas");
+    esperar(p[0].categoria).igual("Royal Canin");
+    esperar(p[0].precio).igual(1250, "en centavos, siempre");
+    esperar(p[0].precio_anterior).igual(1500);
+    esperar(p[0].oculto).falso();
+    esperar(p[0].variedades.length).igual(2);
+    esperar(p[0].variedades[0].opciones[1]).igual({ texto: "15 lbs.", recargo: 300 });
+    esperar(p[0].variedades[1].modo).igual("hasta_completar");
+    esperar(p[0].variedades[1].cantidad).igual(3);
+    esperar(p[0].variedades[1].opciones[1].recargo).igual(250);
+  });
+
+  test("«Ocultar» se escribe de seis maneras y todas valen", () => {
+    for (const v of ["SI", "si", "x", "TRUE", "1", "Sí"]) esperar(esSi(v)).verdadero(v);
+    for (const v of ["", "no", "NO", "0", "falso"]) esperar(esSi(v)).falso(v);
+  });
+
+  test("una descripción con salto de línea no parte la tabla en dos", () => {
+    // LA HOJA ENTRECOMILLA esas celdas y mete el salto tal cual. Cortando por
+    // «\n» a secas, ese producto se rompería y arrastraría el resto: se
+    // perderían filas SIN QUE NADIE LO NOTE hasta ver la tienda mal.
+    const p = leerPegado(
+      "Nombre\tDescripcion\tPrecio\n" +
+        '"Pastel"\t"Dos pisos.\nCon fresas."\t25.00\n' +
+        "Galletas\tSencillas\t3.00",
+    );
+    esperar(p.length).igual(2);
+    esperar(p[0].descripcion).igual("Dos pisos.\nCon fresas.");
+    esperar(p[1].nombre).igual("Galletas");
+  });
+
+  test("las comillas dobles dentro de una celda se conservan", () => {
+    const filas = cortarTabla('"Pizza 12"" grande"\t10.00');
+    esperar(filas[0][0]).igual('Pizza 12" grande');
+  });
+
+  test("las filas en blanco del final no crean productos fantasma", () => {
+    // Seleccionar de más en la hoja es lo más común del mundo.
+    const p = leerPegado("Nombre\tPrecio\nPan\t1.50\n\t\n\n");
+    esperar(p.length).igual(1);
+    esperar(p[0].nombre).igual("Pan");
+  });
+
+  test("sin fila de encabezados se asume el orden de la tabla", () => {
+    const p = leerPegado("Pan\tIntegral\tPanadería\t1.50");
+    esperar(p.length).igual(1);
+    esperar(p[0].nombre).igual("Pan");
+    esperar(p[0].categoria).igual("Panadería");
+    esperar(p[0].precio).igual(150);
+  });
+
+  test("un encabezado NO se confunde con un producto llamado «Precio»", () => {
+    // Hace falta que coincidan DOS columnas para dar la fila por encabezado.
+    // Con una sola, se perdería un producto de verdad.
+    // UNA sola coincidencia no basta. Aquí «Precio» SÍ es un nombre de columna
+    // conocido, pero el resto de la fila no lo es: es un producto que se llama
+    // así, y darlo por encabezado lo haría desaparecer sin avisar.
+    const p = leerPegado("Precio\tsuelto\t9.00");
+    esperar(p.length).igual(1, "esta fila es un producto, no un encabezado");
+    esperar(p[0].nombre).igual("Precio");
+
+    // Con DOS sí es encabezado, y entonces la fila no es un producto.
+    const q = leerPegado("Nombre\tPrecio\nPan\t1.50");
+    esperar(q.length).igual(1);
+    esperar(q[0].nombre).igual("Pan");
+  });
+
+  test("un «antes» que no es oferta no se pinta tachado", () => {
+    // Un precio tachado que no es menor hace desconfiar de la tienda entera.
+    const p = leerPegado("Nombre\tPrecio\tPrecio Anterior\nPan\t10.00\t8.00");
+    esperar(p[0].precio_anterior).igual(null);
+  });
+
+  test("el stock vacío NO es cero", () => {
+    // Vacío = no llevo control. Cero = agotado. Confundirlos esconde del
+    // escaparate productos que sí hay.
+    const p = leerPegado("Nombre\tPrecio\tStock\nPan\t1.00\t\nLeche\t2.00\t0");
+    esperar(p[0].stock).igual(null);
+    esperar(p[1].stock).igual(0);
+  });
+
+  test("pegar nada no rompe nada", () => {
+    for (const v of ["", "   ", null, undefined, "\n\n"]) esperar(leerPegado(v)).igual([]);
   });
 });
 
