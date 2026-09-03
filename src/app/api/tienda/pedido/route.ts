@@ -259,7 +259,13 @@ export async function POST(req: Request) {
     });
     if (!orden.ok || !orden.datos) return { yappy_error: orden.mensaje };
 
-    await sb.from("pedidos").update({ pago: "pendiente" }).eq("id", ped.id);
+    // LA HORA SE GUARDA AQUÍ, no cuando llegue el aviso: es justo el aviso lo
+    // que puede no llegar nunca, y sin esta marca un pedido se quedaría
+    // «pagando» para siempre.
+    await sb
+      .from("pedidos")
+      .update({ pago: "pendiente", pago_iniciado_en: new Date().toISOString() })
+      .eq("id", ped.id);
     await sb.from("pedido_eventos").insert({
       pedido_id: ped.id,
       que: "pago_pendiente",

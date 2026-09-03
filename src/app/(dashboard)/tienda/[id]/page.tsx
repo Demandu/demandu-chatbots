@@ -77,7 +77,7 @@ export default async function TiendaDetallePage({
     activa === "pedidos"
       ? await sb
           .from("pedidos")
-          .select("id,numero,estado,pago,total,created_at,respuestas,pedido_lineas(nombre,cantidad,precio,elegidas,nota,orden)")
+          .select("id,numero,estado,pago,pago_iniciado_en,pago_referencia,total,created_at,respuestas,pedido_lineas(nombre,cantidad,precio,elegidas,nota,orden)")
           .eq("tienda_id", params.id)
           .order("created_at", { ascending: false })
           .limit(200)
@@ -88,6 +88,8 @@ export default async function TiendaDetallePage({
     numero: Number(p.numero),
     estado: p.estado as PedidoEnLista["estado"],
     pago: (p.pago ?? "sin_cobro") as PedidoEnLista["pago"],
+    pago_iniciado_en: (p.pago_iniciado_en as string) ?? null,
+    pago_referencia: (p.pago_referencia as string) ?? null,
     total: Number(p.total),
     created_at: String(p.created_at),
     respuestas: (p.respuestas ?? []) as PedidoEnLista["respuestas"],

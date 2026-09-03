@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { ChevronRight } from "lucide-react";
 import { comoDinero } from "@/lib/tienda/variedades";
+import { estadoDelCobro, VENTANA_COBRO_MIN } from "@/lib/tienda/cobro";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
 
 export type EstadoPedido =
@@ -27,6 +28,8 @@ export type PedidoEnLista = {
   numero: number;
   estado: EstadoPedido;
   pago: EstadoPago;
+  pago_iniciado_en: string | null;
+  pago_referencia: string | null;
   total: number;
   created_at: string;
   respuestas: { id: string; etiqueta: string; valor: string }[];
@@ -55,12 +58,23 @@ export const COLUMNAS: { clave: EstadoPedido; titulo: string; siguiente?: Estado
  * normal en una tienda que cobra al recibir, y una etiqueta en cada tarjeta
  * para decir «nada que ver aquí» solo tapa las que sí importan.
  */
-const SELLOS: Record<string, { texto: string; color: string }> = {
-  pendiente: { texto: "Pago iniciado", color: "#d97706" },
+const SELLOS: Record<string, { texto: string; color: string; pista?: string }> = {
+  esperando: {
+    texto: "Pagando…",
+    color: "#d97706",
+    pista: `El cliente tiene unos minutos para confirmar en su app.`,
+  },
+  // ESTE ES EL SELLO QUE EVITA UN REGALO. Yappy no siempre avisa cuando el
+  // cliente no confirma, y no hay forma de preguntárselo: pasado el tiempo, lo
+  // honesto es decir que no consta el pago, no dejar un «pagando…» eterno que
+  // se lee como dinero en camino.
+  sin_confirmar: {
+    texto: "Pago sin confirmar",
+    color: "#dc2626",
+    pista: `Pasaron más de ${VENTANA_COBRO_MIN} minutos sin aviso del banco. No cobres por esta vía sin comprobarlo.`,
+  },
   pagado: { texto: "Pagado", color: "#16a34a" },
-  rechazado: { texto: "Pago rechazado", color: "#dc2626" },
-  cancelado: { texto: "Pago cancelado", color: "#dc2626" },
-  expirado: { texto: "Pago vencido", color: "#dc2626" },
+  fallido: { texto: "Pago no completado", color: "#dc2626" },
 };
 
 const cuando = (iso: string) => {
@@ -170,14 +184,20 @@ export function Pedidos({
                   </div>
                   <p className="text-[11px] text-ink-3">{cuando(p.created_at)}</p>
 
-                  {SELLOS[p.pago] && (
-                    <span
-                      className="mt-1 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white"
-                      style={{ backgroundColor: SELLOS[p.pago].color }}
-                    >
-                      {SELLOS[p.pago].texto}
-                    </span>
-                  )}
+                  {(() => {
+                    const sello = SELLOS[estadoDelCobro(p.pago, p.pago_iniciado_en)];
+                    if (!sello) return null;
+                    return (
+                      <span
+                        className="mt-1 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white"
+                        style={{ backgroundColor: sello.color }}
+                        title={sello.pista ?? ""}
+                      >
+                        {sello.texto}
+                        {p.pago_referencia ? ` · ${p.pago_referencia}` : ""}
+                      </span>
+                    );
+                  })()}
 
                   <ul className="mt-1.5 grid gap-0.5">
                     {p.lineas.map((l, i) => (

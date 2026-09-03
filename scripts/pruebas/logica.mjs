@@ -21,6 +21,7 @@ import {
   comoMontoYappy, montoCobrable, aliasYappy, aliasValido, codigoDePedido, codigoValido,
   claveDeFirma, firmaIpn, ipnValido, esAmbiente, PAGOS_YAPPY, API_YAPPY, CDN_YAPPY,
 } from "../../src/lib/tienda/yappy.ts";
+import { estadoDelCobro, VENTANA_COBRO_MIN } from "../../src/lib/tienda/cobro.ts";
 import { claveDeLinea, precioUnitario, totalDeLinea, totalDelCarrito, cuantasUnidades, faltaElegir, faltaContestar, textoDelPedido, enlaceDeWhatsapp } from "../../src/lib/tienda/pedido.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
@@ -1994,6 +1995,50 @@ describe("Tienda: los datos que se le mandan a Yappy", () => {
   test("cada entorno apunta a su propia dirección", () => {
     esperar(API_YAPPY.prueba === API_YAPPY.produccion).falso();
     esperar(CDN_YAPPY.prueba === CDN_YAPPY.produccion).falso();
+  });
+});
+
+describe("Tienda: un cobro sin respuesta no se da por vivo para siempre", () => {
+  // ───────────────────────────────────────────────────────────────────────────
+  // POR QUÉ ESTO EXISTE: Yappy no publica ninguna consulta de estado, y el
+  // aviso de «el cliente no confirmó» puede no llegar nunca. Sin reloj, ese
+  // pedido se quedaría diciendo «pagando…», que en un tablero se lee como
+  // dinero en camino — y el negocio entrega contra un pago que no existe.
+  // ───────────────────────────────────────────────────────────────────────────
+  const ahora = new Date("2026-09-03T12:00:00Z");
+  const haceMinutos = (m) => new Date(ahora.getTime() - m * 60000).toISOString();
+
+  test("recién iniciado, se está esperando", () => {
+    esperar(estadoDelCobro("pendiente", haceMinutos(1), ahora)).igual("esperando");
+    esperar(estadoDelCobro("pendiente", haceMinutos(VENTANA_COBRO_MIN), ahora)).igual("esperando");
+  });
+
+  test("pasada la ventana SIN aviso, deja de darse por vivo", () => {
+    esperar(estadoDelCobro("pendiente", haceMinutos(VENTANA_COBRO_MIN + 1), ahora)).igual("sin_confirmar");
+    esperar(estadoDelCobro("pendiente", haceMinutos(600), ahora)).igual("sin_confirmar");
+  });
+
+  test("un pendiente sin hora se trata como sin confirmar, no como recién hecho", () => {
+    // Prudencia: lo caro es decir que un pago va en camino cuando no lo va.
+    esperar(estadoDelCobro("pendiente", null, ahora)).igual("sin_confirmar");
+    esperar(estadoDelCobro("pendiente", "no es una fecha", ahora)).igual("sin_confirmar");
+  });
+
+  test("el reloj NO puede convertir un pagado en dudoso", () => {
+    // Lo que dice el aviso firmado manda por encima del tiempo: un pedido
+    // pagado hace un año sigue pagado.
+    esperar(estadoDelCobro("pagado", haceMinutos(100000), ahora)).igual("pagado");
+    esperar(estadoDelCobro("pagado", null, ahora)).igual("pagado");
+  });
+
+  test("los finales de Yappy se cuentan como fallidos, no como pendientes", () => {
+    for (const v of ["rechazado", "cancelado", "expirado"]) {
+      esperar(estadoDelCobro(v, haceMinutos(1), ahora)).igual("fallido");
+    }
+  });
+
+  test("un pedido que nunca intentó cobrar en línea no lleva sello", () => {
+    esperar(estadoDelCobro("sin_cobro", null, ahora)).igual("sin_cobro");
   });
 });
 

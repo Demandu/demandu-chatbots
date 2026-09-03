@@ -29,6 +29,12 @@ export async function GET(req: Request) {
   const hash = String(q.get("hash") ?? "").trim();
   const domain = String(q.get("domain") ?? "").trim();
 
+  // EL NÚMERO DE CONFIRMACIÓN NO ENTRA EN LA FIRMA —Yappy firma orderId, status
+  // y dominio— así que se trata como lo que es: un dato que se guarda para que
+  // el negocio pueda cotejarlo con lo que el cliente ve en su app, nunca como
+  // algo en lo que apoyarse para decidir si hubo pago.
+  const referencia = String(q.get("confirmationNumber") ?? "").trim().slice(0, 64);
+
   // Una respuesta sola para todo lo que no cuadra: qué falló es asunto del
   // registro, no de quien llama.
   const no = () => NextResponse.json({ ok: false }, { status: 400 });
@@ -39,7 +45,7 @@ export async function GET(req: Request) {
 
   const { data: pedido } = await sb
     .from("pedidos")
-    .select("id,tienda_id,estado,pago,total")
+    .select("id,tienda_id,estado,pago,total,pago_referencia")
     .eq("codigo", orderId)
     .maybeSingle();
 
@@ -78,9 +84,12 @@ export async function GET(req: Request) {
 
   // Ya estaba en ese estado: se contesta bien y no se escribe nada. Un reintento
   // no puede volver a mover el pedido ni duplicar el evento.
-  if (pedido.pago === pago) return NextResponse.json({ ok: true });
+  if (pedido.pago === pago && (!referencia || pedido.pago_referencia === referencia)) {
+    return NextResponse.json({ ok: true });
+  }
 
   const cambios: Record<string, unknown> = { pago, updated_at: new Date().toISOString() };
+  if (referencia) cambios.pago_referencia = referencia;
   if (pago === "pagado") {
     cambios.pagado_en = new Date().toISOString();
     // Pagar confirma el pedido: nadie tiene que entrar a pulsar «Confirmado»
@@ -94,7 +103,7 @@ export async function GET(req: Request) {
     pedido_id: pedido.id,
     que: `pago_${pago}`,
     quien: "yappy",
-    detalle: { status, total: pedido.total },
+    detalle: { status, total: pedido.total, referencia: referencia || null },
   });
 
   return NextResponse.json({ ok: true });

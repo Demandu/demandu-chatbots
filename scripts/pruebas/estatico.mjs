@@ -3014,6 +3014,27 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     const sql = fs.readFileSync(mig, "utf8").replace(/--.*$/gm, "");
     esperar(/to\s+anon/.test(sql)).falso("ninguna migración de cobros puede tocar los permisos de anon");
   });
+
+  test("el módulo que firma los cobros no puede acabar en el navegador", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // `lib/tienda/yappy.ts` usa `crypto` de Node y es donde se manejan las
+    // llaves. Si una pantalla de cliente lo importara, ese módulo entraría en
+    // el paquete que se descarga el visitante — además de romper el build. El
+    // trozo que sí necesita el tablero (el estado del cobro) vive aparte, en
+    // `lib/tienda/cobro.ts`, sin crypto y sin secretos.
+    // ─────────────────────────────────────────────────────────────────────────
+    const malos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (!/^\s*["']use client["']/m.test(texto)) continue;
+      if (/from\s+["'][^"']*tienda\/yappy["']/.test(sinComentarios(texto))) malos.push(ruta);
+    }
+    esperar(malos.join(", ")).igual("", "una pantalla de cliente importa el módulo que firma");
+
+    const cobro = fs.readFileSync(path.join(SRC, "lib/tienda/cobro.ts"), "utf8");
+    esperar(/from\s+["']crypto["']|require\(["']crypto["']\)/.test(cobro)).falso(
+      "lib/tienda/cobro.ts tiene que poder correr en el navegador",
+    );
+  });
 });
 
 process.exit(await correrPruebas());
