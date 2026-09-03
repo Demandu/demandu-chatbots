@@ -3210,6 +3210,33 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
       "la zona horaria no se enseña: viene por defecto en otra ciudad y corre todas las horas",
     );
   });
+
+  test("después de pagar hay un botón para avisarle al negocio", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ESTO SE VIO EN EL PRIMER COBRO REAL. El pago entró, la página dijo «Pago
+    // enviado» y ahí se quedó: quien llega por el enlace puede no haber mandado
+    // nunca el mensaje del pedido —lo abrió desde otro sitio, o cerró WhatsApp
+    // sin enviarlo— y el negocio se queda con el dinero en la cuenta y sin
+    // saber qué preparar ni para quién.
+    // ─────────────────────────────────────────────────────────────────────────
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/PaginaDePago.tsx"), "utf8"),
+    );
+    esperar(t.includes("textoPedido")).verdadero(
+      "la página de pago no tiene el pedido escrito para mandarlo",
+    );
+    esperar(t.includes("enlaceDeWhatsapp(")).verdadero(
+      "después de pagar no hay forma de avisarle al negocio",
+    );
+
+    // Y el texto lo arma el SERVIDOR con los precios de la base, no el navegador.
+    const pagina = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/t/[slug]/pagar/[codigo]/page.tsx"), "utf8"),
+    );
+    esperar(pagina.includes("textoDelPedido(")).verdadero(
+      "el mensaje del pedido pagado tiene que armarse en el servidor",
+    );
+  });
 });
 
 process.exit(await correrPruebas());

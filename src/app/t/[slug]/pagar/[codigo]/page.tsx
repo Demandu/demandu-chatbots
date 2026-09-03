@@ -8,6 +8,7 @@ import { enlaceDePago } from "@/lib/tienda/direccion";
 import { comoDinero } from "@/lib/tienda/variedades";
 import { estadoDelCobro } from "@/lib/tienda/cobro";
 import { PaginaDePago } from "@/components/tienda/PaginaDePago";
+import { textoDelPedido, type LineaCarrito } from "@/lib/tienda/pedido";
 
 /**
  * Pagar un pedido, desde el enlace del mensaje.
@@ -64,7 +65,7 @@ export default async function PagarPedidoPage({
 
   const { data: pedido } = await sb
     .from("pedidos")
-    .select("numero,total,pago,pago_iniciado_en,estado,pedido_lineas(nombre,cantidad,precio,elegidas,orden)")
+    .select("numero,total,pago,pago_iniciado_en,estado,respuestas,pedido_lineas(nombre,cantidad,precio,elegidas,nota,orden)")
     .eq("codigo", codigo)
     .eq("tienda_id", tienda.id)
     .maybeSingle();
@@ -85,6 +86,32 @@ export default async function PagarPedidoPage({
       precio: Number(l.precio),
       elegidas: (l.elegidas ?? []) as { texto: string }[],
     }));
+
+  // EL MENSAJE DEL PEDIDO SE ARMA TAMBIÉN AQUÍ. Quien paga desde el enlace
+  // puede no haber mandado nunca el mensaje —abrió el enlace desde otro sitio,
+  // o cerró WhatsApp sin enviarlo— y el negocio se quedaría con el cobro pero
+  // sin saber qué preparar. Con los precios de la base, no del navegador.
+  const respuestas = (pedido.respuestas ?? []) as { id: string; valor: string }[];
+  const paraTexto: LineaCarrito[] = lineas.map((l, i) => ({
+    clave: String(i),
+    producto_id: "",
+    nombre: l.nombre,
+    precio: l.precio,
+    cantidad: l.cantidad,
+    elegidas: l.elegidas.map((e) => ({ grupo: "", texto: e.texto, recargo: 0 })),
+    nota: "",
+  }));
+
+  const textoPedido = [
+    `*Pedido #${pedido.numero}*`,
+    textoDelPedido({
+      tienda: titulo,
+      lineas: paraTexto,
+      respuestas: Object.fromEntries(respuestas.map((r) => [r.id, r.valor])),
+      preguntas: config.preguntas,
+      moneda: config.moneda,
+    }),
+  ].join("\n");
 
   return (
     <div style={{ backgroundColor: c.fondo, color: c.texto, minHeight: "100vh" }}>
@@ -137,6 +164,7 @@ export default async function PagarPedidoPage({
             colores={c}
             cdnYappy={cobro.cdn}
             whatsapp={config.whatsapp.numero}
+            textoPedido={textoPedido}
           />
         )}
       </main>

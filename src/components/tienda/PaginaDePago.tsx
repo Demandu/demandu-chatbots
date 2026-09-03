@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { BotonYappy } from "./BotonYappy";
 import { comoDinero } from "@/lib/tienda/variedades";
+import { enlaceDeWhatsapp } from "@/lib/tienda/pedido";
 import type { ConfigTienda } from "@/lib/tienda/config";
 
 /**
@@ -38,6 +39,7 @@ export function PaginaDePago({
   colores,
   cdnYappy,
   whatsapp,
+  textoPedido,
 }: {
   slug: string;
   codigo: string;
@@ -49,6 +51,8 @@ export function PaginaDePago({
   colores: ConfigTienda["colores"];
   cdnYappy: string;
   whatsapp: string;
+  /** El pedido escrito, para mandárselo al negocio ya pagado. */
+  textoPedido: string;
 }) {
   const [enviado, setEnviado] = useState(false);
   const [aviso, setAviso] = useState("");
@@ -116,9 +120,42 @@ export function PaginaDePago({
           >
             Pago enviado ✅
           </p>
-          <p className="text-center text-sm opacity-70">
-            {tienda} lo confirma en un momento. Puedes cerrar esta página.
-          </p>
+
+          {/* ───────────────────────────────────────────────────────────────
+              AVISAR AL NEGOCIO ES EL PASO QUE FALTABA, y no es un adorno.
+
+              Quien llega a esta página por el enlace puede no haber mandado
+              nunca el mensaje del pedido: lo abrió desde otro sitio, o cerró
+              WhatsApp sin enviarlo. El negocio se quedaría con el cobro en la
+              cuenta y sin saber qué preparar ni para quién.
+
+              NO SE ABRE SOLO. Después de volver de la app del banco, un
+              `window.open` automático lo bloquea el navegador casi siempre —y
+              el cliente no ve nada. Un botón grande siempre funciona.
+              ─────────────────────────────────────────────────────────────── */}
+          {whatsapp && textoPedido ? (
+            <>
+              <a
+                href={enlaceDeWhatsapp(
+                  whatsapp,
+                  `${textoPedido}\n\n*PAGADO con Yappy* ✅\nCódigo: ${codigo}`,
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block rounded-2xl py-3.5 text-center font-bold text-white shadow-lg"
+                style={{ backgroundColor: "#25D366" }}
+              >
+                Avisarle a {tienda} por WhatsApp
+              </a>
+              <p className="text-center text-sm opacity-70">
+                Le llega tu pedido con el pago marcado. Es lo que hace que sepan qué preparar.
+              </p>
+            </>
+          ) : (
+            <p className="text-center text-sm opacity-70">
+              {tienda} lo confirma en un momento. Puedes cerrar esta página.
+            </p>
+          )}
         </>
       ) : (
         <>
@@ -148,7 +185,7 @@ export function PaginaDePago({
       {/* SIEMPRE HAY UNA SALIDA QUE NO ES PAGAR. Si el banco falla, quien ya
           hizo el pedido tiene que poder escribirle al negocio en vez de
           quedarse mirando un error. */}
-      {whatsapp && (
+      {whatsapp && !enviado && (
         <a
           href={`https://wa.me/${whatsapp}?text=${encodeURIComponent(`Hola, sobre mi pedido #${numero} (${codigo})`)}`}
           target="_blank"
