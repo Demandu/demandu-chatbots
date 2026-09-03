@@ -2040,6 +2040,15 @@ describe("Tienda: un cobro sin respuesta no se da por vivo para siempre", () => 
   test("un pedido que nunca intentó cobrar en línea no lleva sello", () => {
     esperar(estadoDelCobro("sin_cobro", null, ahora)).igual("sin_cobro");
   });
+
+  test("un pago devuelto NO se cuenta igual que uno que nunca entró", () => {
+    // La segunda API de Yappy trae un estado que el aviso del botón no tiene:
+    // «anulada» (REVERSED), un cobro que se ejecutó y luego se deshizo. Meterlo
+    // en el mismo saco que un rechazo haría que el negocio reclame lo que no
+    // debe: no es lo mismo perseguir un pago que nunca entró que uno devuelto.
+    esperar(estadoDelCobro("anulado", haceMinutos(1), ahora)).igual("anulado");
+    esperar(estadoDelCobro("anulado", null, ahora)).igual("anulado");
+  });
 });
 
 process.exit(await correrPruebas());

@@ -262,9 +262,17 @@ export async function POST(req: Request) {
     // LA HORA SE GUARDA AQUÍ, no cuando llegue el aviso: es justo el aviso lo
     // que puede no llegar nunca, y sin esta marca un pedido se quedaría
     // «pagando» para siempre.
+    // EL ID DE TRANSACCIÓN SE GUARDA AQUÍ Y NO SE USA TODAVÍA. Yappy lo da una
+    // sola vez, al crear la orden; si solo viajara al navegador —como hacía
+    // hasta ahora— este pedido quedaría fuera de cualquier conciliación futura,
+    // y ese dato no se recupera después.
     await sb
       .from("pedidos")
-      .update({ pago: "pendiente", pago_iniciado_en: new Date().toISOString() })
+      .update({
+        pago: "pendiente",
+        pago_iniciado_en: new Date().toISOString(),
+        pago_transaccion: orden.datos.transactionId,
+      })
       .eq("id", ped.id);
     await sb.from("pedido_eventos").insert({
       pedido_id: ped.id,

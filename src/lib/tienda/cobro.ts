@@ -32,13 +32,18 @@ export const VENTANA_COBRO_MIN = 10;
  * como «está por entrar», y el negocio prepara el pedido esperando un dinero
  * que ya no va a llegar. Pasada la ventana, se dice lo que de verdad se sabe:
  * que no hubo confirmación.
+ *
+ * «Anulado» va aparte de «fallido» A PROPÓSITO: un pago que nunca entró y uno
+ * que entró y se devolvió se arreglan de formas distintas, y confundirlos hace
+ * que el negocio reclame lo que no debe.
  */
 export function estadoDelCobro(
   pago: string,
   iniciadoEn: string | null | undefined,
   ahora: Date = new Date(),
-): "sin_cobro" | "esperando" | "sin_confirmar" | "pagado" | "fallido" {
+): "sin_cobro" | "esperando" | "sin_confirmar" | "pagado" | "fallido" | "anulado" {
   if (pago === "pagado") return "pagado";
+  if (pago === "anulado") return "anulado";
   if (pago === "rechazado" || pago === "cancelado" || pago === "expirado") return "fallido";
   if (pago !== "pendiente") return "sin_cobro";
 

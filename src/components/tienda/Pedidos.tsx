@@ -21,7 +21,8 @@ export type EstadoPago =
   | "pagado"
   | "rechazado"
   | "cancelado"
-  | "expirado";
+  | "expirado"
+  | "anulado";
 
 export type PedidoEnLista = {
   id: string;
@@ -75,6 +76,11 @@ const SELLOS: Record<string, { texto: string; color: string; pista?: string }> =
   },
   pagado: { texto: "Pagado", color: "#16a34a" },
   fallido: { texto: "Pago no completado", color: "#dc2626" },
+  anulado: {
+    texto: "Pago devuelto",
+    color: "#dc2626",
+    pista: "El cobro se ejecutó y luego se anuló. No es lo mismo que uno que nunca entró.",
+  },
 };
 
 const cuando = (iso: string) => {
