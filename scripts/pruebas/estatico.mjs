@@ -350,6 +350,64 @@ describe("La solicitud de persona no se borra sola", () => {
   });
 });
 
+// ─── Quién habla: el bot o la persona ────────────────────────────────────────
+describe("Cuando escribe un agente, el bot se calla", () => {
+  const ruta = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/api/canales/enviar/route.ts"), "utf8"),
+  );
+  const inbox = sinComentarios(
+    fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8"),
+  );
+
+  test("escribir desde la Bandeja TOMA la conversación", () => {
+    // EL CAOS QUE ARREGLA. Los dos motores ya se callaban con `assigned`, pero
+    // NADIE LO PONÍA NUNCA: el agente escribía, el lead contestaba, y le
+    // respondía el bot. Dos voces hablando con el mismo cliente, preguntando
+    // cada una lo que la otra ya había preguntado. Pasó en producción.
+    // SE BUSCA LA ACTUALIZACIÓN, NO LA PRIMERA MENCIÓN DE LA TABLA. Anclar en
+    // `.from("conversations")` encontraba la CONSULTA de arriba —la que lee la
+    // conversación— y la comprobación miraba 400 caracteres donde nunca iba a
+    // estar. Saltó al correrla, que es justo para lo que sirve.
+    esperar(/handoff_requested_at: null,\s*status: "assigned",/.test(ruta)).verdadero(
+      "un mensaje de un agente tiene que tomar la conversación, o el bot le sigue pisando",
+    );
+  });
+
+  test("los motores respetan que esté tomada", () => {
+    // La otra mitad del trato. Si un motor dejara de mirarlo, poner el estado
+    // no serviría de nada.
+    const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+    const web = fs.readFileSync(path.join(SRC, "app/api/webchat/route.ts"), "utf8");
+    const ig = fs.readFileSync(path.join(SRC, "app/api/webhooks/instagram/route.ts"), "utf8");
+    for (const [nombre, texto] of [["WhatsApp", wa], ["canal web", web], ["Instagram", ig]]) {
+      esperar(/status === "assigned"/.test(texto)).verdadero(
+        `el motor de ${nombre} tiene que callarse cuando la lleva una persona`,
+      );
+    }
+  });
+
+  test("hay forma de devolvérsela a la IA", () => {
+    // Sin vuelta atrás, la primera respuesta de un agente apagaría el bot en
+    // esa conversación PARA SIEMPRE. Antes de esto no existía ningún botón.
+    esperar(inbox.includes("Devolver a la IA")).verdadero(
+      "hace falta un botón para que el chatbot vuelva a contestar",
+    );
+    const i = inbox.indexOf("Devolver a la IA");
+    esperar(inbox.slice(Math.max(0, i - 400), i).includes('setConvStatus("open")')).verdadero(
+      "ese botón tiene que devolver la conversación al estado abierto",
+    );
+  });
+
+  test("se avisa de que la IA está en pausa", () => {
+    // Si no se dice, el agente cree que el bot sigue trabajando y se
+    // desentiende; o nadie sabe a quién le toca y la conversación se muere.
+    esperar(/sel\.status === "assigned"/.test(inbox)).verdadero(
+      "el aviso tiene que depender del estado real de la conversación",
+    );
+    esperar(inbox.includes("La IA está en pausa")).verdadero("hay que decirlo con todas las letras");
+  });
+});
+
 // ─── El entrenamiento por pestañas ───────────────────────────────────────────
 describe("Entrenamiento: pestañas", () => {
   const pagina = fs.readFileSync(

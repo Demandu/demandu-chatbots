@@ -1157,6 +1157,32 @@ export function InboxClient({
             />
           )}
 
+          {/* ── LA IA ESTÁ EN PAUSA ────────────────────────────────────────
+              En cuanto un agente escribe, la conversación pasa a `assigned` y
+              los dos motores se callan. Eso hay que DECIRLO, y hay que dar la
+              vuelta atrás: sin este aviso, el agente no sabe que el bot dejó
+              de contestar y se queda esperando que siga solo, o peor, la
+              conversación se queda muerta porque nadie sabe que le toca.
+
+              El botón va AQUÍ, encima del cuadro de escribir, y no escondido
+              en el menú de tres puntos: es lo que se hace al terminar de
+              atender, y tiene que estar donde se está mirando. */}
+          {sel && sel.status === "assigned" && !ventanaCerrada && (
+            <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-t border-surface-border px-3 py-2" style={{ backgroundColor: "var(--tarjeta)" }}>
+              <p className="text-xs text-muted">
+                <b className="text-white">Tú llevas esta conversación.</b> La IA está en pausa y no va a
+                contestar hasta que se la devuelvas.
+              </p>
+              <button
+                onClick={() => setConvStatus("open")}
+                className="flex flex-none items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs font-bold text-white transition hover:border-white/40"
+                title="El chatbot vuelve a contestar en esta conversación"
+              >
+                <Bot className="h-3.5 w-3.5" /> Devolver a la IA
+              </button>
+            </div>
+          )}
+
   {/* Composer (estilo WhatsApp Web · Demandu) */}
           <div
             className="flex flex-none items-end gap-2 px-3 py-2.5"

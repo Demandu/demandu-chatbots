@@ -234,9 +234,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No se pudo guardar el mensaje." }, { status: 500 });
   }
 
+  // ── CUANDO HABLA UNA PERSONA, EL BOT SE CALLA ────────────────────────────
+  //
+  // ESTE `status` ES EL ARREGLO DE UN CAOS REAL. Los dos motores ya se callaban
+  // con `assigned` —está comprobado en el código de los dos— pero NADIE LO
+  // PONÍA NUNCA. El agente escribía desde la Bandeja, el lead contestaba, y le
+  // respondía el BOT: dos voces distintas hablando con el mismo cliente,
+  // pisándose, cada una preguntando lo que la otra ya había preguntado.
+  //
+  // Se vio en una conversación de verdad: el agente escribió «hola como estas»,
+  // el lead contestó «bien gracias y tú», y el bot soltó «Bien, gracias por
+  // preguntar 😊 ¿Cuál es su nombre?» — al lead que el agente ya estaba
+  // atendiendo.
+  //
+  // Se toma la conversación aunque el envío haya fallado: si un agente está
+  // escribiendo, está metido en la conversación, llegara o no ese mensaje.
   await sb
     .from("conversations")
-    .update({ last_message_at: new Date().toISOString(), handoff_requested_at: null })
+    .update({
+      last_message_at: new Date().toISOString(),
+      handoff_requested_at: null,
+      status: "assigned",
+    })
     .eq("id", conv.id);
 
   return NextResponse.json({ mensaje: fila });
