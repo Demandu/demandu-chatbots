@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { leerConfig } from "@/lib/tienda/config";
+import { sanearGrupos } from "@/lib/tienda/variedades";
 import { Escaparate, type ProductoPublico } from "@/components/tienda/Escaparate";
 
 /**
@@ -66,5 +67,15 @@ export default async function TiendaPublicaPage({ params }: { params: { slug: st
   // cabecera en blanco hace dudar de si la página cargó bien.
   const conNombre = { ...config, titulo: config.titulo || tienda.nombre };
 
-  return <Escaparate config={conNombre} productos={(prods ?? []) as ProductoPublico[]} />;
+  // LAS OPCIONES SE SANEAN TAMBIÉN AL LEER, no solo al guardar. En la base ya
+  // hay filas escritas por versiones anteriores —y las va a haber siempre, en
+  // cuanto un importador o una migración pase por aquí— y una opción mal
+  // formada no rompe la página: la deja muda, que es peor. Sanearlo al leer
+  // arregla lo viejo sin tocar los datos y protege de lo que venga.
+  const productos = ((prods ?? []) as ProductoPublico[]).map((p) => ({
+    ...p,
+    variedades: sanearGrupos(p.variedades),
+  }));
+
+  return <Escaparate config={conNombre} productos={productos} />;
 }

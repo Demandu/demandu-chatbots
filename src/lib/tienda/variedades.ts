@@ -203,14 +203,22 @@ export function sanearGrupos(crudo: unknown): GrupoVariedad[] {
         });
 
       const cantidad = Math.round(Number(grupo.cantidad));
+      const cantidadBuena =
+        modo === "hasta_completar" && Number.isFinite(cantidad) && cantidad > 1;
+
+      // «HASTA COMPLETAR» SIN CANTIDAD NO ES «HASTA COMPLETAR»: es «elige las
+      // que quieras». Esto NO es una preferencia de estilo, es un fallo que
+      // costó una tienda entera: la hoja traía `Variedades2 Modo = HASTA
+      // COMPLETAR` con la casilla de cantidad vacía, el tope quedaba en cero, y
+      // el escaparate bloqueaba EN SILENCIO cada clic de ese grupo. El cliente
+      // veía las opciones, las pulsaba, y no pasaba nada.
+      const modoFinal: ModoVariedad =
+        modo === "hasta_completar" && !cantidadBuena ? "varias" : modo;
+
       return {
         nombre,
-        modo,
-        // La cantidad solo significa algo en «hasta completar», y por debajo de
-        // dos no es una cantidad: es elegir una.
-        ...(modo === "hasta_completar" && Number.isFinite(cantidad) && cantidad > 1
-          ? { cantidad }
-          : {}),
+        modo: modoFinal,
+        ...(cantidadBuena ? { cantidad } : {}),
         opciones,
       } as GrupoVariedad;
     })

@@ -1500,6 +1500,39 @@ describe("Tienda: las opciones que llegan del navegador", () => {
     esperar(c[0].cantidad === undefined).verdadero();
   });
 
+  test("«hasta completar» SIN cantidad no puede bloquear el grupo", () => {
+    // ESTO COSTÓ UNA TIENDA. La hoja traía `Variedades2 Modo = HASTA COMPLETAR`
+    // con la casilla de cantidad vacía. El tope quedaba en cero, y el
+    // escaparate bloqueaba EN SILENCIO cada clic de ese grupo: el cliente veía
+    // las opciones, las pulsaba, y no pasaba nada. Sin nombre para el fallo,
+    // parece que la tienda está rota.
+    //
+    // Un grupo así no es «elige exactamente N»: es «elige las que quieras».
+    for (const cantidad of [undefined, null, 0, 1, "", "no", NaN]) {
+      const g = sanearGrupos([
+        { nombre: "Variedades 2", modo: "hasta_completar", cantidad, opciones: [{ texto: "A" }, { texto: "B" }] },
+      ]);
+      esperar(g[0].modo).igual("varias", `con cantidad ${JSON.stringify(cantidad)}`);
+      esperar(g[0].cantidad === undefined).verdadero();
+    }
+
+    // Con una cantidad de verdad sí se respeta.
+    const bien = sanearGrupos([
+      { nombre: "Sabor", modo: "hasta_completar", cantidad: 3, opciones: [{ texto: "A" }] },
+    ]);
+    esperar(bien[0].modo).igual("hasta_completar");
+    esperar(bien[0].cantidad).igual(3);
+  });
+
+  test("un grupo convertido a «varias» deja de ser obligatorio", () => {
+    // Y esa es justo la salida: como «varias» nunca es obligatoria, el cliente
+    // puede pedir aunque no elija nada de ese grupo.
+    const g = sanearGrupos([
+      { nombre: "Variedades 2", modo: "hasta_completar", opciones: [{ texto: "A" }] },
+    ]);
+    esperar(faltaElegir(g, [])).igual([]);
+  });
+
   test("basura no rompe nada", () => {
     for (const v of [null, undefined, "texto", 42, {}, [null], [{}], [[]]]) {
       esperar(Array.isArray(sanearGrupos(v))).verdadero();

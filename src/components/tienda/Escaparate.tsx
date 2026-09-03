@@ -407,7 +407,15 @@ function FilaProducto({
     >
       {p.imagen_url ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={p.imagen_url} alt="" className="h-16 w-16 flex-none rounded-xl object-cover" />
+        // LA FOTO ENTERA, NO RECORTADA. Un saco de comida es más alto que
+        // ancho: recortándolo al cuadrado se corta la marca y el peso, que es
+        // justo lo que el cliente busca para distinguir un producto de otro.
+        <img
+          src={p.imagen_url}
+          alt=""
+          className="h-16 w-16 flex-none rounded-xl object-contain"
+          style={{ backgroundColor: "rgba(0,0,0,.04)" }}
+        />
       ) : (
         <span
           className="grid h-16 w-16 flex-none place-items-center rounded-xl text-[10px] opacity-40"
@@ -482,7 +490,16 @@ function FichaProducto({
         return [...xs.filter((e) => e.grupo !== g.nombre), { grupo: g.nombre, texto, recargo }];
       }
       if (yaEsta) return xs.filter((e) => !(e.grupo === g.nombre && e.texto === texto));
-      if (g.modo === "hasta_completar" && xs.filter((e) => e.grupo === g.nombre).length >= (g.cantidad ?? 0)) {
+      // El tope solo aplica si de verdad HAY un tope. Sin esta guarda, un grupo
+      // con «hasta completar» y cantidad vacía tiene tope cero y bloquea cada
+      // clic sin decir nada — el cliente pulsa y no pasa nada.
+      const tope = Number(g.cantidad);
+      if (
+        g.modo === "hasta_completar" &&
+        Number.isFinite(tope) &&
+        tope > 0 &&
+        xs.filter((e) => e.grupo === g.nombre).length >= tope
+      ) {
         return xs;
       }
       return [...xs, { grupo: g.nombre, texto, recargo }];
@@ -518,7 +535,12 @@ function FichaProducto({
         <div className="mx-auto max-w-2xl">
           {producto.imagen_url && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={producto.imagen_url} alt={producto.nombre} className="aspect-square w-full object-cover sm:aspect-[2/1]" />
+            <img
+              src={producto.imagen_url}
+              alt={producto.nombre}
+              className="aspect-square w-full object-contain"
+              style={{ backgroundColor: "rgba(0,0,0,.04)" }}
+            />
           )}
 
           <div className="px-4 py-4">
