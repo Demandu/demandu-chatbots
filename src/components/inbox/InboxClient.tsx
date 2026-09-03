@@ -1173,19 +1173,43 @@ export function InboxClient({
               con una plantilla— el botón para devolvérsela a la IA
               DESAPARECÍA. Justo el caso en que más falta hace: el humano entra,
               resuelve, y no tiene forma de soltar la conversación. */}
-          {sel && sel.status === "assigned" && (
+          {/* QUIÉN ESTÁ HABLANDO, SIEMPRE A LA VISTA Y SIEMPRE CAMBIABLE.
+              La primera versión solo salía cuando la conversación YA estaba
+              tomada, y eso dejaba fuera el caso más importante: el agente que
+              se sienta a atender y quiere callar al bot ANTES de escribir. Sin
+              eso, la única forma de tomarla era mandar un mensaje — y mientras
+              lo redactaba, el bot podía contestar por él. */}
+          {sel && sel.status !== "closed" && (
             <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-t border-surface-border px-3 py-2" style={{ backgroundColor: "var(--tarjeta)" }}>
-              <p className="text-xs text-muted">
-                <b className="text-white">Tú llevas esta conversación.</b> La IA está en pausa y no va a
-                contestar hasta que se la devuelvas.
-              </p>
-              <button
-                onClick={() => setConvStatus("open")}
-                className="flex flex-none items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs font-bold text-white transition hover:border-white/40"
-                title="El chatbot vuelve a contestar en esta conversación"
-              >
-                <Bot className="h-3.5 w-3.5" /> Devolver a la IA
-              </button>
+              {sel.status === "assigned" ? (
+                <>
+                  <p className="text-xs text-muted">
+                    <b className="text-white">Tú llevas esta conversación.</b> La IA está en pausa y no va a
+                    contestar hasta que se la devuelvas.
+                  </p>
+                  <button
+                    onClick={() => setConvStatus("open")}
+                    className="flex flex-none items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs font-bold text-white transition hover:border-white/40"
+                    title="El chatbot vuelve a contestar en esta conversación"
+                  >
+                    <Bot className="h-3.5 w-3.5" /> Devolver a la IA
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-muted">
+                    <b className="text-white">La IA está atendiendo.</b> En cuanto escribas se pone en
+                    pausa — o tómala tú ahora mismo.
+                  </p>
+                  <button
+                    onClick={() => setConvStatus("assigned")}
+                    className="flex flex-none items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs font-bold text-white transition hover:border-white/40"
+                    title="El chatbot deja de contestar en esta conversación"
+                  >
+                    <Hand className="h-3.5 w-3.5" /> Tomar la conversación
+                  </button>
+                </>
+              )}
             </div>
           )}
 

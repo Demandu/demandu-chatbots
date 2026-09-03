@@ -414,6 +414,24 @@ describe("Cuando escribe un agente, el bot se calla", () => {
       "el botón de devolver no puede esconderse cuando la ventana está cerrada",
     );
   });
+
+  test("se puede tomar la conversación SIN escribir", () => {
+    // EL CASO QUE FALTABA. La primera versión solo enseñaba algo cuando la
+    // conversación YA estaba tomada, así que el agente que se sienta a atender
+    // no tenía forma de callar al bot antes de escribir: tenía que mandar un
+    // mensaje, y mientras lo redactaba el bot podía contestar por él.
+    esperar(inbox.includes("Tomar la conversación")).verdadero(
+      "hace falta poder tomarla antes de escribir",
+    );
+    const i = inbox.indexOf("Tomar la conversación");
+    esperar(inbox.slice(Math.max(0, i - 400), i).includes('setConvStatus("assigned")')).verdadero(
+      "ese botón tiene que poner la conversación en manos de la persona",
+    );
+    // Y el aviso tiene que verse SIEMPRE, no solo cuando ya está tomada.
+    esperar(/sel\.status !== "closed"/.test(inbox)).verdadero(
+      "quién está hablando tiene que verse en toda conversación viva",
+    );
+  });
 });
 
 // ─── El entrenamiento por pestañas ───────────────────────────────────────────
