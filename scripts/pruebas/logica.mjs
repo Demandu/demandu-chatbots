@@ -13,8 +13,8 @@ import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
 import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
-import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender } from "../../src/lib/tienda/config.ts";
-import { leerPreguntasEscritas, escribirPreguntas, leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
+import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
+import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
 import { claveDeLinea, precioUnitario, totalDeLinea, totalDelCarrito, cuantasUnidades, faltaElegir, faltaContestar, textoDelPedido, enlaceDeWhatsapp } from "../../src/lib/tienda/pedido.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
@@ -1089,6 +1089,7 @@ describe("Tienda: variedades con recargo", () => {
   });
 });
 
+
 describe("Tienda: la dirección pública", () => {
   test("un nombre de negocio se convierte en una dirección usable", () => {
     esperar(aDireccion("Paws at Home")).igual("paws-at-home");
@@ -1157,6 +1158,7 @@ describe("Tienda: la dirección pública", () => {
   });
 });
 
+
 describe("Tienda: cómo se ve y qué pregunta", () => {
   test("una configuración vacía sigue dando una tienda que se puede pintar", () => {
     // LA CONFIGURACIÓN VIVE EN UN `jsonb` que pudo escribir una versión
@@ -1218,13 +1220,19 @@ describe("Tienda: cómo se ve y qué pregunta", () => {
     esperar(c.preguntas.map((p) => p.etiqueta).join("|")).igual("Nombre completo|Nombre PH");
   });
 
-  test("una pregunta sin id no se queda sin id", () => {
-    // El id es lo que se guarda con el pedido. Sin él, dos respuestas se
-    // pisarían y el pedido llegaría incompleto.
-    const c = leerConfig({ preguntas: [{ etiqueta: "Nombre del perro" }, { etiqueta: "Raza" }] });
-    esperar(c.preguntas[0].id).igual("pregunta_1");
-    esperar(c.preguntas[1].id).igual("pregunta_2");
-    esperar(c.preguntas[0].id === c.preguntas[1].id).falso("dos preguntas no pueden compartir id");
+  test("el id de una pregunta sale de su texto, no de quien lo mande", () => {
+    // Antes el id venía de fuera y, si faltaba, se inventaba por posición
+    // (`pregunta_1`). Eso hacía que reordenar el formulario cambiara los ids y
+    // los pedidos viejos dejaran de cuadrar. Ahora sale SIEMPRE de la etiqueta,
+    // y un id que venga de fuera se ignora.
+    const c = leerConfig({
+      preguntas: [
+        { id: "loquesea", etiqueta: "Nombre del perro" },
+        { etiqueta: "Raza" },
+      ],
+    });
+    esperar(c.preguntas[0].id).igual("nombre_del_perro");
+    esperar(c.preguntas[1].id).igual("raza");
   });
 
   test("una tienda sin WhatsApp NO está lista para vender", () => {
@@ -1257,55 +1265,67 @@ describe("Tienda: cómo se ve y qué pregunta", () => {
   });
 });
 
+
 describe("Tienda: lo que se escribe a mano", () => {
-  test("el formulario se escribe como se lee", () => {
-    const p = leerPreguntasEscritas(
-      "Nombre Completo*\nForma de Pago* | Yappy, Efectivo, Tarjeta\nComentarios | parrafo\nTeléfono | telefono",
-    );
+  test("el formulario admite los tipos que hace falta preguntar", () => {
+    const p = sanearPreguntas([
+      { etiqueta: "Nombre Completo", tipo: "texto", obligatoria: true },
+      { etiqueta: "Método de pago", tipo: "lista", obligatoria: true, opciones: ["Efectivo", "Yappy", "MercadoPago", "Tarjeta de crédito"] },
+      { etiqueta: "Comentarios", tipo: "parrafo" },
+      { etiqueta: "Teléfono", tipo: "telefono" },
+    ]);
     esperar(p.length).igual(4);
-    esperar(p[0]).igual({ id: "nombre_completo", etiqueta: "Nombre Completo", tipo: "texto", obligatoria: true });
+    esperar(p[0].id).igual("nombre_completo");
     esperar(p[1].tipo).igual("lista");
-    esperar(p[1].opciones.join("|")).igual("Yappy|Efectivo|Tarjeta");
-    esperar(p[1].obligatoria).verdadero("el asterisco va antes de la barra");
+    esperar(p[1].opciones.join("|")).igual("Efectivo|Yappy|MercadoPago|Tarjeta de crédito");
     esperar(p[2].tipo).igual("parrafo");
-    esperar(p[3].tipo).igual("telefono");
     esperar(p[3].obligatoria).falso();
   });
 
-  test("una sola opción no se pinta como desplegable", () => {
-    // Un desplegable de un elemento no es una elección: es un dato fijo con
-    // dos clics de más.
-    const p = leerPreguntasEscritas("Sucursal | Centro");
-    esperar(p[0].tipo).igual("texto");
-    esperar(p[0].opciones === undefined).verdadero();
+  test("una lista sin opciones de verdad no se pinta como desplegable", () => {
+    // Un desplegable vacío —o de un solo elemento— es una pregunta que el
+    // cliente no puede contestar. Si además es obligatoria, se queda encerrado
+    // sin poder pedir.
+    esperar(sanearPreguntas([{ etiqueta: "Sucursal", tipo: "lista", opciones: [] }])[0].tipo).igual("texto");
+    esperar(sanearPreguntas([{ etiqueta: "Sucursal", tipo: "lista", opciones: ["Centro"] }])[0].tipo).igual("texto");
+    esperar(sanearPreguntas([{ etiqueta: "Sucursal", tipo: "lista", opciones: ["Centro", "Norte"] }])[0].tipo).igual("lista");
   });
 
-  test("el id sobrevive a mover las líneas de sitio", () => {
+  test("las opciones repetidas de una lista se quitan", () => {
+    const p = sanearPreguntas([
+      { etiqueta: "Pago", tipo: "lista", opciones: ["Yappy", " Yappy ", "Efectivo", ""] },
+    ]);
+    esperar(p[0].opciones).igual(["Yappy", "Efectivo"]);
+  });
+
+  test("el id sobrevive a mover las preguntas de sitio", () => {
     // EL ID ES LO QUE SE GUARDA CON CADA PEDIDO. Si saliera de la posición,
     // reordenar el formulario haría ilegibles todos los pedidos anteriores.
-    const antes = leerPreguntasEscritas("Nombre*\nDirección*");
-    const despues = leerPreguntasEscritas("Dirección*\nNombre*");
+    const antes = sanearPreguntas([{ etiqueta: "Nombre" }, { etiqueta: "Dirección" }]);
+    const despues = sanearPreguntas([{ etiqueta: "Dirección" }, { etiqueta: "Nombre" }]);
     esperar(antes[0].id).igual(despues[1].id);
     esperar(antes[1].id).igual(despues[0].id);
     esperar(antes[1].id).igual("direccion", "los acentos no llegan al id");
   });
 
   test("dos preguntas iguales no comparten respuesta", () => {
-    const p = leerPreguntasEscritas("Talla\nTalla\nTalla");
+    const p = sanearPreguntas([{ etiqueta: "Talla" }, { etiqueta: "Talla" }, { etiqueta: "Talla" }]);
     esperar(new Set(p.map((x) => x.id)).size).igual(3);
   });
 
-  test("líneas vacías y asteriscos sueltos no crean preguntas fantasma", () => {
-    esperar(leerPreguntasEscritas("")).igual([]);
-    esperar(leerPreguntasEscritas("\n\n   \n")).igual([]);
-    esperar(leerPreguntasEscritas("*")).igual([], "un asterisco solo no es una pregunta");
+  test("una pregunta sin texto no se guarda", () => {
+    // Pintaría una casilla en blanco que el cliente tiene que rellenar sin
+    // saber qué le están preguntando.
+    esperar(sanearPreguntas([{ etiqueta: "   " }, { etiqueta: "" }, {}])).igual([]);
+    for (const v of [null, undefined, "texto", 42, {}]) esperar(sanearPreguntas(v)).igual([]);
   });
 
-  test("lo escrito y lo guardado son lo mismo de ida y vuelta", () => {
-    // Si no cuadraran, abrir la pantalla y guardar sin tocar nada cambiaría el
-    // formulario a espaldas del negocio.
-    const texto = "Nombre Completo*\nForma de Pago* | Yappy, Efectivo\nComentarios | parrafo";
-    esperar(escribirPreguntas(leerPreguntasEscritas(texto))).igual(texto);
+  test("el formulario se corta en diez, como la hoja", () => {
+    // `pr_preg1`…`pr_preg10`. Y hay motivo además del histórico: cada pregunta
+    // es una casilla más entre el carrito y el pedido enviado.
+    const muchas = Array.from({ length: 25 }, (_, i) => ({ etiqueta: `Pregunta ${i + 1}` }));
+    esperar(sanearPreguntas(muchas).length).igual(MAX_PREGUNTAS);
+    esperar(MAX_PREGUNTAS).igual(10);
   });
 
   test("las variedades se escriben igual que en la hoja", () => {
@@ -1330,6 +1350,7 @@ describe("Tienda: lo que se escribe a mano", () => {
     esperar(escribirGrupos(leerGruposEscritos(texto))).igual(texto);
   });
 });
+
 
 describe("Tienda: pegar el catálogo desde una hoja", () => {
   // La cabecera REAL de la hoja que ya usan, con sus nombres tal cual.
@@ -1429,6 +1450,7 @@ describe("Tienda: pegar el catálogo desde una hoja", () => {
     for (const v of ["", "   ", null, undefined, "\n\n"]) esperar(leerPegado(v)).igual([]);
   });
 });
+
 
 describe("Tienda: las opciones que llegan del navegador", () => {
   // `sanearGrupos` es LA PUERTA. La pantalla de opciones es una comodidad; esto
@@ -1556,6 +1578,7 @@ describe("Tienda: las opciones que llegan del navegador", () => {
     esperar(recargoDe(g, ["Queso", "Tocino"])).igual(250);
   });
 });
+
 
 describe("Tienda: el carrito y el pedido", () => {
   const linea = (extra = {}) => ({

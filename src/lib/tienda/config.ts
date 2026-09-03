@@ -119,6 +119,86 @@ export type ConfigTienda = {
   pie?: string;
 };
 
+
+/**
+ * Cuántas preguntas puede llevar el formulario.
+ *
+ * DIEZ, COMO EN LA HOJA (`pr_preg1`…`pr_preg10`). No es un número mágico: es el
+ * que ya usan sus tiendas y con el que su gente lleva años pidiendo. Y hay un
+ * motivo para que exista un tope: cada pregunta es una casilla más entre el
+ * carrito y el pedido enviado, y eso se paga en pedidos abandonados.
+ */
+export const MAX_PREGUNTAS = 10;
+
+/** El id de una pregunta, sacado de su etiqueta. */
+function idDeEtiqueta(etiqueta: string): string {
+  return (
+    etiqueta
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 40) || "pregunta"
+  );
+}
+
+/**
+ * Las preguntas del pedido, saneadas.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL ID SALE DE LA ETIQUETA, NO DE LA POSICIÓN. El id es lo que se guarda con
+ * cada pedido; si cambiara al mover una pregunta de sitio, los pedidos viejos
+ * dejarían de cuadrar con los nuevos y el histórico se volvería ilegible.
+ *
+ * UNA LISTA SIN OPCIONES SE DEGRADA A TEXTO. Un desplegable vacío es una
+ * pregunta que el cliente no puede contestar; si además es obligatoria, se
+ * queda encerrado sin poder pedir.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function sanearPreguntas(crudo: unknown): PreguntaPedido[] {
+  if (!Array.isArray(crudo)) return [];
+  const vistos = new Set<string>();
+
+  return crudo
+    .map((x) => {
+      const p = (x ?? {}) as Partial<PreguntaPedido>;
+      const etiqueta = String(p.etiqueta ?? "").trim();
+      if (!etiqueta) return null;
+
+      const tipo: TipoPregunta = (["texto", "parrafo", "lista", "telefono"] as const).includes(
+        p.tipo as TipoPregunta,
+      )
+        ? (p.tipo as TipoPregunta)
+        : "texto";
+
+      const opciones = Array.isArray(p.opciones)
+        ? [...new Set(p.opciones.map((o) => String(o).trim()).filter(Boolean))]
+        : [];
+
+      let id = idDeEtiqueta(etiqueta);
+      // Dos preguntas con el mismo texto pisarían la misma respuesta.
+      if (vistos.has(id)) {
+        let n = 2;
+        while (vistos.has(`${id}_${n}`)) n++;
+        id = `${id}_${n}`;
+      }
+      vistos.add(id);
+
+      const esLista = tipo === "lista" && opciones.length > 1;
+      return {
+        id,
+        etiqueta,
+        tipo: tipo === "lista" && !esLista ? "texto" : tipo,
+        obligatoria: p.obligatoria === true,
+        ...(esLista ? { opciones } : {}),
+        ...(p.ayuda ? { ayuda: String(p.ayuda) } : {}),
+      } as PreguntaPedido;
+    })
+    .filter((x): x is PreguntaPedido => x !== null)
+    .slice(0, MAX_PREGUNTAS);
+}
+
 /**
  * Una tienda recién creada tiene que verse bien SIN que nadie configure nada.
  *
@@ -186,26 +266,7 @@ export function leerConfig(crudo: unknown): ConfigTienda {
 
   const wa = (c.whatsapp ?? {}) as Partial<ConfigTienda["whatsapp"]>;
 
-  const preguntas = Array.isArray(c.preguntas)
-    ? (c.preguntas as PreguntaPedido[])
-        .filter((p) => p && typeof p.etiqueta === "string" && p.etiqueta.trim())
-        .map((p, i) => ({
-          id: String(p.id ?? "").trim() || `pregunta_${i + 1}`,
-          etiqueta: p.etiqueta.trim(),
-          tipo: (["texto", "parrafo", "lista", "telefono"] as const).includes(p.tipo)
-            ? p.tipo
-            : "texto",
-          obligatoria: p.obligatoria === true,
-          // Una lista sin opciones es un desplegable vacío: el cliente no
-          // puede contestar y no puede seguir. Se degrada a texto libre.
-          ...(p.tipo === "lista" && Array.isArray(p.opciones) && p.opciones.length
-            ? { opciones: p.opciones.map((o) => String(o).trim()).filter(Boolean) }
-            : p.tipo === "lista"
-              ? { tipo: "texto" as TipoPregunta }
-              : {}),
-          ...(p.ayuda ? { ayuda: String(p.ayuda) } : {}),
-        }))
-    : d.preguntas;
+  const preguntas = sanearPreguntas(c.preguntas);
 
   return {
     titulo: String(c.titulo ?? "").trim(),

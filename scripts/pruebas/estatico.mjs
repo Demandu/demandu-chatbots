@@ -2619,6 +2619,7 @@ describe("Servidor y navegador", () => {
   });
 });
 
+
 // ─── El menú de la izquierda ─────────────────────────────────────────────────
 describe("El menú lleva a alguna parte", () => {
   // TODAS las direcciones que existen de verdad, sacadas de los `page.tsx`.
@@ -2663,6 +2664,7 @@ describe("El menú lleva a alguna parte", () => {
     esperar(/href:\s*"\/tienda"/.test(side)).verdadero("no hay acceso a la Tienda desde el menú");
   });
 });
+
 
 // ─── La tienda ───────────────────────────────────────────────────────────────
 describe("Tienda: nada que se pulse puede quedarse callado", () => {
@@ -2711,6 +2713,19 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
     esperar(/escribirGrupos|leerGruposEscritos/.test(editor)).falso(
       "el editor visual no puede volver al texto con barras",
+    );
+
+    // NI LAS PREGUNTAS DEL FORMULARIO. El mismo error, cometido dos veces:
+    // «Forma de Pago* | Yappy, Efectivo» es un idioma de programador, y quien
+    // configura una tienda no lo habla.
+    const diseno = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/EditorDiseno.tsx"), "utf8"),
+    );
+    esperar(diseno.includes("<EditorPreguntas")).verdadero(
+      "las preguntas del pedido tienen que armarse con casillas y botones",
+    );
+    esperar(/escribirPreguntas|name="preguntas"[\s\S]{0,80}textarea/.test(diseno)).falso(
+      "las preguntas volvieron a pedirse como texto con barras",
     );
   });
 

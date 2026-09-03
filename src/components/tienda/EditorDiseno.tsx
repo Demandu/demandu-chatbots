@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { AlertTriangle } from "lucide-react";
-import type { ConfigTienda } from "@/lib/tienda/config";
+import type { ConfigTienda, PreguntaPedido } from "@/lib/tienda/config";
 import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
-import { escribirPreguntas } from "@/lib/tienda/escritura";
+import { EditorPreguntas } from "./EditorPreguntas";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
 
 function Guardar() {
@@ -66,6 +66,8 @@ export function EditorDiseno({
   // LAS CATEGORÍAS NO SE ESCRIBEN AQUÍ: salen del catálogo, que es donde el
   // negocio ya las puso. Escribirlas otra vez es garantizar que un día no
   // coincidan y una categoría entera desaparezca del escaparate.
+  const [preguntas, setPreguntas] = useState<PreguntaPedido[]>(config.preguntas);
+
   const [fotos, setFotos] = useState<Record<string, string>>(() =>
     Object.fromEntries(config.categorias.map((c) => [c.nombre, c.imagen_url ?? ""])),
   );
@@ -226,21 +228,13 @@ export function EditorDiseno({
             </div>
           </div>
 
-          <label className="mb-1.5 mt-4 block text-xs font-semibold text-ink-2">
-            Preguntas del formulario — una por línea
-          </label>
-          <textarea
-            name="preguntas"
-            rows={6}
-            defaultValue={escribirPreguntas(config.preguntas)}
-            className="input-l font-mono text-xs"
-          />
-          <p className="mt-1.5 text-xs text-ink-2">
-            Un <b className="text-ink">*</b> al final la hace obligatoria. Para una lista, escribe
-            las opciones después de una barra:{" "}
-            <code className="text-ink">Forma de Pago* | Yappy, Efectivo, Tarjeta</code>. Para
-            respuesta larga, <code className="text-ink">| parrafo</code>.
+          <h3 className="mb-1 mt-5 text-sm font-semibold text-ink">Lo que le preguntas al cliente</h3>
+          <p className="mb-3 text-sm text-ink-2">
+            Es el formulario que sale al enviar el pedido. Cada tienda pregunta lo suyo — el
+            edificio, el apartamento, cómo va a pagar.
           </p>
+          <input type="hidden" name="preguntas" value={JSON.stringify(preguntas)} />
+          <EditorPreguntas preguntas={config.preguntas} onCambio={setPreguntas} />
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div>

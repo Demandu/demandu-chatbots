@@ -4,8 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { aCentavos, sanearGrupos } from "@/lib/tienda/variedades";
-import { leerPreguntasEscritas } from "@/lib/tienda/escritura";
-import { leerConfig, soloDigitos, type ConfigTienda } from "@/lib/tienda/config";
+import { leerConfig, sanearPreguntas, soloDigitos, type ConfigTienda } from "@/lib/tienda/config";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 
@@ -49,7 +48,13 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
       return { imagen_url, ...(enlace ? { enlace } : {}) };
     });
 
-  const preguntas = leerPreguntasEscritas(s(fd.get("preguntas")));
+  // Llegan como JSON desde la pantalla; `leerConfig` las sanea más abajo.
+  let preguntas: unknown = [];
+  try {
+    preguntas = JSON.parse(s(fd.get("preguntas")) || "[]");
+  } catch {
+    preguntas = previa.preguntas;
+  }
 
   // Llega como JSON desde la pantalla; `leerConfig` lo sanea más abajo.
   let categorias: unknown = [];
@@ -87,7 +92,7 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
     moneda: s(fd.get("moneda")),
     // Sin preguntas la tienda no puede recoger un pedido; se conservan las que
     // había en vez de dejar el formulario vacío.
-    preguntas: preguntas.length ? preguntas : previa.preguntas,
+    preguntas: sanearPreguntas(preguntas).length ? preguntas : previa.preguntas,
     aclaraciones: fd.get("aclaraciones") === "on",
     minimo_pedido: aCentavos(s(fd.get("minimo"))),
     pie: s(fd.get("pie")),
@@ -103,7 +108,7 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
   revalidatePath(`/tienda/${tiendaId}`);
   return {
     ok: true,
-    mensaje: preguntas.length
+    mensaje: sanearPreguntas(preguntas).length
       ? "Diseño guardado."
       : "Diseño guardado. Dejaste el formulario vacío, así que se conservaron las preguntas anteriores.",
   };
