@@ -3063,6 +3063,41 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     }
     esperar(malos.join(", ")).igual("", "hay prefijos de país escritos a mano fuera de telefono.ts");
   });
+
+  test("el dominio del cobro se decide en UN solo sitio", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // El cobro se CREA con un dominio y el aviso se COMPRUEBA contra otro. Si
+    // esas dos piezas lo leen cada una por su cuenta y una de las dos se
+    // encuentra el campo vacío, el pago entra y el pedido nunca se marca. Ya
+    // estuvo a punto de pasar con una tienda real.
+    // ─────────────────────────────────────────────────────────────────────────
+    const rutas = [
+      "app/api/tienda/yappy/ipn/route.ts",
+      "lib/tienda/cobrar-pedido.ts",
+    ];
+    for (const r of rutas) {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, r), "utf8"));
+      esperar(t.includes("dominioDeCobro(")).verdadero(
+        `${r} lee el dominio del cobro por su cuenta en vez de usar el respaldo`,
+      );
+      esperar(/dominio\s*\?\?\s*""/.test(t)).falso(`${r} deja pasar un dominio vacío`);
+    }
+  });
+
+  test("reintentar el pago no crea un pedido nuevo", () => {
+    // Se vio en la base: dos pedidos idénticos, cuatro segundos de diferencia.
+    // Era alguien pulsando «pagar», viendo un error y pulsando otra vez.
+    const ruta = path.join(SRC, "app/api/tienda/pedido/cobrar/route.ts");
+    esperar(fs.existsSync(ruta)).verdadero("falta la ruta para reintentar el cobro");
+    const t = sinComentarios(fs.readFileSync(ruta, "utf8"));
+
+    esperar(/from\(\s*["']pedidos["']\s*\)[\s\S]{0,120}insert/.test(t)).falso(
+      "reintentar el cobro no puede insertar un pedido",
+    );
+    esperar(t.includes('pago === "pagado"')).verdadero(
+      "un pedido ya pagado no se puede volver a cobrar",
+    );
+  });
 });
 
 process.exit(await correrPruebas());

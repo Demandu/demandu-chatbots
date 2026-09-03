@@ -123,11 +123,24 @@ export function Cobros({
 
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-ink-2">Entorno</label>
+            {/* PRODUCCIÓN VA PRIMERO Y ES EL NORMAL. Lo puse al revés al
+                principio, dando por hecho que Yappy repartía llaves de sandbox
+                a cualquier comercio; el portal entrega un solo juego, y son las
+                de verdad. Arrancar en pruebas garantizaba que el primer intento
+                de todo el mundo fallara con un mensaje que no explica nada. */}
             <div className="flex flex-wrap gap-2">
               {(
                 [
-                  { v: "prueba", t: "Pruebas", p: "Para comprobar que todo funciona sin mover dinero." },
-                  { v: "produccion", t: "Producción", p: "Cobros de verdad, a clientes de verdad." },
+                  {
+                    v: "produccion",
+                    t: "Producción",
+                    p: "Las llaves que te dio tu panel de Yappy. Es lo normal.",
+                  },
+                  {
+                    v: "prueba",
+                    t: "Pruebas",
+                    p: "Solo si Yappy te dio credenciales de integración aparte. Con las llaves normales, esto falla.",
+                  },
                 ] as const
               ).map((o) => (
                 <label

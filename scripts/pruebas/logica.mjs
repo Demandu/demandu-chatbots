@@ -20,6 +20,7 @@ import { recalcularPedido } from "../../src/lib/tienda/recalcular.ts";
 import {
   comoMontoYappy, montoCobrable, aliasYappy, aliasValido, codigoDePedido, codigoValido,
   claveDeFirma, firmaIpn, ipnValido, esAmbiente, PAGOS_YAPPY, API_YAPPY, CDN_YAPPY,
+  dominioDeCobro,
 } from "../../src/lib/tienda/yappy.ts";
 import { estadoDelCobro, VENTANA_COBRO_MIN } from "../../src/lib/tienda/cobro.ts";
 import { aWhatsapp, telefonoUtil } from "../../src/lib/tienda/telefono.ts";
@@ -1992,6 +1993,26 @@ describe("Tienda: los datos que se le mandan a Yappy", () => {
     esperar(esAmbiente("")).igual("prueba");
     esperar(esAmbiente("cualquier-cosa")).igual("prueba");
     esperar(esAmbiente("produccion")).igual("produccion");
+  });
+
+  test("EL DOMINIO NUNCA SE QUEDA VACÍO", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ESTO PASÓ DE VERDAD: una tienda configurada antes de que existiera la
+    // columna la tenía en blanco. El cobro se habría creado igual, pero la
+    // firma del aviso se comprueba contra ese mismo dominio — y con el campo
+    // vacío NINGÚN aviso habría cuadrado nunca. El cliente paga, el banco
+    // avisa, y el pedido se queda sin marcar. Silencioso, y del lado del
+    // dinero.
+    // ─────────────────────────────────────────────────────────────────────────
+    esperar(dominioDeCobro("", "store.demandu.tech")).igual("https://store.demandu.tech");
+    esperar(dominioDeCobro(null, "store.demandu.tech")).igual("https://store.demandu.tech");
+    esperar(dominioDeCobro(undefined, "store.demandu.tech")).igual("https://store.demandu.tech");
+    esperar(dominioDeCobro("   ", "store.demandu.tech")).igual("https://store.demandu.tech");
+  });
+
+  test("un dominio guardado manda sobre el de la plataforma", () => {
+    // El día que una tienda tenga su propio subdominio, lo suyo pesa más.
+    esperar(dominioDeCobro("https://mitienda.com", "store.demandu.tech")).igual("https://mitienda.com");
   });
 
   test("cada entorno apunta a su propia dirección", () => {

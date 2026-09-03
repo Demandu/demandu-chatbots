@@ -4,18 +4,10 @@ import { leerConfig } from "@/lib/tienda/config";
 import { sanearGrupos } from "@/lib/tienda/variedades";
 import { recalcularPedido, type LineaPedida, type ProductoDelCatalogo } from "@/lib/tienda/recalcular";
 import { textoDelPedido, type LineaCarrito } from "@/lib/tienda/pedido";
-import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
 import { aWhatsapp, telefonoUtil } from "@/lib/tienda/telefono";
 import { paisDesdeTelefono } from "@/lib/phoneCountry";
-import {
-  aliasValido,
-  codigoDePedido,
-  crearOrdenYappy,
-  esAmbiente,
-  montoCobrable,
-  validarComercio,
-  CDN_YAPPY,
-} from "@/lib/tienda/yappy";
+import { cobrarPedidoConYappy } from "@/lib/tienda/cobrar-pedido";
+import { codigoDePedido } from "@/lib/tienda/yappy";
 
 /**
  * Crear un pedido desde el escaparate.
@@ -291,81 +283,22 @@ export async function POST(req: Request) {
    *
    * ───────────────────────────────────────────────────────────────────────────
    * SI YAPPY FALLA, EL PEDIDO NO SE CAE. Ya está guardado y el cliente ya tiene
-   * su mensaje de WhatsApp: quitárselo porque el banco no contestó sería
-   * perder una venta por algo que no es culpa de nadie de los dos. Se devuelve
-   * el motivo y la tienda ofrece pagar al recibir.
+   * su mensaje de WhatsApp: quitárselo porque el banco no contestó sería perder
+   * una venta por algo que no es culpa de nadie de los dos. Se devuelve el
+   * motivo, queda apuntado en la bitácora, y la tienda ofrece pagar al recibir.
    * ───────────────────────────────────────────────────────────────────────────
    */
   async function cobrarConYappy() {
-
-    const { data: cobro } = await sb
-      .from("tienda_cobros")
-      .select("comercio,secreto,dominio,ambiente,activo")
-      .eq("tienda_id", tienda!.id)
-      .eq("proveedor", "yappy")
-      .maybeSingle();
-
-    if (!cobro?.activo || !cobro.comercio || !cobro.secreto) {
-      return { yappy_error: "Esta tienda no está cobrando con Yappy ahora mismo." };
-    }
-    if (!montoCobrable(total)) {
-      return { yappy_error: "El monto es demasiado bajo para cobrarlo en línea." };
-    }
-
-    // EL TELÉFONO SALE DE LO QUE YA CONTESTÓ. Yappy necesita el número para
-    // abrir la app en el teléfono correcto, y volver a pedirlo en la pantalla
-    // de pago es una casilla más donde el pedido se abandona.
     const preguntaTel = config.preguntas.find((p) => p.tipo === "telefono");
     const telefono = preguntaTel
       ? (respuestas.find((r) => r.id === preguntaTel.id)?.valor ?? "")
       : "";
 
-    if (!aliasValido(telefono)) {
-      return {
-        yappy_error: "Para pagar con Yappy hace falta un número de celular de Panamá (8 dígitos).",
-      };
-    }
-
-    const comercio = {
-      comercio: cobro.comercio,
-      secreto: cobro.secreto,
-      dominio: cobro.dominio || `https://${DOMINIO_TIENDAS}`,
-      ambiente: esAmbiente(cobro.ambiente),
-    };
-
-    const sesion = await validarComercio(comercio);
-    if (!sesion.ok) return { yappy_error: sesion.mensaje };
-
-    const orden = await crearOrdenYappy(comercio, sesion.token, {
-      codigo: ped.codigo,
+    return cobrarPedidoConYappy(sb, {
+      id: ped.id,
+      tienda_id: tienda!.id,
       total,
       telefono,
-      ipnUrl: `https://${DOMINIO_TIENDAS}/api/tienda/yappy/ipn`,
     });
-    if (!orden.ok || !orden.datos) return { yappy_error: orden.mensaje };
-
-    // LA HORA SE GUARDA AQUÍ, no cuando llegue el aviso: es justo el aviso lo
-    // que puede no llegar nunca, y sin esta marca un pedido se quedaría
-    // «pagando» para siempre.
-    // EL ID DE TRANSACCIÓN SE GUARDA AQUÍ Y NO SE USA TODAVÍA. Yappy lo da una
-    // sola vez, al crear la orden; si solo viajara al navegador —como hacía
-    // hasta ahora— este pedido quedaría fuera de cualquier conciliación futura,
-    // y ese dato no se recupera después.
-    await sb
-      .from("pedidos")
-      .update({
-        pago: "pendiente",
-        pago_iniciado_en: new Date().toISOString(),
-        pago_transaccion: orden.datos.transactionId,
-      })
-      .eq("id", ped.id);
-    await sb.from("pedido_eventos").insert({
-      pedido_id: ped.id,
-      que: "pago_pendiente",
-      quien: "yappy",
-      detalle: { ambiente: comercio.ambiente, transactionId: orden.datos.transactionId },
-    });
-
-    return { yappy: { ...orden.datos, cdn: CDN_YAPPY[comercio.ambiente] } };
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ipnValido, PAGOS_YAPPY } from "@/lib/tienda/yappy";
+import { ipnValido, PAGOS_YAPPY, dominioDeCobro } from "@/lib/tienda/yappy";
+import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
 
 /**
  * El aviso de pago de Yappy (IPN).
@@ -64,7 +65,7 @@ export async function GET(req: Request) {
     status,
     domain,
     hash,
-    dominioEsperado: cobro?.dominio ?? "",
+    dominioEsperado: dominioDeCobro(cobro?.dominio, DOMINIO_TIENDAS),
   });
 
   if (!firma.ok) {

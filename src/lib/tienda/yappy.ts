@@ -39,6 +39,25 @@ export const CDN_YAPPY: Record<Ambiente, string> = {
   produccion: "https://bt-cdn.yappy.cloud/v1/cdn/web-component-btn-yappy.js",
 };
 
+/**
+ * El dominio con el que se habla con Yappy.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TIENE RESPALDO PORQUE YA NOS MORDIÓ. Una tienda configurada antes de que
+ * existiera esta columna la tenía vacía, y con el dominio vacío la firma del
+ * aviso de pago NUNCA cuadra: el cobro se hace, el cliente paga, y el pedido se
+ * queda sin marcar para siempre. Un fallo silencioso, del lado del dinero.
+ *
+ * Se decide en UN solo sitio para que las tres piezas —crear la orden,
+ * comprobar el aviso y enseñarlo en pantalla— no puedan discrepar. Si
+ * discreparan, el pago se crearía con un dominio y se validaría con otro.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function dominioDeCobro(guardado: unknown, dominioPlataforma: string): string {
+  const d = String(guardado ?? "").trim();
+  return d || `https://${String(dominioPlataforma ?? "").trim()}`;
+}
+
 export function esAmbiente(v: unknown): Ambiente {
   return v === "produccion" ? "produccion" : "prueba";
 }

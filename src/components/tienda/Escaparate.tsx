@@ -90,6 +90,7 @@ export function Escaparate({
   const [aviso, setAviso] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [pagado, setPagado] = useState(false);
+  const [saltando, setSaltando] = useState(false);
 
   const q = busca.trim().toLowerCase();
   const visibles = useMemo(() => {
@@ -136,12 +137,28 @@ export function Escaparate({
   const unidades = cuantasUnidades(carrito);
   const bajoMinimo = config.minimo_pedido > 0 && total < config.minimo_pedido;
 
-  const agregar = (linea: LineaCarrito) =>
+  const agregar = (linea: LineaCarrito) => {
     setCarrito((xs) => {
       const i = xs.findIndex((x) => x.clave === linea.clave);
       if (i >= 0) return xs.map((x, j) => (j === i ? { ...x, cantidad: x.cantidad + linea.cantidad } : x));
       return [...xs, linea];
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // QUE SE NOTE QUE PASÓ ALGO.
+    //
+    // Agregar al carrito no cambiaba nada visible salvo un número pequeño
+    // abajo, y ese número nadie lo mira: el cliente agrega, no ve reacción,
+    // duda de si funcionó, y se va. La barra de abajo se pone verde, dice qué
+    // hacer con todas sus letras, y salta un momento para que el ojo la
+    // encuentre sola.
+    //
+    // SALTA UN MOMENTO, NO SIEMPRE. Algo que se mueve sin parar deja de verse a
+    // los diez segundos y encima marea.
+    // ─────────────────────────────────────────────────────────────────────────
+    setSaltando(true);
+    setTimeout(() => setSaltando(false), 1400);
+  };
 
   const cambiarCantidad = (clave: string, delta: number) =>
     setCarrito((xs) =>
@@ -216,6 +233,9 @@ export function Escaparate({
       }
 
       setEnviando(false);
+      if (j?.codigo) {
+        yaCreado.current = { firma: firmaDelCarrito(), codigo: String(j.codigo), texto: j?.texto || deRespaldo };
+      }
       return { texto: j?.texto || deRespaldo, yappy: j?.yappy, yappy_error: j?.yappy_error };
     } catch {
       // Sin red hacia nuestro servidor, pero el cliente sí tiene WhatsApp. Se
@@ -241,18 +261,63 @@ export function Escaparate({
    */
   const textoTrasPagar = useRef("");
 
-  const pagarConYappy = async () => {
-    const r = await pedir("yappy");
-    if (!r) return null;
-    textoTrasPagar.current = r.texto;
+  /**
+   * EL PEDIDO QUE YA SE CREÓ, y con qué carrito.
+   *
+   * Sin esto, pulsar «pagar», ver un error y volver a pulsar creaba un pedido
+   * nuevo cada vez. Se vio en la base: dos pedidos idénticos con cuatro
+   * segundos de diferencia. El negocio se queda con fantasmas que cancelar a
+   * mano, justo cuando ya está molesto porque el cobro no le funciona.
+   */
+  const yaCreado = useRef<{ firma: string; codigo: string; texto: string } | null>(null);
+  const firmaDelCarrito = () =>
+    JSON.stringify([carrito.map((l) => [l.producto_id, l.cantidad, l.elegidas, l.nota]), respuestas]);
 
-    if (r.yappy_error || !r.yappy) {
+  const pagarConYappy = async () => {
+    // SI ESTE MISMO CARRITO YA CREÓ UN PEDIDO, se cobra sobre ese. Un reintento
+    // de pago no es un pedido nuevo.
+    const previo = yaCreado.current;
+    const mismo = previo && previo.firma === firmaDelCarrito();
+
+    let texto = previo?.texto ?? "";
+    let datos: { transactionId: string; token: string; documentName: string } | undefined;
+    let error: string | undefined;
+
+    if (mismo && previo) {
+      setEnviando(true);
+      try {
+        const r = await fetch("/api/tienda/pedido/cobrar", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ slug, codigo: previo.codigo }),
+        });
+        const j = await r.json();
+        if (!r.ok || j?.error) error = j?.error ?? "No se pudo iniciar el pago.";
+        else {
+          datos = j?.yappy;
+          error = j?.yappy_error;
+        }
+      } catch {
+        error = "No se pudo hablar con el servidor.";
+      }
+      setEnviando(false);
+    } else {
+      const r = await pedir("yappy");
+      if (!r) return null;
+      texto = r.texto;
+      datos = r.yappy;
+      error = r.yappy_error;
+    }
+
+    textoTrasPagar.current = texto;
+
+    if (error || !datos) {
       // El pedido YA quedó guardado: se le dice qué pasó y se le deja el
       // camino de siempre, no se le tira el carrito.
-      setAviso(`${r.yappy_error ?? "No se pudo iniciar el pago."} Puedes enviarlo por WhatsApp y pagar al recibir.`);
+      setAviso(`${error ?? "No se pudo iniciar el pago."} Puedes enviarlo por WhatsApp y pagar al recibir.`);
       return null;
     }
-    return r.yappy;
+    return datos;
   };
 
   const trasPagar = () => {
@@ -427,33 +492,53 @@ export function Escaparate({
         <p className="mt-2 text-xs opacity-70">Powered By demandu.tech</p>
       </footer>
 
-      {/* ── Barra de abajo: buscar y carrito, como en la tienda de siempre ── */}
+      {/* ── Barra de abajo ───────────────────────────────────────────────
+          VACÍA ES DISCRETA, CON ALGO DENTRO GRITA. Mientras no hay nada que
+          pedir, buscar es lo único que importa y la barra no debe robar
+          atención. En cuanto entra un producto, se convierte en el botón más
+          grande de la pantalla y dice exactamente qué va a pasar al pulsarlo:
+          nadie tiene que deducir que ese carrito pequeño lleva a algún sitio. */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-around px-4"
+        className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-2 px-3"
         style={{
-          backgroundColor: c.principal,
-          paddingTop: 12,
-          paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+          backgroundColor: unidades > 0 ? c.whatsapp : c.principal,
+          paddingTop: 10,
+          paddingBottom: "max(10px, env(safe-area-inset-bottom))",
+          transition: "background-color .25s",
         }}
       >
         <button
           type="button"
           onClick={() => setBuscando((v) => !v)}
-          className="grid h-9 w-14 place-items-center text-white/90"
+          className="grid h-11 w-11 flex-none place-items-center rounded-full text-white/90"
+          style={{ backgroundColor: unidades > 0 ? "rgba(0,0,0,.16)" : "transparent" }}
           aria-label="Buscar"
         >
           <Search className="h-5 w-5" />
         </button>
-        <button
-          type="button"
-          onClick={() => setVerCarrito(true)}
-          className="flex h-9 items-center gap-2 px-3 text-white"
-          aria-label="Ver el pedido"
-        >
-          <ShoppingBag className="h-5 w-5" />
-          <span className="text-sm font-bold">{unidades}</span>
-          {unidades > 0 && <span className="text-sm font-bold">· {comoDinero(total, config.moneda)}</span>}
-        </button>
+
+        {unidades === 0 ? (
+          <span className="flex-1 text-center text-sm text-white/70">
+            Toca un producto para agregarlo
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setVerCarrito(true)}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-full py-3 text-white shadow-lg ${
+              saltando ? "animate-bounce" : ""
+            }`}
+            style={{ backgroundColor: "rgba(0,0,0,.22)" }}
+          >
+            <ShoppingBag className="h-5 w-5 flex-none" />
+            <span className="text-[15px] font-bold">
+              Ver mi pedido · {comoDinero(total, config.moneda)}
+            </span>
+            <span className="grid h-6 min-w-6 flex-none place-items-center rounded-full bg-white px-1.5 text-xs font-bold" style={{ color: c.whatsapp }}>
+              {unidades}
+            </span>
+          </button>
+        )}
       </nav>
 
       {/* El botón flotante de WhatsApp, que en la tienda de siempre es por donde
