@@ -7,7 +7,7 @@ import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * `platform.demandu.tech` es la plataforma: se entra con cuenta.
- * `shop.demandu.tech/<tienda>` es el escaparate público: no se entra con nada.
+ * `store.demandu.tech/<tienda>` es el escaparate público: no se entra con nada.
  *
  * Son el mismo programa porque comparten la base de datos y el catálogo — que
  * es justo la ventaja frente a una tienda suelta— pero se comportan distinto, y

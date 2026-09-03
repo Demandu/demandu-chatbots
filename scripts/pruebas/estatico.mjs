@@ -2744,6 +2744,31 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("el dominio de las tiendas se escribe en UN solo sitio", () => {
+    // YA CAMBIÓ UNA VEZ (`shop` → `store`) antes de tener un cliente encima. Si
+    // el nombre estuviera repartido por las pantallas, el día que vuelva a
+    // cambiar se olvidaría una — y esa mandaría clientes a una tienda que no
+    // existe, sin que nadie lo note hasta que alguien se queje.
+    const sueltos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta.includes("lib/tienda/direccion")) continue;
+      // Solo los nombres que sirven TIENDAS. `platform.demandu.tech` escrito a
+      // mano como recurso de última hora es otra cosa y es legítimo.
+      if (/(shop|store|eshop|tienda|tiendas)\.demandu\.tech/.test(sinComentarios(texto))) {
+        sueltos.push(ruta);
+      }
+    }
+    esperar(sueltos.join(", ")).igual(
+      "",
+      "hay un dominio de demandu escrito a mano fuera de la constante",
+    );
+
+    const dir = fs.readFileSync(path.join(SRC, "lib/tienda/direccion.ts"), "utf8");
+    esperar(/DOMINIO_TIENDAS[\s\S]{0,200}?store\.demandu\.tech/.test(dir)).verdadero(
+      "la constante no apunta al dominio de tiendas",
+    );
+  });
+
   test("ninguna pantalla manda a las tiendas viejas", () => {
     // `eshop.demandu.tech` lo sirve HOY el proveedor anterior, con clientes
     // reales vendiendo. Que la plataforma imprima esa dirección en un enlace

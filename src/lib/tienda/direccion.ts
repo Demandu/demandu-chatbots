@@ -38,14 +38,19 @@ export function direccionValida(slug: string): boolean {
  *
  * NO ES `eshop.demandu.tech` A PROPÓSITO. Esa dirección la sirve hoy el
  * proveedor anterior y ahí están funcionando las tiendas de clientes reales:
- * apuntarla aquí las tumbaría todas de golpe. `shop` es un dominio nuevo y
- * vacío, así que las tiendas nuevas nacen aquí sin tocar nada, y las viejas se
- * migran de una en una cuando su dueño diga.
+ * apuntarla aquí las tumbaría todas de golpe. Las tiendas nuevas nacen en
+ * `store` sin tocar nada, y las viejas se migran de una en una cuando su dueño
+ * lo diga.
  *
- * Se puede cambiar por entorno para poder probar sin tocar el código.
+ * VA EN UNA CONSTANTE, no repartido por las pantallas, porque ya cambió una vez
+ * (`shop` → `store`) antes de tener un solo cliente encima. La próxima vez que
+ * cambie tiene que ser este renglón y nada más — o el día que se olvide una
+ * pantalla, esa mandará clientes a una tienda que no existe.
+ *
+ * Se puede cambiar por entorno para probar sin tocar el código.
  */
 export const DOMINIO_TIENDAS =
-  (process.env.NEXT_PUBLIC_DOMINIO_TIENDAS ?? "shop.demandu.tech").trim().toLowerCase();
+  (process.env.NEXT_PUBLIC_DOMINIO_TIENDAS ?? "store.demandu.tech").trim().toLowerCase();
 
 /** La dirección completa de una tienda, tal y como se comparte. */
 export function enlaceDeTienda(slug: string): string {
