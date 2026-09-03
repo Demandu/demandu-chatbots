@@ -155,3 +155,64 @@ export function comoDinero(centavos: number, moneda = "$"): string {
   const abs = Math.abs(n);
   return `${signo}${moneda}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
 }
+
+/**
+ * Deja los grupos en un estado en el que la tienda puede pintarlos y cobrarlos.
+ *
+ * SE LLAMA EN EL SERVIDOR, aunque la pantalla ya cuide de todo: lo que llega es
+ * un JSON que manda el navegador, y aquí se decide cuánto se le cobra a una
+ * persona. La pantalla es una comodidad; esto es la puerta.
+ *
+ * Lo que se descarta y por qué:
+ * - Grupo o opción SIN NOMBRE: en el escaparate sería un botón en blanco que el
+ *   cliente puede pulsar sin saber qué está eligiendo.
+ * - Grupo SIN OPCIONES: una pregunta que no se puede contestar; si el producto
+ *   la necesita, no se puede ni pedir.
+ * - Opciones REPETIDAS dentro de un grupo: al sumar el recargo se cobrarían dos
+ *   veces, porque las elecciones se buscan por su texto.
+ * - Recargos negativos o rotos: un descuento escondido dentro de una opción es
+ *   dinero que se pierde sin que nadie lo vea.
+ */
+export function sanearGrupos(crudo: unknown): GrupoVariedad[] {
+  if (!Array.isArray(crudo)) return [];
+
+  return crudo
+    .map((g) => {
+      const grupo = (g ?? {}) as Partial<GrupoVariedad>;
+      const nombre = String(grupo.nombre ?? "").trim();
+      const modo: ModoVariedad = (["una", "varias", "hasta_completar"] as const).includes(
+        grupo.modo as ModoVariedad,
+      )
+        ? (grupo.modo as ModoVariedad)
+        : "una";
+
+      const vistas = new Set<string>();
+      const opciones: Opcion[] = (Array.isArray(grupo.opciones) ? grupo.opciones : [])
+        .map((o) => {
+          const op = (o ?? {}) as Partial<Opcion>;
+          const texto = String(op.texto ?? "").trim();
+          const n = Math.round(Number(op.recargo));
+          return { texto, recargo: Number.isFinite(n) && n > 0 ? n : 0 };
+        })
+        .filter((o) => {
+          if (!o.texto) return false;
+          const k = o.texto.toLowerCase();
+          if (vistas.has(k)) return false;
+          vistas.add(k);
+          return true;
+        });
+
+      const cantidad = Math.round(Number(grupo.cantidad));
+      return {
+        nombre,
+        modo,
+        // La cantidad solo significa algo en «hasta completar», y por debajo de
+        // dos no es una cantidad: es elegir una.
+        ...(modo === "hasta_completar" && Number.isFinite(cantidad) && cantidad > 1
+          ? { cantidad }
+          : {}),
+        opciones,
+      } as GrupoVariedad;
+    })
+    .filter((g) => g.nombre && g.opciones.length > 0);
+}

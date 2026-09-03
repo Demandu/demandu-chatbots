@@ -2,10 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
-import { Plus, Trash2, ClipboardPaste, X } from "lucide-react";
+import { Plus, Trash2, ClipboardPaste, X, SlidersHorizontal, ChevronDown } from "lucide-react";
 import { comoDinero, type GrupoVariedad } from "@/lib/tienda/variedades";
-import { escribirGrupos, leerGruposEscritos } from "@/lib/tienda/escritura";
 import { leerPegado } from "@/lib/tienda/pegar";
+import { EditorVariedades } from "./EditorVariedades";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
 
 export type Producto = {
@@ -21,7 +21,7 @@ export type Producto = {
   variedades: GrupoVariedad[];
 };
 
-/** Una fila mientras se edita: todo texto, porque es lo que hay en las casillas. */
+/** Una fila mientras se edita. El dinero es texto: es lo que hay en la casilla. */
 type Fila = {
   /** Vacío = producto nuevo, todavía sin guardar. */
   id: string;
@@ -33,7 +33,8 @@ type Fila = {
   stock: string;
   oculto: boolean;
   imagen_url: string;
-  variedades: string;
+  /** Ya no es texto con barras: son los grupos de verdad. */
+  variedades: GrupoVariedad[];
 };
 
 const dinero = (c: number | null) => (c === null || c === 0 ? "" : (c / 100).toFixed(2));
@@ -49,7 +50,7 @@ function aFila(p: Producto): Fila {
     stock: p.stock === null ? "" : String(p.stock),
     oculto: p.oculto,
     imagen_url: p.imagen_url ?? "",
-    variedades: escribirGrupos(p.variedades),
+    variedades: Array.isArray(p.variedades) ? p.variedades : [],
   };
 }
 
@@ -63,7 +64,7 @@ const FILA_VACIA: Fila = {
   stock: "",
   oculto: false,
   imagen_url: "",
-  variedades: "",
+  variedades: [],
 };
 
 function Guardar({ cuantos }: { cuantos: number }) {
@@ -79,24 +80,27 @@ function Guardar({ cuantos }: { cuantos: number }) {
   );
 }
 
+const casilla =
+  "w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 outline-none focus:border-linea-2 focus:bg-tarjeta";
+
 /**
- * El catálogo, como una hoja de cálculo.
+ * El catálogo.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * ANTES ERA UNA VENTANITA POR PRODUCTO Y ESTABA MAL. Con cincuenta productos,
- * abrir, escribir, guardar y cerrar cincuenta veces no lo hace nadie: se
- * abandona a la mitad y el catálogo se queda en la hoja vieja para siempre. La
- * forma correcta de editar una tabla es una tabla.
+ * DOS CORRECCIONES DE RUMBO, LAS DOS POR LO MISMO: quien arma la tienda no
+ * sabe de esto, y cada obstáculo es una tienda que se queda a medias.
  *
- * Y SE PUEDE PEGAR DESDE GOOGLE SHEETS. Al copiar celdas, el portapapeles trae
- * texto separado por tabulaciones; eso significa que migrar una tienda entera
- * es seleccionar, copiar, pegar — sin integración, sin permisos y sin que la
- * hoja tenga que ser pública.
+ * 1. Era una ventanita por producto. Con cincuenta productos eso son cincuenta
+ *    veces abrir, escribir, guardar y cerrar: nadie lo termina. Ahora es una
+ *    tabla, que es la forma natural de repasar y corregir muchos precios.
  *
- * SE GUARDA TODO DE UNA VEZ, no casilla por casilla. Guardar en cada tecla
- * convierte una corrección en cincuenta escrituras y, cuando la red falla a
- * mitad de camino, deja el catálogo a medio cambiar sin que nadie lo sepa. Aquí
- * lo que no se ha guardado se ve marcado, y se guarda cuando el negocio decide.
+ * 2. La tabla pedía las opciones así: `Sabor | hasta completar 3 | Pollo,
+ *    Salmón {2.50}`. Eso es un idioma de programador. Ahora la columna es un
+ *    BOTÓN que abre una pantalla con casillas y botones, sin sintaxis ninguna.
+ *
+ * Y ARRANCA CON POCAS COLUMNAS —foto, nombre, precio, categoría y opciones—
+ * porque diez columnas de golpe asustan y ocho de ellas casi nunca se tocan.
+ * «Más columnas» destapa el resto para quien las necesita.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function Productos({
@@ -115,6 +119,8 @@ export function Productos({
   const [borradas, setBorradas] = useState<string[]>([]);
   const [pegando, setPegando] = useState(false);
   const [texto, setTexto] = useState("");
+  const [todo, setTodo] = useState(false);
+  const [opcionesDe, setOpcionesDe] = useState<number | null>(null);
   const [estado, enviar] = useFormState(guardar, { ok: false, mensaje: "" });
 
   const porId = useMemo(() => new Map(originales.map((f) => [f.id, f])), [originales]);
@@ -125,7 +131,7 @@ export function Productos({
   };
   const pendientes = filas.filter(cambiada).length + borradas.length;
 
-  const set = (i: number, campo: keyof Fila, valor: string | boolean) =>
+  const set = (i: number, campo: keyof Fila, valor: string | boolean | GrupoVariedad[]) =>
     setFilas((f) => f.map((x, j) => (j === i ? { ...x, [campo]: valor } : x)));
 
   const quitar = (i: number) => {
@@ -135,7 +141,7 @@ export function Productos({
   };
 
   const pegar = () => {
-    const nuevas = leerPegado(texto).map((p) => ({
+    const nuevas: Fila[] = leerPegado(texto).map((p) => ({
       id: "",
       nombre: p.nombre,
       descripcion: p.descripcion,
@@ -145,7 +151,7 @@ export function Productos({
       stock: p.stock === null ? "" : String(p.stock),
       oculto: p.oculto,
       imagen_url: p.imagen_url,
-      variedades: escribirGrupos(p.variedades),
+      variedades: p.variedades,
     }));
     if (!nuevas.length) return;
     // SE AÑADEN, NO SE SUSTITUYE. Pegar encima borraría en un segundo un
@@ -156,26 +162,30 @@ export function Productos({
   };
 
   const categorias = [...new Set(filas.map((f) => f.categoria).filter(Boolean))];
-  const total = filas.reduce((s, f) => {
-    const n = Number(String(f.precio).replace(",", "."));
-    return s + (Number.isFinite(n) ? Math.round(n * 100) : 0);
-  }, 0);
 
   return (
     <form action={enviar}>
       <input type="hidden" name="tienda_id" value={tiendaId} />
-      {/* La tabla entera viaja como un solo campo. Un `input` por casilla serían
-          quinientos campos en el formulario y ningún control sobre el orden. */}
+      {/* La tabla entera viaja como un solo campo: un `input` por casilla serían
+          quinientos campos y ningún control sobre el orden. */}
       <input type="hidden" name="filas" value={JSON.stringify(filas)} />
       <input type="hidden" name="borradas" value={JSON.stringify(borradas)} />
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-2">
           {filas.length} producto{filas.length === 1 ? "" : "s"}
-          {categorias.length > 0 && ` · ${categorias.length} categoría${categorias.length === 1 ? "" : "s"}`}
-          {filas.length > 0 && ` · catálogo de ${comoDinero(total, moneda)} en precios de lista`}
+          {categorias.length > 0 &&
+            ` · ${categorias.length} categoría${categorias.length === 1 ? "" : "s"}`}
         </p>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-soft"
+            onClick={() => setTodo((v) => !v)}
+            title="Descripción, precio anterior, existencias y ocultar"
+          >
+            <SlidersHorizontal className="h-4 w-4" /> {todo ? "Menos columnas" : "Más columnas"}
+          </button>
           <button type="button" className="btn-soft" onClick={() => setPegando(true)}>
             <ClipboardPaste className="h-4 w-4" /> Pegar desde una hoja
           </button>
@@ -184,7 +194,7 @@ export function Productos({
             className="btn-soft"
             onClick={() => setFilas((f) => [...f, { ...FILA_VACIA }])}
           >
-            <Plus className="h-4 w-4" /> Fila
+            <Plus className="h-4 w-4" /> Producto
           </button>
           <Guardar cuantos={pendientes} />
         </div>
@@ -205,29 +215,26 @@ export function Productos({
 
       {filas.length === 0 ? (
         <div className="rounded-2xl border border-linea-2 bg-tarjeta p-5 text-sm leading-relaxed text-ink-2">
-          <b className="text-ink">Trae tu catálogo de una vez.</b>
+          <b className="text-ink">Empieza por tus productos.</b>
           <p className="mt-1">
-            Abre tu hoja de cálculo, selecciona las filas de productos con sus encabezados, copia, y
-            pulsa <b className="text-ink">Pegar desde una hoja</b>. Se entienden tus columnas tal y
-            como están: Nombre, Descripcion, Variedades, Variedades2, Precio, Ocultar, Categoria…
+            Si ya los tienes en una hoja de cálculo, pulsa{" "}
+            <b className="text-ink">Pegar desde una hoja</b>: copias las filas y entran todas de una
+            vez. Si no, <b className="text-ink">Producto</b> agrega uno en blanco.
           </p>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-linea">
-          <table className="w-full min-w-[1100px] border-collapse text-sm">
+          <table className="w-full min-w-[720px] border-collapse text-sm">
             <thead>
               <tr className="bg-tarjeta text-left text-xs font-semibold uppercase tracking-wide text-ink-2">
-                <th className="px-2 py-2">Nombre</th>
-                <th className="px-2 py-2">Descripción</th>
+                <th className="w-12 px-2 py-2">Foto</th>
+                <th className="px-2 py-2">Producto</th>
                 <th className="px-2 py-2">Categoría</th>
-                <th className="w-24 px-2 py-2">Precio</th>
-                <th className="w-24 px-2 py-2">Antes</th>
-                <th className="w-20 px-2 py-2">Stock</th>
-                <th className="w-16 px-2 py-2" title="Escóndelo del escaparate sin borrarlo">
-                  Ocultar
-                </th>
-                <th className="px-2 py-2">Foto</th>
-                <th className="px-2 py-2">Variedades</th>
+                <th className="w-24 px-2 py-2 text-right">Precio</th>
+                {todo && <th className="w-24 px-2 py-2 text-right">Antes</th>}
+                {todo && <th className="w-20 px-2 py-2 text-right">Existencias</th>}
+                {todo && <th className="w-16 px-2 py-2">Ocultar</th>}
+                <th className="w-40 px-2 py-2">Opciones</th>
                 <th className="w-10 px-2 py-2" />
               </tr>
             </thead>
@@ -235,110 +242,160 @@ export function Productos({
               {filas.map((f, i) => {
                 const nueva = !f.id;
                 const editada = cambiada(f);
+                const cuantasOpciones = f.variedades.reduce(
+                  (n, g) => n + (g.opciones?.length ?? 0),
+                  0,
+                );
                 return (
                   <tr
                     key={f.id || `nueva-${i}`}
                     className="border-t border-linea align-top"
                     style={
                       editada
-                        ? { backgroundColor: nueva ? "rgba(16,185,129,.07)" : "rgba(245,158,11,.07)" }
+                        ? {
+                            backgroundColor: nueva
+                              ? "rgba(16,185,129,.07)"
+                              : "rgba(245,158,11,.07)",
+                          }
                         : undefined
                     }
                   >
+                    {/* La foto se ve, no se adivina por su enlace. Un enlace
+                        roto pintado como texto pasa desapercibido hasta que un
+                        cliente ve el hueco en la tienda. */}
+                    <td className="p-1">
+                      <label className="block cursor-pointer" title="Pega aquí el enlace de la foto">
+                        {f.imagen_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={f.imagen_url}
+                            alt=""
+                            className="h-10 w-10 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <span className="grid h-10 w-10 place-items-center rounded-lg border border-dashed border-linea-2 text-[10px] text-ink-3">
+                            foto
+                          </span>
+                        )}
+                        <input
+                          value={f.imagen_url}
+                          onChange={(e) => set(i, "imagen_url", e.target.value)}
+                          className="sr-only"
+                          aria-label="Enlace de la foto"
+                        />
+                      </label>
+                    </td>
+
                     <td className="p-1">
                       <input
                         value={f.nombre}
                         onChange={(e) => set(i, "nombre", e.target.value)}
-                        className="w-full min-w-[160px] rounded-md border border-transparent bg-transparent px-1.5 py-1 text-ink outline-none focus:border-linea-2 focus:bg-tarjeta"
+                        className={`${casilla} min-w-[160px] text-ink`}
                         placeholder="Nombre del producto"
                       />
+                      {todo && (
+                        <textarea
+                          rows={1}
+                          value={f.descripcion}
+                          onChange={(e) => set(i, "descripcion", e.target.value)}
+                          placeholder="Descripción"
+                          className={`${casilla} mt-1 min-w-[160px] resize-y text-xs text-ink-2`}
+                        />
+                      )}
+                      {/* El enlace de la foto, aquí y no en su columna: en la
+                          columna ocupaba el ancho de dos y casi nunca se toca. */}
+                      {todo && (
+                        <input
+                          value={f.imagen_url}
+                          onChange={(e) => set(i, "imagen_url", e.target.value)}
+                          placeholder="https://…  (enlace de la foto)"
+                          className={`${casilla} mt-1 min-w-[160px] text-[11px] text-ink-3`}
+                        />
+                      )}
                     </td>
-                    <td className="p-1">
-                      <textarea
-                        rows={1}
-                        value={f.descripcion}
-                        onChange={(e) => set(i, "descripcion", e.target.value)}
-                        className="w-full min-w-[180px] resize-y rounded-md border border-transparent bg-transparent px-1.5 py-1 text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
-                      />
-                    </td>
+
                     <td className="p-1">
                       <input
                         value={f.categoria}
                         onChange={(e) => set(i, "categoria", e.target.value)}
                         list="cats-tienda"
-                        className="w-full min-w-[110px] rounded-md border border-transparent bg-transparent px-1.5 py-1 text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
+                        placeholder="—"
+                        className={`${casilla} min-w-[110px] text-ink-2`}
                       />
                     </td>
+
                     <td className="p-1">
                       <input
                         value={f.precio}
                         onChange={(e) => set(i, "precio", e.target.value)}
                         inputMode="decimal"
                         placeholder="0.00"
-                        className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-right text-ink outline-none focus:border-linea-2 focus:bg-tarjeta"
+                        className={`${casilla} text-right text-ink`}
                       />
                     </td>
+
+                    {todo && (
+                      <td className="p-1">
+                        <input
+                          value={f.precio_anterior}
+                          onChange={(e) => set(i, "precio_anterior", e.target.value)}
+                          inputMode="decimal"
+                          title="El precio tachado. Solo se pinta si es mayor que el precio."
+                          className={`${casilla} text-right text-ink-2`}
+                        />
+                      </td>
+                    )}
+
+                    {todo && (
+                      <td className="p-1">
+                        <input
+                          value={f.stock}
+                          onChange={(e) => set(i, "stock", e.target.value)}
+                          inputMode="numeric"
+                          placeholder="—"
+                          title="Vacío = no llevas control. 0 = agotado."
+                          className={`${casilla} text-right text-ink-2`}
+                        />
+                      </td>
+                    )}
+
+                    {todo && (
+                      <td className="p-1 text-center">
+                        <input
+                          type="checkbox"
+                          checked={f.oculto}
+                          onChange={(e) => set(i, "oculto", e.target.checked)}
+                          className="mt-1.5 h-4 w-4"
+                          style={{ accentColor: "#6E42FF" }}
+                        />
+                      </td>
+                    )}
+
+                    {/* NADA DE SINTAXIS. Un botón que dice lo que hay dentro. */}
                     <td className="p-1">
-                      <input
-                        value={f.precio_anterior}
-                        onChange={(e) => set(i, "precio_anterior", e.target.value)}
-                        inputMode="decimal"
-                        className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-right text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => setOpcionesDe(i)}
+                        className="w-full rounded-lg border border-linea px-2 py-1.5 text-left text-xs transition hover:border-violet"
+                      >
+                        {f.variedades.length === 0 ? (
+                          <span className="text-ink-3">Sin opciones · agregar</span>
+                        ) : (
+                          <span className="text-ink-2">
+                            {f.variedades.map((g) => g.nombre).filter(Boolean).join(" · ")}{" "}
+                            <span className="text-ink-3">({cuantasOpciones})</span>
+                          </span>
+                        )}
+                        <ChevronDown className="ml-1 inline h-3 w-3 text-ink-3" />
+                      </button>
                     </td>
-                    <td className="p-1">
-                      <input
-                        value={f.stock}
-                        onChange={(e) => set(i, "stock", e.target.value)}
-                        inputMode="numeric"
-                        placeholder="—"
-                        title="Vacío = sin control de existencias. 0 = agotado."
-                        className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-right text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
-                      />
-                    </td>
-                    <td className="p-1 text-center">
-                      <input
-                        type="checkbox"
-                        checked={f.oculto}
-                        onChange={(e) => set(i, "oculto", e.target.checked)}
-                        className="mt-1.5 h-4 w-4"
-                        style={{ accentColor: "#6E42FF" }}
-                      />
-                    </td>
-                    <td className="p-1">
-                      <input
-                        value={f.imagen_url}
-                        onChange={(e) => set(i, "imagen_url", e.target.value)}
-                        placeholder="https://…"
-                        className="w-full min-w-[120px] rounded-md border border-transparent bg-transparent px-1.5 py-1 text-xs text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
-                      />
-                    </td>
-                    <td className="p-1">
-                      <textarea
-                        rows={1}
-                        value={f.variedades}
-                        onChange={(e) => set(i, "variedades", e.target.value)}
-                        placeholder="Sabor | una | Pollo, Salmón {2.50}"
-                        title="Grupo | cómo se elige | opciones. Entre llaves, lo que suma al precio."
-                        className="w-full min-w-[200px] resize-y rounded-md border border-transparent bg-transparent px-1.5 py-1 font-mono text-[11px] text-ink-2 outline-none focus:border-linea-2 focus:bg-tarjeta"
-                      />
-                      {/* Lo que el cliente va a ver de verdad, contado en corto:
-                          la línea escrita es cómoda para editar pero difícil de
-                          revisar de un vistazo. */}
-                      {f.variedades.trim() && (
-                        <p className="px-1.5 pt-0.5 text-[10px] text-ink-3">
-                          {leerGruposEscritos(f.variedades)
-                            .map((g) => `${g.nombre}: ${g.opciones.length}`)
-                            .join(" · ") || "no se entiende: revisa las barras"}
-                        </p>
-                      )}
-                    </td>
+
                     <td className="p-1 text-center">
                       <button
                         type="button"
                         onClick={() => quitar(i)}
                         className="mt-1 text-ink-3 transition hover:text-danger"
-                        title="Quitar esta fila"
+                        title="Quitar este producto"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -358,9 +415,25 @@ export function Productos({
 
       {filas.length > 0 && (
         <p className="mt-3 text-xs text-ink-2">
-          Verde = producto nuevo. Ámbar = con cambios sin guardar. Las variedades se escriben{" "}
-          <code className="text-ink">Grupo | una · varias · hasta completar 3 | Opción, Otra {"{2.50}"}</code>.
+          Verde = producto nuevo. Ámbar = con cambios sin guardar.
+          {!todo && " Con «Más columnas» aparecen descripción, precio anterior, existencias y ocultar."}
         </p>
+      )}
+
+      {opcionesDe !== null && filas[opcionesDe] && (
+        <EditorVariedades
+          nombreProducto={filas[opcionesDe].nombre}
+          grupos={filas[opcionesDe].variedades}
+          moneda={moneda}
+          otrosProductos={filas
+            .filter((_, j) => j !== opcionesDe)
+            .map((f) => ({ nombre: f.nombre || "Producto sin nombre", variedades: f.variedades }))}
+          onGuardar={(g) => {
+            set(opcionesDe, "variedades", g);
+            setOpcionesDe(null);
+          }}
+          onCerrar={() => setOpcionesDe(null)}
+        />
       )}
 
       {pegando && (
@@ -378,9 +451,9 @@ export function Productos({
               </button>
             </div>
             <p className="mb-3 text-sm text-ink-2">
-              En tu hoja, selecciona los productos <b className="text-ink">con la fila de
-              encabezados</b>, copia, y pega aquí. Se reconocen tus nombres de columna tal y como
-              están.
+              En tu hoja de cálculo selecciona los productos{" "}
+              <b className="text-ink">con la fila de encabezados</b>, cópialos, y pégalos aquí. Se
+              reconocen tus nombres de columna tal y como están.
             </p>
             <textarea
               autoFocus

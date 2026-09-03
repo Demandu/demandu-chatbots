@@ -11,7 +11,7 @@ import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
-import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero } from "../../src/lib/tienda/variedades.ts";
+import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
 import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender } from "../../src/lib/tienda/config.ts";
 import { leerPreguntasEscritas, escribirPreguntas, leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
@@ -1426,6 +1426,100 @@ describe("Tienda: pegar el catálogo desde una hoja", () => {
 
   test("pegar nada no rompe nada", () => {
     for (const v of ["", "   ", null, undefined, "\n\n"]) esperar(leerPegado(v)).igual([]);
+  });
+});
+
+describe("Tienda: las opciones que llegan del navegador", () => {
+  // `sanearGrupos` es LA PUERTA. La pantalla de opciones es una comodidad; esto
+  // llega como JSON desde el navegador y decide cuánto se le cobra a alguien.
+
+  test("un grupo sin nombre no se guarda", () => {
+    // En el escaparate sería una pregunta sin enunciado.
+    esperar(sanearGrupos([{ nombre: "  ", modo: "una", opciones: [{ texto: "A", recargo: 0 }] }])).igual([]);
+  });
+
+  test("un grupo sin opciones no se guarda", () => {
+    // Una pregunta que el cliente no puede contestar; si el producto la
+    // necesita, no se puede ni pedir.
+    esperar(sanearGrupos([{ nombre: "Sabor", modo: "una", opciones: [] }])).igual([]);
+    esperar(sanearGrupos([{ nombre: "Sabor", modo: "una", opciones: [{ texto: "  " }] }])).igual([]);
+  });
+
+  test("una opción repetida se cobraría dos veces, así que se quita", () => {
+    // Las elecciones se buscan POR SU TEXTO al sumar el recargo. Dos opciones
+    // con el mismo nombre en un grupo cobran doble sin que nadie lo vea.
+    const g = sanearGrupos([
+      {
+        nombre: "Extras",
+        modo: "varias",
+        opciones: [
+          { texto: "Queso", recargo: 100 },
+          { texto: "queso", recargo: 100 },
+          { texto: "Tocino", recargo: 150 },
+        ],
+      },
+    ]);
+    esperar(g[0].opciones.length).igual(2);
+    esperar(g[0].opciones.map((o) => o.texto).join("|")).igual("Queso|Tocino");
+  });
+
+  test("un recargo negativo o roto NO baja el precio a escondidas", () => {
+    const g = sanearGrupos([
+      {
+        nombre: "Tamaño",
+        modo: "una",
+        opciones: [
+          { texto: "Chico", recargo: -500 },
+          { texto: "Grande", recargo: "no soy un número" },
+          { texto: "Gigante", recargo: 250 },
+        ],
+      },
+    ]);
+    esperar(g[0].opciones.map((o) => o.recargo)).igual([0, 0, 250]);
+  });
+
+  test("un modo inventado cae en «elige una»", () => {
+    // Lo menos sorprendente. Un modo desconocido dejaría el grupo sin reglas.
+    esperar(sanearGrupos([{ nombre: "X", modo: "loquesea", opciones: [{ texto: "A" }] }])[0].modo).igual("una");
+  });
+
+  test("la cantidad solo cuenta en «elige una cantidad exacta»", () => {
+    const a = sanearGrupos([{ nombre: "X", modo: "una", cantidad: 5, opciones: [{ texto: "A" }] }]);
+    esperar(a[0].cantidad === undefined).verdadero("una cantidad en «elige una» no significa nada");
+
+    const b = sanearGrupos([
+      { nombre: "X", modo: "hasta_completar", cantidad: 6, opciones: [{ texto: "A" }] },
+    ]);
+    esperar(b[0].cantidad).igual(6);
+
+    // Uno no es una cantidad: es elegir una.
+    const c = sanearGrupos([
+      { nombre: "X", modo: "hasta_completar", cantidad: 1, opciones: [{ texto: "A" }] },
+    ]);
+    esperar(c[0].cantidad === undefined).verdadero();
+  });
+
+  test("basura no rompe nada", () => {
+    for (const v of [null, undefined, "texto", 42, {}, [null], [{}], [[]]]) {
+      esperar(Array.isArray(sanearGrupos(v))).verdadero();
+    }
+    esperar(sanearGrupos([null, { nombre: "X", opciones: [{ texto: "A" }] }]).length).igual(1);
+  });
+
+  test("lo saneado se puede cobrar sin sorpresas", () => {
+    // La prueba de que las dos piezas encajan: lo que sale de aquí es lo que
+    // `recargoDe` va a sumar en el carrito.
+    const g = sanearGrupos([
+      {
+        nombre: "Extras",
+        modo: "varias",
+        opciones: [
+          { texto: "Queso", recargo: 100 },
+          { texto: "Tocino", recargo: 150 },
+        ],
+      },
+    ]);
+    esperar(recargoDe(g, ["Queso", "Tocino"])).igual(250);
   });
 });
 

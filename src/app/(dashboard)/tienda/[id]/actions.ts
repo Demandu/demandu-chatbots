@@ -3,8 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
-import { aCentavos } from "@/lib/tienda/variedades";
-import { leerPreguntasEscritas, leerGruposEscritos } from "@/lib/tienda/escritura";
+import { aCentavos, sanearGrupos } from "@/lib/tienda/variedades";
+import { leerPreguntasEscritas } from "@/lib/tienda/escritura";
 import { leerConfig, soloDigitos, type ConfigTienda } from "@/lib/tienda/config";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
@@ -113,7 +113,8 @@ type FilaCruda = {
   stock?: string;
   oculto?: boolean;
   imagen_url?: string;
-  variedades?: string;
+  /** Ya no es texto con barras: son los grupos, tal y como los deja la pantalla. */
+  variedades?: unknown;
 };
 
 /**
@@ -181,7 +182,9 @@ export async function guardarProductos(_e: Estado, fd: FormData): Promise<Estado
       stock:
         stockCrudo === "" || !Number.isFinite(stockNum) ? null : Math.max(0, Math.round(stockNum)),
       imagen_url: String(f.imagen_url ?? "").trim() || null,
-      variedades: leerGruposEscritos(String(f.variedades ?? "")),
+      // SE SANEA AQUÍ aunque la pantalla ya lo cuide: esto llega como JSON
+      // desde el navegador y decide cuánto se le cobra a una persona.
+      variedades: sanearGrupos(f.variedades),
       orden,
       updated_at: new Date().toISOString(),
     };

@@ -2689,6 +2689,42 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("las opciones NO se le piden al cliente como sintaxis", () => {
+    // POR QUÉ EXISTE ESTA REGLA: la tabla llegó a pedir esto en una casilla —
+    //   Sabor | hasta completar 3 | Pollo, Salmón {2.50}
+    // que está bien para quien programa y es un idioma extranjero para la
+    // señora de la panadería. Si para poner tres sabores hay que aprender una
+    // sintaxis, la tienda no se arma; y una tienda a medias no vende.
+    const tabla = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/Productos.tsx"), "utf8"),
+    );
+    esperar(/escribirGrupos|leerGruposEscritos/.test(tabla)).falso(
+      "la tabla volvió a editar las variedades como texto con barras",
+    );
+    esperar(tabla.includes("<EditorVariedades")).verdadero(
+      "las opciones tienen que abrirse en su pantalla de casillas y botones",
+    );
+
+    // Y en esa pantalla no puede aparecer la sintaxis por ningún lado.
+    const editor = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/EditorVariedades.tsx"), "utf8"),
+    );
+    esperar(/escribirGrupos|leerGruposEscritos/.test(editor)).falso(
+      "el editor visual no puede volver al texto con barras",
+    );
+  });
+
+  test("lo que llega del navegador se sanea en el servidor", () => {
+    // La pantalla es una comodidad. Las opciones llegan como JSON y deciden
+    // cuánto se le cobra a una persona: la puerta está en el servidor.
+    const acciones = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"),
+    );
+    esperar(/variedades:\s*sanearGrupos\(/.test(acciones)).verdadero(
+      "las variedades se guardan sin sanear",
+    );
+  });
+
   test("las llaves de cobro no viven donde cualquiera puede leerlas", () => {
     // `tiendas.config` tiene lectura ANÓNIMA a propósito: es lo que pinta el
     // escaparate. Un secreto de comercio ahí estaría publicado en internet.
