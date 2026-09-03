@@ -11,6 +11,7 @@ import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
+import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
 import { aDireccion, direccionValida, enlaceDePago, hostDeLaPeticion } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
@@ -2303,6 +2304,67 @@ describe("Tienda: de qué dominio llega la visita", () => {
 
   test("sin cabeceras no se inventa un dominio", () => {
     esperar(hostDeLaPeticion(cabeceras({}))).igual("");
+  });
+});
+
+describe("IA: marcar «agendar» no es tener agenda", () => {
+  const abierto = { mon: { enabled: true, open: "09:00", close: "18:00" } };
+  const base = { conectado: true, timezone: "America/Panama", horas: abierto };
+
+  test("sin acciones de agenda, este bloque ni aparece", () => {
+    const r = loQueFaltaParaAgendar({ ...base, herramientas: ["etiquetar"] });
+    esperar(r.usaAgenda).falso();
+    esperar(r.problemas.length).igual(0);
+  });
+
+  test("SIN CALENDAR CONECTADO NO SE PUEDE AGENDAR, y hay que decirlo", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // Hoy se puede marcar la casilla, guardar, y quedarse tranquilo mientras
+    // Google Calendar no está conectado. El bot no avisa: no encuentra huecos
+    // nunca, y el negocio se entera cuando un cliente pregunta por qué nadie
+    // lo atendió.
+    // ───────────────────────────────────────────────────────────────────────
+    const r = loQueFaltaParaAgendar({ ...base, conectado: false, herramientas: ["agendar_cita", "ver_horarios"] });
+    esperar(r.lista).falso();
+    esperar(r.problemas.some((p) => /Calendar/i.test(p))).verdadero();
+  });
+
+  test("sin ningún día abierto no hay hueco posible", () => {
+    const r = loQueFaltaParaAgendar({
+      ...base,
+      horas: { mon: { enabled: false, open: "09:00", close: "18:00" } },
+      herramientas: ["ver_horarios"],
+    });
+    esperar(r.lista).falso();
+    esperar(r.problemas.some((p) => /día abierto/i.test(p))).verdadero();
+  });
+
+  test("RESERVAR SIN PODER MIRAR es cómo se pisan dos citas", () => {
+    // La acción de reservar no consulta disponibilidad por su cuenta: si no
+    // puede ver los huecos, agenda encima de lo que ya haya.
+    const r = loQueFaltaParaAgendar({ ...base, herramientas: ["agendar_cita"] });
+    esperar(r.lista).falso();
+    esperar(r.problemas.some((p) => /encima/i.test(p))).verdadero();
+  });
+
+  test("mirar sin reservar es una configuración legítima", () => {
+    // Un bot que dice las horas libres y deja que una persona confirme es un
+    // caso real, no un error a medio hacer.
+    const r = loQueFaltaParaAgendar({ ...base, herramientas: ["ver_horarios"] });
+    esperar(r.lista).verdadero();
+    esperar(r.problemas.length).igual(0);
+  });
+
+  test("sin zona horaria las horas que ofrezca no son las tuyas", () => {
+    const r = loQueFaltaParaAgendar({ ...base, timezone: "", herramientas: ["ver_horarios"] });
+    esperar(r.lista).falso();
+    esperar(r.problemas.some((p) => /zona horaria/i.test(p))).verdadero();
+  });
+
+  test("todo en su sitio: lista, y sin ruido", () => {
+    const r = loQueFaltaParaAgendar({ ...base, herramientas: ["ver_horarios", "agendar_cita"] });
+    esperar(r.lista).verdadero();
+    esperar(r.problemas.length).igual(0);
   });
 });
 

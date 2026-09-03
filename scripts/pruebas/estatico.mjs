@@ -3189,6 +3189,27 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
       "al crear una tienda no se comprueban las direcciones que ya estuvieron en uso",
     );
   });
+
+  test("la pantalla que enciende la agenda dice si la agenda funciona", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Es la misma lección que el cobro: una casilla marcada no es una función
+    // que funciona. Quien enciende «Agendar citas» está en esta pantalla, y
+    // mandarle a otra a comprobar si su calendario está conectado es
+    // exactamente cómo se queda sin comprobar.
+    // ─────────────────────────────────────────────────────────────────────────
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/ai/page.tsx"), "utf8"),
+    );
+    esperar(t.includes("loQueFaltaParaAgendar(")).verdadero(
+      "la pantalla de la IA no comprueba si la agenda puede funcionar",
+    );
+    esperar(t.includes("google_calendar")).verdadero(
+      "no se mira si Google Calendar está conectado",
+    );
+    esperar(/timezone/.test(t)).verdadero(
+      "la zona horaria no se enseña: viene por defecto en otra ciudad y corre todas las horas",
+    );
+  });
 });
 
 process.exit(await correrPruebas());

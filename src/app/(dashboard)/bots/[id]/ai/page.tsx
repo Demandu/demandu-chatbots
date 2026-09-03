@@ -9,6 +9,8 @@ import { createClient } from "@/lib/supabase/server";
 import { AI_DEFAULTS, aiConfigured } from "@/lib/ai/answer";
 import { saveAiSettings } from "./actions";
 import { Sparkles, BookOpen } from "lucide-react";
+import { EstadoDeAgenda } from "@/components/bots/EstadoDeAgenda";
+import { loQueFaltaParaAgendar, type DiaLaboral } from "@/lib/ai/agenda";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +44,43 @@ export default async function BotAiPage({
   // configuraciones que fallan en silencio.
   const { data: etiquetas } = await supabase.from("tags").select("name").order("name");
   const nombresDeEtiquetas = ((etiquetas ?? []) as any[]).map((t) => t.name);
+
+  // ── LA AGENDA, COMPROBADA AQUÍ Y NO PROMETIDA ───────────────────────────
+  // Marcar «Agendar citas» y guardar no es tener agenda: hace falta Google
+  // Calendar conectado, algún día abierto y la zona horaria correcta. Nada de
+  // eso se ve desde esta pantalla, así que se falla en silencio — el bot no
+  // encuentra huecos, o los ofrece con una hora de diferencia, y el negocio se
+  // entera cuando un cliente llama preguntando por qué nadie lo atendió.
+  const [{ data: integracion }, { data: org }] = await Promise.all([
+    supabase
+      .from("integrations")
+      .select("account_email")
+      .eq("provider", "google_calendar")
+      .maybeSingle(),
+    supabase.from("organizations").select("timezone, business_hours").limit(1).maybeSingle(),
+  ]);
+
+  const horas = ((org?.business_hours as Record<string, DiaLaboral>) ?? {}) as Record<string, DiaLaboral>;
+  const agenda = loQueFaltaParaAgendar({
+    herramientas: ((bot.ai as any)?.herramientas ?? []) as string[],
+    conectado: Boolean(integracion),
+    timezone: String(org?.timezone ?? ""),
+    horas,
+  });
+
+  const DIAS: Record<string, string> = {
+    mon: "lun", tue: "mar", wed: "mié", thu: "jue", fri: "vie", sat: "sáb", sun: "dom",
+  };
+  const abiertos = Object.entries(horas).filter(([, d]) => d?.enabled);
+  const resumenHorario = abiertos.length
+    ? abiertos
+        .sort(
+          (a, b) =>
+            Object.keys(DIAS).indexOf(a[0]) - Object.keys(DIAS).indexOf(b[0]),
+        )
+        .map(([k, d]) => `${DIAS[k] ?? k} ${d.open ?? "?"}–${d.close ?? "?"}`)
+        .join(" · ")
+    : "ningún día abierto";
 
   const ai = { ...AI_DEFAULTS, ...(((bot as any).ai as any) ?? {}) };
   const lista = aiConfigured();
@@ -217,6 +256,13 @@ export default async function BotAiPage({
                       </label>
                     ))}
                   </div>
+
+                  <EstadoDeAgenda
+                    estado={agenda}
+                    cuenta={(integracion as any)?.account_email ?? ""}
+                    timezone={String(org?.timezone ?? "")}
+                    resumenHorario={resumenHorario}
+                  />
 
                   <div className="mt-3">
                     <label className="mb-1 block text-xs font-semibold text-ink-2">
