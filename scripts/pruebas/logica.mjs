@@ -20,7 +20,7 @@ import { recalcularPedido } from "../../src/lib/tienda/recalcular.ts";
 import {
   comoMontoYappy, montoCobrable, aliasYappy, aliasValido, codigoDePedido, codigoValido,
   claveDeFirma, firmaIpn, ipnValido, esAmbiente, PAGOS_YAPPY, API_YAPPY, CDN_YAPPY,
-  dominioDeCobro,
+  dominioDeCobro, falloDeComercio,
 } from "../../src/lib/tienda/yappy.ts";
 import { estadoDelCobro, VENTANA_COBRO_MIN } from "../../src/lib/tienda/cobro.ts";
 import { aWhatsapp, telefonoUtil } from "../../src/lib/tienda/telefono.ts";
@@ -1993,6 +1993,25 @@ describe("Tienda: los datos que se le mandan a Yappy", () => {
     esperar(esAmbiente("")).igual("prueba");
     esperar(esAmbiente("cualquier-cosa")).igual("prueba");
     esperar(esAmbiente("produccion")).igual("produccion");
+  });
+
+  test("un rechazo en PRUEBAS dice por qué, no solo lo que dijo el banco", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // ESTO PASÓ DE VERDAD: el banco contestó «Algo salió mal» y se quedó tan
+    // ancho. La causa era llaves de producción contra el entorno de pruebas —
+    // algo que el sistema SABE y se estaba callando. Se tardó una tarde y una
+    // consulta a la base en averiguar lo que la pantalla podía haber dicho.
+    // ───────────────────────────────────────────────────────────────────────
+    const enPruebas = falloDeComercio("Algo salió mal", "prueba");
+    esperar(enPruebas.includes("Algo salió mal")).verdadero("se pierde lo que dijo el banco");
+    esperar(/PRUEBAS/.test(enPruebas)).verdadero("no se avisa del entorno, que es la causa más común");
+
+    // En producción no se inventa una explicación que no toca.
+    esperar(falloDeComercio("Algo salió mal", "produccion")).igual("Algo salió mal");
+  });
+
+  test("un rechazo sin mensaje del banco no deja al negocio en blanco", () => {
+    esperar(falloDeComercio("", "produccion").length > 10).verdadero();
   });
 
   test("EL DOMINIO NUNCA SE QUEDA VACÍO", () => {

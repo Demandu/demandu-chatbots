@@ -226,6 +226,26 @@ async function llamar(url: string, opciones: RequestInit): Promise<Respuesta> {
 }
 
 /**
+ * Lo que se le enseña al negocio cuando Yappy rechaza el comercio.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL BANCO CONTESTA «Algo salió mal» Y SE QUEDA TAN ANCHO. Ese mensaje no le
+ * sirve a nadie: no dice si el número está mal, si el dominio no coincide o si
+ * las llaves son de otro entorno.
+ *
+ * La causa de lejos más común es esta última —llaves normales contra el entorno
+ * de pruebas— y el sistema SÍ sabe en cuál está. Callárselo y repetir el
+ * mensaje del banco es dejar que el negocio pruebe a ciegas lo que nosotros ya
+ * podemos deducir.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function falloDeComercio(mensajeDelBanco: string, ambiente: Ambiente): string {
+  const base = String(mensajeDelBanco ?? "").trim() || "Yappy no aceptó los datos del comercio.";
+  if (ambiente !== "prueba") return base;
+  return `${base} · Estás en el entorno de PRUEBAS: las llaves que da el panel de Yappy son de producción y aquí no valen. Cambia el entorno a Producción.`;
+}
+
+/**
  * Paso 1: identificarse. Es también LA PRUEBA DE QUE LA CONFIGURACIÓN SIRVE
  * —número de comercio, secreto y dominio— sin mover un centavo de nadie.
  */
@@ -243,7 +263,7 @@ export async function validarComercio(
       return {
         ok: false,
         token: "",
-        mensaje: r?.status?.description || "Yappy no aceptó los datos del comercio.",
+        mensaje: falloDeComercio(r?.status?.description ?? "", c.ambiente),
       };
     }
     return { ok: true, token, mensaje: "" };
