@@ -3530,4 +3530,135 @@ describe("Tienda: las medidas de las imágenes", () => {
   });
 });
 
+describe("Los pedidos alimentan el embudo", () => {
+  const mig = sinComentarios(
+    fs.readFileSync(path.join(RAIZ, "supabase/migrations/0079_pedidos_al_embudo.sql"), "utf8"),
+  );
+
+  test("DE CENTAVOS A UNIDADES, o el reporte de ventas se multiplica por cien", () => {
+    // El pedido guarda 1763 y el embudo muestra 17.63. Los dos números son
+    // correctos en su sitio; confundirlos es el error más caro posible en una
+    // pantalla que el dueño usa para decidir.
+    esperar(/\/\s*100/.test(mig)).verdadero("el importe no se convierte de centavos");
+  });
+
+  test("SE RECALCULA ENTERO, no se va sumando", () => {
+    // Ir sumando obliga a acordarse de restar. Una resta olvidada —un pedido
+    // cancelado, uno editado— deja el embudo inflado para siempre y nadie lo
+    // nota, porque el número sigue pareciendo razonable.
+    esperar(/sum\(pe\.total\)/.test(mig)).verdadero("no se recalcula la suma de los pedidos");
+    esperar(/estado <> 'cancelado'/.test(mig)).verdadero("los pedidos cancelados suman");
+  });
+
+  test("UN PAGO SOLO GANA EN EL INSTANTE EN QUE OCURRE", () => {
+    // Sin esto, cualquier cambio posterior sobre un pedido ya pagado volvería
+    // a arrastrar la tarjeta a Ganada — incluso después de que el dueño la
+    // hubiera reabierto a propósito. Un tablero que no obedece.
+    esperar(/old\.pago is distinct from new\.pago/.test(mig)).verdadero(
+      "se mira el estado del pago a secas: la tarjeta se cerrará sola una y otra vez",
+    );
+    esperar(/v_status = 'abierta'/.test(mig)).verdadero(
+      "una tarjeta ya cerrada se puede volver a mover: es una decisión tomada",
+    );
+  });
+
+  test("UN PEDIDO CANCELADO NO PIERDE LA OPORTUNIDAD", () => {
+    // Un enlace de pago vencido se vuelve a pedir casi siempre. Marcar
+    // «perdida» por eso llenaría el embudo de derrotas que no ocurrieron.
+    // Se mira el CÓDIGO, no el texto: `sinComentarios` no quita los «--» de
+    // SQL, así que buscar la palabra suelta encontraría el comentario que
+    // explica justamente por qué no se hace.
+    esperar(/outcome\s*=\s*'perdido'/.test(mig)).falso(
+      "la migración busca la etapa de perdida: un enlace vencido no es una derrota",
+    );
+    esperar(/status\s*(:)?=\s*'perdida'/.test(mig)).falso(
+      "la migración marca oportunidades como perdidas",
+    );
+  });
+
+  test("los dos interruptores existen y vienen encendidos", () => {
+    // Encendidos de fábrica porque quien vende por tienda quiere las dos
+    // cosas; apagables porque en venta consultiva un pedido de $17 no puede
+    // pisar un pronóstico de $5.000.
+    for (const c of ["pedidos_suman", "pedido_pagado_gana"]) {
+      esperar(new RegExp(`${c} boolean not null default true`).test(mig)).verdadero(
+        `falta el interruptor ${c}`,
+      );
+      esperar(mig.includes(`coalesce(p.${c}, true)`)).verdadero(
+        `${c} no se respeta en el disparador`,
+      );
+    }
+
+    // Y se pueden tocar desde la pantalla, o no sirven de nada.
+    const pantalla = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/settings/states/page.tsx"), "utf8"),
+    );
+    const accion = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/settings/actions.ts"), "utf8"),
+    );
+    for (const c of ["pedidos_suman", "pedido_pagado_gana"]) {
+      esperar(pantalla.includes(`name="${c}"`)).verdadero(`${c} no se puede ver en Configuración`);
+      esperar(accion.includes(`${c}:`)).verdadero(`${c} no se guarda`);
+    }
+  });
+
+  test("la regla vive en la BASE, no en el panel", () => {
+    // El pago lo confirma una ruta pública (el aviso de Yappy) y el estado lo
+    // cambia otra pantalla. Escrita en cada una, un día dejan de coincidir.
+    esperar(/create trigger pedidos_al_embudo/.test(mig)).verdadero("no hay disparador");
+    const rutaIpn = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/api/tienda/yappy/ipn/route.ts"), "utf8"),
+    );
+    esperar(/opportunit/i.test(rutaIpn)).falso(
+      "el aviso de pago toca el embudo por su cuenta: esa regla tiene que estar en un solo sitio",
+    );
+  });
+});
+
+describe("La tienda tiene UN solo botón que gana", () => {
+  const esc = fs.readFileSync(path.join(SRC, "components/tienda/Escaparate.tsx"), "utf8");
+  const limpio = sinComentarios(esc);
+
+  test("ARRIBA DEL CATÁLOGO NO HAY ATAJO A WHATSAPP", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Se quitó después de verlo pasar: había un botón verde grande «Escribir» y
+    // un globo flotando sobre el carrito, y la gente los pulsaba para HACER EL
+    // PEDIDO. Escribían «hola quiero croquetas», el carrito se quedaba vacío y
+    // el negocio volvía a tomar nota a mano — justo de lo que veníamos huyendo.
+    //
+    // Un atajo a WhatsApp compite con el catálogo y gana él, por más grande y
+    // más familiar. El WhatsApp de consultas vive en el pie, después de todo.
+    // ─────────────────────────────────────────────────────────────────────────
+    const pie = limpio.indexOf("Consultas al");
+    esperar(pie > 0).verdadero("cambió el pie, revisa esta prueba");
+
+    // Se miran los ENLACES, no la variable: declararla arriba es normal, usarla
+    // arriba es el problema.
+    const usos = [...limpio.matchAll(/href=\{waConsultas\}/g)].map((m) => m.index ?? 0);
+    esperar(usos.length).igual(1, "hay más de un atajo a WhatsApp en la tienda");
+    esperar(usos[0] > pie).verdadero(
+      "hay un atajo a WhatsApp antes del pie: va a competir con el carrito y va a ganar",
+    );
+    esperar(/fixed[^"']*bottom-24/.test(limpio)).falso(
+      "volvió el globo flotante de WhatsApp encima del carrito",
+    );
+  });
+
+  test("el logo se pinta POR DELANTE de la portada", () => {
+    // La portada está posicionada y el logo no lo estaba, así que el navegador
+    // la pintaba encima: el logo salía cortado por arriba como una placa. Se
+    // veía roto y no había ningún error en ninguna parte.
+    esperar(/relative z-10 -mt-/.test(limpio)).verdadero(
+      "el logo no se declara por delante de la portada: va a salir cortado",
+    );
+  });
+
+  test("el icono de Instagram se dibuja aquí, no se trae de fuera", () => {
+    // Una tienda que carga el icono desde otro servidor depende de ese servidor
+    // para verse bien, y le cuenta a Meta quién visita la tienda de su cliente.
+    esperar(limpio.includes("function IconoInstagram")).verdadero("falta el icono de Instagram");
+    esperar(/<img[^>]*instagram/i.test(limpio)).falso("el icono de Instagram viene de fuera");
+  });
+});
+
 process.exit(await correrPruebas());

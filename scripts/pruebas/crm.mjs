@@ -192,4 +192,34 @@ describe("Embudo: agendar el próximo paso", () => {
   });
 });
 
+describe("El embudo cuenta la plata de los pedidos", () => {
+  test("UN PEDIDO DE $17,63 NO SE MUESTRA COMO $18", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // El importe ahora sale de los pedidos de la tienda. Un número que no
+    // cuadra con el que el dueño ve en su tablero de pedidos le hace
+    // desconfiar de los dos, y una cifra en la que no se confía deja de
+    // mirarse — que es perder el embudo entero por un redondeo.
+    // ───────────────────────────────────────────────────────────────────────
+    esperar(/17[.,]63/.test(dinero(17.63))).verdadero(`salió ${dinero(17.63)}`);
+    // Y un importe redondo NO se llena de ceros: «$2.00» en una tarjeta se lee
+    // peor que «$2» y no aporta nada.
+    esperar(/2[.,]00/.test(dinero(2))).falso(`salió ${dinero(2)}`);
+  });
+
+  test("una suma grande sigue sin centavos", () => {
+    // Arriba de mil ya no hablamos de un pedido sino de una suma, y ahí los
+    // centavos son ruido que estorba en la cabecera del tablero.
+    esperar(/1[.,]250/.test(dinero(1250.4, "USD"))).verdadero();
+    esperar(/[.,]40/.test(dinero(1250.4, "USD"))).falso("los centavos estorban en una suma");
+  });
+
+  test("sin importe no se pinta un «$0» falso", () => {
+    // Una tarjeta sin monto y una de cero no son lo mismo: la primera es que
+    // todavía no se sabe.
+    esperar(dinero(null)).igual("");
+    esperar(dinero(undefined)).igual("");
+    esperar(dinero(0) === "").falso("cero es un dato, no una ausencia");
+  });
+});
+
 process.exit(await correrPruebas());

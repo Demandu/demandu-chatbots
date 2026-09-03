@@ -86,6 +86,26 @@ export default async function EmbudosPage() {
                   <input type="checkbox" name="auto_create" defaultChecked={p.auto_create} className="accent-violet" />
                   Crear tarjetas solo
                 </label>
+                {/* ── LO QUE ATA LA TIENDA CON EL EMBUDO ──────────────────
+                    Encendidos de fábrica: quien vende por tienda quiere las
+                    dos cosas, y pedirle que las active es pedirle que adivine
+                    que existen. Se apagan en la venta consultiva, donde el
+                    importe es una previsión y un pedido de $17 no puede pisar
+                    un pronóstico de $5.000. */}
+                <label
+                  className="flex items-center gap-1.5 text-xs text-ink-2"
+                  title="El importe de cada tarjeta se calcula sumando los pedidos de ese cliente, en vez de escribirlo a mano"
+                >
+                  <input type="checkbox" name="pedidos_suman" defaultChecked={p.pedidos_suman} className="accent-violet" />
+                  El monto sale de los pedidos
+                </label>
+                <label
+                  className="flex items-center gap-1.5 text-xs text-ink-2"
+                  title="Cuando el banco confirma el pago, la tarjeta se mueve sola a la etapa de ganada"
+                >
+                  <input type="checkbox" name="pedido_pagado_gana" defaultChecked={p.pedido_pagado_gana} className="accent-violet" />
+                  Un pago la mueve a Ganada
+                </label>
                 <button className="btn-soft px-3 py-1.5 text-xs">Guardar</button>
               </form>
               {embudos.length > 1 && (

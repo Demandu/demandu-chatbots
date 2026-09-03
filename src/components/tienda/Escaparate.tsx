@@ -271,10 +271,10 @@ export function Escaparate({
           fondo de la tienda y con su aro, se ve como una foto de perfil. */}
       <header>
         <div
-          className="relative w-full overflow-hidden"
+          className="w-full overflow-hidden"
           style={{
             aspectRatio: proporcionDe("portada"),
-            maxHeight: 260,
+            maxHeight: 200,
             // SIN PORTADA NO SE VE UN HUECO BLANCO: la banda se pinta con los
             // colores del negocio. Una tienda recién creada tiene que verse
             // terminada antes de que nadie suba nada.
@@ -288,10 +288,17 @@ export function Escaparate({
         </div>
 
         <div className="mx-auto max-w-4xl px-4">
-          <div className="-mt-12 flex items-end gap-3 sm:-mt-14">
+          {/* ── EL LOGO VA POR DELANTE DE LA PORTADA ──────────────────────
+              Y hay que decírselo. La portada es un elemento posicionado y esto
+              no lo era, así que el navegador la pintaba encima: el logo salía
+              cortado por arriba, como una placa. Se veía roto y no había
+              ningún error en ninguna parte. */}
+          <div className="relative z-10 -mt-11 flex items-end gap-3 sm:-mt-12">
             <span
-              className="grid h-24 w-24 flex-none place-items-center overflow-hidden rounded-full sm:h-28 sm:w-28"
+              className="grid h-22 w-22 flex-none place-items-center overflow-hidden rounded-full sm:h-24 sm:w-24"
               style={{
+                height: 88,
+                width: 88,
                 backgroundColor: c.fondo,
                 // El aro del color del fondo es lo que despega la foto de la
                 // portada, igual que en Instagram.
@@ -316,17 +323,17 @@ export function Escaparate({
 
             {/* Las cifras, como las de un perfil. No son vanidad: dicen de un
                 vistazo si esta tienda tiene tres cosas o tiene cien. */}
-            <div className="flex flex-1 justify-around pb-2 text-center">
+            <div className="flex flex-1 items-baseline justify-end gap-6 pb-2 pr-1 text-center">
               <span className="leading-tight">
-                <b className="block text-lg font-bold">{productos.length}</b>
-                <span className="text-xs opacity-60">
+                <b className="block text-base font-bold">{productos.length}</b>
+                <span className="text-[11px] opacity-55">
                   {productos.length === 1 ? "producto" : "productos"}
                 </span>
               </span>
               {cuantasCategorias > 0 && (
                 <span className="leading-tight">
-                  <b className="block text-lg font-bold">{cuantasCategorias}</b>
-                  <span className="text-xs opacity-60">
+                  <b className="block text-base font-bold">{cuantasCategorias}</b>
+                  <span className="text-[11px] opacity-55">
                     {cuantasCategorias === 1 ? "categoría" : "categorías"}
                   </span>
                 </span>
@@ -334,45 +341,44 @@ export function Escaparate({
             </div>
           </div>
 
-          <div className="mt-3">
-            <p className="text-lg font-bold leading-tight sm:text-xl">{config.titulo}</p>
-            {config.contacto.horario && (
-              <p className="mt-0.5 text-sm opacity-70">{config.contacto.horario}</p>
-            )}
-            {config.contacto.direccion && (
-              <p className="text-sm opacity-70">{config.contacto.direccion}</p>
-            )}
-          </div>
-
-          {/* Los botones del perfil. El de WhatsApp también está flotando abajo,
-              y aun así va aquí: el flotante se descubre a los diez segundos y
-              este se ve en el primero. */}
-          {(waConsultas || instagramTienda) && (
-            <div className="mt-3 flex gap-2">
-              {waConsultas && (
-                <a
-                  href={waConsultas}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white"
-                  style={{ backgroundColor: c.whatsapp }}
-                >
-                  <IconoWhatsapp className="h-4 w-4" /> Escribir
-                </a>
+          <div className="mt-2.5 flex items-start gap-2 pb-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-lg font-bold leading-tight sm:text-xl">{config.titulo}</p>
+              {config.contacto.horario && (
+                <p className="mt-0.5 text-sm opacity-70">{config.contacto.horario}</p>
               )}
-              {instagramTienda && (
-                <a
-                  href={instagramTienda}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold"
-                  style={{ border: "1px solid rgba(0,0,0,.15)" }}
-                >
-                  Instagram
-                </a>
+              {config.contacto.direccion && (
+                <p className="text-sm opacity-70">{config.contacto.direccion}</p>
               )}
             </div>
-          )}
+
+            {/* ── NI BOTÓN DE ESCRIBIR NI GLOBO FLOTANTE ────────────────────
+                Los quitamos después de verlo: la gente pulsaba el botón verde
+                grande para HACER EL PEDIDO, escribía «hola quiero croquetas» y
+                el carrito se quedaba vacío. Un atajo a WhatsApp arriba del
+                catálogo compite con el catálogo, y gana él por ser más grande
+                y más familiar — así se pierde el pedido y el negocio vuelve a
+                tomar nota a mano, que es justo de lo que veníamos huyendo.
+
+                Instagram SÍ se queda, y pequeño: no compite con comprar
+                —lleva a otra aplicación— y es de donde viene casi toda la
+                gente que llega aquí. */}
+            {instagramTienda && (
+              <a
+                href={instagramTienda}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Ver el Instagram del negocio"
+                className="grid h-10 w-10 flex-none place-items-center rounded-xl text-white shadow-sm transition hover:opacity-90"
+                style={{
+                  background:
+                    "radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%, #d6249f 60%, #285AEB 90%)",
+                }}
+              >
+                <IconoInstagram className="h-5 w-5" />
+              </a>
+            )}
+          </div>
         </div>
       </header>
 
@@ -560,20 +566,11 @@ export function Escaparate({
         )}
       </nav>
 
-      {/* El botón flotante de WhatsApp, que en la tienda de siempre es por donde
-          entra la mitad de las consultas. */}
-      {waConsultas && !abierto && !verCarrito && (
-        <a
-          href={waConsultas}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="fixed bottom-24 right-4 z-30 grid h-14 w-14 place-items-center rounded-full shadow-lg"
-          style={{ backgroundColor: c.whatsapp }}
-          aria-label="Escribir por WhatsApp"
-        >
-          <IconoWhatsapp className="h-8 w-8" />
-        </a>
-      )}
+      {/* AQUÍ HABÍA UN GLOBO DE WHATSAPP FLOTANDO, y se quitó a propósito.
+          Estaba justo encima del carrito y la gente lo pulsaba para hacer el
+          pedido: escribían «hola quiero croquetas» y el carrito se quedaba
+          vacío. Competía con el único botón que tiene que ganar en esta
+          pantalla. Para consultas está el WhatsApp del pie. */}
 
       {abierto && (
         <FichaProducto
@@ -692,6 +689,23 @@ function IconoWhatsapp({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="#fff" className={className} aria-hidden="true">
       <path d="M17.47 14.38c-.3-.15-1.75-.86-2.02-.96-.27-.1-.47-.15-.67.15-.2.3-.77.96-.94 1.16-.17.2-.35.22-.64.07-.3-.15-1.25-.46-2.38-1.47-.88-.78-1.47-1.75-1.64-2.05-.17-.3-.02-.46.13-.6.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.6-.92-2.2-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.01-1.04 2.47s1.06 2.86 1.21 3.06c.15.2 2.1 3.2 5.08 4.49.71.3 1.26.49 1.69.63.71.22 1.36.19 1.87.12.57-.09 1.75-.72 2-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35zM12.04 2c-5.5 0-9.96 4.46-9.96 9.96 0 1.76.46 3.42 1.27 4.86L2 22l5.32-1.39a9.9 9.9 0 0 0 4.72 1.2h.01c5.5 0 9.96-4.46 9.96-9.96S17.54 2 12.04 2zm0 18.02h-.01a8.2 8.2 0 0 1-4.18-1.15l-.3-.18-3.16.83.84-3.08-.2-.32a8.18 8.18 0 0 1-1.25-4.36c0-4.54 3.7-8.24 8.25-8.24 2.2 0 4.27.86 5.83 2.42a8.19 8.19 0 0 1 2.41 5.83c0 4.54-3.7 8.25-8.23 8.25z" />
+    </svg>
+  );
+}
+
+/**
+ * El logotipo de Instagram, dibujado y no traído de fuera.
+ *
+ * Una tienda que carga un icono desde otro servidor depende de ese servidor
+ * para verse bien, y le cuenta a Meta quién visita la tienda de su cliente.
+ * Son treinta bytes de SVG.
+ */
+function IconoInstagram({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="4.2" stroke="currentColor" strokeWidth="2" />
+      <circle cx="17.4" cy="6.6" r="1.3" fill="currentColor" />
     </svg>
   );
 }

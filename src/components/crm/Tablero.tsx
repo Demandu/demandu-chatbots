@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Search, MoveRight, MessageSquare, AlertTriangle, CalendarClock,
-  RefreshCw, Loader2, X,
+  RefreshCw, Loader2, X, ShoppingBag,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { bandera } from "@/lib/phoneCountry";
@@ -47,6 +47,59 @@ export function Tablero({
 
   const arrastrando = useRef<string | null>(null);
   const [indicador, setIndicador] = useState<{ col: string; idx: number } | null>(null);
+
+  /**
+   * El último pedido de cada contacto, para poder saltar a él desde la tarjeta.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * SE PIDE APARTE Y NO DENTRO DE `crm_board`. El tablero es la consulta más
+   * cara de la plataforma —seis columnas con sus tarjetas, tareas y últimas
+   * conversaciones— y meterle otro `join` la encarece para todos, incluidos los
+   * clientes que no tienen tienda. Esto son unas decenas de filas y llega un
+   * instante después: la tarjeta se pinta igual sin ello.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [pedidos, setPedidos] = useState<Record<string, PedidoDeTarjeta>>({});
+
+  useEffect(() => {
+    const ids = [
+      ...new Set(
+        (tablero.columnas ?? [])
+          .flatMap((c) => c.tarjetas ?? [])
+          .map((t) => t.contact_id)
+          .filter((x): x is string => Boolean(x)),
+      ),
+    ];
+    if (!ids.length) {
+      setPedidos({});
+      return;
+    }
+
+    let vivo = true;
+    sb.from("pedidos")
+      .select("numero,tienda_id,contacto_id,estado,created_at")
+      .in("contacto_id", ids)
+      .neq("estado", "cancelado")
+      .order("created_at", { ascending: false })
+      .limit(400)
+      .then(({ data }) => {
+        if (!vivo) return;
+        const mapa: Record<string, PedidoDeTarjeta> = {};
+        for (const fila of (data ?? []) as Record<string, unknown>[]) {
+          const cid = String(fila.contacto_id ?? "");
+          // Vienen del más nuevo al más viejo: el primero de cada contacto es
+          // el suyo, y los siguientes no lo pisan.
+          if (cid && !mapa[cid]) {
+            mapa[cid] = { numero: Number(fila.numero), tienda_id: String(fila.tienda_id) };
+          }
+        }
+        setPedidos(mapa);
+      });
+
+    return () => {
+      vivo = false;
+    };
+  }, [tablero, sb]);
   const debounce = useRef<any>(null);
 
   // Next guarda la respuesta del servidor unos segundos: al ir a la Bandeja y
@@ -217,6 +270,7 @@ export function Tablero({
                 columna={c}
                 columnas={columnas}
                 indicador={indicador?.col === c.id ? indicador.idx : null}
+                pedidos={pedidos}
                 onSobre={(idx) => setIndicador({ col: c.id, idx })}
                 onSalir={() => setIndicador((i) => (i?.col === c.id ? null : i))}
                 onSoltar={(idx) => {
@@ -254,12 +308,16 @@ export function Tablero({
 
 // ─── Columna ────────────────────────────────────────────────────────────────
 
+/** Lo justo para pintar el enlace: el número que se lee y a qué tienda ir. */
+type PedidoDeTarjeta = { numero: number; tienda_id: string };
+
 function ColumnaTablero({
-  columna, columnas, indicador, onSobre, onSalir, onSoltar, onArrastrar, onAbrir, onMoverA,
+  columna, columnas, indicador, pedidos, onSobre, onSalir, onSoltar, onArrastrar, onAbrir, onMoverA,
 }: {
   columna: Columna;
   columnas: Columna[];
   indicador: number | null;
+  pedidos: Record<string, PedidoDeTarjeta>;
   onSobre: (idx: number) => void;
   onSalir: () => void;
   onSoltar: (idx: number) => void;
@@ -306,6 +364,7 @@ function ColumnaTablero({
             {indicador === i && <Guia />}
             <TarjetaCrm
               tarjeta={t}
+              pedido={t.contact_id ? pedidos[t.contact_id] : undefined}
               columnas={columnas}
               columnaActual={columna.id}
               onArrastrar={onArrastrar}
@@ -339,9 +398,10 @@ function Guia() {
 // ─── Tarjeta ────────────────────────────────────────────────────────────────
 
 function TarjetaCrm({
-  tarjeta: t, columnas, columnaActual, onArrastrar, onSobre, onAbrir, onMoverA,
+  tarjeta: t, pedido, columnas, columnaActual, onArrastrar, onSobre, onAbrir, onMoverA,
 }: {
   tarjeta: Tarjeta;
+  pedido?: PedidoDeTarjeta;
   columnas: Columna[];
   columnaActual: string;
   onArrastrar: (id: string) => void;
@@ -416,6 +476,21 @@ function TarjetaCrm({
             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-ink-2 transition hover:bg-suave hover:text-ink"
           >
             <MessageSquare className="h-3 w-3" /> Abrir chat
+          </Link>
+        )}
+
+        {/* ── Y al pedido ────────────────────────────────────────────────
+            LA TARJETA YA DICE CUÁNTO VALE ESTE CLIENTE; esto dice de dónde
+            sale ese número. Sin el enlace, el dueño ve un importe que él no
+            escribió y no tiene forma de comprobarlo — y un número que no se
+            puede comprobar deja de mirarse. */}
+        {pedido && (
+          <Link
+            href={`/tienda/${pedido.tienda_id}?t=pedidos#pedido-${pedido.numero}`}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-ink-2 transition hover:bg-suave hover:text-ink"
+            title="Ver este pedido en la tienda"
+          >
+            <ShoppingBag className="h-3 w-3" /> #{pedido.numero}
           </Link>
         )}
         <div className="relative ml-auto">

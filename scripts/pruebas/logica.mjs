@@ -2628,8 +2628,8 @@ describe("Tienda: las medidas de las imágenes", () => {
   });
 
   test("la proporción sale en el formato que entiende CSS", () => {
-    esperar(proporcionDe("banner")).igual("3 / 1");
-    esperar(proporcionDe("portada")).igual("3 / 1");
+    esperar(proporcionDe("banner")).igual("4 / 1");
+    esperar(proporcionDe("portada")).igual("4 / 1");
     esperar(proporcionDe("logo")).igual("1 / 1");
     esperar(proporcionDe("producto")).igual("1 / 1");
   });
@@ -2642,7 +2642,7 @@ describe("Tienda: las medidas de las imágenes", () => {
       esperar(texto.includes(comoMedida(m))).verdadero(`falta la medida de ${m.clave}`);
       esperar(texto.includes(m.titulo)).verdadero(`falta ${m.titulo}`);
     }
-    esperar(/3 a 1/.test(texto)).verdadero("no dice el resumen de las proporciones");
+    esperar(/4 a 1/.test(texto)).verdadero("no dice el resumen de las proporciones");
   });
 });
 

@@ -66,15 +66,32 @@ export function tableroVacio(): Tablero {
 
 // ─── Cómo se lee una tarjeta ────────────────────────────────────────────────
 
-/** Importe en dinero. Sin valor devuelve cadena vacía: no se pinta un "$0" falso. */
+/**
+ * Un importe del embudo. Sin valor devuelve cadena vacía: no se pinta un «$0»
+ * falso.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LOS CENTAVOS APARECEN CUANDO IMPORTAN. Redondear siempre venía de pensar el
+ * embudo como ventas grandes: en «$1.250.000» los centavos son ruido. Pero
+ * ahora el importe sale de los pedidos de la tienda, y ahí un pedido de $17,63
+ * se mostraba como «$18». Un número que no cuadra con el que el dueño ve en su
+ * tablero de pedidos le hace desconfiar de los dos.
+ *
+ * El corte en mil es arbitrario y da igual que lo sea: por debajo estamos
+ * hablando de un pedido concreto y por encima de una suma.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export function dinero(v: number | null | undefined, moneda = "MXN"): string {
   if (v === null || v === undefined || !Number.isFinite(Number(v))) return "";
+  const n = Number(v);
+  const decimales = Math.abs(n) < 1000 && !Number.isInteger(n) ? 2 : 0;
   try {
     return new Intl.NumberFormat("es-MX", {
-      style: "currency", currency: moneda || "MXN", maximumFractionDigits: 0,
-    }).format(Number(v));
+      style: "currency", currency: moneda || "MXN",
+      minimumFractionDigits: decimales, maximumFractionDigits: decimales,
+    }).format(n);
   } catch {
-    return `$${Math.round(Number(v)).toLocaleString("es-MX")}`;
+    return `$${(decimales ? n.toFixed(2) : String(Math.round(n))).toLocaleString?.() ?? n}`;
   }
 }
 

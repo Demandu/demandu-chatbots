@@ -298,7 +298,15 @@ export async function updatePipeline(formData: FormData) {
   }
   await sb
     .from("pipelines")
-    .update({ name, auto_create: formData.get("auto_create") === "on", is_default: porDefecto })
+    .update({
+      name,
+      auto_create: formData.get("auto_create") === "on",
+      // Van con el resto del formulario: son del embudo, no de la tienda. Un
+      // negocio con dos embudos puede querer que solo uno cuente pedidos.
+      pedidos_suman: formData.get("pedidos_suman") === "on",
+      pedido_pagado_gana: formData.get("pedido_pagado_gana") === "on",
+      is_default: porDefecto,
+    })
     .eq("id", id);
   revalidatePath("/settings/states");
   revalidatePath("/crm");

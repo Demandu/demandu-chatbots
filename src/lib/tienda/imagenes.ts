@@ -8,9 +8,9 @@
  * alguien cambie el diseño la ayuda seguirá diciendo lo de antes — y el cliente
  * mandará una imagen que se ve cortada haciendo exactamente lo que le pedimos.
  *
- * DOS PROPORCIONES Y NADA MÁS: cuadrado, o 3 a 1. No es una limitación técnica,
+ * DOS PROPORCIONES Y NADA MÁS: cuadrado, o 4 a 1. No es una limitación técnica,
  * es que la instrucción tiene que caber en un mensaje de WhatsApp. «Todo
- * cuadrado, menos la portada y los banners que son 3 a 1» se sigue; una tabla
+ * cuadrado, menos la portada y los banners que son 4 a 1» se sigue; una tabla
  * de cinco medidas distintas no la sigue nadie, y acabamos recibiendo cinco
  * fotos mal cortadas.
  *
@@ -32,10 +32,13 @@ export type MedidaImagen = {
   recorte: string;
 };
 
-/** La proporción de cada forma, como la escribe CSS: «3 / 1». */
+/** La proporción de cada forma, como la escribe CSS: «4 / 1». */
 export const PROPORCION: Record<FormaImagen, string> = {
   cuadrada: "1 / 1",
-  ancha: "3 / 1",
+  // CUATRO A UNO Y NO TRES: con 3:1 la portada se comía media pantalla del
+  // teléfono y empujaba el catálogo fuera de la vista. Una tienda es un
+  // catálogo con una portada, no una portada con un catálogo debajo.
+  ancha: "4 / 1",
 };
 
 export const MEDIDAS: MedidaImagen[] = [
@@ -54,16 +57,16 @@ export const MEDIDAS: MedidaImagen[] = [
     titulo: "Portada",
     forma: "ancha",
     ancho: 1200,
-    alto: 400,
+    alto: 300,
     recorte:
-      "Se recorta al centro y el logo tapa la esquina de abajo a la izquierda: pon lo importante arriba y al centro.",
+      "Se recorta al centro y el logo se apoya abajo a la izquierda: pon lo importante arriba y al centro.",
   },
   {
     clave: "banner",
     titulo: "Banners",
     forma: "ancha",
     ancho: 1200,
-    alto: 400,
+    alto: 300,
     recorte: "Se ven enteros. El texto que lleven dentro, grande: se leen en un teléfono.",
   },
   {
@@ -87,7 +90,7 @@ export const MEDIDAS: MedidaImagen[] = [
   },
 ];
 
-/** «1200 × 400 px», para ponerlo en una etiqueta. */
+/** «1200 × 300 px», para ponerlo en una etiqueta. */
 export function comoMedida(m: MedidaImagen): string {
   return `${m.ancho} × ${m.alto} px`;
 }
@@ -118,7 +121,7 @@ export function instruccionesDeImagenes(): string {
     "",
     ...MEDIDAS.map(linea),
     "",
-    "En resumen: todo cuadrado, menos la portada y los banners que son 3 a 1 (el triple de anchos que de altos).",
+    "En resumen: todo cuadrado, menos la portada y los banners que son 4 a 1 (cuatro veces más anchos que altos).",
     "Formato JPG o PNG, menos de 1 MB cada una.",
   ].join("\n");
 }
