@@ -11,6 +11,7 @@ import { EditorDiseno } from "@/components/tienda/EditorDiseno";
 import { Cobros } from "@/components/tienda/Cobros";
 import { Direccion } from "@/components/tienda/Direccion";
 import { EncargadoDePedidos } from "@/components/tienda/EncargadoDePedidos";
+import { AvisosAlCliente } from "@/components/tienda/AvisosAlCliente";
 import { Pedidos, type PedidoEnLista } from "@/components/tienda/Pedidos";
 import {
   guardarDiseno,
@@ -21,6 +22,7 @@ import {
   probarYappy,
   cambiarDireccion,
   cambiarEncargado,
+  guardarAvisos,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -195,6 +197,16 @@ export default async function TiendaDetallePage({
               atiendeId={(tienda as any).atiende_id ?? null}
               equipo={(equipo ?? []) as { id: string; name: string | null; available: boolean }[]}
               accion={cambiarEncargado}
+            />
+          )}
+
+          {activa === "pedidos" && (
+            <AvisosAlCliente
+              tiendaId={params.id}
+              avisos={config.avisos}
+              moneda={config.moneda}
+              tienda={config.titulo || tienda.nombre}
+              accion={guardarAvisos}
             />
           )}
 

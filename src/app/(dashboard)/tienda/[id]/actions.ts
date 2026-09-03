@@ -7,10 +7,18 @@ import { aCentavos, sanearGrupos } from "@/lib/tienda/variedades";
 import { leerConfig, sanearPreguntas, soloDigitos, type ConfigTienda } from "@/lib/tienda/config";
 import { DOMINIO_TIENDAS, aDireccion, direccionValida, enlaceLegible } from "@/lib/tienda/direccion";
 import { esAmbiente, validarComercio } from "@/lib/tienda/yappy";
+import { avisarDelPedido } from "@/lib/tienda/avisar";
+import { momentoDelEstado, sanearAvisos, MOMENTOS, MAX_AVISO } from "@/lib/tienda/avisos";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 
-export type Estado = { ok: boolean; mensaje: string };
+/**
+ * `tono: "aviso"` es la tercera respuesta que faltaba: LO QUE PEDISTE SE HIZO,
+ * PERO ALGO DE ALREDEDOR NO. El pedido se movió y el cliente no recibió el
+ * mensaje. Pintarlo en verde sería mentir y en rojo también —el negocio
+ * volvería a arrastrar la tarjeta creyendo que no se guardó.
+ */
+export type Estado = { ok: boolean; mensaje: string; tono?: "aviso" };
 
 /**
  * Comprueba que la tienda es de quien dice serlo.
@@ -452,6 +460,19 @@ export async function cambiarEstadoPedido(_e: Estado, fd: FormData): Promise<Est
 
   const sb = createClient();
 
+  // EL ESTADO DE ANTES SE MIRA PRIMERO, y no por curiosidad: arrastrar una
+  // tarjeta al sitio donde ya estaba no es un cambio, y no puede volver a
+  // avisar al cliente ni ensuciar la bitácora.
+  const { data: antes } = await sb
+    .from("pedidos")
+    .select("estado")
+    .eq("id", pedidoId)
+    .eq("tienda_id", tiendaId)
+    .maybeSingle();
+
+  if (!antes) return { ok: false, mensaje: "Ese pedido no es de esta tienda." };
+  if (antes.estado === estado) return { ok: true, mensaje: "" };
+
   // Acotado a la tienda además de por id: un id de otra tienda no puede mover
   // el pedido de otro cliente.
   const { error } = await sb
@@ -466,10 +487,81 @@ export async function cambiarEstadoPedido(_e: Estado, fd: FormData): Promise<Est
     pedido_id: pedidoId,
     que: `estado:${estado}`,
     quien: "panel",
+    detalle: { antes: antes.estado },
   });
 
   revalidatePath(`/tienda/${tiendaId}`);
-  return { ok: true, mensaje: "" };
+
+  // ── Y el cliente se entera ────────────────────────────────────────────────
+  //
+  // DESPUÉS DE GUARDAR Y DESPUÉS DE REVALIDAR, a propósito. El pedido ya está
+  // movido: si el aviso falla —Meta caído, token caducado, fuera de las 24 h—
+  // el negocio conserva su cambio y solo lee por qué el cliente no recibió
+  // nada. Al revés, un fallo de WhatsApp bloquearía el tablero.
+  const momento = momentoDelEstado(estado);
+  if (!momento) return { ok: true, mensaje: "" };
+
+  const aviso = await avisarDelPedido(sb, pedidoId, momento);
+  if (aviso.enviado) return { ok: true, mensaje: "Listo. Le avisamos al cliente por WhatsApp." };
+
+  // Sin motivo = el aviso estaba apagado o ya se había mandado. No es un fallo
+  // y no hay nada que contarle a nadie.
+  return aviso.motivo
+    ? { ok: true, tono: "aviso", mensaje: `Movido, pero el cliente no recibió el aviso: ${aviso.motivo}` }
+    : { ok: true, mensaje: "" };
+}
+
+/**
+ * Los textos que recibe el cliente en cada paso.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SE GUARDAN DENTRO DE `config` Y SE MEZCLAN CON LO QUE YA HABÍA. Escribir la
+ * configuración entera desde este formulario borraría los colores y las
+ * preguntas, que se editan en otra pantalla: el negocio guardaría un texto y se
+ * le quedaría la tienda en blanco.
+ *
+ * UN TEXTO VACÍO NO APAGA NADA. Apagar es la casilla; dejar el texto en blanco
+ * devuelve el de fábrica. Si un campo vacío significara silencio, cualquiera lo
+ * borraría sin querer y el cliente dejaría de recibir avisos sin que nadie
+ * pudiera ver por qué.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function guardarAvisos(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  const previa = leerConfig(t.config);
+
+  const momentos: Record<string, { activo: boolean; texto: string }> = {};
+  for (const m of MOMENTOS) {
+    momentos[m.clave] = {
+      activo: fd.get(`activo_${m.clave}`) === "on",
+      // Se recorta aquí además de en el saneo: lo que llega es texto del
+      // navegador y podría venir de cualquier parte.
+      texto: s(fd.get(`texto_${m.clave}`)).slice(0, MAX_AVISO),
+    };
+  }
+
+  const avisos = sanearAvisos({ activo: fd.get("avisos_activo") === "on", momentos });
+
+  const { error } = await createClient()
+    .from("tiendas")
+    .update({
+      config: { ...previa, avisos },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", tiendaId);
+
+  if (error) return { ok: false, mensaje: "No se pudieron guardar los avisos." };
+
+  revalidatePath(`/tienda/${tiendaId}`);
+  return {
+    ok: true,
+    mensaje: avisos.activo
+      ? "Guardado. A partir de ahora el cliente se entera solo."
+      : "Guardado. Los avisos quedan apagados: el cliente no recibirá nada.",
+  };
 }
 
 /* ── Cobros ────────────────────────────────────────────────────────────────── */

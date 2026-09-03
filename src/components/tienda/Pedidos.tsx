@@ -165,7 +165,11 @@ export function Pedidos({
       </div>
 
       {estado.mensaje && (
-        <p className={`mb-3 text-sm ${estado.ok ? "text-emerald-400" : "text-danger"}`}>
+        <p
+          className={`mb-3 text-sm ${
+            estado.tono === "aviso" ? "text-aviso" : estado.ok ? "text-emerald-400" : "text-danger"
+          }`}
+        >
           {estado.mensaje}
         </p>
       )}

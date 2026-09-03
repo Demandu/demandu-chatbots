@@ -27,6 +27,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { sanearAvisos, AVISOS_POR_DEFECTO, type AvisosTienda } from "./avisos";
+
 export type TipoPregunta = "texto" | "parrafo" | "lista" | "telefono";
 
 export type PreguntaPedido = {
@@ -117,6 +119,17 @@ export type ConfigTienda = {
 
   /** Lo que va abajo del todo, debajo del «Powered by». */
   pie?: string;
+
+  /**
+   * Lo que se le escribe al cliente cuando su pedido se mueve.
+   *
+   * VIVE AQUÍ Y NO EN UNA TABLA APARTE porque es configuración de la tienda,
+   * como los colores o las preguntas: se edita en la misma pantalla y se guarda
+   * de una vez. Y no hay nada secreto en ella —son los textos que el propio
+   * cliente va a leer— así que que la lectura pública de `config` los alcance
+   * no cambia nada. Los secretos siguen en `tienda_cobros`.
+   */
+  avisos: AvisosTienda;
 };
 
 
@@ -229,6 +242,7 @@ export const CONFIG_POR_DEFECTO: ConfigTienda = {
   aclaraciones: true,
   minimo_pedido: 0,
   pie: "",
+  avisos: AVISOS_POR_DEFECTO,
 };
 
 /** Un color que se pueda pintar sin romper la tienda. */
@@ -314,6 +328,11 @@ export function leerConfig(crudo: unknown): ConfigTienda {
       ? Math.max(0, Math.round(Number(c.minimo_pedido)))
       : 0,
     pie: c.pie ? String(c.pie) : "",
+    // Una tienda que nunca abrió esta pantalla avisa igual: los textos de
+    // fábrica están escritos para poder salir tal cual. Lo contrario —callar
+    // hasta que alguien configure— deja al cliente sin noticias justo en las
+    // tiendas que menos tiempo tienen para configurar nada.
+    avisos: sanearAvisos(c.avisos),
   };
 }
 

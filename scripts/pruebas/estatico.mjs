@@ -3285,4 +3285,124 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
   });
 });
 
+describe("Tienda: los avisos al cliente", () => {
+  test("EL PEDIDO SE MUEVE AUNQUE EL AVISO FALLE", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // El estado del pedido es la verdad del negocio; el aviso es una cortesía
+    // al cliente. Si se avisara ANTES de guardar, un token de Meta caducado o
+    // un mensaje fuera de las 24 h dejaría al negocio sin poder mover sus
+    // pedidos — infinitamente peor que un cliente sin notificación.
+    // ─────────────────────────────────────────────────────────────────────────
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"),
+    );
+
+    const iGuardar = t.indexOf('.update({ estado');
+    const iAvisar = t.indexOf("avisarDelPedido(");
+    esperar(iGuardar > 0).verdadero("cambió la forma de guardar el estado, revisa esta prueba");
+    esperar(iAvisar > 0).verdadero("mover un pedido ya no avisa al cliente");
+    esperar(iAvisar > iGuardar).verdadero(
+      "se avisa antes de guardar: un fallo de WhatsApp bloquearía el tablero",
+    );
+  });
+
+  test("arrastrar una tarjeta al sitio donde ya estaba no vuelve a avisar", () => {
+    // Tres arrastres de ida y vuelta son tres cambios por dentro y un solo
+    // hecho para el cliente. Sin esto recibe el mismo mensaje tres veces.
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"),
+    );
+    esperar(/antes\.estado === estado/.test(t)).verdadero(
+      "no se compara con el estado anterior antes de mover y avisar",
+    );
+  });
+
+  test("EL AVISO NO PUEDE ROMPER LA RESPUESTA A YAPPY", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Si esta ruta contestara error, Yappy reintentaría el mismo aviso de pago
+    // —que ya está guardado— y el cliente recibiría el mensaje otra vez. El
+    // cobro manda; el aviso va detrás y protegido.
+    // ─────────────────────────────────────────────────────────────────────────
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/api/tienda/yappy/ipn/route.ts"), "utf8"),
+    );
+    const i = t.indexOf("avisarDelPedido(");
+    esperar(i > 0).verdadero("el pago ya no avisa al cliente");
+    esperar(/try\s*{[\s\S]{0,200}avisarDelPedido\(/.test(t)).verdadero(
+      "el aviso no está protegido: un fallo suyo haría reintentar el pago a Yappy",
+    );
+    esperar(t.indexOf("update(cambios)") < i).verdadero(
+      "se avisa antes de guardar el pago",
+    );
+  });
+
+  test("un pago rechazado no se le anuncia al cliente por WhatsApp", () => {
+    // Quien acaba de ver el error en su teléfono no necesita un segundo
+    // mensaje diciéndoselo, y el enlace de pago sigue vivo para reintentar.
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/api/tienda/yappy/ipn/route.ts"), "utf8"),
+    );
+    esperar(/if\s*\(pago === "pagado"\)\s*{[\s\S]{0,300}avisarDelPedido\(/.test(t)).verdadero(
+      "se avisa de cualquier resultado del cobro, no solo del pago",
+    );
+  });
+
+  test("el que manda los avisos NO puede acabar en el navegador", () => {
+    // `lib/tienda/avisar.ts` lee el token de WhatsApp de la organización. Que
+    // una pantalla de cliente lo importe metería ese camino en el paquete que
+    // se descarga el visitante de la tienda.
+    const malos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (!/^\s*["']use client["']/m.test(texto)) continue;
+      if (/from\s+["'][^"']*tienda\/avisar["']/.test(sinComentarios(texto))) malos.push(ruta);
+    }
+    esperar(malos.join(", ")).igual("", "una pantalla de cliente importa el módulo que envía");
+  });
+
+  test("los textos de los avisos SÍ pueden pintarse en el navegador", () => {
+    // La vista previa es lo único que hace que alguien note que escribió
+    // {pedido} en vez de {numero} antes de que ese mensaje salga de verdad.
+    // Para eso, el módulo de los textos no puede arrastrar nada de servidor.
+    const t = fs.readFileSync(path.join(SRC, "lib/tienda/avisos.ts"), "utf8");
+    esperar(/from\s+["'](node:|crypto|@supabase|@\/lib\/canales)/.test(sinComentarios(t))).falso(
+      "lib/tienda/avisos.ts tiene que poder correr en el navegador",
+    );
+  });
+
+  test("el aviso queda escrito en la conversación, y no como si fuera el bot", () => {
+    // Un aviso que no entra en la Bandeja hace que el agente salude a alguien
+    // a quien el sistema acaba de escribir sin tener ni idea. Y marcarlo como
+    // «bot» ensucia la analítica de la IA con mensajes que no son suyos.
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "lib/tienda/avisar.ts"), "utf8"));
+    esperar(/from\(\s*["']messages["']\s*\)[\s\S]{0,200}insert/.test(t)).verdadero(
+      "el aviso no se guarda en la conversación",
+    );
+    esperar(/sender:\s*["']system["']/.test(t)).verdadero(
+      "el aviso se guarda como bot o como agente, y no lo es",
+    );
+  });
+
+  test("NO SE AVISA DOS VECES DE LO MISMO", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // No basta con preguntarle a la bitácora: hay que IRSE si la respuesta es
+    // que sí. Preguntar y seguir enviando igual es el error que esta prueba
+    // existe para cazar, porque desde fuera se ve idéntico a estar protegido.
+    // ─────────────────────────────────────────────────────────────────────────
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "lib/tienda/avisar.ts"), "utf8"));
+
+    const consulta = t.match(/const\s*{\s*data:\s*(\w+)\s*}[^;]{0,400}contains\(/);
+    esperar(!!consulta).verdadero("no se comprueba en la bitácora si ese aviso ya salió");
+
+    const usa = new RegExp(`${consulta[1]}[^;]{0,120}return`);
+    esperar(usa.test(t)).verdadero(
+      "se pregunta si el aviso ya salió y se manda igual: el cliente lo recibe dos veces",
+    );
+
+    const iCorte = t.search(usa);
+    esperar(iCorte > 0 && iCorte < t.indexOf("enviarTexto(")).verdadero(
+      "la comprobación de duplicados va después del envío, así que no lo evita",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

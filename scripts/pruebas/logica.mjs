@@ -12,6 +12,9 @@ import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
+import {
+  MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado,
+} from "../../src/lib/tienda/avisos.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
 import { aDireccion, direccionValida, enlaceDePago, hostDeLaPeticion } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
@@ -2365,6 +2368,149 @@ describe("IA: marcar «agendar» no es tener agenda", () => {
     const r = loQueFaltaParaAgendar({ ...base, herramientas: ["ver_horarios", "agendar_cita"] });
     esperar(r.lista).verdadero();
     esperar(r.problemas.length).igual(0);
+  });
+});
+
+describe("Tienda: lo que el cliente recibe cuando su pedido se mueve", () => {
+  const datos = {
+    numero: 128,
+    tienda: "Paws at Home",
+    total: "$25.00",
+    codigo: "C9UYJC3S76SB",
+    cliente: "María",
+  };
+
+  test("«recibido» NO avisa: el cliente acaba de escribir", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // Contestarle «recibimos tu pedido» a la vez que su propio mensaje no le
+    // dice nada nuevo, y abre una conversación que WhatsApp le factura al
+    // negocio. Es una decisión, no un olvido.
+    // ───────────────────────────────────────────────────────────────────────
+    esperar(momentoDelEstado("recibido") === null).verdadero("«recibido» no puede avisar");
+    esperar(momentoDelEstado("en_camino")).igual("en_camino");
+    esperar(momentoDelEstado("entregado")).igual("entregado");
+  });
+
+  test("un estado inventado no manda nada", () => {
+    esperar(momentoDelEstado("caminando") === null).verdadero();
+    esperar(momentoDelEstado("") === null).verdadero();
+  });
+
+  test("«pagado» no es un estado del tablero, así que no se alcanza arrastrando", () => {
+    // El aviso de pago lo dispara el banco, no una tarjeta movida a mano. Si
+    // «pagado» se pudiera alcanzar desde el tablero habría dos caminos hacia
+    // el mismo mensaje y el cliente lo recibiría dos veces.
+    esperar(momentoDelEstado("pagado") === null).verdadero();
+  });
+
+  test("UN HUECO SIN VALOR SE VA ENTERO, con su coma y su espacio", () => {
+    // «Ya lo tenemos anotado, {cliente}.» sin nombre no puede quedar
+    // «Ya lo tenemos anotado, .» — es exactamente el detalle por el que un
+    // mensaje se nota automático.
+    const r = rellenarAviso("Confirmado, {cliente}. Gracias.", { ...datos, cliente: "" });
+    esperar(r).igual("Confirmado. Gracias.");
+  });
+
+  test("con nombre, el nombre se pone", () => {
+    esperar(rellenarAviso("Hola {cliente}, tu pedido #{numero}", datos))
+      .igual("Hola María, tu pedido #128");
+  });
+
+  test("UN HUECO QUE NO EXISTE SE QUEDA A LA VISTA", () => {
+    // Si el negocio escribe {pedido} en vez de {numero}, verlo en la vista
+    // previa es lo que hace que lo corrija. Borrarlo en silencio deja un
+    // mensaje sin el dato más importante y nadie se entera hasta que sale.
+    esperar(rellenarAviso("Pedido {pedido} listo", datos)).igual("Pedido {pedido} listo");
+  });
+
+  test("el total y el código salen tal cual se los dan", () => {
+    esperar(rellenarAviso("{total} · {codigo} · {tienda}", datos))
+      .igual("$25.00 · C9UYJC3S76SB · Paws at Home");
+  });
+
+  test("EL INTERRUPTOR GENERAL APAGA TODO, aunque el momento esté encendido", () => {
+    const a = sanearAvisos({ activo: false });
+    esperar(a.momentos.en_camino.activo).verdadero("el momento sigue encendido por dentro");
+    esperar(textoDelAviso("en_camino", a, datos) === null).verdadero("y aun así no sale nada");
+  });
+
+  test("un momento apagado no manda, y los demás sí", () => {
+    const a = sanearAvisos({ momentos: { en_camino: { activo: false } } });
+    esperar(textoDelAviso("en_camino", a, datos) === null).verdadero();
+    esperar(typeof textoDelAviso("entregado", a, datos)).igual("string");
+  });
+
+  test("«Preparando» viene APAGADO de fábrica", () => {
+    // Cada aviso cuesta dinero y gasta la paciencia del cliente. Este es el
+    // único paso que casi nunca le dice algo que no supiera ya.
+    const a = sanearAvisos({});
+    esperar(a.momentos.preparando.activo).falso();
+    esperar(a.momentos.en_camino.activo).verdadero();
+  });
+
+  test("UN TEXTO VACÍO NO ES SILENCIO: vuelve el de fábrica", () => {
+    // Si un campo en blanco significara «no avisar», cualquiera lo borraría
+    // sin querer y el cliente dejaría de recibir avisos sin que se pueda ver
+    // por qué. Para callar está la casilla.
+    const a = sanearAvisos({ momentos: { entregado: { activo: true, texto: "   " } } });
+    esperar(a.momentos.entregado.texto.length > 0).verdadero();
+    esperar(textoDelAviso("entregado", a, datos) === null).falso();
+  });
+
+  test("una configuración a medias no manda un mensaje vacío", () => {
+    // El JSON lo pudo escribir una versión anterior o alguien con la consola
+    // abierta. Un aviso en blanco llega, no dice nada, y el cliente escribe
+    // preguntando qué fue eso.
+    const a = sanearAvisos({ activo: true, momentos: { pagado: {} } });
+    for (const m of MOMENTOS) {
+      esperar(a.momentos[m.clave].texto.trim().length > 0).verdadero(`${m.clave} salió vacío`);
+    }
+  });
+
+  test("un texto larguísimo se recorta: esto se lee en una notificación", () => {
+    const a = sanearAvisos({ momentos: { entregado: { activo: true, texto: "x".repeat(5000) } } });
+    esperar(a.momentos.entregado.texto.length).igual(MAX_AVISO);
+  });
+
+  test("los textos de fábrica salen enteros y sin huecos sueltos", () => {
+    // Una tienda que nunca abrió esta pantalla avisa igual, así que lo de
+    // fábrica tiene que poder salir tal cual hacia un cliente de verdad.
+    const a = sanearAvisos(undefined);
+    for (const m of MOMENTOS) {
+      const t = rellenarAviso(a.momentos[m.clave].texto, datos);
+      esperar(/[{}]/.test(t)).falso(`${m.clave} dejó un hueco sin rellenar: ${t}`);
+      esperar(/ ,|, \./.test(t)).falso(`${m.clave} quedó con puntuación suelta: ${t}`);
+    }
+  });
+
+  test("y siguen saliendo enteros aunque no sepamos el nombre del cliente", () => {
+    const a = sanearAvisos(undefined);
+    for (const m of MOMENTOS) {
+      const t = rellenarAviso(a.momentos[m.clave].texto, { ...datos, cliente: "" });
+      esperar(t.trim().length > 10).verdadero(`${m.clave} se quedó en nada: ${t}`);
+      esperar(/ ,|,\./.test(t)).falso(`${m.clave} quedó con puntuación suelta: ${t}`);
+    }
+  });
+
+  test("LOS AVISOS VIAJAN DENTRO DE `config` y sobreviven a guardar el diseño", () => {
+    // `guardarDiseno` reescribe la configuración entera. Si `leerConfig` no
+    // conservara los avisos, tocar un color borraría los textos que el negocio
+    // escribió — y dejaría de avisar sin decírselo a nadie.
+    const guardada = leerConfig({
+      titulo: "Paws",
+      avisos: { activo: true, momentos: { en_camino: { activo: true, texto: "Ya va {numero}" } } },
+    });
+    esperar(guardada.avisos.momentos.en_camino.texto).igual("Ya va {numero}");
+
+    const otraVez = leerConfig({ ...guardada, titulo: "Paws at Home" });
+    esperar(otraVez.avisos.momentos.en_camino.texto).igual("Ya va {numero}");
+    esperar(otraVez.avisos.momentos.preparando.activo).falso();
+  });
+
+  test("una tienda vieja, sin nada guardado, avisa igual", () => {
+    const c = leerConfig({ titulo: "Vieja" });
+    esperar(c.avisos.activo).verdadero();
+    esperar(typeof textoDelAviso("pagado", c.avisos, datos)).igual("string");
   });
 });
 

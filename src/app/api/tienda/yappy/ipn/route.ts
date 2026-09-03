@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ipnValido, PAGOS_YAPPY, dominioDeCobro } from "@/lib/tienda/yappy";
 import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
+import { avisarDelPedido } from "@/lib/tienda/avisar";
 
 /**
  * El aviso de pago de Yappy (IPN).
@@ -106,6 +107,28 @@ export async function GET(req: Request) {
     quien: "yappy",
     detalle: { status, total: pedido.total, referencia: referencia || null },
   });
+
+  // ── Y AHORA SE LO DECIMOS AL CLIENTE ──────────────────────────────────────
+  //
+  // ES EL AVISO QUE MÁS FALTA HACÍA. El cliente pagaba, el pedido pasaba solo a
+  // Confirmados, y por su lado no ocurría nada: se quedaba sin más prueba que
+  // la pantalla del banco. El único mensaje que de verdad tranquiliza —«tenemos
+  // tu plata, tenemos tu pedido»— no salía de aquí porque nadie lo mandaba.
+  //
+  // SOLO CUANDO HAY PAGO. Un rechazo no se anuncia por WhatsApp: quien acaba de
+  // ver el error en su teléfono no necesita un segundo mensaje diciéndoselo, y
+  // el enlace de pago sigue vivo para volver a intentarlo.
+  //
+  // NUNCA ROMPE LA RESPUESTA A YAPPY. Si esto fallara y contestáramos error,
+  // Yappy reintentaría el mismo aviso —y el pago ya está guardado—. Se contesta
+  // bien pase lo que pase; lo que falle queda en la bitácora del pedido.
+  if (pago === "pagado") {
+    try {
+      await avisarDelPedido(sb, pedido.id, "pagado");
+    } catch (e) {
+      console.error("[ipn aviso]", e);
+    }
+  }
 
   return NextResponse.json({ ok: true });
 }
