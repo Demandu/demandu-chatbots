@@ -128,6 +128,37 @@ export function Productos({
   const [palabra, setPalabra] = useState("");
   const [estadoVaciar, enviarVaciar] = useFormState(vaciar, { ok: false, mensaje: "" });
 
+  /*
+   * LA TABLA SE VUELVE A LEER CUANDO EL SERVIDOR CAMBIA.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * ESTO NACIÓ DE UN FALLO CON DIENTES. Alex vació el catálogo: los 96
+   * productos se borraron de verdad en la base, y la pantalla siguió
+   * enseñándolos como si nada. `useState(originales)` solo mira su valor
+   * inicial la PRIMERA vez que se monta el componente; después, aunque el
+   * servidor mande otra cosa, el estado se queda con lo de antes.
+   *
+   * Enseñar datos viejos ya es malo. Lo peligroso es lo siguiente: esas 96
+   * filas seguían siendo filas «sin id», así que pulsar Guardar las habría
+   * vuelto a crear TODAS. El cliente borra su catálogo, guarda cualquier
+   * cosa, y el catálogo resucita — y no hay forma de que entienda por qué.
+   *
+   * Se compara una FIRMA del contenido, no la identidad del array: cada
+   * render del servidor crea un array nuevo, así que comparar referencias
+   * borraría lo que estás escribiendo en cada refresco. Con la firma, solo se
+   * resincroniza cuando los datos cambiaron de verdad — que es justo cuando
+   * hay que hacerlo: acabas de guardar, de vaciar, o alguien más editó.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const firma = useMemo(() => JSON.stringify(originales), [originales]);
+  const [firmaVista, setFirmaVista] = useState(firma);
+  if (firma !== firmaVista) {
+    setFirmaVista(firma);
+    setFilas(originales);
+    setBorradas([]);
+    setOpcionesDe(null);
+  }
+
   const porId = useMemo(() => new Map(originales.map((f) => [f.id, f])), [originales]);
   const cambiada = (f: Fila) => {
     if (!f.id) return f.nombre.trim() !== "";

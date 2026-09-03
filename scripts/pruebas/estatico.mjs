@@ -2744,6 +2744,31 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("la tabla se resincroniza cuando el servidor cambia", () => {
+    // FALLO REAL, Y CON DIENTES: Alex vació el catálogo, los 96 productos se
+    // borraron de verdad en la base, y la pantalla siguió enseñándolos.
+    // `useState(x)` solo mira su valor inicial al montar; después el estado se
+    // queda con lo de antes aunque el servidor mande otra cosa.
+    //
+    // Lo peligroso no era enseñar datos viejos: esas 96 filas seguían siendo
+    // filas «sin id», así que pulsar Guardar las habría vuelto a CREAR todas.
+    // El cliente borra su catálogo, guarda, y el catálogo resucita.
+    const tabla = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/Productos.tsx"), "utf8"),
+    );
+    esperar(/firma\s*!==\s*firmaVista/.test(tabla)).verdadero(
+      "la tabla no se vuelve a leer cuando cambian los datos del servidor",
+    );
+    esperar(/setFilas\(originales\)/.test(tabla)).verdadero(
+      "al cambiar el servidor, las filas tienen que volver a salir de él",
+    );
+    // Por FIRMA, no por identidad del array: cada render del servidor crea un
+    // array nuevo, y comparar referencias borraría lo que estás escribiendo.
+    esperar(/const firma = useMemo\(/.test(tabla)).verdadero(
+      "hay que comparar el contenido, no la referencia",
+    );
+  });
+
   test("vaciar el catálogo no se puede hacer de un clic descuidado", () => {
     // BORRAR NOVENTA Y SEIS PRODUCTOS NO SE DESHACE: no hay papelera ni copia.
     // Un botón de confirmar se pulsa sin leer —todos lo hacemos— pero nadie
