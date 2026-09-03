@@ -66,38 +66,53 @@ export function ResponderEnIdioma({
   );
 
   return (
-    <div ref={caja} className="relative flex-none border-t border-surface-border bg-surface/60 px-3 py-1.5">
+    // EL FONDO ES EL MISMO DEL COMPOSITOR, no `bg-surface/60`.
+    //
+    // Con aquel semitransparente esta franja salía más oscura que la de arriba
+    // y la de abajo, y encima los textos en gris apagado quedaban casi
+    // ilegibles: se veía una banda sucia con letras que había que adivinar.
+    // Compartiendo `--tarjeta` con el compositor, las tres franjas son una
+    // sola superficie y los grises recuperan su contraste.
+    <div
+      ref={caja}
+      className="relative flex-none border-t border-surface-border px-3 py-2"
+      style={{ backgroundColor: "var(--tarjeta)" }}
+    >
       <div className="flex flex-wrap items-center gap-2">
         {/* Sin idioma todavía: un solo botón que abre la lista. Con idioma:
             interruptor + el idioma, que se puede cambiar de un clic. */}
         {idioma ? (
           <>
-            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted">
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-white">
               <input
                 type="checkbox"
                 checked={activo}
                 onChange={(e) => onCambiar(e.target.checked)}
-                className="h-3.5 w-3.5 accent-violet"
+                className="h-3.5 w-3.5"
+                style={{ accentColor: "#6E42FF" }}
               />
               <Languages className="h-4 w-4" />
               Responder en
             </label>
 
+            {/* El morado de la plataforma, no un violeta suelto: encendido
+                tiene que verse encendido de un vistazo. */}
             <button
               type="button"
               onClick={() => setEligiendo((v) => !v)}
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs font-semibold transition ${
+              className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold text-white transition"
+              style={
                 activo
-                  ? "border-violet bg-violet/15 text-white"
-                  : "border-surface-border bg-surface-raised text-muted hover:text-white"
-              }`}
+                  ? { borderColor: "#6E42FF", backgroundColor: "rgba(110,66,255,.22)" }
+                  : { borderColor: "var(--surface-border, rgba(255,255,255,.14))", backgroundColor: "rgba(255,255,255,.06)" }
+              }
             >
               {info?.bandera} {info?.nombre ?? idioma}
-              <span className="text-[10px] opacity-60">▾</span>
+              <span className="text-[10px] opacity-70">▾</span>
             </button>
 
             {detectado && !activo && (
-              <span className="text-[11px] text-muted-2">detectado por sus mensajes</span>
+              <span className="text-[11px] text-muted">detectado por sus mensajes</span>
             )}
           </>
         ) : (
@@ -111,7 +126,7 @@ export function ResponderEnIdioma({
         )}
 
         {activo && cargando && (
-          <span className="inline-flex items-center gap-1 text-[11px] text-muted-2">
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted">
             <Loader2 className="h-3 w-3 animate-spin" /> traduciendo…
           </span>
         )}
@@ -120,7 +135,7 @@ export function ResponderEnIdioma({
           <button
             type="button"
             onClick={() => onCambiar(false)}
-            className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-2 transition hover:text-danger"
+            className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted transition hover:text-danger"
           >
             <X className="h-3 w-3" /> escribir sin traducir
           </button>
@@ -167,8 +182,11 @@ export function ResponderEnIdioma({
 
       {/* La previa: esto es EXACTAMENTE lo que va a recibir el lead. */}
       {activo && hayTexto && previa && (
-        <div className="mt-1.5 rounded-lg border border-violet/40 bg-violet/10 px-3 py-2">
-          <p className="mb-0.5 text-[10px] font-bold uppercase tracking-wider text-violet">
+        <div
+          className="mt-2 rounded-lg border px-3 py-2"
+          style={{ borderColor: "rgba(110,66,255,.5)", backgroundColor: "rgba(110,66,255,.14)" }}
+        >
+          <p className="mb-0.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#b9a3ff" }}>
             Se enviará esto
           </p>
           <p className="whitespace-pre-wrap text-sm text-white">{previa}</p>

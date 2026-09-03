@@ -350,6 +350,45 @@ describe("La solicitud de persona no se borra sola", () => {
   });
 });
 
+// ─── La franja del traductor ─────────────────────────────────────────────────
+describe("Responder en otro idioma: se tiene que leer", () => {
+  // SIN COMENTARIOS. Los comentarios que explican este arreglo citan las clases
+  // que prohíben —`bg-surface/60`, `text-muted-2`— así que leer el texto crudo
+  // encuentra la prosa y falla contra código correcto. Es la quinta vez que
+  // este archivo tropieza con lo mismo; ya debería ser un reflejo.
+  const t = sinComentarios(
+    fs.readFileSync(path.join(SRC, "components/inbox/ResponderEnIdioma.tsx"), "utf8"),
+  );
+
+  test("comparte superficie con el compositor", () => {
+    // ESTABA CON `bg-surface/60`: una banda semitransparente MÁS OSCURA que la
+    // franja de arriba y la de abajo, con los textos en gris apagado encima.
+    // El resultado era una tira sucia con letras que había que adivinar. Se vio
+    // en una captura de la Bandeja de verdad, no en teoría.
+    esperar(/bg-surface\/60/.test(t)).falso(
+      "esa banda semitransparente rompe la continuidad y apaga los textos",
+    );
+    esperar(/backgroundColor: "var\(--tarjeta\)"/.test(t)).verdadero(
+      "el fondo tiene que ser el mismo del compositor",
+    );
+  });
+
+  test("los textos pequeños no usan el gris más apagado", () => {
+    // `text-muted-2` sobre esta franja es ilegible. El de al lado, `text-muted`,
+    // es el que usa la franja de «la IA está en pausa» y sí se lee.
+    //
+    // SE MIRA SOLO LA FRANJA, no el archivo entero: el desplegable de idiomas
+    // tiene su propio fondo sólido y ahí ese gris sí se lee. La primera versión
+    // de esta prueba prohibía la clase en todo el archivo y fallaba contra dos
+    // usos correctos — prohibir de más también es una prueba mal escrita.
+    const franja = t.slice(0, t.indexOf("{eligiendo &&"));
+    esperar(franja.length > 500).verdadero("no pude recortar la franja: la prueba no valdría");
+    esperar(/text-muted-2/.test(franja)).falso(
+      "el gris más apagado no se lee sobre esta franja",
+    );
+  });
+});
+
 // ─── Quién habla: el bot o la persona ────────────────────────────────────────
 describe("Cuando escribe un agente, el bot se calla", () => {
   const ruta = sinComentarios(
