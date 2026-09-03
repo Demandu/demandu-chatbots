@@ -16,6 +16,7 @@ import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
+import { recalcularPedido } from "../../src/lib/tienda/recalcular.ts";
 import { claveDeLinea, precioUnitario, totalDeLinea, totalDelCarrito, cuantasUnidades, faltaElegir, faltaContestar, textoDelPedido, enlaceDeWhatsapp } from "../../src/lib/tienda/pedido.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
@@ -1715,6 +1716,120 @@ describe("Tienda: el carrito y el pedido", () => {
       moneda: "$",
     });
     esperar(texto.split("Croquetas").length - 1).igual(1);
+  });
+});
+
+
+describe("Tienda: el pedido se recalcula en el servidor", () => {
+  // ESTA ES LA PIEZA QUE IMPIDE QUE TE ROBEN. El escaparate es una página
+  // pública: cualquiera abre la consola del navegador y manda lo que quiera.
+
+  const catalogo = [
+    {
+      id: "p1",
+      nombre: "Croquetas",
+      precio: 6000,
+      oculto: false,
+      stock: null,
+      variedades: [
+        {
+          nombre: "Tamaño",
+          modo: "una",
+          opciones: [
+            { texto: "5 lbs.", recargo: 0 },
+            { texto: "15 lbs.", recargo: 300 },
+          ],
+        },
+      ],
+    },
+    { id: "p2", nombre: "Juguete", precio: 500, oculto: false, stock: 3, variedades: [] },
+    { id: "oculto", nombre: "Escondido", precio: 100, oculto: true, stock: null, variedades: [] },
+    { id: "agotado", nombre: "Agotado", precio: 100, oculto: false, stock: 0, variedades: [] },
+  ];
+
+  test("el precio SIEMPRE sale del catálogo, no de lo que mandan", () => {
+    // El intento clásico: pedir un saco de 60 dólares por un centavo.
+    const r = recalcularPedido(catalogo, [
+      { producto_id: "p1", cantidad: 1, precio: 1, elegidas: [{ grupo: "Tamaño", texto: "5 lbs." }] },
+    ]);
+    esperar(r.lineas[0].precio).igual(6000);
+    esperar(r.total).igual(6000);
+  });
+
+  test("los recargos también salen del catálogo", () => {
+    // Inventarse «15 lbs.» con recargo 0 no puede abaratar el saco grande.
+    const r = recalcularPedido(catalogo, [
+      {
+        producto_id: "p1",
+        cantidad: 2,
+        elegidas: [{ grupo: "Tamaño", texto: "15 lbs.", recargo: 0 }],
+      },
+    ]);
+    esperar(r.lineas[0].elegidas[0].recargo).igual(300);
+    esperar(r.lineas[0].precio).igual(6300);
+    esperar(r.total).igual(12600);
+  });
+
+  test("una opción que ese producto no tiene tumba la línea entera", () => {
+    // No se acepta a medias: un pedido a medio validar parece válido y se
+    // prepara, que es peor que rechazarlo.
+    const r = recalcularPedido(catalogo, [
+      { producto_id: "p1", cantidad: 1, elegidas: [{ grupo: "Tamaño", texto: "500 lbs." }] },
+    ]);
+    esperar(r.lineas).igual([]);
+    esperar(r.total).igual(0);
+    esperar(r.rechazos.length).igual(1);
+  });
+
+  test("lo obligatorio se exige también aquí, no solo en la pantalla", () => {
+    const r = recalcularPedido(catalogo, [{ producto_id: "p1", cantidad: 1, elegidas: [] }]);
+    esperar(r.lineas).igual([]);
+    esperar(r.rechazos[0].includes("Tamaño")).verdadero();
+  });
+
+  test("lo oculto y lo agotado no se pueden pedir", () => {
+    const r = recalcularPedido(catalogo, [
+      { producto_id: "oculto", cantidad: 1, elegidas: [] },
+      { producto_id: "agotado", cantidad: 1, elegidas: [] },
+      { producto_id: "no-existe", cantidad: 1, elegidas: [] },
+    ]);
+    esperar(r.lineas).igual([]);
+    esperar(r.rechazos.length).igual(3);
+  });
+
+  test("no se vende más de lo que hay", () => {
+    esperar(recalcularPedido(catalogo, [{ producto_id: "p2", cantidad: 4, elegidas: [] }]).lineas).igual([]);
+    const bien = recalcularPedido(catalogo, [{ producto_id: "p2", cantidad: 3, elegidas: [] }]);
+    esperar(bien.total).igual(1500);
+  });
+
+  test("las cantidades raras no pasan", () => {
+    for (const cantidad of [0, -3, 1.5, "muchas", null, undefined, NaN, Infinity]) {
+      const r = recalcularPedido(catalogo, [{ producto_id: "p2", cantidad, elegidas: [] }]);
+      // 1.5 se trunca a 1, que es aceptable; el resto se cae.
+      if (cantidad === 1.5) esperar(r.lineas[0].cantidad).igual(1);
+      else esperar(r.lineas).igual([], String(cantidad));
+    }
+  });
+
+  test("un pedido vacío o con basura da cero, no un error", () => {
+    for (const v of [[], null, undefined, "texto", 42, [null], [{}]]) {
+      const r = recalcularPedido(catalogo, v);
+      esperar(r.total).igual(0);
+      esperar(Array.isArray(r.lineas)).verdadero();
+    }
+  });
+
+  test("lo bueno pasa aunque venga con algo malo al lado", () => {
+    // Un pedido mixto no se descarta entero: se queda lo que cuadra y se dice
+    // qué se cayó, para poder explicárselo a quien pidió.
+    const r = recalcularPedido(catalogo, [
+      { producto_id: "p2", cantidad: 2, elegidas: [] },
+      { producto_id: "agotado", cantidad: 1, elegidas: [] },
+    ]);
+    esperar(r.lineas.length).igual(1);
+    esperar(r.total).igual(1000);
+    esperar(r.rechazos.length).igual(1);
   });
 });
 

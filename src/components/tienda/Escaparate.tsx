@@ -67,9 +67,11 @@ function tieneRecargos(p: ProductoPublico): boolean {
 export function Escaparate({
   config,
   productos,
+  slug,
 }: {
   config: ConfigTienda;
   productos: ProductoPublico[];
+  slug: string;
 }) {
   const c = config.colores;
   const [busca, setBusca] = useState("");
@@ -80,6 +82,7 @@ export function Escaparate({
   const [verCarrito, setVerCarrito] = useState(false);
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [aviso, setAviso] = useState("");
+  const [enviando, setEnviando] = useState(false);
 
   const q = busca.trim().toLowerCase();
   const visibles = useMemo(() => {
@@ -138,17 +141,64 @@ export function Escaparate({
       xs.map((x) => (x.clave === clave ? { ...x, cantidad: x.cantidad + delta } : x)).filter((x) => x.cantidad > 0),
     );
 
-  const enviar = () => {
+  /**
+   * EL PEDIDO SE REGISTRA ANTES DE ABRIR WHATSAPP.
+   *
+   * Antes se abría el chat y ya. Si el cliente no llegaba a enviar el mensaje
+   * —se arrepintió, se le fue el internet, cerró sin querer— ese pedido se
+   * perdía entero y el negocio nunca supo que existió. Ahora queda guardado con
+   * su número, y se puede ir a buscar.
+   *
+   * LA VENTANA SE ABRE PASE LO QUE PASE. Si el servidor falla, se manda el
+   * texto armado aquí: el cliente que ya decidió comprar no puede quedarse
+   * mirando un error nuestro. Se pierde el registro, no la venta.
+   */
+  const enviar = async () => {
     const falta = faltaContestar(config.preguntas, respuestas);
     if (falta.length) return setAviso(`Falta ${falta.join(", ")}.`);
     if (bajoMinimo) return setAviso(`El pedido mínimo es ${comoDinero(config.minimo_pedido, config.moneda)}.`);
-    const texto = textoDelPedido({
+
+    setAviso("");
+    setEnviando(true);
+
+    const deRespaldo = textoDelPedido({
       tienda: config.titulo,
       lineas: carrito,
       respuestas,
       preguntas: config.preguntas,
       moneda: config.moneda,
     });
+
+    let texto = deRespaldo;
+    try {
+      const r = await fetch("/api/tienda/pedido", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          slug,
+          respuestas,
+          lineas: carrito.map((l) => ({
+            producto_id: l.producto_id,
+            cantidad: l.cantidad,
+            elegidas: l.elegidas.map((e) => ({ grupo: e.grupo, texto: e.texto })),
+            nota: l.nota,
+          })),
+        }),
+      });
+      const j = await r.json();
+      if (r.ok && j?.texto) texto = j.texto;
+      else if (j?.error) {
+        // Un rechazo del servidor SÍ para el envío: significa que el precio o
+        // las existencias cambiaron mientras el cliente pedía, y mandar ese
+        // pedido sería mandar algo que el negocio no puede cumplir.
+        setEnviando(false);
+        return setAviso(j.error);
+      }
+    } catch {
+      // Sin red hacia nuestro servidor, pero el cliente sí tiene WhatsApp.
+    }
+
+    setEnviando(false);
     window.open(enlaceDeWhatsapp(config.whatsapp.numero, texto), "_blank");
   };
 
@@ -389,6 +439,7 @@ export function Escaparate({
           onCantidad={cambiarCantidad}
           onCerrar={() => setVerCarrito(false)}
           onEnviar={enviar}
+          enviando={enviando}
         />
       )}
     </div>
@@ -698,6 +749,7 @@ function VistaCarrito({
   onCantidad,
   onCerrar,
   onEnviar,
+  enviando,
 }: {
   config: ConfigTienda;
   carrito: LineaCarrito[];
@@ -709,6 +761,7 @@ function VistaCarrito({
   onCantidad: (clave: string, delta: number) => void;
   onCerrar: () => void;
   onEnviar: () => void;
+  enviando: boolean;
 }) {
   const c = config.colores;
   const campo = {
@@ -837,10 +890,11 @@ function VistaCarrito({
           <button
             type="button"
             onClick={onEnviar}
-            className="mx-auto block w-full max-w-2xl rounded-2xl py-3.5 text-center font-bold text-white shadow-lg"
+            disabled={enviando}
+            className="mx-auto block w-full max-w-2xl rounded-2xl py-3.5 text-center font-bold text-white shadow-lg disabled:opacity-70"
             style={{ backgroundColor: c.whatsapp }}
           >
-            {config.whatsapp.texto_boton}
+            {enviando ? "Preparando tu pedido…" : config.whatsapp.texto_boton}
           </button>
         </div>
       )}

@@ -9,7 +9,8 @@ import { TiendaNav, esPestana } from "@/components/tienda/TiendaNav";
 import { Productos, type Producto } from "@/components/tienda/Productos";
 import { EditorDiseno } from "@/components/tienda/EditorDiseno";
 import { Cobros } from "@/components/tienda/Cobros";
-import { guardarDiseno, guardarProductos, vaciarCatalogo, guardarCobros } from "./actions";
+import { Pedidos, type PedidoEnLista } from "@/components/tienda/Pedidos";
+import { guardarDiseno, guardarProductos, vaciarCatalogo, guardarCobros, cambiarEstadoPedido } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,36 @@ export default async function TiendaDetallePage({
     .eq("tienda_id", params.id)
     .eq("proveedor", "yappy")
     .neq("secreto", "");
+
+  // Los pedidos, con sus líneas de una sola consulta: uno por pedido serían
+  // cincuenta viajes en una tienda con movimiento.
+  const { data: pedidosCrudos } =
+    activa === "pedidos"
+      ? await sb
+          .from("pedidos")
+          .select("id,numero,estado,total,created_at,respuestas,pedido_lineas(nombre,cantidad,precio,elegidas,nota,orden)")
+          .eq("tienda_id", params.id)
+          .order("created_at", { ascending: false })
+          .limit(200)
+      : { data: [] };
+
+  const pedidos: PedidoEnLista[] = ((pedidosCrudos ?? []) as Record<string, unknown>[]).map((p) => ({
+    id: String(p.id),
+    numero: Number(p.numero),
+    estado: p.estado as PedidoEnLista["estado"],
+    total: Number(p.total),
+    created_at: String(p.created_at),
+    respuestas: (p.respuestas ?? []) as PedidoEnLista["respuestas"],
+    lineas: (((p.pedido_lineas ?? []) as Record<string, unknown>[]) ?? [])
+      .sort((a, b) => Number(a.orden) - Number(b.orden))
+      .map((l) => ({
+        nombre: String(l.nombre),
+        cantidad: Number(l.cantidad),
+        precio: Number(l.precio),
+        elegidas: (l.elegidas ?? []) as { grupo: string; texto: string }[],
+        nota: (l.nota as string) ?? null,
+      })),
+  }));
 
   // Las categorías que de verdad tienen productos, en el orden del catálogo.
   const categoriasEnUso = [
@@ -138,6 +169,15 @@ export default async function TiendaDetallePage({
 
         <div className="mt-6">
           <TiendaNav tiendaId={params.id} activa={activa} />
+
+          {activa === "pedidos" && (
+            <Pedidos
+              tiendaId={params.id}
+              pedidos={pedidos}
+              moneda={config.moneda}
+              cambiarEstado={cambiarEstadoPedido}
+            />
+          )}
 
           {activa === "productos" && (
             <Productos

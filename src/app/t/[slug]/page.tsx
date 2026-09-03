@@ -77,5 +77,5 @@ export default async function TiendaPublicaPage({ params }: { params: { slug: st
     variedades: sanearGrupos(p.variedades),
   }));
 
-  return <Escaparate config={conNombre} productos={productos} />;
+  return <Escaparate config={conNombre} productos={productos} slug={tienda.slug} />;
 }

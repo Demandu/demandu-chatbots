@@ -2759,6 +2759,44 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("el pedido se recalcula en el servidor, nunca se cree al navegador", () => {
+    // LA TIENDA ES PÚBLICA: cualquiera abre la consola y manda lo que quiera.
+    // Si el servidor se creyera el precio que llega, alguien pediría un saco de
+    // sesenta dólares por un centavo, y el negocio se enteraría al empacarlo.
+    const ruta = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/api/tienda/pedido/route.ts"), "utf8"),
+    );
+    esperar(ruta.includes("recalcularPedido(")).verdadero(
+      "la ruta de pedidos no recalcula contra el catálogo",
+    );
+    // El total que se guarda tiene que ser el recalculado, no uno que venga en
+    // el cuerpo de la petición.
+    esperar(/total,\s*$/m.test(ruta) || ruta.includes("total,")).verdadero();
+    esperar(/cuerpo\??\.?\s*\.?total|body\.total/.test(ruta)).falso(
+      "la ruta está leyendo un total del navegador",
+    );
+
+    // Y los pedidos NO se pueden crear desde el navegador contra la base: la
+    // migración no lleva política para `anon`.
+    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/0072_pedidos.sql"), "utf8");
+    esperar(/to\s+anon/.test(mig.replace(/--.*$/gm, ""))).falso(
+      "pedidos no puede tener política para anon: el precio se forjaría desde el navegador",
+    );
+  });
+
+  test("el precio de una línea de pedido queda congelado", () => {
+    // Si la línea leyera el precio del producto, mañana el negocio sube un
+    // precio y TODOS los pedidos viejos pasarían a decir el precio nuevo. Eso
+    // rompe la contabilidad, las devoluciones y cualquier reclamo.
+    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/0072_pedidos.sql"), "utf8");
+    esperar(/create table if not exists public\.pedido_lineas[\s\S]*?precio\s+integer\s+not null/.test(mig)).verdadero(
+      "la línea del pedido no guarda su propio precio",
+    );
+    esperar(/create table if not exists public\.pedido_lineas[\s\S]*?nombre\s+text\s+not null/.test(mig)).verdadero(
+      "la línea del pedido no guarda su propio nombre",
+    );
+  });
+
   test("no se mezcla la tarjeta oscura con el texto del tema", () => {
     // TEXTO INVISIBLE, VISTO EN UNA CAPTURA DE ALEX. Hay dos clases de tarjeta:
     // `.card` es la vieja y es azul oscuro SIEMPRE, en los dos temas; `.card-l`

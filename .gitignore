@@ -40,3 +40,6 @@ next-env.d.ts
 # lo que sobra se mueve aquí en vez de borrarse — pero no tiene que viajar al
 # repositorio: `publish.sh` hace `git add -A` y se lo llevaría todo.
 _to_delete/
+
+# Paquetes que llegan desde la sesión de Claude: se descomprimen y ya está.
+_entrega/

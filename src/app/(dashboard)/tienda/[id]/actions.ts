@@ -300,6 +300,50 @@ export async function vaciarCatalogo(_e: Estado, fd: FormData): Promise<Estado> 
   };
 }
 
+/* ── Pedidos ───────────────────────────────────────────────────────────────── */
+
+const ESTADOS = ["recibido", "confirmado", "preparando", "en_camino", "entregado", "cancelado"];
+
+/**
+ * Mover un pedido de estado.
+ *
+ * CADA CAMBIO DEJA RASTRO en `pedido_eventos`. El día que un pedido aparezca
+ * entregado sin haberse entregado, o cancelado sin que nadie sepa quién, la
+ * única forma de averiguarlo es que esté anotado. Es el mismo criterio que ya
+ * salvó el diagnóstico de los webhooks de Meta.
+ */
+export async function cambiarEstadoPedido(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  const pedidoId = s(fd.get("pedido_id"));
+  const estado = s(fd.get("estado"));
+  if (!pedidoId) return { ok: false, mensaje: "No sé qué pedido mover." };
+  if (!ESTADOS.includes(estado)) return { ok: false, mensaje: "Ese estado no existe." };
+
+  const sb = createClient();
+
+  // Acotado a la tienda además de por id: un id de otra tienda no puede mover
+  // el pedido de otro cliente.
+  const { error } = await sb
+    .from("pedidos")
+    .update({ estado, updated_at: new Date().toISOString() })
+    .eq("id", pedidoId)
+    .eq("tienda_id", tiendaId);
+
+  if (error) return { ok: false, mensaje: "No se pudo cambiar el estado." };
+
+  await sb.from("pedido_eventos").insert({
+    pedido_id: pedidoId,
+    que: `estado:${estado}`,
+    quien: "panel",
+  });
+
+  revalidatePath(`/tienda/${tiendaId}`);
+  return { ok: true, mensaje: "" };
+}
+
 /* ── Cobros ────────────────────────────────────────────────────────────────── */
 
 /**

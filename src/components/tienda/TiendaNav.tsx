@@ -15,6 +15,9 @@ import Link from "next/link";
  */
 
 export const PESTANAS = [
+  // PEDIDOS VA PRIMERO a propósito: es lo que se mira todo el día. Productos y
+  // Diseño se tocan al montar la tienda y luego casi nunca.
+  { clave: "pedidos", titulo: "Pedidos" },
   { clave: "productos", titulo: "Productos" },
   { clave: "diseno", titulo: "Diseño" },
   { clave: "cobros", titulo: "Cobros" },
@@ -23,7 +26,7 @@ export const PESTANAS = [
 export type ClavePestana = (typeof PESTANAS)[number]["clave"];
 
 export function esPestana(v: string | undefined): ClavePestana {
-  return (PESTANAS.find((p) => p.clave === v)?.clave ?? "productos") as ClavePestana;
+  return (PESTANAS.find((p) => p.clave === v)?.clave ?? "pedidos") as ClavePestana;
 }
 
 export function TiendaNav({ tiendaId, activa }: { tiendaId: string; activa: string }) {
