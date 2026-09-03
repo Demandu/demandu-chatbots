@@ -55,7 +55,7 @@ export function Cobros({
         </p>
       </div>
 
-      <section className="card grid gap-3 p-4">
+      <section className="card-l grid gap-3 p-4">
         <h2 className="font-semibold text-ink">Yappy</h2>
 
         <div>

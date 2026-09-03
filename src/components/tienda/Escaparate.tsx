@@ -159,13 +159,23 @@ export function Escaparate({
   return (
     <div style={{ backgroundColor: c.fondo, color: c.texto, minHeight: "100vh", paddingBottom: 86 }}>
       {/* ── Cabecera: logo y nombre ── */}
-      <header style={{ backgroundColor: c.principal }} className="px-4 py-4">
-        <div className="mx-auto flex max-w-4xl items-center gap-3">
+      {/* EL LOGO GRANDE Y CENTRADO. Pequeño y a un lado no se nota, y es lo
+          único que le dice al cliente que llegó a la tienda correcta: viene de
+          un enlace en una biografía de Instagram, sin más contexto. */}
+      <header style={{ backgroundColor: c.principal }} className="px-4 py-6">
+        <div className="mx-auto flex max-w-4xl flex-col items-center gap-3 text-center">
           {config.logo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={config.logo_url} alt={config.titulo} className="h-11 w-11 flex-none rounded-full object-cover" />
+            <img
+              src={config.logo_url}
+              alt={config.titulo}
+              className="h-24 w-24 flex-none rounded-full bg-white/10 object-contain sm:h-28 sm:w-28"
+            />
           ) : null}
-          <p className="truncate text-lg font-bold text-white">{config.titulo}</p>
+          <p className="text-xl font-bold text-white sm:text-2xl">{config.titulo}</p>
+          {config.contacto.horario && (
+            <p className="text-xs text-white/70">{config.contacto.horario}</p>
+          )}
         </div>
       </header>
 
@@ -353,6 +363,12 @@ export function Escaparate({
         <FichaProducto
           producto={abierto}
           config={config}
+          unidadesEnCarrito={unidades}
+          totalEnCarrito={total}
+          onVerPedido={() => {
+            setAbierto(null);
+            setVerCarrito(true);
+          }}
           onCerrar={() => setAbierto(null)}
           onAgregar={(l) => {
             agregar(l);
@@ -467,11 +483,17 @@ function IconoWhatsapp({ className }: { className?: string }) {
 function FichaProducto({
   producto,
   config,
+  unidadesEnCarrito,
+  totalEnCarrito,
+  onVerPedido,
   onCerrar,
   onAgregar,
 }: {
   producto: ProductoPublico;
   config: ConfigTienda;
+  unidadesEnCarrito: number;
+  totalEnCarrito: number;
+  onVerPedido: () => void;
   onCerrar: () => void;
   onAgregar: (l: LineaCarrito) => void;
 }) {
@@ -631,15 +653,35 @@ function FichaProducto({
       </div>
 
       <div className="flex-none p-3" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
-        <button
-          type="button"
-          onClick={agregar}
-          className="mx-auto flex w-full max-w-2xl items-center justify-between rounded-2xl px-4 py-3.5 font-bold text-white shadow-lg"
-          style={{ backgroundColor: c.principal }}
-        >
-          <span>Agregar</span>
-          <span>{comoDinero(precioUnitario(linea) * cantidad, config.moneda)}</span>
-        </button>
+        <div className="mx-auto grid w-full max-w-2xl gap-2">
+          <button
+            type="button"
+            onClick={agregar}
+            className="flex items-center justify-between rounded-2xl px-4 py-3.5 font-bold text-white shadow-lg"
+            style={{ backgroundColor: c.principal }}
+          >
+            <span>Agregar</span>
+            <span>{comoDinero(precioUnitario(linea) * cantidad, config.moneda)}</span>
+          </button>
+
+          {/* EL PEDIDO NO DESAPARECE AL ENTRAR EN UN PRODUCTO. Si ya hay cosas
+              en el carrito y aquí solo se ve «Agregar», el cliente que ya
+              terminó tiene que adivinar cómo salir a enviarlo — y adivinar,
+              con el pedido hecho, es donde se pierde la venta. */}
+          {unidadesEnCarrito > 0 && (
+            <button
+              type="button"
+              onClick={onVerPedido}
+              className="flex items-center justify-between rounded-2xl px-4 py-3 font-bold text-white"
+              style={{ backgroundColor: c.whatsapp }}
+            >
+              <span className="text-sm">
+                {config.whatsapp.texto_boton} ({unidadesEnCarrito})
+              </span>
+              <span className="text-sm">{comoDinero(totalEnCarrito, config.moneda)}</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

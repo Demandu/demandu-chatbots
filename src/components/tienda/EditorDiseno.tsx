@@ -85,7 +85,7 @@ export function EditorDiseno({
 
       <div className="grid gap-5">
         {/* ── Identidad ── */}
-        <section className="card p-4">
+        <section className="card-l p-4">
           <h2 className="mb-3 font-semibold text-ink">La cara del negocio</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
@@ -145,7 +145,7 @@ export function EditorDiseno({
         </section>
 
         {/* ── Categorías ── */}
-        <section className="card p-4">
+        <section className="card-l p-4">
           <h2 className="font-semibold text-ink">Categorías</h2>
           <p className="mb-3 mt-1 text-sm text-ink-2">
             Salen solas de tus productos. Aquí solo les pones foto — es lo primero que ve quien
@@ -183,7 +183,7 @@ export function EditorDiseno({
         </section>
 
         {/* ── Colores ── */}
-        <section className="card p-4">
+        <section className="card-l p-4">
           <h2 className="mb-3 font-semibold text-ink">Colores</h2>
           <div className="grid gap-3 sm:grid-cols-3">
             <Color name="color_principal" etiqueta="Principal" valor={config.colores.principal} />
@@ -195,7 +195,7 @@ export function EditorDiseno({
         </section>
 
         {/* ── El pedido ── */}
-        <section className="card p-4">
+        <section className="card-l p-4">
           <h2 className="font-semibold text-ink">A dónde llega el pedido</h2>
           <p className="mb-3 mt-1 text-sm text-ink-2">
             Sin esto la tienda se ve perfecta y no vende: el cliente llena el carrito, pulsa el
@@ -268,7 +268,7 @@ export function EditorDiseno({
         </section>
 
         {/* ── Contacto ── */}
-        <section className="card p-4">
+        <section className="card-l p-4">
           <h2 className="mb-3 font-semibold text-ink">Contacto y pie</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>

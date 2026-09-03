@@ -2744,6 +2744,28 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("no se mezcla la tarjeta oscura con el texto del tema", () => {
+    // TEXTO INVISIBLE, VISTO EN UNA CAPTURA DE ALEX. Hay dos clases de tarjeta:
+    // `.card` es la vieja y es azul oscuro SIEMPRE, en los dos temas; `.card-l`
+    // respeta el tema. `text-ink` es texto oscuro en modo claro. Juntas dan
+    // letra negra sobre fondo azul marino: los títulos y los nombres de las
+    // categorías no se leían.
+    //
+    // Nadie lo nota programando en modo oscuro, que es donde ambas cosas se ven
+    // bien. Por eso hace falta una regla y no buena memoria.
+    const malos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      const t = sinComentarios(texto);
+      const usaTarjetaOscura = /className="card[ "]|className=\{`card[ `]/.test(t);
+      const usaTextoDelTema = /\btext-ink\b/.test(t);
+      if (usaTarjetaOscura && usaTextoDelTema) malos.push(ruta);
+    }
+    esperar(malos.join(", ")).igual(
+      "",
+      "una pantalla mezcla `card` (siempre oscura) con `text-ink` (oscuro en tema claro): el texto no se lee",
+    );
+  });
+
   test("la tabla se resincroniza cuando el servidor cambia", () => {
     // FALLO REAL, Y CON DIENTES: Alex vació el catálogo, los 96 productos se
     // borraron de verdad en la base, y la pantalla siguió enseñándolos.

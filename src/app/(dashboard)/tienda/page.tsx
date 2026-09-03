@@ -70,7 +70,7 @@ export default async function TiendaPage() {
               <Link
                 key={t.id}
                 href={`/tienda/${t.id}`}
-                className="card p-4 transition hover:border-pink/35"
+                className="card-l p-4 transition hover:border-pink/35"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
