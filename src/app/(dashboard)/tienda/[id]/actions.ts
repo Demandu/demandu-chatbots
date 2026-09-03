@@ -250,6 +250,51 @@ export async function guardarProductos(_e: Estado, fd: FormData): Promise<Estado
   };
 }
 
+/**
+ * Vaciar el catálogo entero.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ESTO NO SE DESHACE. No hay papelera ni copia: los productos y sus opciones se
+ * van, y con noventa y seis a la vez eso es una tarde de trabajo perdida.
+ *
+ * POR ESO PIDE ESCRIBIR «BORRAR», y se comprueba AQUÍ además de en la pantalla.
+ * Un botón de confirmar se pulsa sin leer —todos lo hacemos— pero nadie teclea
+ * seis letras por accidente. Es el único freno que de verdad para una mano
+ * rápida, y cuesta tres segundos a quien sí quería hacerlo.
+ *
+ * SE ACOTA A ESTA TIENDA SIEMPRE. Un `delete` sin `tienda_id` en un sistema
+ * multi-inquilino no borra un catálogo: borra todos.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function vaciarCatalogo(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  if (s(fd.get("confirmacion")).toUpperCase() !== "BORRAR") {
+    return { ok: false, mensaje: "Para vaciar el catálogo hay que escribir BORRAR." };
+  }
+
+  const sb = createClient();
+
+  // Se cuenta ANTES para poder decir cuántos se fueron. Un «listo» a secas deja
+  // a cualquiera con la duda de si borró lo que creía.
+  const { count } = await sb
+    .from("tienda_productos")
+    .select("id", { count: "exact", head: true })
+    .eq("tienda_id", tiendaId);
+
+  const { error } = await sb.from("tienda_productos").delete().eq("tienda_id", tiendaId);
+  if (error) return { ok: false, mensaje: "No se pudo vaciar el catálogo. Inténtalo de nuevo." };
+
+  revalidatePath(`/tienda/${tiendaId}`);
+  const n = count ?? 0;
+  return {
+    ok: true,
+    mensaje: n === 0 ? "El catálogo ya estaba vacío." : `Catálogo vaciado: ${n} producto${n === 1 ? "" : "s"} borrado${n === 1 ? "" : "s"}.`,
+  };
+}
+
 /* ── Cobros ────────────────────────────────────────────────────────────────── */
 
 /**

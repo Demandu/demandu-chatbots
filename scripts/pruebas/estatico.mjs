@@ -2744,6 +2744,39 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("vaciar el catálogo no se puede hacer de un clic descuidado", () => {
+    // BORRAR NOVENTA Y SEIS PRODUCTOS NO SE DESHACE: no hay papelera ni copia.
+    // Un botón de confirmar se pulsa sin leer —todos lo hacemos— pero nadie
+    // teclea seis letras por accidente.
+    const acciones = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"),
+    );
+    const i = acciones.indexOf("export async function vaciarCatalogo");
+    esperar(i > 0).verdadero("no existe la acción de vaciar el catálogo");
+    const cuerpo = acciones.slice(i, acciones.indexOf("export async function", i + 10));
+
+    // La palabra se comprueba EN EL SERVIDOR, no solo en la pantalla: la
+    // pantalla es una comodidad, esto es la puerta.
+    esperar(/confirmacion[\s\S]{0,120}BORRAR/.test(cuerpo)).verdadero(
+      "el servidor no exige escribir BORRAR",
+    );
+    // Y siempre acotado a esta tienda: un delete sin `tienda_id` en un sistema
+    // multi-inquilino no borra un catálogo, borra todos.
+    esperar(/\.delete\(\)[\s\S]{0,80}\.eq\("tienda_id"/.test(cuerpo)).verdadero(
+      "el borrado no está acotado a la tienda",
+    );
+
+    // Y el botón no puede vivir pegado al de guardar.
+    const tabla = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/Productos.tsx"), "utf8"),
+    );
+    const iGuardar = tabla.indexOf("<Guardar cuantos");
+    const iVaciar = tabla.indexOf("Vaciar el catálogo");
+    esperar(iVaciar > iGuardar).verdadero(
+      "el botón de vaciar tiene que estar lejos del de guardar, no al lado",
+    );
+  });
+
   test("la tienda abre por categorías, no soltando todo el catálogo", () => {
     // ESTA ES LA FORMA QUE SUS CLIENTES YA SABEN USAR, copiada de la tienda que
     // llevan años usando: cabecera, banner, y las categorías CERRADAS con su

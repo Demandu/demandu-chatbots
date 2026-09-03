@@ -108,11 +108,13 @@ export function Productos({
   productos,
   moneda,
   guardar,
+  vaciar,
 }: {
   tiendaId: string;
   productos: Producto[];
   moneda: string;
   guardar: (e: Estado, fd: FormData) => Promise<Estado>;
+  vaciar: (e: Estado, fd: FormData) => Promise<Estado>;
 }) {
   const originales = useMemo(() => productos.map(aFila), [productos]);
   const [filas, setFilas] = useState<Fila[]>(originales);
@@ -122,6 +124,9 @@ export function Productos({
   const [todo, setTodo] = useState(false);
   const [opcionesDe, setOpcionesDe] = useState<number | null>(null);
   const [estado, enviar] = useFormState(guardar, { ok: false, mensaje: "" });
+  const [vaciando, setVaciando] = useState(false);
+  const [palabra, setPalabra] = useState("");
+  const [estadoVaciar, enviarVaciar] = useFormState(vaciar, { ok: false, mensaje: "" });
 
   const porId = useMemo(() => new Map(originales.map((f) => [f.id, f])), [originales]);
   const cambiada = (f: Fila) => {
@@ -164,6 +169,7 @@ export function Productos({
   const categorias = [...new Set(filas.map((f) => f.categoria).filter(Boolean))];
 
   return (
+    <>
     <form action={enviar}>
       <input type="hidden" name="tienda_id" value={tiendaId} />
       {/* La tabla entera viaja como un solo campo: un `input` por casilla serían
@@ -203,6 +209,12 @@ export function Productos({
       {estado.mensaje && (
         <p className={`mb-3 text-sm ${estado.ok ? "text-emerald-400" : "text-danger"}`}>
           {estado.mensaje}
+        </p>
+      )}
+
+      {estadoVaciar.mensaje && (
+        <p className={`mb-3 text-sm ${estadoVaciar.ok ? "text-emerald-400" : "text-danger"}`}>
+          {estadoVaciar.mensaje}
         </p>
       )}
 
@@ -413,6 +425,21 @@ export function Productos({
         </div>
       )}
 
+      {/* ABAJO Y DISCRETO, LEJOS DE GUARDAR. Un botón de borrar todo al lado del
+          de guardar se pulsa por error, y eso no se deshace. */}
+      {productos.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setPalabra("");
+            setVaciando(true);
+          }}
+          className="mt-5 text-xs text-ink-3 underline transition hover:text-danger"
+        >
+          Vaciar el catálogo
+        </button>
+      )}
+
       {filas.length > 0 && (
         <p className="mt-3 text-xs text-ink-2">
           Verde = producto nuevo. Ámbar = con cambios sin guardar.
@@ -496,5 +523,69 @@ export function Productos({
         </div>
       )}
     </form>
+
+    {/* FUERA DEL FORMULARIO DE ARRIBA: un formulario dentro de otro no es HTML
+        válido y el navegador lo desarma por su cuenta, con resultados raros. */}
+    {vaciando && (
+      <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
+        <form
+          action={(fd) => {
+            enviarVaciar(fd);
+            setVaciando(false);
+          }}
+          className="w-full max-w-md rounded-2xl border border-linea bg-tarjeta p-5"
+        >
+          <input type="hidden" name="tienda_id" value={tiendaId} />
+
+          <div className="flex items-start gap-3">
+            <span className="grid h-10 w-10 flex-none place-items-center rounded-2xl bg-danger/12 text-danger">
+              <Trash2 className="h-5 w-5" />
+            </span>
+            <div>
+              <h2 className="font-display text-lg font-bold text-ink">Vaciar el catálogo</h2>
+              <p className="mt-1 text-sm leading-relaxed text-ink-2">
+                Se van a borrar <b className="text-ink">{productos.length} producto
+                {productos.length === 1 ? "" : "s"}</b> con sus opciones.{" "}
+                <b className="text-ink">Esto no se deshace</b>: no hay papelera ni copia.
+              </p>
+              <p className="mt-2 text-xs text-ink-2">
+                Si lo que quieres es sacarlos de la tienda un tiempo, no los borres: márcalos como
+                ocultos en «Más columnas» y vuelven cuando quieras.
+              </p>
+            </div>
+          </div>
+
+          <label className="mb-1.5 mt-4 block text-xs font-semibold text-ink-2">
+            Escribe <b className="text-ink">BORRAR</b> para confirmar
+          </label>
+          <input
+            autoFocus
+            name="confirmacion"
+            value={palabra}
+            onChange={(e) => setPalabra(e.target.value)}
+            autoComplete="off"
+            className="input-l"
+          />
+
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              className="rounded-xl px-4 py-2 text-sm font-bold text-white transition disabled:opacity-40"
+              style={{ backgroundColor: "var(--danger, #dc2626)" }}
+              disabled={palabra.trim().toUpperCase() !== "BORRAR"}
+            >
+              Borrar los {productos.length}
+            </button>
+            <button
+              type="button"
+              onClick={() => setVaciando(false)}
+              className="text-sm text-ink-2 transition hover:text-ink"
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      </div>
+    )}
+    </>
   );
 }
