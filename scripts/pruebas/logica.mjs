@@ -11,6 +11,7 @@ import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
+import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero } from "../../src/lib/tienda/variedades.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
 import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
@@ -977,6 +978,109 @@ describe("WhatsApp: la firma de Meta", () => {
     esperar(/return\s+diferencia === 0/.test(cuerpo)).verdadero(
       "el veredicto sale de la diferencia acumulada, no de un corte anticipado",
     );
+  });
+});
+
+// ─── La tienda: precios y variedades ─────────────────────────────────────────
+//
+// ESTO DECIDE CUÁNTO SE LE COBRA A UNA PERSONA. Un fallo aquí no es un texto
+// mal puesto: es dinero mal cobrado, y el cliente lo ve en su recibo. Por eso
+// se prueba con los casos raros de las hojas de verdad, no con ejemplos
+// cómodos.
+describe("Tienda: leer precios de una hoja", () => {
+  test("acepta punto y coma como decimal", () => {
+    // En Panamá y media Latinoamérica se escriben las dos formas, y quien
+    // llena la hoja no tiene por qué saber cuál espera el programa.
+    esperar(aCentavos("2.50")).igual(250, "2.50 son 250 centavos");
+    esperar(aCentavos("2,50")).igual(250, "rechazar la coma cobraría CERO en vez de 2.50");
+    esperar(aCentavos("5")).igual(500);
+    esperar(aCentavos(16.35)).igual(1635, "también los que ya vienen como número");
+  });
+
+  test("no confunde separador de miles con decimales", () => {
+    // EN LA HOJA REAL HAY UN «1,600.0». Leerlo como uno coma seis convertiría
+    // un producto de mil seiscientos en uno de dos dólares.
+    esperar(aCentavos("1,600.0")).igual(160000, "mil seiscientos, no uno coma seis");
+    esperar(aCentavos("1.600,50")).igual(160050, "formato europeo: el último manda");
+    esperar(aCentavos("1,600")).igual(160000, "tres dígitos detrás = miles");
+    esperar(aCentavos("1,60")).igual(160, "dos dígitos detrás = decimales");
+  });
+
+  test("quita símbolos de moneda y no se rompe con basura", () => {
+    esperar(aCentavos("B/. 2.50")).igual(250);
+    esperar(aCentavos("$ 12")).igual(1200);
+    for (const v of ["", null, undefined, "gratis", "  "]) {
+      esperar(aCentavos(v)).igual(0, `${JSON.stringify(v)} no puede inventarse un precio`);
+    }
+  });
+
+  test("redondea al centavo, porque el dinero no tiene milésimas", () => {
+    esperar(aCentavos("2.505")).igual(251);
+    esperar(aCentavos("0.004")).igual(0);
+  });
+});
+
+describe("Tienda: variedades con recargo", () => {
+  test("lee el formato de la hoja tal cual", () => {
+    const o = leerOpciones("Pollo, Salmón {2.50}, Res {5}");
+    esperar(o.length).igual(3);
+    esperar(o[0]).igual({ texto: "Pollo", recargo: 0 });
+    esperar(o[1]).igual({ texto: "Salmón", recargo: 250 });
+    esperar(o[2]).igual({ texto: "Res", recargo: 500 });
+  });
+
+  test("una coma de más no crea una opción vacía", () => {
+    // El error de tecleo más común de todos. Pintaría un botón en blanco que
+    // el cliente puede pulsar sin saber qué está eligiendo.
+    const o = leerOpciones("Pollo, Salmón, ");
+    esperar(o.length).igual(2);
+    esperar(o.map((x) => x.texto).join("|")).igual("Pollo|Salmón");
+  });
+
+  test("ante una llave rota NO se cobra de más", () => {
+    // Cobrar por un error de tecleo es mucho peor que no cobrar: el cliente
+    // paga de más y nadie se entera hasta que reclama.
+    esperar(leerOpciones("Salmón {2.50")).igual([{ texto: "Salmón 2.50", recargo: 0 }]);
+    esperar(leerOpciones("Salmón {}")).igual([{ texto: "Salmón", recargo: 0 }]);
+  });
+
+  test("sin variedades no hay variedades", () => {
+    for (const v of ["", null, undefined, "  "]) esperar(leerOpciones(v)).igual([]);
+  });
+
+  test("el modo se entiende como lo escribe el cliente", () => {
+    esperar(leerModo("HASTA COMPLETAR")).igual("hasta_completar");
+    esperar(leerModo("hasta completar 3")).igual("hasta_completar");
+    esperar(leerModo("varias")).igual("varias");
+    esperar(leerModo("")).igual("una", "por defecto se elige UNA: es lo menos sorprendente");
+    esperar(leerModo(null)).igual("una");
+  });
+
+  test("el recargo total sale de lo que el cliente eligió", () => {
+    const grupos = [
+      { nombre: "Tamaño", modo: "una", opciones: leerOpciones("5 lbs., 15 lbs. {3}") },
+      { nombre: "Sabor", modo: "varias", opciones: leerOpciones("Pollo, Salmón {2.50}") },
+    ];
+    esperar(recargoDe(grupos, ["15 lbs.", "Salmón"])).igual(550, "3.00 + 2.50");
+    esperar(recargoDe(grupos, ["5 lbs.", "Pollo"])).igual(0);
+    esperar(recargoDe(grupos, ["no existe"])).igual(0, "una opción inventada no cobra nada");
+    esperar(recargoDe([], ["lo que sea"])).igual(0);
+  });
+
+  test("sumar en centavos no arrastra el error de los decimales", () => {
+    // LA RAZÓN DE QUE TODO ESTO SEA ENTERO. Con coma flotante, 0.1 + 0.2 no da
+    // 0.3, y un carrito de veinte productos acaba con un centavo de más o de
+    // menos. El cliente lo ve en el total y pierde la confianza.
+    esperar(0.1 + 0.2 === 0.3).falso("así se comporta la coma flotante");
+    const g = [{ nombre: "x", modo: "varias", opciones: leerOpciones("A {0.10}, B {0.20}") }];
+    esperar(recargoDe(g, ["A", "B"])).igual(30, "en centavos la suma es exacta");
+  });
+
+  test("el dinero se escribe como lo lee una persona", () => {
+    esperar(comoDinero(250)).igual("$2.50");
+    esperar(comoDinero(160000)).igual("$1600.00");
+    esperar(comoDinero(5)).igual("$0.05", "los centavos sueltos no se pierden");
+    esperar(comoDinero(0)).igual("$0.00");
   });
 });
 
