@@ -58,6 +58,25 @@ export function enlaceDeTienda(slug: string): string {
 }
 
 /**
+ * De qué dominio llega esta visita.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SE MIRA `x-forwarded-host` ANTES QUE `host`. La aplicación no recibe las
+ * visitas directamente: hay un proxy delante, y algunos reescriben `host` con
+ * su propio nombre interno. Cuando eso pasa, el dominio de tiendas deja de
+ * reconocerse y el escaparate contesta 404 en su propia dirección, sin un solo
+ * error en ningún registro.
+ *
+ * El puerto se quita, y de una lista se toma el primero: un encabezado
+ * reenviado puede traer varios separados por comas.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function hostDeLaPeticion(cabeceras: { get(nombre: string): string | null }): string {
+  const bruto = cabeceras.get("x-forwarded-host") ?? cabeceras.get("host") ?? "";
+  return bruto.split(",")[0].split(":")[0].trim().toLowerCase();
+}
+
+/**
  * El enlace que va dentro del mensaje de WhatsApp para pagar.
  *
  * ─────────────────────────────────────────────────────────────────────────────

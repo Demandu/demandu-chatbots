@@ -12,7 +12,7 @@ import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
-import { aDireccion, direccionValida, enlaceDePago } from "../../src/lib/tienda/direccion.ts";
+import { aDireccion, direccionValida, enlaceDePago, hostDeLaPeticion } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
@@ -2251,6 +2251,39 @@ describe("Tienda: el enlace de pago que va en el mensaje", () => {
 
   test("el código se escribe siempre igual, lo dicten como lo dicten", () => {
     esperar(enlaceDePago("x", "abc123")).igual(enlaceDePago("x", "ABC123"));
+  });
+});
+
+describe("Tienda: de qué dominio llega la visita", () => {
+  const cabeceras = (o) => ({ get: (n) => o[n.toLowerCase()] ?? null });
+
+  test("el proxy manda sobre el host interno", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // Sin esto, un proxy que reescribe `host` con su nombre interno hace que
+    // el dominio de tiendas deje de reconocerse: 404 en la dirección propia de
+    // la tienda, y ni un error en ningún registro.
+    // ───────────────────────────────────────────────────────────────────────
+    esperar(
+      hostDeLaPeticion(cabeceras({ "x-forwarded-host": "store.demandu.tech", host: "interno.netlify.app" })),
+    ).igual("store.demandu.tech");
+  });
+
+  test("sin proxy vale el host de siempre", () => {
+    esperar(hostDeLaPeticion(cabeceras({ host: "store.demandu.tech" }))).igual("store.demandu.tech");
+  });
+
+  test("el puerto y las mayúsculas no cuentan", () => {
+    esperar(hostDeLaPeticion(cabeceras({ host: "Store.Demandu.Tech:3000" }))).igual("store.demandu.tech");
+  });
+
+  test("de una lista reenviada se toma el primero", () => {
+    esperar(
+      hostDeLaPeticion(cabeceras({ "x-forwarded-host": "store.demandu.tech, otro.interno" })),
+    ).igual("store.demandu.tech");
+  });
+
+  test("sin cabeceras no se inventa un dominio", () => {
+    esperar(hostDeLaPeticion(cabeceras({}))).igual("");
   });
 });
 

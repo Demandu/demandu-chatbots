@@ -2745,7 +2745,11 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     esperar(fs.existsSync(path.join(SRC, "app/t/[slug]/page.tsx"))).verdadero(
       "no hay pantalla pública de tienda",
     );
-    const mw = sinComentarios(fs.readFileSync(path.join(RAIZ, "middleware.ts"), "utf8"));
+    // SE LEE EL DE `src/`, QUE ES EL QUE CORRE. Esta prueba leyó durante horas
+    // una copia en la raíz que Next nunca carga: pasaba en verde mientras el
+    // escaparate daba 404 en su propio dominio. Una prueba que mira el archivo
+    // equivocado no es una prueba, es una coartada.
+    const mw = sinComentarios(fs.readFileSync(path.join(SRC, "middleware.ts"), "utf8"));
     esperar(mw.includes("DOMINIO_TIENDAS")).verdadero(
       "el dominio de tiendas no se enruta en el middleware",
     );
@@ -3122,6 +3126,33 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
       fs.readFileSync(path.join(SRC, "components/tienda/Escaparate.tsx"), "utf8"),
     );
     esperar(/BotonYappy/.test(esc)).falso("el botón de pago volvió al carrito");
+  });
+
+  test("HAY UN SOLO middleware, y vive en src/", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ESTA PRUEBA EXISTE POR UNA TARDE PERDIDA. La aplicación vive en
+    // `src/app`, así que Next solo carga `src/middleware.ts`. Había una segunda
+    // copia en la raíz con todo el enrutado del dominio de tiendas: código
+    // correcto, pruebas en verde, y NUNCA se ejecutaba. El escaparate daba 404
+    // en su propia dirección y no había un solo error donde mirar.
+    //
+    // Un archivo que no corre es peor que uno que falla: el que falla avisa.
+    // ─────────────────────────────────────────────────────────────────────────
+    esperar(fs.existsSync(path.join(SRC, "middleware.ts"))).verdadero(
+      "el middleware tiene que estar en src/, que es donde Next lo busca",
+    );
+    esperar(fs.existsSync(path.join(RAIZ, "middleware.ts"))).falso(
+      "hay un middleware en la raíz que Next ignora: o se borra, o alguien va a editarlo creyendo que corre",
+    );
+
+    // Y el que sí corre es el que enruta el dominio de tiendas.
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "middleware.ts"), "utf8"));
+    esperar(t.includes("DOMINIO_TIENDAS")).verdadero(
+      "el middleware que corre no sabe nada del dominio de tiendas",
+    );
+    esperar(t.includes("hostDeLaPeticion(")).verdadero(
+      "el dominio se lee sin tener en cuenta el proxy que hay delante",
+    );
   });
 });
 
