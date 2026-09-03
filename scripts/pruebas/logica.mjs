@@ -14,6 +14,7 @@ import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.t
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero } from "../../src/lib/tienda/variedades.ts";
 import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender } from "../../src/lib/tienda/config.ts";
+import { leerPreguntasEscritas, escribirPreguntas, leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
 import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
@@ -1251,6 +1252,80 @@ describe("Tienda: cómo se ve y qué pregunta", () => {
     esperar(leerConfig({ minimo_pedido: -5 }).minimo_pedido).igual(0);
     esperar(leerConfig({ minimo_pedido: "no" }).minimo_pedido).igual(0);
     esperar(leerConfig({ minimo_pedido: 10.6 }).minimo_pedido).igual(11, "medio centavo no existe");
+  });
+});
+
+describe("Tienda: lo que se escribe a mano", () => {
+  test("el formulario se escribe como se lee", () => {
+    const p = leerPreguntasEscritas(
+      "Nombre Completo*\nForma de Pago* | Yappy, Efectivo, Tarjeta\nComentarios | parrafo\nTeléfono | telefono",
+    );
+    esperar(p.length).igual(4);
+    esperar(p[0]).igual({ id: "nombre_completo", etiqueta: "Nombre Completo", tipo: "texto", obligatoria: true });
+    esperar(p[1].tipo).igual("lista");
+    esperar(p[1].opciones.join("|")).igual("Yappy|Efectivo|Tarjeta");
+    esperar(p[1].obligatoria).verdadero("el asterisco va antes de la barra");
+    esperar(p[2].tipo).igual("parrafo");
+    esperar(p[3].tipo).igual("telefono");
+    esperar(p[3].obligatoria).falso();
+  });
+
+  test("una sola opción no se pinta como desplegable", () => {
+    // Un desplegable de un elemento no es una elección: es un dato fijo con
+    // dos clics de más.
+    const p = leerPreguntasEscritas("Sucursal | Centro");
+    esperar(p[0].tipo).igual("texto");
+    esperar(p[0].opciones === undefined).verdadero();
+  });
+
+  test("el id sobrevive a mover las líneas de sitio", () => {
+    // EL ID ES LO QUE SE GUARDA CON CADA PEDIDO. Si saliera de la posición,
+    // reordenar el formulario haría ilegibles todos los pedidos anteriores.
+    const antes = leerPreguntasEscritas("Nombre*\nDirección*");
+    const despues = leerPreguntasEscritas("Dirección*\nNombre*");
+    esperar(antes[0].id).igual(despues[1].id);
+    esperar(antes[1].id).igual(despues[0].id);
+    esperar(antes[1].id).igual("direccion", "los acentos no llegan al id");
+  });
+
+  test("dos preguntas iguales no comparten respuesta", () => {
+    const p = leerPreguntasEscritas("Talla\nTalla\nTalla");
+    esperar(new Set(p.map((x) => x.id)).size).igual(3);
+  });
+
+  test("líneas vacías y asteriscos sueltos no crean preguntas fantasma", () => {
+    esperar(leerPreguntasEscritas("")).igual([]);
+    esperar(leerPreguntasEscritas("\n\n   \n")).igual([]);
+    esperar(leerPreguntasEscritas("*")).igual([], "un asterisco solo no es una pregunta");
+  });
+
+  test("lo escrito y lo guardado son lo mismo de ida y vuelta", () => {
+    // Si no cuadraran, abrir la pantalla y guardar sin tocar nada cambiaría el
+    // formulario a espaldas del negocio.
+    const texto = "Nombre Completo*\nForma de Pago* | Yappy, Efectivo\nComentarios | parrafo";
+    esperar(escribirPreguntas(leerPreguntasEscritas(texto))).igual(texto);
+  });
+
+  test("las variedades se escriben igual que en la hoja", () => {
+    const g = leerGruposEscritos("Tamaño | una | 5 lbs., 15 lbs. {3}\nSabor | hasta completar 3 | Pollo, Salmón {2.50}");
+    esperar(g.length).igual(2);
+    esperar(g[0].modo).igual("una");
+    esperar(g[0].opciones[1]).igual({ texto: "15 lbs.", recargo: 300 });
+    esperar(g[1].modo).igual("hasta_completar");
+    esperar(g[1].cantidad).igual(3);
+    esperar(g[1].opciones[1].recargo).igual(250);
+  });
+
+  test("un grupo sin opciones no se guarda", () => {
+    // Sería una pregunta que el cliente no puede contestar; si el producto la
+    // necesita, no se puede ni pedir.
+    esperar(leerGruposEscritos("Tamaño | una |")).igual([]);
+    esperar(leerGruposEscritos(" | una | A, B")).igual([]);
+  });
+
+  test("las variedades también cuadran de ida y vuelta", () => {
+    const texto = "Tamaño | una | 5 lbs., 15 lbs. {3.00}\nSabor | hasta completar 3 | Pollo, Salmón {2.50}";
+    esperar(escribirGrupos(leerGruposEscritos(texto))).igual(texto);
   });
 });
 

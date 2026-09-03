@@ -2664,4 +2664,47 @@ describe("El menú lleva a alguna parte", () => {
   });
 });
 
+// ─── La tienda ───────────────────────────────────────────────────────────────
+describe("Tienda: nada que se pulse puede quedarse callado", () => {
+  const RUTA = "app/(dashboard)/tienda/[id]/page.tsx";
+  const ficha = sinComentarios(fs.readFileSync(path.join(SRC, RUTA), "utf8"));
+
+  test("las tres secciones son pestañas de verdad, no adorno", () => {
+    // ESTA PRUEBA EXISTE POR UN FALLO MÍO. Productos, Diseño y Cobros estaban
+    // pintadas como tarjetas bonitas que no llevaban a ninguna parte: el
+    // cliente pulsaba, no pasaba nada, y se quedaba sin saber si la culpa era
+    // suya. Un botón que parece un botón y no hace nada es el mismo error que
+    // una opción de menú que acaba en un 404.
+    esperar(ficha.includes("<TiendaNav")).verdadero("la ficha no tiene pestañas");
+    for (const comp of ["<Productos", "<EditorDiseno", "<Cobros"]) {
+      esperar(ficha.includes(comp)).verdadero(`falta la sección ${comp}`);
+    }
+  });
+
+  test("el secreto de cobro NUNCA se pide a la base desde la pantalla", () => {
+    // No se puede filtrar lo que nunca se leyó. La pantalla solo necesita
+    // saber SI hay secreto, y eso se pregunta contando.
+    esperar(/select\(\s*["'][^"']*secreto/.test(ficha)).falso(
+      "la ficha está trayendo el secreto de cobro a la vista",
+    );
+  });
+
+  test("las llaves de cobro no viven donde cualquiera puede leerlas", () => {
+    // `tiendas.config` tiene lectura ANÓNIMA a propósito: es lo que pinta el
+    // escaparate. Un secreto de comercio ahí estaría publicado en internet.
+    const cfg = fs.readFileSync(path.join(SRC, "lib/tienda/config.ts"), "utf8");
+    esperar(/secreto|api_key|token/i.test(sinComentarios(cfg))).falso(
+      "la configuración pública de la tienda no puede contener credenciales",
+    );
+
+    const mig = path.join(RAIZ, "supabase/migrations/0071_tienda_cobros.sql");
+    esperar(fs.existsSync(mig)).verdadero("falta la tabla aparte para las llaves de cobro");
+    const sql = fs.readFileSync(mig, "utf8");
+    esperar(/to\s+anon/.test(sql.replace(/--.*$/gm, ""))).falso(
+      "tienda_cobros no puede tener ninguna política para anon",
+    );
+    esperar(/enable row level security/.test(sql)).verdadero("tienda_cobros sin RLS");
+  });
+});
+
 process.exit(await correrPruebas());
