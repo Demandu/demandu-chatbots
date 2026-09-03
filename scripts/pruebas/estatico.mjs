@@ -3098,6 +3098,31 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
       "un pedido ya pagado no se puede volver a cobrar",
     );
   });
+
+  test("la página de pago no lee el importe de la dirección", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Es la diferencia con la tienda anterior, y la única que importa de
+    // verdad: allí el importe viajaba en la URL. Aquí solo el código.
+    // ─────────────────────────────────────────────────────────────────────────
+    const ruta = path.join(SRC, "app/t/[slug]/pagar/[codigo]/page.tsx");
+    esperar(fs.existsSync(ruta)).verdadero("falta la página de pago");
+    const t = sinComentarios(fs.readFileSync(ruta, "utf8"));
+
+    esperar(/searchParams/.test(t)).falso("la página de pago no puede leer parámetros de la dirección");
+    esperar(t.includes('.eq("codigo"')).verdadero("el pedido se busca por su código");
+    esperar(t.includes('.eq("tienda_id"')).verdadero(
+      "el pedido tiene que buscarse dentro de su tienda, no en toda la plataforma",
+    );
+  });
+
+  test("el escaparate ya no cobra: pagar vive en su propia página", () => {
+    // El botón dentro del carrito existía treinta segundos y desaparecía. El
+    // enlace del mensaje se puede reenviar mañana.
+    const esc = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/Escaparate.tsx"), "utf8"),
+    );
+    esperar(/BotonYappy/.test(esc)).falso("el botón de pago volvió al carrito");
+  });
 });
 
 process.exit(await correrPruebas());

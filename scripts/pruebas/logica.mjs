@@ -12,7 +12,7 @@ import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
-import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
+import { aDireccion, direccionValida, enlaceDePago } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
@@ -2225,6 +2225,32 @@ describe("Tienda: lo que este cliente vale", () => {
   test("la ficha vacía existe y no rompe nada", () => {
     esperar(SIN_COMPRAS.pedidos).igual(0);
     esperar(SIN_COMPRAS.favoritos.length).igual(0);
+  });
+});
+
+describe("Tienda: el enlace de pago que va en el mensaje", () => {
+  test("lleva el código del pedido y NADA más", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // La tienda anterior mandaba el importe dentro de la dirección
+    // (`?c=ESEQ&name=pawsathome&amount=25`), donde quien recibe el mensaje lo
+    // puede editar antes de abrirla. Aquí el precio se lee de la base.
+    // ───────────────────────────────────────────────────────────────────────
+    const url = enlaceDePago("pawsathome", "8EXUCM4WUVLC");
+    esperar(url.includes("8EXUCM4WUVLC")).verdadero();
+    esperar(url.includes("?")).falso("el enlace de pago no puede llevar parámetros");
+    esperar(/amount|total|precio|monto/i.test(url)).falso("el importe no puede viajar en la dirección");
+  });
+
+  test("va bajo la tienda, no en la raíz del dominio", () => {
+    // `store.demandu.tech/pagar/...` chocaría con una tienda que se llamara
+    // «pagar». Bajo el nombre de la tienda no hay colisión posible.
+    esperar(enlaceDePago("pawsathome", "ABC123")).igual(
+      "https://store.demandu.tech/pawsathome/pagar/ABC123",
+    );
+  });
+
+  test("el código se escribe siempre igual, lo dicten como lo dicten", () => {
+    esperar(enlaceDePago("x", "abc123")).igual(enlaceDePago("x", "ABC123"));
   });
 });
 

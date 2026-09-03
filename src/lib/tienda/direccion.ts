@@ -57,6 +57,27 @@ export function enlaceDeTienda(slug: string): string {
   return `https://${DOMINIO_TIENDAS}/${slug}`;
 }
 
+/**
+ * El enlace que va dentro del mensaje de WhatsApp para pagar.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LLEVA EL CÓDIGO DEL PEDIDO Y NADA MÁS.
+ *
+ * La tienda anterior mandaba `?c=ESEQ&name=pawsathome&amount=25`: el importe
+ * viajaba en la dirección, donde el cliente lo puede editar antes de abrirla.
+ * Aquí el precio, los productos y el teléfono se leen de la base al abrir la
+ * página. No hay ningún número que tocar.
+ *
+ * VA DENTRO DEL MENSAJE, no en el carrito, y eso es una decisión de negocio: el
+ * pedido llega aunque el pago falle, el enlace se puede reenviar mañana, y
+ * quien pidió desde la computadora lo abre en el teléfono, que es donde tiene
+ * Yappy.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function enlaceDePago(slug: string, codigo: string): string {
+  return `https://${DOMINIO_TIENDAS}/${slug}/pagar/${String(codigo ?? "").toUpperCase()}`;
+}
+
 /** Lo que se enseña en pantalla: sin `https://`, que no aporta nada al leerlo. */
 export function enlaceLegible(slug: string): string {
   return `${DOMINIO_TIENDAS}/${slug}`;

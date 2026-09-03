@@ -6,7 +6,8 @@ import { recalcularPedido, type LineaPedida, type ProductoDelCatalogo } from "@/
 import { textoDelPedido, type LineaCarrito } from "@/lib/tienda/pedido";
 import { aWhatsapp, telefonoUtil } from "@/lib/tienda/telefono";
 import { paisDesdeTelefono } from "@/lib/phoneCountry";
-import { cobrarPedidoConYappy } from "@/lib/tienda/cobrar-pedido";
+import { cobroPublico } from "@/lib/tienda/cobro-publico";
+import { enlaceDePago } from "@/lib/tienda/direccion";
 import { codigoDePedido } from "@/lib/tienda/yappy";
 
 /**
@@ -34,7 +35,6 @@ export async function POST(req: Request) {
     slug?: string;
     lineas?: LineaPedida[];
     respuestas?: Record<string, string>;
-    pago?: string;
   };
   try {
     cuerpo = await req.json();
@@ -173,6 +173,12 @@ export async function POST(req: Request) {
     nota: l.nota,
   }));
 
+  // EL COBRO VIAJA EN EL MENSAJE, no en el carrito. Así el negocio recibe el
+  // pedido aunque el cliente nunca llegue a pagar, y puede reenviarle el enlace
+  // mañana: «aún me debes esto, aquí está». Un botón dentro del carrito existe
+  // treinta segundos y desaparece.
+  const cobro = await cobroPublico(tienda.id);
+
   const texto = [
     `*Pedido #${ped.numero}*`,
     textoDelPedido({
@@ -182,14 +188,14 @@ export async function POST(req: Request) {
       preguntas: config.preguntas,
       moneda: config.moneda,
     }),
+    ...(cobro.yappy
+      ? ["", "Dale clic para pagar con Yappy:", enlaceDePago(tienda.slug, ped.codigo)]
+      : []),
   ].join("\n");
 
-  // ENLAZAR AL CONTACTO VA ANTES DEL COBRO a propósito: si Yappy tarda o falla,
-  // el pedido ya quedó atado a su persona. Al revés, un fallo del banco dejaría
-  // el pedido huérfano en el CRM para siempre.
+  // Se ata a su persona antes de contestar: el pedido y su ficha se crean en el
+  // mismo momento o no se atan nunca.
   await enlazarContacto();
-
-  const yappy = cuerpo?.pago === "yappy" ? await cobrarConYappy() : null;
 
   return NextResponse.json({
     numero: ped.numero,
@@ -197,7 +203,6 @@ export async function POST(req: Request) {
     total,
     texto,
     rechazos,
-    ...(yappy ?? {}),
   });
 
   /**
@@ -278,27 +283,4 @@ export async function POST(req: Request) {
     return (respuestas.find((r) => r.id === p.id)?.valor ?? "").trim().slice(0, 120);
   }
 
-  /**
-   * Preparar el cobro con Yappy.
-   *
-   * ───────────────────────────────────────────────────────────────────────────
-   * SI YAPPY FALLA, EL PEDIDO NO SE CAE. Ya está guardado y el cliente ya tiene
-   * su mensaje de WhatsApp: quitárselo porque el banco no contestó sería perder
-   * una venta por algo que no es culpa de nadie de los dos. Se devuelve el
-   * motivo, queda apuntado en la bitácora, y la tienda ofrece pagar al recibir.
-   * ───────────────────────────────────────────────────────────────────────────
-   */
-  async function cobrarConYappy() {
-    const preguntaTel = config.preguntas.find((p) => p.tipo === "telefono");
-    const telefono = preguntaTel
-      ? (respuestas.find((r) => r.id === preguntaTel.id)?.valor ?? "")
-      : "";
-
-    return cobrarPedidoConYappy(sb, {
-      id: ped.id,
-      tienda_id: tienda!.id,
-      total,
-      telefono,
-    });
-  }
 }
