@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import type { ConfigTienda } from "@/lib/tienda/config";
+import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
 import { escribirPreguntas } from "@/lib/tienda/escritura";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
 
@@ -309,7 +310,7 @@ function VistaPrevia({
           {titulo || "Tu negocio"}
         </p>
         <p className="truncate text-[11px]" style={{ color: "rgba(255,255,255,.7)" }}>
-          eshop.demandu.tech/{slug}
+          {DOMINIO_TIENDAS}/{slug}
         </p>
       </div>
       <div className="p-4" style={{ backgroundColor: c.fondo }}>

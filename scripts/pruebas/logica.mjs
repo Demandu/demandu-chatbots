@@ -16,6 +16,7 @@ import { aDireccion, direccionValida } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender } from "../../src/lib/tienda/config.ts";
 import { leerPreguntasEscritas, escribirPreguntas, leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
+import { claveDeLinea, precioUnitario, totalDeLinea, totalDelCarrito, cuantasUnidades, faltaElegir, faltaContestar, textoDelPedido, enlaceDeWhatsapp } from "../../src/lib/tienda/pedido.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
 import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
@@ -1520,6 +1521,144 @@ describe("Tienda: las opciones que llegan del navegador", () => {
       },
     ]);
     esperar(recargoDe(g, ["Queso", "Tocino"])).igual(250);
+  });
+});
+
+describe("Tienda: el carrito y el pedido", () => {
+  const linea = (extra = {}) => ({
+    clave: "x",
+    producto_id: "p1",
+    nombre: "Croquetas",
+    precio: 1250,
+    cantidad: 1,
+    elegidas: [],
+    nota: "",
+    ...extra,
+  });
+
+  test("el precio de una unidad incluye los recargos", () => {
+    const l = linea({ elegidas: [{ grupo: "Tamaño", texto: "15 lbs.", recargo: 300 }] });
+    esperar(precioUnitario(l)).igual(1550);
+  });
+
+  test("tres unidades cuestan tres veces, sin arrastrar centavos", () => {
+    // POR ESTO TODO ES ENTERO. Con coma flotante, 12.50 + recargos por tres
+    // acaba con un centavo de diferencia entre la pantalla y el mensaje — y el
+    // cliente lo ve.
+    const l = linea({ cantidad: 3, elegidas: [{ grupo: "Sabor", texto: "Salmón", recargo: 250 }] });
+    esperar(totalDeLinea(l)).igual(4500);
+    esperar(totalDelCarrito([l, linea({ clave: "y" })])).igual(5750);
+    esperar(cuantasUnidades([l, linea({ clave: "y", cantidad: 2 })])).igual(5);
+  });
+
+  test("el mismo producto con distintas opciones son DOS líneas", () => {
+    // Si se juntaran por el id del producto, pedir una pizza con piña y otra
+    // sin piña daría «2 pizzas» y una de las dos saldría mal.
+    const conPina = claveDeLinea("p1", [{ grupo: "Extras", texto: "Piña" }], "");
+    const sinPina = claveDeLinea("p1", [], "");
+    esperar(conPina === sinPina).falso();
+
+    // Y el mismo producto con las mismas opciones en otro orden es LA MISMA.
+    const a = claveDeLinea("p1", [{ grupo: "A", texto: "1" }, { grupo: "B", texto: "2" }], "");
+    const b = claveDeLinea("p1", [{ grupo: "B", texto: "2" }, { grupo: "A", texto: "1" }], "");
+    esperar(a).igual(b, "el orden en que se pulsaron no hace otro producto");
+
+    // Una nota distinta SÍ es otra línea: «sin cebolla» no se puede juntar.
+    esperar(claveDeLinea("p1", [], "sin cebolla") === sinPina).falso();
+  });
+
+  test("no se deja pedir sin elegir lo obligatorio", () => {
+    // Un pedido sin el tamaño obliga a llamar al cliente, y esa llamada es
+    // donde se pierden los pedidos pequeños.
+    const grupos = [
+      { nombre: "Tamaño", modo: "una", opciones: [{ texto: "5 lbs.", recargo: 0 }] },
+      { nombre: "Extras", modo: "varias", opciones: [{ texto: "Juguete", recargo: 100 }] },
+      { nombre: "Sabor", modo: "hasta_completar", cantidad: 3, opciones: [{ texto: "Pollo", recargo: 0 }] },
+    ];
+    esperar(faltaElegir(grupos, [])).igual(["Tamaño", "Sabor"], "«las que quiera» nunca es obligatoria");
+
+    const casi = [
+      { grupo: "Tamaño", texto: "5 lbs." },
+      { grupo: "Sabor", texto: "Pollo" },
+      { grupo: "Sabor", texto: "Pollo" },
+    ];
+    esperar(faltaElegir(grupos, casi)).igual(["Sabor"], "dos de tres todavía no completa");
+
+    esperar(faltaElegir(grupos, [...casi, { grupo: "Sabor", texto: "Pollo" }])).igual([]);
+  });
+
+  test("el formulario obligatorio se comprueba antes de enviar", () => {
+    const preguntas = [
+      { id: "nombre", etiqueta: "Nombre completo", tipo: "texto", obligatoria: true },
+      { id: "nota", etiqueta: "Comentarios", tipo: "parrafo", obligatoria: false },
+    ];
+    esperar(faltaContestar(preguntas, {})).igual(["Nombre completo"]);
+    esperar(faltaContestar(preguntas, { nombre: "   " })).igual(["Nombre completo"], "espacios no cuentan");
+    esperar(faltaContestar(preguntas, { nombre: "Ana" })).igual([]);
+  });
+
+  test("el mensaje lleva todo lo que hace falta para preparar y cobrar", () => {
+    const texto = textoDelPedido({
+      tienda: "Paws at Home",
+      lineas: [
+        linea({
+          cantidad: 2,
+          elegidas: [
+            { grupo: "Tamaño", texto: "15 lbs.", recargo: 300 },
+            { grupo: "Sabor", texto: "Salmón", recargo: 250 },
+          ],
+          nota: "tocar el timbre",
+        }),
+      ],
+      respuestas: { nombre: "Ana", ph: "Torre 3" },
+      preguntas: [
+        { id: "nombre", etiqueta: "Nombre Completo", tipo: "texto", obligatoria: true },
+        { id: "ph", etiqueta: "Nombre PH", tipo: "texto", obligatoria: true },
+        { id: "vacia", etiqueta: "Comentarios", tipo: "texto", obligatoria: false },
+      ],
+      moneda: "$",
+    });
+
+    esperar(texto.includes("2 × Croquetas")).verdadero();
+    esperar(texto.includes("Tamaño: 15 lbs. (+$3.00)")).verdadero();
+    esperar(texto.includes("Nota: tocar el timbre")).verdadero();
+    esperar(texto.includes("*Total: $36.00*")).verdadero("(12.50+3.00+2.50) × 2");
+    esperar(texto.includes("Nombre PH: Torre 3")).verdadero();
+    esperar(texto.includes("Comentarios")).falso("una pregunta sin contestar no ensucia el mensaje");
+  });
+
+  test("el total sale SIEMPRE, aunque haya una sola cosa", () => {
+    // Es el número que se cobra. Buscarlo sumando de cabeza es como se cobra
+    // mal, y en un teléfono es peor.
+    const texto = textoDelPedido({
+      tienda: "X",
+      lineas: [linea()],
+      respuestas: {},
+      preguntas: [],
+      moneda: "$",
+    });
+    esperar(texto.includes("*Total: $12.50*")).verdadero();
+  });
+
+  test("el enlace de WhatsApp no se corta a la mitad", () => {
+    // Un pedido lleva saltos de línea, acentos, almohadillas y signos de más.
+    // Sin codificar, lo que se pierde es el FINAL: el total y la dirección.
+    const url = enlaceDeWhatsapp("+507 6238-1138", "Línea 1\nTotal: $5+2 #1 & ya");
+    esperar(url.startsWith("https://wa.me/50762381138?text=")).verdadero();
+    esperar(url.includes("\n")).falso();
+    esperar(url.includes(" ")).falso();
+    esperar(decodeURIComponent(url.split("text=")[1])).igual("Línea 1\nTotal: $5+2 #1 & ya");
+  });
+
+  test("una línea en cero no se cuela en el mensaje", () => {
+    const texto = textoDelPedido({
+      tienda: "X",
+      lineas: [linea({ cantidad: 0 }), linea({ clave: "y", cantidad: 1 })],
+      respuestas: {},
+      preguntas: [],
+      moneda: "$",
+    });
+    esperar(texto.split("Croquetas").length - 1).igual(1);
   });
 });
 

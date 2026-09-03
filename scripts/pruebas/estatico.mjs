@@ -2725,6 +2725,37 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("el escaparate público existe y no pide sesión", () => {
+    // Sin esto, la plataforma sabe crear tiendas que nadie puede visitar.
+    esperar(fs.existsSync(path.join(SRC, "app/t/[slug]/page.tsx"))).verdadero(
+      "no hay pantalla pública de tienda",
+    );
+    const mw = sinComentarios(fs.readFileSync(path.join(RAIZ, "middleware.ts"), "utf8"));
+    esperar(mw.includes("DOMINIO_TIENDAS")).verdadero(
+      "el dominio de tiendas no se enruta en el middleware",
+    );
+    // En el escaparate NO se pregunta por la sesión: es un viaje a Supabase en
+    // cada visita de cada cliente de cada tienda, y la respuesta siempre es
+    // «nadie».
+    const iTienda = mw.indexOf("DOMINIO_TIENDAS");
+    const iSesion = mw.indexOf("updateSession(request)");
+    esperar(iTienda > 0 && iSesion > iTienda).verdadero(
+      "el dominio de tiendas tiene que resolverse ANTES de comprobar la sesión",
+    );
+  });
+
+  test("ninguna pantalla manda a las tiendas viejas", () => {
+    // `eshop.demandu.tech` lo sirve HOY el proveedor anterior, con clientes
+    // reales vendiendo. Que la plataforma imprima esa dirección en un enlace
+    // nuevo manda al cliente a una tienda que no es la suya.
+    const malas = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta.includes("lib/tienda/direccion") || ruta.includes("lib/tienda/config")) continue;
+      if (sinComentarios(texto).includes("eshop.demandu.tech")) malas.push(ruta);
+    }
+    esperar(malas.join(", ")).igual("", "hay pantallas apuntando al dominio de las tiendas viejas");
+  });
+
   test("las llaves de cobro no viven donde cualquiera puede leerlas", () => {
     // `tiendas.config` tiene lectura ANÓNIMA a propósito: es lo que pinta el
     // escaparate. Un secreto de comercio ahí estaría publicado en internet.

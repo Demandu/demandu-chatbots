@@ -3,6 +3,7 @@ import { Store, ExternalLink } from "lucide-react";
 import { Topbar } from "@/components/Topbar";
 import { createClient } from "@/lib/supabase/server";
 import { NuevaTienda } from "@/components/tienda/NuevaTienda";
+import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
 import { crearTienda } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +76,7 @@ export default async function TiendaPage() {
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-ink">{t.nombre}</p>
                     <p className="mt-0.5 truncate text-xs text-ink-2">
-                      eshop.demandu.tech/{t.slug}
+                      {DOMINIO_TIENDAS}/{t.slug}
                     </p>
                   </div>
                   <span

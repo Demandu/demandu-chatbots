@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { Store } from "lucide-react";
-import { aDireccion } from "@/lib/tienda/direccion";
+import { aDireccion, DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
 import type { EstadoTienda } from "@/app/(dashboard)/tienda/actions";
 
 function Boton() {
@@ -88,7 +88,7 @@ export function NuevaTienda({
       <p className="mt-3 text-xs text-ink-2">
         Su enlace será{" "}
         <b className="text-ink">
-          eshop.demandu.tech/{direccion || <span className="text-ink-2">…</span>}
+          {DOMINIO_TIENDAS}/{direccion || <span className="text-ink-2">…</span>}
         </b>
       </p>
 

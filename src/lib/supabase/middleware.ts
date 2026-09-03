@@ -42,7 +42,14 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/bots") ||
     pathname.startsWith("/inbox") ||
     pathname.startsWith("/contacts") ||
-    pathname.startsWith("/settings");
+    pathname.startsWith("/settings") ||
+    // Se quedaron fuera al añadirlas y nadie lo notó porque RLS no devuelve
+    // nada sin sesión: la pantalla salía vacía en vez de mandar a entrar, que
+    // parece un fallo de la plataforma.
+    pathname.startsWith("/tienda") ||
+    pathname.startsWith("/crm") ||
+    pathname.startsWith("/analytics") ||
+    pathname.startsWith("/campaigns");
 
   if (!user && isProtected) {
     const url = request.nextUrl.clone();

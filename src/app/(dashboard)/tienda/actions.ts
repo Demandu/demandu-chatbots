@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
-import { aDireccion, direccionValida } from "@/lib/tienda/direccion";
+import { aDireccion, direccionValida, enlaceLegible } from "@/lib/tienda/direccion";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 
@@ -52,5 +52,5 @@ export async function crearTienda(
   }
 
   revalidatePath("/tienda");
-  return { ok: true, mensaje: `Tienda creada. Su dirección es eshop.demandu.tech/${slug}` };
+  return { ok: true, mensaje: `Tienda creada. Su dirección es ${enlaceLegible(slug)}` };
 }

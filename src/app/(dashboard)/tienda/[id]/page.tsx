@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, AlertTriangle, Bot } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Bot, ExternalLink } from "lucide-react";
 import { Topbar } from "@/components/Topbar";
 import { createClient } from "@/lib/supabase/server";
 import { leerConfig, loQueFaltaParaVender } from "@/lib/tienda/config";
+import { DOMINIO_TIENDAS, enlaceDeTienda } from "@/lib/tienda/direccion";
 import { TiendaNav, esPestana } from "@/components/tienda/TiendaNav";
 import { Productos, type Producto } from "@/components/tienda/Productos";
 import { EditorDiseno } from "@/components/tienda/EditorDiseno";
@@ -85,11 +86,23 @@ export default async function TiendaDetallePage({
 
         <h1 className="font-display text-2xl font-bold text-ink">{tienda.nombre}</h1>
         <p className="mt-1 text-sm text-ink-2">
-          eshop.demandu.tech/<b className="text-ink">{tienda.slug}</b>
+          {DOMINIO_TIENDAS}/<b className="text-ink">{tienda.slug}</b>
           {" · "}
           {tienda.activa ? "abierta al público" : "cerrada"}
           {bot ? ` · los pedidos entran a ${bot.name || "un chatbot sin nombre"}` : ""}
         </p>
+
+        {/* VER LA TIENDA COMO LA VE UN CLIENTE. Sin esto, la única forma de
+            comprobar el trabajo es teclear la dirección a mano — y quien no lo
+            haga publica a ciegas. */}
+        <a
+          href={enlaceDeTienda(tienda.slug)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-violet transition hover:opacity-80"
+        >
+          Ver la tienda <ExternalLink className="h-3.5 w-3.5" />
+        </a>
 
         {/* LO QUE LE FALTA PARA VENDER, ARRIBA Y SIEMPRE VISIBLE. El fallo más
             caro de una tienda es el que no se ve: se ve perfecta, el cliente
