@@ -1287,6 +1287,7 @@ export function InboxClient({
             tags={tags}
             attrs={attrs}
             orgId={orgId}
+            conversacionId={sel.id}
             onPatch={(patch) =>
               setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, contact: { ...c.contact!, ...patch } as any } : c)))
             }

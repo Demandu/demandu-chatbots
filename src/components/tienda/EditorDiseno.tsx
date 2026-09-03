@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import type { ConfigTienda, PreguntaPedido } from "@/lib/tienda/config";
+import { medida, comoMedida, instruccionesDeImagenes } from "@/lib/tienda/imagenes";
 import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
 import { EditorPreguntas } from "./EditorPreguntas";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
@@ -14,6 +15,31 @@ function Guardar() {
     <button className="btn-primary" disabled={pending}>
       {pending ? "Guardando…" : "Guardar diseño"}
     </button>
+  );
+}
+
+/**
+ * La medida que tiene que tener esta imagen, pegada al campo donde se pone.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * VA AQUÍ Y NO EN UN MANUAL. Quien sube la foto es casi siempre otra persona
+ * distinta de quien la hizo, y la pregunta «¿de qué tamaño la mando?» llega por
+ * WhatsApp una y otra vez. Puesta al lado de la casilla, se contesta sola.
+ *
+ * EL RECORTE EN EL «TÍTULO»: lo que la gente manda mal no es el tamaño, es la
+ * composición. Una portada preciosa con el nombre abajo a la izquierda queda
+ * tapada por el logo, y eso solo se evita diciéndolo antes.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function Medida({ clave }: { clave: Parameters<typeof medida>[0] }) {
+  const m = medida(clave);
+  return (
+    <span
+      className="rounded-md bg-suave px-1.5 py-0.5 font-mono text-[10px] font-normal text-ink-2"
+      title={m.recorte}
+    >
+      {comoMedida(m)}
+    </span>
   );
 }
 
@@ -110,7 +136,7 @@ export function EditorDiseno({
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-ink-2">
-                Enlace del logo
+                Enlace del logo <Medida clave="logo" />
               </label>
               <input
                 name="logo_url"
@@ -121,7 +147,7 @@ export function EditorDiseno({
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-ink-2">
-                Enlace de la portada
+                Enlace de la portada <Medida clave="portada" />
               </label>
               <input
                 name="portada_url"
@@ -133,7 +159,8 @@ export function EditorDiseno({
           </div>
 
           <label className="mb-1.5 mt-3 block text-xs font-semibold text-ink-2">
-            Banners — uno por línea: enlace de la imagen, y si lleva a algún sitio, «| dirección»
+            Banners <Medida clave="banner" /> — uno por línea: enlace de la imagen, y si lleva a
+            algún sitio, «| dirección»
           </label>
           <textarea
             name="banners"
@@ -151,7 +178,8 @@ export function EditorDiseno({
           <h2 className="font-semibold text-ink">Categorías</h2>
           <p className="mb-3 mt-1 text-sm text-ink-2">
             Salen solas de tus productos. Aquí solo les pones foto — es lo primero que ve quien
-            entra, porque la tienda abre mostrando las categorías cerradas.
+            entra, porque la tienda abre mostrando las categorías cerradas.{" "}
+            <Medida clave="categoria" />
           </p>
 
           {categoriasEnUso.length === 0 ? (

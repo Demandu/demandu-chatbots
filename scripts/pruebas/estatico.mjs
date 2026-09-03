@@ -3455,4 +3455,79 @@ describe("Tienda: los avisos al cliente", () => {
   });
 });
 
+describe("Tienda: el pedido y su conversación, en los dos sentidos", () => {
+  test("DESDE EL PEDIDO SE LLEGA AL CHAT", () => {
+    // Sin esto hay que abrir Conversaciones en otra pestaña y buscar a la
+    // persona por el nombre. En hora punta eso no lo hace nadie, y el pedido
+    // se despacha sin leer lo que el cliente escribió después.
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "components/tienda/Pedidos.tsx"), "utf8"));
+    esperar(/\/inbox\?c=\$\{[^}]*conversacion_id/.test(t)).verdadero(
+      "la tarjeta del pedido no lleva a su conversación",
+    );
+    // Y NO SE PINTA SI NO HAY CHAT: un botón que no lleva a ninguna parte
+    // enseña a la gente a no pulsarlo.
+    esperar(/\{p\.conversacion_id &&/.test(t)).verdadero(
+      "el enlace al chat se pinta aunque el pedido no tenga conversación",
+    );
+  });
+
+  test("Y DESDE EL CHAT SE VUELVE AL PEDIDO", () => {
+    // La ida sin la vuelta no sirve: el agente que resuelve la duda tendría
+    // que buscar el pedido a mano para moverlo, y en hora punta no lo mueve.
+    // Así es como un pedido pagado se queda en «Recibidos».
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/ComprasDelContacto.tsx"), "utf8"),
+    );
+    esperar(/t=pedidos#pedido-\$\{/.test(t)).verdadero("la ficha del contacto no vuelve al pedido");
+
+    // Y EL ANCLA TIENE QUE EXISTIR AL OTRO LADO, o el enlace lleva a la lista
+    // entera y el agente busca a ojo justo lo que veníamos a evitar.
+    const tablero = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/Pedidos.tsx"), "utf8"),
+    );
+    esperar(/id=\{`pedido-\$\{p\.numero\}`\}/.test(tablero)).verdadero(
+      "las tarjetas no tienen ancla: el enlace de vuelta no cae en ninguna",
+    );
+  });
+
+  test("se vuelve al pedido DE ESTA conversación, no al último", () => {
+    // Un cliente que repite tiene varios pedidos. Llevar al agente al pedido
+    // equivocado mientras habla de otro es peor que no llevarlo a ninguno.
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/ComprasDelContacto.tsx"), "utf8"),
+    );
+    esperar(/conversacion_id[^;]{0,80}=== conversacionId/.test(t)).verdadero(
+      "no se busca el pedido de esta conversación",
+    );
+  });
+});
+
+describe("Tienda: las medidas de las imágenes", () => {
+  test("LA INSTRUCCIÓN Y EL RECORTE SALEN DEL MISMO NÚMERO", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Escritos en dos sitios, el día que alguien cambie el diseño la ayuda
+    // seguirá diciendo lo de antes — y el cliente mandará una imagen que se ve
+    // cortada haciendo exactamente lo que le pedimos.
+    // ─────────────────────────────────────────────────────────────────────────
+    const esc = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/Escaparate.tsx"), "utf8"),
+    );
+    esperar(esc.includes('proporcionDe("portada")')).verdadero(
+      "la portada recorta con una proporción escrita a mano",
+    );
+    esperar(esc.includes('proporcionDe("banner")')).verdadero(
+      "los banners recortan con una proporción escrita a mano",
+    );
+
+    const editor = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/EditorDiseno.tsx"), "utf8"),
+    );
+    for (const clave of ["logo", "portada", "banner", "categoria"]) {
+      esperar(editor.includes(`<Medida clave="${clave}"`)).verdadero(
+        `el campo de ${clave} no dice qué medida tiene que tener`,
+      );
+    }
+  });
+});
+
 process.exit(await correrPruebas());

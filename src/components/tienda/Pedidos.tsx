@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
-import { ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { ChevronRight, MessageSquare } from "lucide-react";
 import { comoDinero } from "@/lib/tienda/variedades";
 import { estadoDelCobro, VENTANA_COBRO_MIN } from "@/lib/tienda/cobro";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
@@ -34,6 +35,8 @@ export type PedidoEnLista = {
   total: number;
   created_at: string;
   respuestas: { id: string; etiqueta: string; valor: string }[];
+  /** La conversación con la que se ató, si el cliente ya escribió. */
+  conversacion_id: string | null;
   lineas: { nombre: string; cantidad: number; precio: number; elegidas: { grupo: string; texto: string }[]; nota: string | null }[];
 };
 
@@ -187,7 +190,15 @@ export function Pedidos({
               {items.length === 0 && <p className="px-1 pb-2 text-xs text-ink-3">—</p>}
 
               {items.map((p) => (
-                <article key={p.id} className="mb-2 rounded-xl bg-tarjeta-2 p-2.5">
+                <article
+                  key={p.id}
+                  // EL ANCLA ES LO QUE CIERRA EL CÍRCULO. Desde el chat se
+                  // vuelve a ESTE pedido —no a la lista— y el navegador lo
+                  // trae a la vista solo. `scroll-mt` deja sitio para la barra
+                  // de arriba, que si no lo tapa justo el que se buscaba.
+                  id={`pedido-${p.numero}`}
+                  className="mb-2 scroll-mt-24 rounded-xl bg-tarjeta-2 p-2.5"
+                >
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-sm font-bold text-ink">#{p.numero}</span>
                     <span className="text-sm font-bold text-ink">{comoDinero(p.total, moneda)}</span>
@@ -258,6 +269,26 @@ export function Pedidos({
                           Cancelar
                         </button>
                       </form>
+                    )}
+
+                    {/* ── Ir al chat ────────────────────────────────────────
+                        EL PEDIDO Y LA CONVERSACIÓN SON LA MISMA COSA, y hasta
+                        aquí había que demostrarlo a mano: ver un pedido raro,
+                        abrir Conversaciones en otra pestaña y buscar a esa
+                        persona por el nombre. En hora punta eso no lo hace
+                        nadie, y el pedido se despacha sin leer lo que el
+                        cliente escribió después.
+
+                        SI NO HAY CHAT NO SE PINTA UN BOTÓN MUERTO: el cliente
+                        pudo pedir sin llegar a mandar el mensaje, y un botón
+                        que no lleva a ninguna parte enseña a no pulsarlo. */}
+                    {p.conversacion_id && (
+                      <Link
+                        href={`/inbox?c=${p.conversacion_id}`}
+                        className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-violet underline-offset-2 transition hover:underline"
+                      >
+                        <MessageSquare className="h-3 w-3" /> Ver chat
+                      </Link>
                     )}
                   </div>
                 </article>

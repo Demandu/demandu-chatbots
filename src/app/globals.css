@@ -165,6 +165,15 @@
 .react-flow__controls-button svg { fill: var(--ink-2); }
 .react-flow__attribution { display: none; }
 
+/* La tarjeta a la que se llega desde el chat se señala sola.
+   Va en CSS y no en una clase de Tailwind porque `:target` con variantes
+   depende de la versión, y esto tiene que funcionar sí o sí: es el final del
+   camino de vuelta desde la conversación. */
+[id^="pedido-"]:target {
+  box-shadow: 0 0 0 2px #6E42FF;
+  transition: box-shadow .2s;
+}
+
 /* Custom muted utility mapping */
 .text-muted { color: #9a9cc7; }
 .text-muted-2 { color: #6e70a0; }

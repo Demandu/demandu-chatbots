@@ -111,6 +111,7 @@ export function ContactPanel({
   tags,
   attrs = [],
   orgId,
+  conversacionId,
   onPatch,
   onToggleTag,
 }: {
@@ -121,6 +122,8 @@ export function ContactPanel({
   attrs?: Attr[];
   /** Necesario para guardar las notas internas con su organización */
   orgId?: string | null;
+  /** La conversación abierta, para poder volver a SU pedido y no a otro. */
+  conversacionId?: string | null;
   onPatch: (patch: Partial<ContactoFicha>) => void;
   onToggleTag: (name: string) => void;
 }) {
@@ -232,7 +235,7 @@ export function ContactPanel({
           Va antes de «de dónde vino» porque pesa más: de qué anuncio llegó
           importa la primera vez; cuántas veces ha comprado importa todas las
           demás. Si nunca compró, este bloque no se pinta. */}
-      <ComprasDelContacto contactoId={contact.id} />
+      <ComprasDelContacto contactoId={contact.id} conversacionId={conversacionId} />
 
       {/* ── DE DÓNDE VINO ────────────────────────────────────────────────
           Va ARRIBA de los atributos y de las etiquetas a propósito: es lo

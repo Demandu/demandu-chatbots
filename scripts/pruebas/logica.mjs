@@ -13,6 +13,9 @@ import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
+  MEDIDAS, PROPORCION, proporcionDe, comoMedida, instruccionesDeImagenes,
+} from "../../src/lib/tienda/imagenes.ts";
+import {
   MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado, botonDelAviso,
 } from "../../src/lib/tienda/avisos.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
@@ -2594,6 +2597,52 @@ describe("Tienda: cuando el cobro no llega a buen puerto", () => {
     esperar(enlaceDePago("paws-at-home", "C9UYJC3S76SB"))
       .igual("https://store.demandu.tech/paws-at-home/pagar/C9UYJC3S76SB");
     esperar(enlaceDeTienda("paws-at-home")).igual("https://store.demandu.tech/paws-at-home");
+  });
+});
+
+describe("Tienda: las medidas de las imágenes", () => {
+  test("DOS PROPORCIONES Y NADA MÁS", () => {
+    // No es una limitación técnica: es que la instrucción tiene que caber en un
+    // mensaje de WhatsApp. «Todo cuadrado menos la portada y los banners» se
+    // sigue; una tabla de cinco medidas distintas no la sigue nadie, y llegan
+    // cinco fotos mal cortadas.
+    const formas = new Set(MEDIDAS.map((m) => m.forma));
+    esperar(formas.size).igual(2, "hay más de dos proporciones que explicar");
+  });
+
+  test("los píxeles CUADRAN con la proporción que declaran", () => {
+    // Una medida que no cumple su propia proporción es peor que no decir nada:
+    // el cliente hace justo lo que le pedimos y aun así se le corta.
+    for (const m of MEDIDAS) {
+      const [a, b] = PROPORCION[m.forma].split("/").map((x) => Number(x.trim()));
+      esperar(m.ancho * b).igual(m.alto * a, `${m.clave} no cumple ${PROPORCION[m.forma]}`);
+    }
+  });
+
+  test("cada medida explica QUÉ PASA CON LO QUE SOBRA", () => {
+    // Lo que la gente manda mal no es el tamaño, es la composición. Una portada
+    // preciosa con el nombre abajo a la izquierda queda tapada por el logo.
+    for (const m of MEDIDAS) {
+      esperar(m.recorte.trim().length > 20).verdadero(`${m.clave} no explica el recorte`);
+    }
+  });
+
+  test("la proporción sale en el formato que entiende CSS", () => {
+    esperar(proporcionDe("banner")).igual("3 / 1");
+    esperar(proporcionDe("portada")).igual("3 / 1");
+    esperar(proporcionDe("logo")).igual("1 / 1");
+    esperar(proporcionDe("producto")).igual("1 / 1");
+  });
+
+  test("la instrucción se puede copiar y pegar entera", () => {
+    // Viaja por WhatsApp entre el negocio y quien le hace las artes: si hay que
+    // reescribirla a mano, se reescribe mal.
+    const texto = instruccionesDeImagenes();
+    for (const m of MEDIDAS) {
+      esperar(texto.includes(comoMedida(m))).verdadero(`falta la medida de ${m.clave}`);
+      esperar(texto.includes(m.titulo)).verdadero(`falta ${m.titulo}`);
+    }
+    esperar(/3 a 1/.test(texto)).verdadero("no dice el resumen de las proporciones");
   });
 });
 

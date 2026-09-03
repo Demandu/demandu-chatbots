@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { Search, ShoppingBag, Plus, Minus, ArrowLeft, ChevronDown } from "lucide-react";
 import { comoDinero, type GrupoVariedad } from "@/lib/tienda/variedades";
 import type { ConfigTienda } from "@/lib/tienda/config";
+import { proporcionDe } from "@/lib/tienda/imagenes";
 import {
   claveDeLinea,
   cuantasUnidades,
@@ -245,41 +246,147 @@ export function Escaparate({
     ? `https://wa.me/${config.whatsapp.numero}?text=${encodeURIComponent("Hola, tengo una consulta")}`
     : "";
 
+  const instagramTienda = config.contacto.instagram
+    ? `https://instagram.com/${config.contacto.instagram.replace(/^@/, "")}`
+    : "";
+
+  // Las categorías del catálogo entero, no las del filtro de búsqueda: es un
+  // dato del negocio y no puede bajar mientras alguien escribe.
+  const cuantasCategorias = useMemo(
+    () => new Set(productos.map((p) => (p.categoria ?? "").trim()).filter(Boolean)).size,
+    [productos],
+  );
+
   return (
     <div style={{ backgroundColor: c.fondo, color: c.texto, minHeight: "100vh", paddingBottom: 86 }}>
-      {/* ── Cabecera: logo y nombre ── */}
-      {/* EL LOGO GRANDE Y CENTRADO. Pequeño y a un lado no se nota, y es lo
-          único que le dice al cliente que llegó a la tienda correcta: viene de
-          un enlace en una biografía de Instagram, sin más contexto. */}
-      <header style={{ backgroundColor: c.principal }} className="px-4 py-6">
-        <div className="mx-auto flex max-w-4xl flex-col items-center gap-3 text-center">
-          {config.logo_url ? (
+      {/* ── Cabecera, con forma de perfil de Instagram ───────────────────────
+          NO ES UN CAPRICHO ESTÉTICO: quien entra aquí viene del enlace de una
+          biografía de Instagram y acaba de salir de esa misma pantalla. Darle
+          la forma que ya conoce —portada, foto redonda encima, nombre, y los
+          botones debajo— hace que en el primer segundo sepa que llegó al
+          negocio correcto, que es lo único que importa en ese segundo.
+
+          Y RESUELVE EL PROBLEMA DEL LOGO. Antes iba sobre el color del negocio:
+          un logo con fondo blanco quedaba como un recorte pegado. Sobre el
+          fondo de la tienda y con su aro, se ve como una foto de perfil. */}
+      <header>
+        <div
+          className="relative w-full overflow-hidden"
+          style={{
+            aspectRatio: proporcionDe("portada"),
+            maxHeight: 260,
+            // SIN PORTADA NO SE VE UN HUECO BLANCO: la banda se pinta con los
+            // colores del negocio. Una tienda recién creada tiene que verse
+            // terminada antes de que nadie suba nada.
+            background: `linear-gradient(120deg, ${c.principal}, ${c.acento})`,
+          }}
+        >
+          {config.portada_url && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={config.logo_url}
-              alt={config.titulo}
-              className="h-24 w-24 flex-none rounded-full bg-white/10 object-contain sm:h-28 sm:w-28"
-            />
-          ) : null}
-          <p className="text-xl font-bold text-white sm:text-2xl">{config.titulo}</p>
-          {config.contacto.horario && (
-            <p className="text-xs text-white/70">{config.contacto.horario}</p>
+            <img src={config.portada_url} alt="" className="h-full w-full object-cover" />
+          )}
+        </div>
+
+        <div className="mx-auto max-w-4xl px-4">
+          <div className="-mt-12 flex items-end gap-3 sm:-mt-14">
+            <span
+              className="grid h-24 w-24 flex-none place-items-center overflow-hidden rounded-full sm:h-28 sm:w-28"
+              style={{
+                backgroundColor: c.fondo,
+                // El aro del color del fondo es lo que despega la foto de la
+                // portada, igual que en Instagram.
+                boxShadow: `0 0 0 4px ${c.fondo}, 0 8px 24px rgba(0,0,0,.18)`,
+              }}
+            >
+              {config.logo_url ? (
+                // ENTERO, NO RECORTADO: un logo con el nombre del negocio dentro
+                // recortado al círculo pierde justo el nombre.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={config.logo_url}
+                  alt={config.titulo}
+                  className="h-[86%] w-[86%] object-contain"
+                />
+              ) : (
+                <span className="text-3xl font-bold" style={{ color: c.principal }}>
+                  {(config.titulo || "?").slice(0, 1).toUpperCase()}
+                </span>
+              )}
+            </span>
+
+            {/* Las cifras, como las de un perfil. No son vanidad: dicen de un
+                vistazo si esta tienda tiene tres cosas o tiene cien. */}
+            <div className="flex flex-1 justify-around pb-2 text-center">
+              <span className="leading-tight">
+                <b className="block text-lg font-bold">{productos.length}</b>
+                <span className="text-xs opacity-60">
+                  {productos.length === 1 ? "producto" : "productos"}
+                </span>
+              </span>
+              {cuantasCategorias > 0 && (
+                <span className="leading-tight">
+                  <b className="block text-lg font-bold">{cuantasCategorias}</b>
+                  <span className="text-xs opacity-60">
+                    {cuantasCategorias === 1 ? "categoría" : "categorías"}
+                  </span>
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <p className="text-lg font-bold leading-tight sm:text-xl">{config.titulo}</p>
+            {config.contacto.horario && (
+              <p className="mt-0.5 text-sm opacity-70">{config.contacto.horario}</p>
+            )}
+            {config.contacto.direccion && (
+              <p className="text-sm opacity-70">{config.contacto.direccion}</p>
+            )}
+          </div>
+
+          {/* Los botones del perfil. El de WhatsApp también está flotando abajo,
+              y aun así va aquí: el flotante se descubre a los diez segundos y
+              este se ve en el primero. */}
+          {(waConsultas || instagramTienda) && (
+            <div className="mt-3 flex gap-2">
+              {waConsultas && (
+                <a
+                  href={waConsultas}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white"
+                  style={{ backgroundColor: c.whatsapp }}
+                >
+                  <IconoWhatsapp className="h-4 w-4" /> Escribir
+                </a>
+              )}
+              {instagramTienda && (
+                <a
+                  href={instagramTienda}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold"
+                  style={{ border: "1px solid rgba(0,0,0,.15)" }}
+                >
+                  Instagram
+                </a>
+              )}
+            </div>
           )}
         </div>
       </header>
-
-      {/* ── Banner principal ── */}
-      {config.portada_url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={config.portada_url} alt="" className="h-40 w-full object-cover sm:h-64" />
-      )}
 
       {config.banners.length > 0 && (
         <div className="mx-auto flex max-w-4xl gap-3 overflow-x-auto px-4 pt-4">
           {config.banners.map((b, i) => {
             const img = (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={b.imagen_url} alt={b.alt ?? ""} className="h-32 w-[85vw] max-w-md flex-none rounded-2xl object-cover sm:w-96" />
+              <img
+                src={b.imagen_url}
+                alt={b.alt ?? ""}
+                className="w-[85vw] max-w-md flex-none rounded-2xl object-cover sm:w-96"
+                style={{ aspectRatio: proporcionDe("banner") }}
+              />
             );
             return b.enlace ? (
               <a key={i} href={b.enlace} target="_blank" rel="noopener noreferrer" className="flex-none">{img}</a>
