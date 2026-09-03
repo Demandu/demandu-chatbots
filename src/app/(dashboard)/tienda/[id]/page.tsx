@@ -10,7 +10,14 @@ import { Productos, type Producto } from "@/components/tienda/Productos";
 import { EditorDiseno } from "@/components/tienda/EditorDiseno";
 import { Cobros } from "@/components/tienda/Cobros";
 import { Pedidos, type PedidoEnLista } from "@/components/tienda/Pedidos";
-import { guardarDiseno, guardarProductos, vaciarCatalogo, guardarCobros, cambiarEstadoPedido } from "./actions";
+import {
+  guardarDiseno,
+  guardarProductos,
+  vaciarCatalogo,
+  guardarCobros,
+  cambiarEstadoPedido,
+  probarYappy,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +58,7 @@ export default async function TiendaDetallePage({
     // ni siquiera se trae para comprobar si existe: eso se pregunta contando.
     sb
       .from("tienda_cobros")
-      .select("comercio,activo")
+      .select("comercio,activo,ambiente,dominio,validado_en")
       .eq("tienda_id", params.id)
       .eq("proveedor", "yappy")
       .maybeSingle(),
@@ -70,7 +77,7 @@ export default async function TiendaDetallePage({
     activa === "pedidos"
       ? await sb
           .from("pedidos")
-          .select("id,numero,estado,total,created_at,respuestas,pedido_lineas(nombre,cantidad,precio,elegidas,nota,orden)")
+          .select("id,numero,estado,pago,total,created_at,respuestas,pedido_lineas(nombre,cantidad,precio,elegidas,nota,orden)")
           .eq("tienda_id", params.id)
           .order("created_at", { ascending: false })
           .limit(200)
@@ -80,10 +87,11 @@ export default async function TiendaDetallePage({
     id: String(p.id),
     numero: Number(p.numero),
     estado: p.estado as PedidoEnLista["estado"],
+    pago: (p.pago ?? "sin_cobro") as PedidoEnLista["pago"],
     total: Number(p.total),
     created_at: String(p.created_at),
     respuestas: (p.respuestas ?? []) as PedidoEnLista["respuestas"],
-    lineas: (((p.pedido_lineas ?? []) as Record<string, unknown>[]) ?? [])
+    lineas: ((p.pedido_lineas ?? []) as Record<string, unknown>[])
       .sort((a, b) => Number(a.orden) - Number(b.orden))
       .map((l) => ({
         nombre: String(l.nombre),
@@ -205,7 +213,11 @@ export default async function TiendaDetallePage({
               comercio={cobros?.comercio ?? ""}
               tieneSecreto={(conSecreto ?? 0) > 0}
               activo={Boolean(cobros?.activo)}
+              ambiente={cobros?.ambiente === "produccion" ? "produccion" : "prueba"}
+              dominio={cobros?.dominio || `https://${DOMINIO_TIENDAS}`}
+              validadoEn={cobros?.validado_en ?? null}
               accion={guardarCobros}
+              probar={probarYappy}
             />
           )}
         </div>

@@ -4,6 +4,16 @@ import { leerConfig } from "@/lib/tienda/config";
 import { sanearGrupos } from "@/lib/tienda/variedades";
 import { recalcularPedido, type LineaPedida, type ProductoDelCatalogo } from "@/lib/tienda/recalcular";
 import { textoDelPedido, type LineaCarrito } from "@/lib/tienda/pedido";
+import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
+import {
+  aliasValido,
+  codigoDePedido,
+  crearOrdenYappy,
+  esAmbiente,
+  montoCobrable,
+  validarComercio,
+  CDN_YAPPY,
+} from "@/lib/tienda/yappy";
 
 /**
  * Crear un pedido desde el escaparate.
@@ -26,7 +36,12 @@ import { textoDelPedido, type LineaCarrito } from "@/lib/tienda/pedido";
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export async function POST(req: Request) {
-  let cuerpo: { slug?: string; lineas?: LineaPedida[]; respuestas?: Record<string, string> };
+  let cuerpo: {
+    slug?: string;
+    lineas?: LineaPedida[];
+    respuestas?: Record<string, string>;
+    pago?: string;
+  };
   try {
     cuerpo = await req.json();
   } catch {
@@ -98,26 +113,40 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No se pudo registrar el pedido." }, { status: 500 });
   }
 
-  const { data: pedido, error: errPedido } = await sb
-    .from("pedidos")
-    .insert({
-      org_id: tienda.org_id,
-      tienda_id: tienda.id,
-      numero,
-      total,
-      canal: "tienda",
-      respuestas,
-    })
-    .select("id,numero")
-    .single();
+  // EL CÓDIGO CORTO SE PONE SIEMPRE, se vaya a cobrar en línea o no: es lo que
+  // se dicta por teléfono y lo que usará cualquier pasarela que se enchufe
+  // después. Ponerlo solo cuando hace falta obliga a inventarlo más tarde,
+  // cuando el pedido ya está en manos de otro sistema.
+  let pedido: { id: string; numero: number; codigo: string } | null = null;
+  for (let intento = 0; intento < 3 && !pedido; intento++) {
+    const codigo = codigoDePedido();
+    const { data } = await sb
+      .from("pedidos")
+      .insert({
+        org_id: tienda.org_id,
+        tienda_id: tienda.id,
+        numero,
+        total,
+        canal: "tienda",
+        respuestas,
+        codigo,
+      })
+      .select("id,numero,codigo")
+      .single();
+    if (data) pedido = data as { id: string; numero: number; codigo: string };
+  }
 
-  if (errPedido || !pedido) {
+  if (!pedido) {
     return NextResponse.json({ error: "No se pudo registrar el pedido." }, { status: 500 });
   }
 
+  // Un alias constante: dentro de las funciones de abajo, TypeScript ya no
+  // recuerda que `pedido` dejó de ser nulo tres líneas antes.
+  const ped = pedido;
+
   await sb.from("pedido_lineas").insert(
     lineas.map((l, i) => ({
-      pedido_id: pedido.id,
+      pedido_id: ped.id,
       producto_id: l.producto_id,
       nombre: l.nombre,
       precio: l.precio,
@@ -129,7 +158,7 @@ export async function POST(req: Request) {
   );
 
   await sb.from("pedido_eventos").insert({
-    pedido_id: pedido.id,
+    pedido_id: ped.id,
     que: "recibido",
     quien: "tienda",
     detalle: { total, lineas: lineas.length, rechazos },
@@ -151,7 +180,7 @@ export async function POST(req: Request) {
   }));
 
   const texto = [
-    `*Pedido #${pedido.numero}*`,
+    `*Pedido #${ped.numero}*`,
     textoDelPedido({
       tienda: config.titulo || tienda.nombre,
       lineas: paraTexto,
@@ -161,5 +190,83 @@ export async function POST(req: Request) {
     }),
   ].join("\n");
 
-  return NextResponse.json({ numero: pedido.numero, total, texto, rechazos });
+  const yappy = cuerpo?.pago === "yappy" ? await cobrarConYappy() : null;
+
+  return NextResponse.json({
+    numero: ped.numero,
+    codigo: ped.codigo,
+    total,
+    texto,
+    rechazos,
+    ...(yappy ?? {}),
+  });
+
+  /**
+   * Preparar el cobro con Yappy.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * SI YAPPY FALLA, EL PEDIDO NO SE CAE. Ya está guardado y el cliente ya tiene
+   * su mensaje de WhatsApp: quitárselo porque el banco no contestó sería
+   * perder una venta por algo que no es culpa de nadie de los dos. Se devuelve
+   * el motivo y la tienda ofrece pagar al recibir.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async function cobrarConYappy() {
+
+    const { data: cobro } = await sb
+      .from("tienda_cobros")
+      .select("comercio,secreto,dominio,ambiente,activo")
+      .eq("tienda_id", tienda!.id)
+      .eq("proveedor", "yappy")
+      .maybeSingle();
+
+    if (!cobro?.activo || !cobro.comercio || !cobro.secreto) {
+      return { yappy_error: "Esta tienda no está cobrando con Yappy ahora mismo." };
+    }
+    if (!montoCobrable(total)) {
+      return { yappy_error: "El monto es demasiado bajo para cobrarlo en línea." };
+    }
+
+    // EL TELÉFONO SALE DE LO QUE YA CONTESTÓ. Yappy necesita el número para
+    // abrir la app en el teléfono correcto, y volver a pedirlo en la pantalla
+    // de pago es una casilla más donde el pedido se abandona.
+    const preguntaTel = config.preguntas.find((p) => p.tipo === "telefono");
+    const telefono = preguntaTel
+      ? (respuestas.find((r) => r.id === preguntaTel.id)?.valor ?? "")
+      : "";
+
+    if (!aliasValido(telefono)) {
+      return {
+        yappy_error: "Para pagar con Yappy hace falta un número de celular de Panamá (8 dígitos).",
+      };
+    }
+
+    const comercio = {
+      comercio: cobro.comercio,
+      secreto: cobro.secreto,
+      dominio: cobro.dominio || `https://${DOMINIO_TIENDAS}`,
+      ambiente: esAmbiente(cobro.ambiente),
+    };
+
+    const sesion = await validarComercio(comercio);
+    if (!sesion.ok) return { yappy_error: sesion.mensaje };
+
+    const orden = await crearOrdenYappy(comercio, sesion.token, {
+      codigo: ped.codigo,
+      total,
+      telefono,
+      ipnUrl: `https://${DOMINIO_TIENDAS}/api/tienda/yappy/ipn`,
+    });
+    if (!orden.ok || !orden.datos) return { yappy_error: orden.mensaje };
+
+    await sb.from("pedidos").update({ pago: "pendiente" }).eq("id", ped.id);
+    await sb.from("pedido_eventos").insert({
+      pedido_id: ped.id,
+      que: "pago_pendiente",
+      quien: "yappy",
+      detalle: { ambiente: comercio.ambiente, transactionId: orden.datos.transactionId },
+    });
+
+    return { yappy: { ...orden.datos, cdn: CDN_YAPPY[comercio.ambiente] } };
+  }
 }

@@ -2948,6 +2948,72 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
     esperar(/enable row level security/.test(sql)).verdadero("tienda_cobros sin RLS");
   });
+
+  test("el secreto de cobro nunca llega al navegador", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // EL ESCAPARATE ES UNA PÁGINA PÚBLICA: todo lo que el servidor le pase a un
+    // componente de cliente viaja en el HTML y se lee con el botón derecho. El
+    // secreto de comercio no puede estar en esa lista ni por accidente, así que
+    // se prohíbe nombrarlo en todo lo que se pinta al público.
+    // ─────────────────────────────────────────────────────────────────────────
+    const publicos = ARCHIVOS.filter(
+      (a) =>
+        a.ruta.startsWith("src/app/t/") ||
+        a.ruta.endsWith("components/tienda/Escaparate.tsx") ||
+        a.ruta.endsWith("components/tienda/BotonYappy.tsx") ||
+        a.ruta.endsWith("lib/tienda/cobro-publico.ts"),
+    );
+    esperar(publicos.length > 0).verdadero("no se encontró el escaparate público");
+
+    const malos = publicos
+      .filter((a) => /secreto/.test(sinComentarios(a.texto)))
+      .map((a) => a.ruta);
+    esperar(malos.join(", ")).igual("", "el secreto de cobro se nombra en una pantalla pública");
+  });
+
+  test("el aviso de pago se comprueba ANTES de tocar el pedido", () => {
+    // Es la única voz que puede decir «esto está pagado», y llega por una URL
+    // que cualquiera puede llamar. Escribir primero y comprobar después es lo
+    // mismo que no comprobar.
+    const ruta = path.join(SRC, "app/api/tienda/yappy/ipn/route.ts");
+    esperar(fs.existsSync(ruta)).verdadero("falta la ruta del aviso de pago");
+    const t = sinComentarios(fs.readFileSync(ruta, "utf8"));
+
+    esperar(t.includes("ipnValido(")).verdadero("el aviso de pago no comprueba la firma");
+
+    const firma = t.indexOf("ipnValido(");
+    const escribe = t.indexOf('.from("pedidos")\n    .update');
+    const escribe2 = t.indexOf('from("pedidos").update');
+    const primerCambio = [escribe, escribe2].filter((i) => i >= 0).sort((a, b) => a - b)[0];
+    if (primerCambio !== undefined) {
+      esperar(firma < primerCambio).verdadero("se cambia el pedido antes de comprobar la firma");
+    }
+
+    // Y el importe del pedido NO puede salir de la URL del aviso: Yappy dice
+    // qué pasó con el cobro, no cuánto se cobró.
+    esperar(/q\.get\(\s*["'](total|amount|monto)["']/.test(t)).falso(
+      "el importe no puede leerse del aviso",
+    );
+  });
+
+  test("las direcciones de Yappy se escriben en UN solo sitio", () => {
+    // Ya pasó con el dominio de las tiendas: repartido por las pantallas,
+    // cambiarlo obliga a acordarse de todas. Aquí además hay dos entornos, y
+    // una dirección de pruebas olvidada en producción es un cobro que no entra.
+    const malos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta.endsWith("lib/tienda/yappy.ts")) continue;
+      if (/yappycloud\.com|bgeneral\.cloud/.test(sinComentarios(texto))) malos.push(ruta);
+    }
+    esperar(malos.join(", ")).igual("", "hay direcciones de Yappy fuera de lib/tienda/yappy.ts");
+  });
+
+  test("la migración de cobros sigue sin abrirle la puerta a nadie", () => {
+    const mig = path.join(RAIZ, "supabase/migrations/0073_yappy.sql");
+    esperar(fs.existsSync(mig)).verdadero("falta la migración de Yappy");
+    const sql = fs.readFileSync(mig, "utf8").replace(/--.*$/gm, "");
+    esperar(/to\s+anon/.test(sql)).falso("ninguna migración de cobros puede tocar los permisos de anon");
+  });
 });
 
 process.exit(await correrPruebas());

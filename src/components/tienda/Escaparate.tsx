@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Search, ShoppingBag, Plus, Minus, ArrowLeft, ChevronDown } from "lucide-react";
 import { comoDinero, type GrupoVariedad } from "@/lib/tienda/variedades";
 import type { ConfigTienda } from "@/lib/tienda/config";
+import { BotonYappy } from "./BotonYappy";
 import {
   claveDeLinea,
   cuantasUnidades,
@@ -68,10 +69,15 @@ export function Escaparate({
   config,
   productos,
   slug,
+  yappy = false,
+  cdnYappy = "",
 }: {
   config: ConfigTienda;
   productos: ProductoPublico[];
   slug: string;
+  /** ¿Esta tienda cobra con Yappy? Lo decide el servidor, no el navegador. */
+  yappy?: boolean;
+  cdnYappy?: string;
 }) {
   const c = config.colores;
   const [busca, setBusca] = useState("");
@@ -83,6 +89,7 @@ export function Escaparate({
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [aviso, setAviso] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [pagado, setPagado] = useState(false);
 
   const q = busca.trim().toLowerCase();
   const visibles = useMemo(() => {
@@ -153,10 +160,22 @@ export function Escaparate({
    * texto armado aquí: el cliente que ya decidió comprar no puede quedarse
    * mirando un error nuestro. Se pierde el registro, no la venta.
    */
-  const enviar = async () => {
+  const pedir = async (
+    pago: "manual" | "yappy",
+  ): Promise<{
+    texto: string;
+    yappy?: { transactionId: string; token: string; documentName: string };
+    yappy_error?: string;
+  } | null> => {
     const falta = faltaContestar(config.preguntas, respuestas);
-    if (falta.length) return setAviso(`Falta ${falta.join(", ")}.`);
-    if (bajoMinimo) return setAviso(`El pedido mínimo es ${comoDinero(config.minimo_pedido, config.moneda)}.`);
+    if (falta.length) {
+      setAviso(`Falta ${falta.join(", ")}.`);
+      return null;
+    }
+    if (bajoMinimo) {
+      setAviso(`El pedido mínimo es ${comoDinero(config.minimo_pedido, config.moneda)}.`);
+      return null;
+    }
 
     setAviso("");
     setEnviando(true);
@@ -169,7 +188,6 @@ export function Escaparate({
       moneda: config.moneda,
     });
 
-    let texto = deRespaldo;
     try {
       const r = await fetch("/api/tienda/pedido", {
         method: "POST",
@@ -177,6 +195,7 @@ export function Escaparate({
         body: JSON.stringify({
           slug,
           respuestas,
+          pago,
           lineas: carrito.map((l) => ({
             producto_id: l.producto_id,
             cantidad: l.cantidad,
@@ -186,20 +205,63 @@ export function Escaparate({
         }),
       });
       const j = await r.json();
-      if (r.ok && j?.texto) texto = j.texto;
-      else if (j?.error) {
+
+      if (!r.ok || j?.error) {
         // Un rechazo del servidor SÍ para el envío: significa que el precio o
         // las existencias cambiaron mientras el cliente pedía, y mandar ese
         // pedido sería mandar algo que el negocio no puede cumplir.
         setEnviando(false);
-        return setAviso(j.error);
+        setAviso(j?.error ?? "No se pudo registrar el pedido.");
+        return null;
       }
-    } catch {
-      // Sin red hacia nuestro servidor, pero el cliente sí tiene WhatsApp.
-    }
 
-    setEnviando(false);
-    window.open(enlaceDeWhatsapp(config.whatsapp.numero, texto), "_blank");
+      setEnviando(false);
+      return { texto: j?.texto || deRespaldo, yappy: j?.yappy, yappy_error: j?.yappy_error };
+    } catch {
+      // Sin red hacia nuestro servidor, pero el cliente sí tiene WhatsApp. Se
+      // pierde el registro, no la venta — y eso solo vale para el pedido a
+      // mano: un cobro no se puede inventar sin servidor.
+      setEnviando(false);
+      return pago === "manual" ? { texto: deRespaldo } : null;
+    }
+  };
+
+  const enviar = async () => {
+    const r = await pedir("manual");
+    if (!r) return;
+    window.open(enlaceDeWhatsapp(config.whatsapp.numero, r.texto), "_blank");
+  };
+
+  /**
+   * PAGAR CON YAPPY.
+   *
+   * El texto del pedido se guarda para mandarlo por WhatsApp DESPUÉS de pagar:
+   * el negocio necesita el detalle igual, y pedirle al cliente que lo mande él
+   * después de haber pagado es donde se pierde la mitad de los mensajes.
+   */
+  const textoTrasPagar = useRef("");
+
+  const pagarConYappy = async () => {
+    const r = await pedir("yappy");
+    if (!r) return null;
+    textoTrasPagar.current = r.texto;
+
+    if (r.yappy_error || !r.yappy) {
+      // El pedido YA quedó guardado: se le dice qué pasó y se le deja el
+      // camino de siempre, no se le tira el carrito.
+      setAviso(`${r.yappy_error ?? "No se pudo iniciar el pago."} Puedes enviarlo por WhatsApp y pagar al recibir.`);
+      return null;
+    }
+    return r.yappy;
+  };
+
+  const trasPagar = () => {
+    setPagado(true);
+    setAviso("");
+    window.open(
+      enlaceDeWhatsapp(config.whatsapp.numero, `${textoTrasPagar.current}\n\n*Pagado con Yappy* ✅`),
+      "_blank",
+    );
   };
 
   const waConsultas = config.whatsapp.numero
@@ -440,6 +502,12 @@ export function Escaparate({
           onCerrar={() => setVerCarrito(false)}
           onEnviar={enviar}
           enviando={enviando}
+          yappy={yappy}
+          cdnYappy={cdnYappy}
+          pagado={pagado}
+          onPagarYappy={pagarConYappy}
+          onPagado={trasPagar}
+          onFalloPago={setAviso}
         />
       )}
     </div>
@@ -750,6 +818,12 @@ function VistaCarrito({
   onCerrar,
   onEnviar,
   enviando,
+  yappy,
+  cdnYappy,
+  pagado,
+  onPagarYappy,
+  onPagado,
+  onFalloPago,
 }: {
   config: ConfigTienda;
   carrito: LineaCarrito[];
@@ -762,6 +836,12 @@ function VistaCarrito({
   onCerrar: () => void;
   onEnviar: () => void;
   enviando: boolean;
+  yappy: boolean;
+  cdnYappy: string;
+  pagado: boolean;
+  onPagarYappy: () => Promise<{ transactionId: string; token: string; documentName: string } | null>;
+  onPagado: () => void;
+  onFalloPago: (m: string) => void;
 }) {
   const c = config.colores;
   const campo = {
@@ -886,15 +966,44 @@ function VistaCarrito({
       </div>
 
       {carrito.length > 0 && (
-        <div className="flex-none p-3" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
+        <div
+          className="mx-auto flex w-full max-w-2xl flex-none flex-col gap-2 p-3"
+          style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
+        >
+          {/* PAGAR VA ARRIBA cuando la tienda cobra en línea: es lo que el
+              negocio prefiere que pase, y lo de arriba es lo que se pulsa. El
+              pedido por WhatsApp NO se quita — quien quiere pagar al recibir
+              tiene que poder, o se pierde esa venta entera. */}
+          {yappy && !pagado && (
+            <BotonYappy
+              cdn={cdnYappy}
+              onPagar={onPagarYappy}
+              onExito={onPagado}
+              onFallo={onFalloPago}
+            />
+          )}
+
+          {pagado && (
+            <p
+              className="rounded-2xl py-3 text-center font-bold text-white"
+              style={{ backgroundColor: "#16a34a" }}
+            >
+              Pago enviado ✅ · el negocio lo confirma en un momento
+            </p>
+          )}
+
           <button
             type="button"
             onClick={onEnviar}
             disabled={enviando}
-            className="mx-auto block w-full max-w-2xl rounded-2xl py-3.5 text-center font-bold text-white shadow-lg disabled:opacity-70"
+            className="block w-full rounded-2xl py-3.5 text-center font-bold text-white shadow-lg disabled:opacity-70"
             style={{ backgroundColor: c.whatsapp }}
           >
-            {enviando ? "Preparando tu pedido…" : config.whatsapp.texto_boton}
+            {enviando
+              ? "Preparando tu pedido…"
+              : yappy && !pagado
+                ? "Pagar al recibir · enviar por WhatsApp"
+                : config.whatsapp.texto_boton}
           </button>
         </div>
       )}

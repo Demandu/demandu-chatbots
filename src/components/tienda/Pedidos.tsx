@@ -14,10 +14,19 @@ export type EstadoPedido =
   | "entregado"
   | "cancelado";
 
+export type EstadoPago =
+  | "sin_cobro"
+  | "pendiente"
+  | "pagado"
+  | "rechazado"
+  | "cancelado"
+  | "expirado";
+
 export type PedidoEnLista = {
   id: string;
   numero: number;
   estado: EstadoPedido;
+  pago: EstadoPago;
   total: number;
   created_at: string;
   respuestas: { id: string; etiqueta: string; valor: string }[];
@@ -37,6 +46,22 @@ export const COLUMNAS: { clave: EstadoPedido; titulo: string; siguiente?: Estado
   { clave: "en_camino", titulo: "En camino", siguiente: "entregado" },
   { clave: "entregado", titulo: "Entregados" },
 ];
+
+/**
+ * El cobro, de un vistazo.
+ *
+ * SIN ESTO EL TABLERO MIENTE: un pedido pagado y uno por cobrar se ven igual, y
+ * el negocio entrega los dos. «Sin cobro» no pinta nada a propósito — es lo
+ * normal en una tienda que cobra al recibir, y una etiqueta en cada tarjeta
+ * para decir «nada que ver aquí» solo tapa las que sí importan.
+ */
+const SELLOS: Record<string, { texto: string; color: string }> = {
+  pendiente: { texto: "Pago iniciado", color: "#d97706" },
+  pagado: { texto: "Pagado", color: "#16a34a" },
+  rechazado: { texto: "Pago rechazado", color: "#dc2626" },
+  cancelado: { texto: "Pago cancelado", color: "#dc2626" },
+  expirado: { texto: "Pago vencido", color: "#dc2626" },
+};
 
 const cuando = (iso: string) => {
   const d = new Date(iso);
@@ -144,6 +169,15 @@ export function Pedidos({
                     <span className="text-sm font-bold text-ink">{comoDinero(p.total, moneda)}</span>
                   </div>
                   <p className="text-[11px] text-ink-3">{cuando(p.created_at)}</p>
+
+                  {SELLOS[p.pago] && (
+                    <span
+                      className="mt-1 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-bold text-white"
+                      style={{ backgroundColor: SELLOS[p.pago].color }}
+                    >
+                      {SELLOS[p.pago].texto}
+                    </span>
+                  )}
 
                   <ul className="mt-1.5 grid gap-0.5">
                     {p.lineas.map((l, i) => (

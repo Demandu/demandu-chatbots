@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { aCentavos, sanearGrupos } from "@/lib/tienda/variedades";
 import { leerConfig, sanearPreguntas, soloDigitos, type ConfigTienda } from "@/lib/tienda/config";
+import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
+import { esAmbiente, validarComercio } from "@/lib/tienda/yappy";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 
@@ -362,6 +364,12 @@ export async function guardarCobros(_e: Estado, fd: FormData): Promise<Estado> {
   const comercio = s(fd.get("yappy_comercio"));
   const secreto = s(fd.get("yappy_secreto"));
   const activo = fd.get("yappy_activo") === "on";
+  const ambiente = esAmbiente(s(fd.get("yappy_ambiente")));
+
+  // EL DOMINIO NO SE LO PREGUNTAMOS AL NEGOCIO: es el nuestro, siempre, y
+  // escribirlo mal en el panel de Yappy es la forma número uno de que un pago
+  // real llegue y se rechace. Se guarda para poder mostrarlo y para firmar.
+  const dominio = `https://${DOMINIO_TIENDAS}`;
 
   if (activo && !comercio) {
     return { ok: false, mensaje: "Para cobrar con Yappy hace falta tu número de comercio." };
@@ -384,6 +392,8 @@ export async function guardarCobros(_e: Estado, fd: FormData): Promise<Estado> {
     proveedor: "yappy",
     comercio,
     activo,
+    dominio,
+    ambiente,
     updated_at: new Date().toISOString(),
   };
   if (secreto) fila.secreto = secreto;
@@ -398,7 +408,68 @@ export async function guardarCobros(_e: Estado, fd: FormData): Promise<Estado> {
   return {
     ok: true,
     mensaje: activo
-      ? "Cobros con Yappy activados. El dinero entra directo a tu cuenta."
+      ? "Cobros con Yappy activados. Pulsa «Probar conexión» antes de vender."
       : "Datos guardados. Yappy está desactivado: los pedidos llegan sin pago en línea.",
+  };
+}
+
+/**
+ * Probar la conexión con Yappy SIN COBRARLE A NADIE.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ES EL PASO QUE FALTABA. Hasta ahora la única forma de saber si el número de
+ * comercio y el secreto estaban bien era esperar a que un cliente real llegara
+ * al final y ver si el pago salía. Eso se paga con la venta de ese cliente.
+ *
+ * Esta llamada es la que Yappy hace de todos modos antes de cada cobro
+ * (`validate/merchant`): si contesta con un token, la configuración sirve.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function probarYappy(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  const sb = createClient();
+  const { data: fila } = await sb
+    .from("tienda_cobros")
+    .select("id,comercio,secreto,dominio,ambiente")
+    .eq("tienda_id", tiendaId)
+    .eq("proveedor", "yappy")
+    .maybeSingle();
+
+  if (!fila?.comercio) {
+    return { ok: false, mensaje: "Guarda primero tu número de comercio." };
+  }
+  if (!fila?.secreto) {
+    return { ok: false, mensaje: "Guarda primero tu secreto de comercio." };
+  }
+
+  const dominio = fila.dominio || `https://${DOMINIO_TIENDAS}`;
+  const r = await validarComercio({
+    comercio: fila.comercio,
+    secreto: fila.secreto,
+    dominio,
+    ambiente: esAmbiente(fila.ambiente),
+  });
+
+  // EL MENSAJE DE YAPPY SE ENSEÑA TAL CUAL. Traducirlo a «hubo un error» borra
+  // la única pista que hay —«dominio no registrado», «comercio inactivo»— y
+  // deja al negocio probando a ciegas.
+  if (!r.ok) {
+    return {
+      ok: false,
+      mensaje: `Yappy no aceptó la configuración: ${r.mensaje} · Comprueba que en tu panel de Yappy el dominio registrado sea exactamente ${dominio}`,
+    };
+  }
+
+  await sb.from("tienda_cobros").update({ validado_en: new Date().toISOString() }).eq("id", fila.id);
+  revalidatePath(`/tienda/${tiendaId}`);
+  return {
+    ok: true,
+    mensaje:
+      esAmbiente(fila.ambiente) === "prueba"
+        ? "Conexión correcta con el Yappy de PRUEBAS. Cambia a producción cuando quieras cobrar de verdad."
+        : "Conexión correcta. Ya puedes cobrar con Yappy.",
   };
 }

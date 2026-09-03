@@ -17,6 +17,10 @@ import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaPar
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
 import { recalcularPedido } from "../../src/lib/tienda/recalcular.ts";
+import {
+  comoMontoYappy, montoCobrable, aliasYappy, aliasValido, codigoDePedido, codigoValido,
+  claveDeFirma, firmaIpn, ipnValido, esAmbiente, PAGOS_YAPPY, API_YAPPY, CDN_YAPPY,
+} from "../../src/lib/tienda/yappy.ts";
 import { claveDeLinea, precioUnitario, totalDeLinea, totalDelCarrito, cuantasUnidades, faltaElegir, faltaContestar, textoDelPedido, enlaceDeWhatsapp } from "../../src/lib/tienda/pedido.ts";
 import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
@@ -1830,6 +1834,166 @@ describe("Tienda: el pedido se recalcula en el servidor", () => {
     esperar(r.lineas.length).igual(1);
     esperar(r.total).igual(1000);
     esperar(r.rechazos.length).igual(1);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Yappy
+ * ──────────────────────────────────────────────────────────────────────────*/
+
+describe("Tienda: el aviso de pago de Yappy", () => {
+  // Un secreto con la forma que documenta Yappy: base64 de «parte1.parte2».
+  const SECRETO = Buffer.from("llavebuena.otracosa", "utf-8").toString("base64");
+  const DOMINIO = "https://store.demandu.tech";
+
+  const avisoDe = (orderId, status, secreto = SECRETO, domain = DOMINIO) => ({
+    secreto,
+    orderId,
+    status,
+    domain,
+    hash: firmaIpn(secreto, orderId, status, domain),
+    dominioEsperado: DOMINIO,
+  });
+
+  test("la llave sale de la primera parte del secreto", () => {
+    esperar(claveDeFirma(SECRETO)).igual("llavebuena");
+  });
+
+  test("un secreto que no es base64 se usa tal cual, no se rompe", () => {
+    esperar(claveDeFirma("asi-tal-cual")).igual("asi-tal-cual");
+  });
+
+  test("la firma es exactamente la que documenta Yappy", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // SE CALCULA A MANO, sin usar nada de yappy.ts salvo lo que se prueba. Si
+    // esta prueba llamara a las mismas funciones para esperar y para
+    // comprobar, pasaría igual con el algoritmo equivocado — y el fallo
+    // aparecería el día del primer pago real, en forma de pago rechazado.
+    // ─────────────────────────────────────────────────────────────────────────
+    const aMano = crypto
+      .createHmac("sha256", "llavebuena")
+      .update("ABC123" + "E" + DOMINIO)
+      .digest("hex");
+    esperar(firmaIpn(SECRETO, "ABC123", "E", DOMINIO)).igual(aMano);
+  });
+
+  test("un aviso bien firmado se acepta", () => {
+    esperar(ipnValido(avisoDe("ABC123", "E")).ok).verdadero();
+  });
+
+  test("SIN FIRMA NO SE COBRA: un aviso inventado se rechaza", () => {
+    const malo = { ...avisoDe("ABC123", "E"), hash: "a".repeat(64) };
+    esperar(ipnValido(malo).ok).falso();
+  });
+
+  test("una firma de otro pedido no sirve para este", () => {
+    // Es el ataque obvio: pagar un pedido de un dólar y reusar ese aviso.
+    const otro = firmaIpn(SECRETO, "OTRO999", "E", DOMINIO);
+    esperar(ipnValido({ ...avisoDe("ABC123", "E"), hash: otro }).ok).falso();
+  });
+
+  test("una firma de «rechazado» no vale para «pagado»", () => {
+    const rechazado = firmaIpn(SECRETO, "ABC123", "R", DOMINIO);
+    esperar(ipnValido({ ...avisoDe("ABC123", "E"), hash: rechazado }).ok).falso();
+  });
+
+  test("un aviso firmado para otro dominio no se recicla", () => {
+    const ajeno = avisoDe("ABC123", "E", SECRETO, "https://otra-tienda.com");
+    esperar(ipnValido(ajeno).ok).falso();
+  });
+
+  test("una tienda sin secreto guardado no puede recibir pagos", () => {
+    esperar(ipnValido({ ...avisoDe("ABC123", "E"), secreto: "" }).ok).falso();
+  });
+
+  test("la firma con otro secreto no cuela", () => {
+    const otroSecreto = Buffer.from("llavemala.otracosa", "utf-8").toString("base64");
+    const conOtra = firmaIpn(otroSecreto, "ABC123", "E", DOMINIO);
+    esperar(ipnValido({ ...avisoDe("ABC123", "E"), hash: conOtra }).ok).falso();
+  });
+
+  test("la barra final del dominio no rompe un aviso legítimo", () => {
+    const conBarra = avisoDe("ABC123", "E", SECRETO, DOMINIO);
+    // Yappy devuelve el dominio tal y como se registró; una barra de más es un
+    // error de configuración, no un pago falso.
+    esperar(
+      ipnValido({ ...conBarra, dominioEsperado: DOMINIO + "/" }).ok,
+    ).verdadero();
+  });
+
+  test("cada estado de Yappy se traduce a uno nuestro", () => {
+    esperar(PAGOS_YAPPY.E).igual("pagado");
+    esperar(PAGOS_YAPPY.R).igual("rechazado");
+    esperar(PAGOS_YAPPY.C).igual("cancelado");
+    esperar(PAGOS_YAPPY.X).igual("expirado");
+  });
+});
+
+describe("Tienda: los datos que se le mandan a Yappy", () => {
+  test("los centavos se escriben con dos decimales y con punto", () => {
+    esperar(comoMontoYappy(0)).igual("0.00");
+    esperar(comoMontoYappy(5)).igual("0.05");
+    esperar(comoMontoYappy(1999)).igual("19.99");
+    esperar(comoMontoYappy(100000)).igual("1000.00");
+    esperar(comoMontoYappy(29)).igual("0.29");
+    esperar(comoMontoYappy(1010)).igual("10.10");
+  });
+
+  test("por debajo de un centavo no hay cobro que crear", () => {
+    esperar(montoCobrable(0)).falso();
+    esperar(montoCobrable(1)).verdadero();
+    esperar(montoCobrable(-500)).falso();
+  });
+
+  test("el teléfono se normaliza como lo escriba el cliente", () => {
+    for (const v of ["61234567", "6123-4567", "+507 6123 4567", "507-6123-4567", "(507) 6123.4567"]) {
+      esperar(aliasYappy(v)).igual("61234567");
+    }
+  });
+
+  test("un número que no es un celular de Panamá no pasa", () => {
+    esperar(aliasValido("61234567")).verdadero();
+    esperar(aliasValido("2123456")).falso();   // fijo, 7 dígitos
+    esperar(aliasValido("71234567")).falso();  // no empieza en 6
+    esperar(aliasValido("")).falso();
+    esperar(aliasValido("+1 305 555 1234")).falso();
+  });
+
+  test("el código del pedido cabe en lo que Yappy admite", () => {
+    for (let i = 0; i < 50; i++) {
+      const c = codigoDePedido();
+      esperar(c.length <= 15).verdadero();
+      esperar(codigoValido(c)).verdadero();
+    }
+  });
+
+  test("el código no lleva letras que se confunden al dictarlas", () => {
+    // Con un azar fijo se recorre el alfabeto entero, no una muestra.
+    let i = 0;
+    const codigos = [];
+    for (let v = 0; v < 40; v++) codigos.push(codigoDePedido(() => ((i++) % 32) / 32));
+    const usadas = new Set(codigos.join("").split(""));
+    for (const prohibida of ["O", "0", "I", "1"]) {
+      esperar(usadas.has(prohibida)).falso();
+    }
+  });
+
+  test("dos códigos seguidos no son el mismo", () => {
+    const vistos = new Set();
+    for (let i = 0; i < 200; i++) vistos.add(codigoDePedido());
+    esperar(vistos.size).igual(200);
+  });
+
+  test("el entorno por defecto es el de pruebas, nunca el de dinero real", () => {
+    esperar(esAmbiente(undefined)).igual("prueba");
+    esperar(esAmbiente("")).igual("prueba");
+    esperar(esAmbiente("cualquier-cosa")).igual("prueba");
+    esperar(esAmbiente("produccion")).igual("produccion");
+  });
+
+  test("cada entorno apunta a su propia dirección", () => {
+    esperar(API_YAPPY.prueba === API_YAPPY.produccion).falso();
+    esperar(CDN_YAPPY.prueba === CDN_YAPPY.produccion).falso();
   });
 });
 

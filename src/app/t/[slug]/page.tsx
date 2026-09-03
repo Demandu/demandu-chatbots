@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { leerConfig } from "@/lib/tienda/config";
 import { sanearGrupos } from "@/lib/tienda/variedades";
 import { Escaparate, type ProductoPublico } from "@/components/tienda/Escaparate";
+import { cobroPublico } from "@/lib/tienda/cobro-publico";
 
 /**
  * Una tienda, servida al público.
@@ -77,5 +78,18 @@ export default async function TiendaPublicaPage({ params }: { params: { slug: st
     variedades: sanearGrupos(p.variedades),
   }));
 
-  return <Escaparate config={conNombre} productos={productos} slug={tienda.slug} />;
+  // Si la tienda cobra en línea lo decide el servidor. Preguntárselo al
+  // navegador sería dejar que cualquiera encendiera el botón de pago de una
+  // tienda que no cobra.
+  const cobro = await cobroPublico(tienda.id);
+
+  return (
+    <Escaparate
+      config={conNombre}
+      productos={productos}
+      slug={tienda.slug}
+      yappy={cobro.yappy}
+      cdnYappy={cobro.cdn}
+    />
+  );
 }
