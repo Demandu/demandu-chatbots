@@ -144,6 +144,17 @@ export function AvisosAlCliente({
                       forma que va a tener en el teléfono. */}
                   <div className="rounded-xl bg-[#DCF8C6] p-2 text-sm leading-snug text-[#111]">
                     {previa || <span className="opacity-50">(vacío: sale el texto de fábrica)</span>}
+
+                    {/* EL BOTÓN NO SE EDITA y por eso se pinta aparte: adónde
+                        lleva lo decide el momento. Un pedido cancelado va a la
+                        tienda y uno vivo a su propio cobro; poder cambiarlo
+                        solo serviría para mandar a alguien a pagar un pedido
+                        que ya no existe. */}
+                    {m.boton && (
+                      <span className="mt-2 block border-t border-black/10 pt-1.5 text-center font-semibold text-[#0a7cff]">
+                        {m.boton.texto}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

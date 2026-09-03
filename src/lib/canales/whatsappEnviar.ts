@@ -96,6 +96,51 @@ export function enviarTexto(pnid: string, token: string, to: string, body: strin
 }
 
 /**
+ * Un texto con UN botón que abre un enlace.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NO ES ADORNO: es la diferencia entre recuperar una venta y perderla. Un cobro
+ * que no se completó termina en un mensaje donde lo único que importa es volver
+ * a intentarlo, y un botón grande se pulsa; una dirección suelta en medio de un
+ * párrafo, no.
+ *
+ * SI EL BOTÓN FALLA, VA EL TEXTO. Los mensajes interactivos dependen de que el
+ * número los tenga habilitados, y eso no se sabe hasta que Meta contesta. Que
+ * el cliente no reciba NADA porque el botón no se pudo pintar sería cambiar una
+ * mejora por una avería, así que se reintenta con el enlace dentro del texto —
+ * que WhatsApp convierte en enlace igual.
+ *
+ * FUERA DE LAS 24 HORAS NO SE REINTENTA. Ahí el problema no es el botón: es que
+ * no se puede escribir de ninguna forma, y repetir el envío solo gasta otro
+ * intento para recibir el mismo rechazo.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function enviarConBoton(
+  pnid: string, token: string, to: string,
+  body: string, boton: string, url: string,
+): Promise<ResultadoEnvio> {
+  const conBoton = await waPost(pnid, token, {
+    to,
+    type: "interactive",
+    interactive: {
+      type: "cta_url",
+      body: { text: body.slice(0, 1024) },
+      action: {
+        name: "cta_url",
+        // Meta corta a 20 caracteres sin avisar y deja el botón a medias.
+        parameters: { display_text: boton.slice(0, 20), url },
+      },
+    },
+  });
+
+  if (conBoton.ok) return conBoton;
+  if (conBoton.code === 131047) return conBoton;
+
+  console.error("[wa botón] no se pudo, va como texto:", conBoton.code, conBoton.error);
+  return enviarTexto(pnid, token, to, `${body}\n\n${url}`);
+}
+
+/**
  * Manda una plantilla aprobada.
  *
  * ES LA ÚNICA FORMA DE REABRIR UNA CONVERSACIÓN. Pasadas 24 horas desde el

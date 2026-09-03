@@ -131,7 +131,27 @@ export default async function PagarPedidoPage({
       <main className="mx-auto w-full max-w-md px-4 py-5">
         {/* YA PAGADO: NO SE VUELVE A COBRAR. Un enlace que alguien reabre una
             semana después no puede pasarle la factura por segunda vez. */}
-        {estado === "pagado" ? (
+        {pedido.estado === "cancelado" ? (
+          /* ─────────────────────────────────────────────────────────────────
+             CANCELADO ES CANCELADO, TAMBIÉN AQUÍ. Cuando el enlace vence le
+             decimos al cliente que su pedido quedó cancelado; si al abrir el
+             enlace igual pudiera pagar, esa persona pagaría algo que le
+             acabamos de decir que ya no existe. La salida no es un error: es
+             volver a la tienda, que es lo que queremos que haga.
+             ───────────────────────────────────────────────────────────────── */
+          <div className="grid gap-3 text-center">
+            <p className="rounded-2xl border px-4 py-3" style={{ borderColor: "rgba(0,0,0,.15)" }}>
+              Este pedido está <b>cancelado</b> y ya no se puede pagar.
+            </p>
+            <a
+              href={`/${tienda.slug}`}
+              className="rounded-2xl py-3.5 font-bold text-white shadow-lg"
+              style={{ backgroundColor: c.principal }}
+            >
+              Volver a pedir en {titulo}
+            </a>
+          </div>
+        ) : estado === "pagado" ? (
           <div className="grid gap-3 text-center">
             <p
               className="rounded-2xl py-3 font-bold text-white"

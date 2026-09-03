@@ -27,11 +27,30 @@
 /** Los momentos en los que se le puede escribir al cliente. */
 export type MomentoAviso =
   | "pagado"
+  | "enlace_vencido"
+  | "pago_no_completado"
   | "confirmado"
   | "preparando"
   | "en_camino"
   | "entregado"
   | "cancelado";
+
+/**
+ * El botón que acompaña al aviso.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SOLO DONDE HAY ALGO QUE HACER. Un aviso de «va en camino» no necesita botón:
+ * no hay nada que pulsar. Un cobro que no se completó sí — y la diferencia
+ * entre poner el enlace o no ponerlo es la diferencia entre recuperar esa venta
+ * y perderla.
+ *
+ * ADÓNDE LLEVA NO LO ELIGE EL NEGOCIO, lo decide el momento: un pedido
+ * cancelado lleva a la tienda (a empezar de nuevo) y uno que sigue vivo lleva a
+ * su propio cobro. Dejarlo configurable solo permitiría mandar al cliente a
+ * pagar un pedido que ya no existe.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export type BotonAviso = { texto: string; a: "tienda" | "pago" };
 
 export type Aviso = {
   activo: boolean;
@@ -75,20 +94,48 @@ export const MOMENTOS: {
   cuando: string;
   activo: boolean;
   texto: string;
+  /** ¿Se alcanza moviendo la tarjeta en el tablero? */
+  esEstado: boolean;
+  boton?: BotonAviso;
 }[] = [
   {
     clave: "pagado",
     etiqueta: "Pago recibido",
     cuando: "Cuando el banco confirma el pago.",
     activo: true,
+    esEstado: false,
     texto:
       "¡Pago recibido! ✅ Tu pedido #{numero} en {tienda} quedó confirmado por {total}. Te vamos avisando por aquí.",
+  },
+  {
+    clave: "enlace_vencido",
+    etiqueta: "Se venció el enlace de pago",
+    cuando: "Cuando pasan los minutos y el cobro caduca. El pedido se cancela solo.",
+    activo: true,
+    esEstado: false,
+    texto:
+      "Se venció el enlace de pago de tu pedido #{numero} en {tienda}, así que quedó cancelado. Si todavía lo quieres, puedes volver a pedirlo en un minuto.",
+    boton: { texto: "Volver a pedir", a: "tienda" },
+  },
+  {
+    clave: "pago_no_completado",
+    etiqueta: "El pago no se completó",
+    // ESTE NO CANCELA NADA, y es deliberado: cancelar en la app de Yappy es casi
+    // siempre un dedazo, y el cliente lo reintenta a los diez segundos. Si el
+    // pedido ya estuviera cancelado, ese dedazo le costaría el carrito entero.
+    cuando: "Cuando el banco lo rechaza o el cliente lo cancela en su app. El pedido sigue vivo.",
+    activo: true,
+    esEstado: false,
+    texto:
+      "No se completó el pago de tu pedido #{numero} en {tienda}. Tu pedido sigue guardado: puedes intentarlo otra vez.",
+    boton: { texto: "Pagar de nuevo", a: "pago" },
   },
   {
     clave: "confirmado",
     etiqueta: "Confirmado",
     cuando: "Cuando lo mueves a Confirmados.",
     activo: true,
+    esEstado: true,
     texto: "Confirmamos tu pedido #{numero} en {tienda}. Ya lo tenemos anotado, {cliente}.",
   },
   {
@@ -97,6 +144,7 @@ export const MOMENTOS: {
     // Apagado de fábrica: ver la cabecera. No es un descuido.
     cuando: "Cuando lo mueves a Preparando.",
     activo: false,
+    esEstado: true,
     texto: "Tu pedido #{numero} ya se está preparando.",
   },
   {
@@ -104,6 +152,7 @@ export const MOMENTOS: {
     etiqueta: "En camino",
     cuando: "Cuando lo mueves a En camino.",
     activo: true,
+    esEstado: true,
     texto: "¡Tu pedido #{numero} va en camino! 🛵",
   },
   {
@@ -111,6 +160,7 @@ export const MOMENTOS: {
     etiqueta: "Entregado",
     cuando: "Cuando lo mueves a Entregado.",
     activo: true,
+    esEstado: true,
     texto: "Tu pedido #{numero} fue entregado. ¡Gracias por comprar en {tienda}!",
   },
   {
@@ -118,6 +168,7 @@ export const MOMENTOS: {
     etiqueta: "Cancelado",
     cuando: "Cuando lo mueves a Cancelado.",
     activo: true,
+    esEstado: true,
     texto:
       "Tu pedido #{numero} en {tienda} quedó cancelado. Si crees que es un error, escríbenos por aquí.",
   },
@@ -227,5 +278,13 @@ export function textoDelAviso(
  */
 export function momentoDelEstado(estado: string): MomentoAviso | null {
   const e = String(estado ?? "").trim();
-  return MOMENTOS.some((m) => m.clave === e) && e !== "pagado" ? (e as MomentoAviso) : null;
+  // SOLO LOS QUE SE ALCANZAN ARRASTRANDO. «Pagado», «se venció el enlace» y «el
+  // pago no se completó» los dispara el banco; si el tablero pudiera llegar
+  // también a ellos habría dos caminos hacia el mismo mensaje.
+  return MOMENTOS.some((m) => m.clave === e && m.esEstado) ? (e as MomentoAviso) : null;
+}
+
+/** El botón que lleva este aviso, si lleva alguno. */
+export function botonDelAviso(momento: MomentoAviso): BotonAviso | null {
+  return MOMENTOS.find((m) => m.clave === momento)?.boton ?? null;
 }

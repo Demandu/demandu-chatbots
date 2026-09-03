@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { leerConfig } from "./config";
-import { textoDelAviso, type MomentoAviso } from "./avisos";
+import { textoDelAviso, botonDelAviso, type MomentoAviso } from "./avisos";
 import { comoDinero } from "./variedades";
-import { enviarTexto } from "@/lib/canales/whatsappEnviar";
+import { enlaceDeTienda, enlaceDePago } from "./direccion";
+import { enviarTexto, enviarConBoton } from "@/lib/canales/whatsappEnviar";
 
 /**
  * Mandarle al cliente el aviso de su pedido.
@@ -66,7 +67,7 @@ export async function avisarDelPedido(
 
   const { data: tienda } = await sb
     .from("tiendas")
-    .select("nombre,config")
+    .select("nombre,slug,config")
     .eq("id", ped.tienda_id)
     .maybeSingle();
 
@@ -132,10 +133,29 @@ export async function avisarDelPedido(
     return { enviado: false, motivo };
   }
 
+  // ── El botón, cuando este momento lleva uno ───────────────────────────────
+  //
+  // EL ENLACE SE ARMA AQUÍ Y NO SE GUARDA. Un enlace guardado en el texto del
+  // aviso se quedaría apuntando a la dirección vieja el día que el negocio
+  // cambie la suya, y esos son justamente los mensajes que llevan dinero
+  // dentro.
+  const boton = botonDelAviso(momento);
+  const slug = String(tienda?.slug ?? "");
+  const destino =
+    !boton || !slug
+      ? ""
+      : boton.a === "pago"
+        ? enlaceDePago(slug, String(ped.codigo ?? ""))
+        : enlaceDeTienda(slug);
+
   // ── Se manda ANTES de guardarlo ───────────────────────────────────────────
   // Mismo orden que la Bandeja y que el motor: guardar primero pintaría en
   // pantalla un mensaje que el cliente nunca recibió.
-  const envio = await enviarTexto(canal.phone_number_id, canal.access_token, para, texto);
+  const envio = destino
+    ? await enviarConBoton(
+        canal.phone_number_id, canal.access_token, para, texto, boton!.texto, destino,
+      )
+    : await enviarTexto(canal.phone_number_id, canal.access_token, para, texto);
 
   await sb.from("messages").insert({
     conversation_id: conversacion.id,
@@ -145,7 +165,10 @@ export async function avisarDelPedido(
     // configuró. Confundirlo con el bot ensucia la analítica de la IA y hace
     // creer al agente que hay un bot contestando en esa conversación.
     sender: "system",
-    body: texto,
+    // CON EL ENLACE DENTRO. El cliente ve un botón; el agente que abre la
+    // conversación tiene que poder abrir exactamente lo mismo que le mandamos,
+    // y un botón no se puede leer desde la Bandeja.
+    body: destino ? `${texto}\n${destino}` : texto,
     payload: {
       aviso_pedido: { pedido_id: ped.id, momento, numero: ped.numero },
       ...(envio.ok
@@ -159,6 +182,7 @@ export async function avisarDelPedido(
   await anotar(envio.ok, {
     texto,
     conversacion_id: conversacion.id,
+    ...(destino ? { boton: boton!.texto, destino } : {}),
     ...(envio.ok ? {} : { motivo: envio.error ?? "No se pudo enviar", code: envio.code ?? null }),
   });
 

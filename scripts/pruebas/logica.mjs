@@ -13,10 +13,10 @@ import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
-  MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado,
+  MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado, botonDelAviso,
 } from "../../src/lib/tienda/avisos.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
-import { aDireccion, direccionValida, enlaceDePago, hostDeLaPeticion } from "../../src/lib/tienda/direccion.ts";
+import { aDireccion, direccionValida, enlaceDePago, enlaceDeTienda, hostDeLaPeticion } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
@@ -2511,6 +2511,89 @@ describe("Tienda: lo que el cliente recibe cuando su pedido se mueve", () => {
     const c = leerConfig({ titulo: "Vieja" });
     esperar(c.avisos.activo).verdadero();
     esperar(typeof textoDelAviso("pagado", c.avisos, datos)).igual("string");
+  });
+});
+
+describe("Tienda: cuando el cobro no llega a buen puerto", () => {
+  const datos = {
+    numero: 128, tienda: "Paws at Home", total: "$25.00",
+    codigo: "C9UYJC3S76SB", cliente: "María",
+  };
+
+  test("VENCIDO Y RECHAZADO NO SON LO MISMO, y no dicen lo mismo", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // Los dos se leen como «no pagó», pero lo que la persona tiene que hacer
+    // después es distinto: en uno su pedido ya no existe y en el otro sigue
+    // ahí. Un mensaje único —«hubo un problema»— la deja sin saber cuál de
+    // los dos le tocó, que es la peor de las tres respuestas posibles.
+    // ───────────────────────────────────────────────────────────────────────
+    const a = sanearAvisos(undefined);
+    const vencido = textoDelAviso("enlace_vencido", a, datos);
+    const fallido = textoDelAviso("pago_no_completado", a, datos);
+
+    esperar(typeof vencido).igual("string");
+    esperar(typeof fallido).igual("string");
+    esperar(vencido === fallido).falso("los dos avisos dicen exactamente lo mismo");
+    esperar(/cancelad/i.test(vencido)).verdadero("el de vencido no dice que el pedido se canceló");
+    esperar(/cancelad/i.test(fallido)).falso(
+      "el de pago rechazado dice que se canceló, y el pedido sigue vivo",
+    );
+  });
+
+  test("cada uno lleva SU botón, y a sitios distintos", () => {
+    // Mandar a «volver a pedir» a quien todavía tiene el pedido vivo le hace
+    // rehacer el carrito para nada; mandar a «pagar de nuevo» a quien ya no
+    // tiene pedido lo lleva a una pantalla que no le va a dejar pagar.
+    esperar(botonDelAviso("enlace_vencido")?.a).igual("tienda");
+    esperar(botonDelAviso("pago_no_completado")?.a).igual("pago");
+    esperar(botonDelAviso("enlace_vencido")?.texto).igual("Volver a pedir");
+  });
+
+  test("un aviso sin nada que hacer NO lleva botón", () => {
+    // Un botón en «va en camino» no lleva a ninguna parte útil y enseña a la
+    // gente que los botones de estos mensajes no sirven para nada.
+    for (const m of ["pagado", "confirmado", "preparando", "en_camino", "entregado", "cancelado"]) {
+      esperar(botonDelAviso(m) === null).verdadero(`${m} lleva botón y no debería`);
+    }
+  });
+
+  test("NINGUNO DE LOS TRES DEL BANCO se alcanza arrastrando la tarjeta", () => {
+    // El pago, el enlace vencido y el rechazo los dispara el banco. Si el
+    // tablero también llegara a ellos habría dos caminos hacia el mismo
+    // mensaje y el cliente lo recibiría dos veces.
+    for (const m of ["pagado", "enlace_vencido", "pago_no_completado"]) {
+      esperar(momentoDelEstado(m) === null).verdadero(`${m} se alcanza desde el tablero`);
+    }
+    // Y los del tablero sí, que es la otra mitad de la regla.
+    for (const m of ["confirmado", "preparando", "en_camino", "entregado", "cancelado"]) {
+      esperar(momentoDelEstado(m)).igual(m);
+    }
+  });
+
+  test("los dos textos nuevos salen enteros, con y sin nombre del cliente", () => {
+    const a = sanearAvisos(undefined);
+    for (const m of ["enlace_vencido", "pago_no_completado"]) {
+      for (const cliente of ["María", ""]) {
+        const t = rellenarAviso(a.momentos[m].texto, { ...datos, cliente });
+        esperar(/[{}]/.test(t)).falso(`${m} dejó un hueco: ${t}`);
+        esperar(t.length > 20).verdadero(`${m} se quedó en nada: ${t}`);
+      }
+    }
+  });
+
+  test("el negocio puede apagarlos, como cualquier otro", () => {
+    const a = sanearAvisos({ momentos: { enlace_vencido: { activo: false } } });
+    esperar(textoDelAviso("enlace_vencido", a, datos) === null).verdadero();
+    esperar(typeof textoDelAviso("pago_no_completado", a, datos)).igual("string");
+  });
+
+  test("el enlace del botón se arma con la dirección de HOY", () => {
+    // Un enlace guardado dentro del texto apuntaría a la dirección vieja el
+    // día que el negocio cambie la suya — y estos son justamente los mensajes
+    // que llevan dinero dentro.
+    esperar(enlaceDePago("paws-at-home", "C9UYJC3S76SB"))
+      .igual("https://store.demandu.tech/paws-at-home/pagar/C9UYJC3S76SB");
+    esperar(enlaceDeTienda("paws-at-home")).igual("https://store.demandu.tech/paws-at-home");
   });
 });
 

@@ -3336,15 +3336,65 @@ describe("Tienda: los avisos al cliente", () => {
     );
   });
 
-  test("un pago rechazado no se le anuncia al cliente por WhatsApp", () => {
-    // Quien acaba de ver el error en su teléfono no necesita un segundo
-    // mensaje diciéndoselo, y el enlace de pago sigue vivo para reintentar.
+  test("UN ENLACE VENCIDO CANCELA EL PEDIDO; UN RECHAZO, NO", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Los dos se leen como «no pagó» y no son lo mismo. El enlace vencido está
+    // muerto y no vuelve nadie; el rechazo tiene a una persona delante que casi
+    // siempre reintenta a los diez segundos —cancelar en la app de Yappy es un
+    // dedazo clásico— y cancelarle el pedido le cuesta el carrito entero.
+    // ─────────────────────────────────────────────────────────────────────────
     const t = sinComentarios(
       fs.readFileSync(path.join(SRC, "app/api/tienda/yappy/ipn/route.ts"), "utf8"),
     );
-    esperar(/if\s*\(pago === "pagado"\)\s*{[\s\S]{0,300}avisarDelPedido\(/.test(t)).verdadero(
-      "se avisa de cualquier resultado del cobro, no solo del pago",
+
+    esperar(/pago === "expirado"[^;]{0,80}estado === "recibido"/.test(t)).verdadero(
+      "no se distingue el enlace vencido, o se cancela un pedido que el negocio ya movió",
     );
+    esperar(/rechazado[\s\S]{0,120}cancelar/i.test(t)).falso(
+      "un pago rechazado está cancelando el pedido",
+    );
+    esperar(t.includes('"enlace_vencido"') && t.includes('"pago_no_completado"')).verdadero(
+      "los dos finales mandan el mismo mensaje",
+    );
+  });
+
+  test("UN PEDIDO CANCELADO NO SE PUEDE PAGAR POR NINGUNA PUERTA", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Al vencer el enlace le decimos al cliente que su pedido quedó cancelado.
+    // Si ese mismo enlace siguiera cobrando, esa persona pagaría algo que le
+    // acabamos de decir que ya no existe, y el negocio tendría dinero de un
+    // pedido que no está en ninguna columna. Son dos puertas y hay que cerrar
+    // las dos: la pantalla y la ruta que cobra.
+    // ─────────────────────────────────────────────────────────────────────────
+    const ruta = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/api/tienda/pedido/cobrar/route.ts"), "utf8"),
+    );
+    esperar(/if\s*\(\s*pedido\.estado === "cancelado"\s*\)\s*{[\s\S]{0,300}return/.test(ruta)).verdadero(
+      "la ruta que cobra acepta un pedido cancelado (o la comprobación lleva una condición de más)",
+    );
+
+    const pagina = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/t/[slug]/pagar/[codigo]/page.tsx"), "utf8"),
+    );
+    const iCancelado = pagina.indexOf('estado === "cancelado"');
+    const iBoton = pagina.indexOf("<PaginaDePago");
+    esperar(iCancelado > 0).verdadero("la pantalla de pago no mira si el pedido está cancelado");
+    esperar(iCancelado < iBoton).verdadero(
+      "la comprobación va después del botón de pago, así que no lo evita",
+    );
+  });
+
+  test("el enlace corto de los botones de plantilla existe de verdad", () => {
+    // Una plantilla aprobada por Meta lleva la dirección dentro. Si la ruta no
+    // existe, el botón que el cliente pulsa para pagar da 404 — y eso no se
+    // arregla sin volver a pasar por revisión.
+    const ruta = path.join(SRC, "app/t/r/[codigo]/page.tsx");
+    esperar(fs.existsSync(ruta)).verdadero("falta la ruta /r/<código> que usan los botones");
+    const t = sinComentarios(fs.readFileSync(ruta, "utf8"));
+    esperar(t.includes("codigoValido(")).verdadero(
+      "no se comprueba la forma del código: esta dirección serviría para adivinarlos",
+    );
+    esperar(/redirect\(/.test(t)).verdadero("el enlace corto no redirige a ninguna parte");
   });
 
   test("el que manda los avisos NO puede acabar en el navegador", () => {

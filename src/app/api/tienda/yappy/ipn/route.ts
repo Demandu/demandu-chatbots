@@ -100,6 +100,24 @@ export async function GET(req: Request) {
     if (pedido.estado === "recibido") cambios.estado = "confirmado";
   }
 
+  // ── UN ENLACE VENCIDO CANCELA EL PEDIDO. UN RECHAZO, NO ────────────────────
+  //
+  // No son lo mismo aunque los dos se lean como «no pagó»:
+  //
+  //   · VENCIDO (X) — el cobro caducó solo, a los pocos minutos. Nadie va a
+  //     volver a ese enlace: está muerto. Dejar el pedido vivo llena el tablero
+  //     de fantasmas que alguien tiene que cancelar a mano.
+  //   · RECHAZADO (R) o CANCELADO EN LA APP (C) — hay una persona delante que
+  //     acaba de intentarlo. Cancelar en la app de Yappy es casi siempre un
+  //     dedazo y lo reintenta a los diez segundos; si el pedido ya estuviera
+  //     cancelado, ese dedazo le costaría el carrito entero.
+  //
+  // SOLO SI SIGUE EN «RECIBIDO». Un pedido que el negocio ya confirmó o está
+  // preparando no se cancela por un aviso del banco: pudo cobrarlo por otra
+  // vía, y quitárselo de las manos a mitad sería peor que cualquier fantasma.
+  const vencido = pago === "expirado" && pedido.estado === "recibido";
+  if (vencido) cambios.estado = "cancelado";
+
   await sb.from("pedidos").update(cambios).eq("id", pedido.id);
   await sb.from("pedido_eventos").insert({
     pedido_id: pedido.id,
@@ -115,16 +133,23 @@ export async function GET(req: Request) {
   // la pantalla del banco. El único mensaje que de verdad tranquiliza —«tenemos
   // tu plata, tenemos tu pedido»— no salía de aquí porque nadie lo mandaba.
   //
-  // SOLO CUANDO HAY PAGO. Un rechazo no se anuncia por WhatsApp: quien acaba de
-  // ver el error en su teléfono no necesita un segundo mensaje diciéndoselo, y
-  // el enlace de pago sigue vivo para volver a intentarlo.
+  // CADA FINAL TIENE SU MENSAJE, y son tres distintos porque lo que el cliente
+  // tiene que hacer después es distinto en cada uno: nada, volver a pedir, o
+  // volver a pagar. Un mensaje único —«hubo un problema»— deja a la persona sin
+  // saber si tiene un pedido o no lo tiene, que es la peor de las tres.
   //
   // NUNCA ROMPE LA RESPUESTA A YAPPY. Si esto fallara y contestáramos error,
   // Yappy reintentaría el mismo aviso —y el pago ya está guardado—. Se contesta
   // bien pase lo que pase; lo que falle queda en la bitácora del pedido.
-  if (pago === "pagado") {
+  const momento =
+    pago === "pagado" ? "pagado"
+    : vencido ? "enlace_vencido"
+    : pago === "rechazado" || pago === "cancelado" ? "pago_no_completado"
+    : null;
+
+  if (momento) {
     try {
-      await avisarDelPedido(sb, pedido.id, "pagado");
+      await avisarDelPedido(sb, pedido.id, momento);
     } catch (e) {
       console.error("[ipn aviso]", e);
     }

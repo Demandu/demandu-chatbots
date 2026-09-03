@@ -53,7 +53,7 @@ export async function POST(req: Request) {
 
   const { data: pedido } = await sb
     .from("pedidos")
-    .select("id,tienda_id,total,pago,respuestas")
+    .select("id,tienda_id,total,pago,estado,respuestas")
     .eq("codigo", codigo)
     .eq("tienda_id", tienda.id)
     .maybeSingle();
@@ -62,6 +62,18 @@ export async function POST(req: Request) {
 
   if (pedido.pago === "pagado") {
     return NextResponse.json({ error: "Este pedido ya está pagado." }, { status: 409 });
+  }
+
+  // UN PEDIDO CANCELADO NO SE COBRA, y esto no es una comprobación de adorno:
+  // cuando el enlace vence, al cliente le llega «tu pedido quedó cancelado».
+  // Si el mismo enlace siguiera cobrando, esa persona pagaría algo que le
+  // acabamos de decir que ya no existe — y el negocio tendría dinero de un
+  // pedido que no está en ninguna columna.
+  if (pedido.estado === "cancelado") {
+    return NextResponse.json(
+      { error: "Este pedido está cancelado. Haz uno nuevo desde la tienda." },
+      { status: 409 },
+    );
   }
 
   // El teléfono sale de lo que contestó en el formulario, no de la petición:
