@@ -1167,7 +1167,13 @@ export function InboxClient({
               El botón va AQUÍ, encima del cuadro de escribir, y no escondido
               en el menú de tres puntos: es lo que se hace al terminar de
               atender, y tiene que estar donde se está mirando. */}
-          {sel && sel.status === "assigned" && !ventanaCerrada && (
+          {/* SIN LA CONDICIÓN DE LA VENTANA, y ese fue un error mío al escribirlo.
+              Lo había atado a `!ventanaCerrada`, así que en una conversación de
+              más de 24 h —donde el agente ya está obligado a intervenir a mano
+              con una plantilla— el botón para devolvérsela a la IA
+              DESAPARECÍA. Justo el caso en que más falta hace: el humano entra,
+              resuelve, y no tiene forma de soltar la conversación. */}
+          {sel && sel.status === "assigned" && (
             <div className="flex flex-none flex-wrap items-center justify-between gap-2 border-t border-surface-border px-3 py-2" style={{ backgroundColor: "var(--tarjeta)" }}>
               <p className="text-xs text-muted">
                 <b className="text-white">Tú llevas esta conversación.</b> La IA está en pausa y no va a

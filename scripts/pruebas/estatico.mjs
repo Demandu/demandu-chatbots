@@ -405,6 +405,14 @@ describe("Cuando escribe un agente, el bot se calla", () => {
       "el aviso tiene que depender del estado real de la conversación",
     );
     esperar(inbox.includes("La IA está en pausa")).verdadero("hay que decirlo con todas las letras");
+
+    // Y NO PUEDE DEPENDER DE LA VENTANA DE 24 H. Se escribió así al principio y
+    // era un error: en una conversación de más de 24 horas —donde el agente ya
+    // está obligado a intervenir a mano con una plantilla— el botón para
+    // devolvérsela a la IA desaparecía. Justo cuando más falta hace.
+    esperar(/sel\.status === "assigned" && !ventanaCerrada/.test(inbox)).falso(
+      "el botón de devolver no puede esconderse cuando la ventana está cerrada",
+    );
   });
 });
 
