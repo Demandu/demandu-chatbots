@@ -142,6 +142,10 @@ export type PersonaDeLista = {
   wa_name?: string | null;
   phone?: string | null;
   tags?: string[] | null;
+  /** Pidió no recibir mensajes. No entra en ninguna difusión, nunca. */
+  opted_out?: boolean | null;
+  /** Cuántos de sus pedidos pagados ya se entregaron. */
+  entregados?: number | null;
   pedidos?: number | null;
   gastado?: number | null;
   ultima?: string | null;
@@ -205,17 +209,26 @@ export function comoCsv(
 /**
  * A quién de esta lista se le puede escribir.
  *
- * SE FILTRA ANTES DE ENSEÑAR EL BOTÓN, no después de pulsarlo. Alguien sin
- * teléfono no recibe nada, y quien se dio de baja NO PUEDE recibir nada — es la
- * regla de Meta y también la decencia mínima. Decir «se mandó a 40» cuando
- * salieron 31 es peor que decir 31.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SE FILTRA ANTES DE ENSEÑAR EL BOTÓN, no después de pulsarlo. Decir «se mandó
+ * a 40» cuando salieron 31 es peor que decir 31: el negocio cuenta con 40
+ * respuestas y no entiende por qué llegan menos.
+ *
+ * QUIEN SE DIO DE BAJA NO ENTRA NUNCA. Es la regla de Meta y también la
+ * decencia mínima; y una difusión a alguien que pidió no recibirlas es la forma
+ * más rápida de que reporte el número y se caiga la cuenta entera de WhatsApp
+ * del cliente.
+ *
+ * UNA PERSONA ES UNA PERSONA. El mismo contacto sale dos veces en la lista de
+ * impagos si tiene dos pedidos sin cobrar; mandarle dos mensajes iguales es
+ * como se pierde a un cliente bueno.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function aQuienSePuedeEscribir(filas: PersonaDeLista[]): string[] {
   const vistos = new Set<string>();
   for (const p of filas) {
+    if (p.opted_out) continue;
     const tel = String(p.phone ?? "").replace(/\D+/g, "");
-    // El MISMO contacto puede salir dos veces en la lista de impagos: dos
-    // pedidos suyos sin cobrar son dos filas y una sola persona.
     if (tel && p.id) vistos.add(String(p.id));
   }
   return [...vistos];

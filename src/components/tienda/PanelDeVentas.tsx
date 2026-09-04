@@ -41,12 +41,12 @@ import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
 type Resumen = {
   ventas: {
     pedidos: number; monto: number; cobrado: number; sin_pagar: number;
-    cuantos_sin_pagar: number; nunca_cobrados: number; ticket: number;
+    cuantos_sin_pagar: number; nunca_cobrados: number; cuantos_pagaron: number; ticket: number;
   };
   anterior: { pedidos: number; monto: number; cobrado: number };
   gente: { compradores: number; nuevos: number; repiten: number; leads: number };
   listas: {
-    nuevos: PersonaDeLista[]; repiten: PersonaDeLista[];
+    pagaron: PersonaDeLista[]; nuevos: PersonaDeLista[]; repiten: PersonaDeLista[];
     sin_pagar: PersonaDeLista[]; leads: PersonaDeLista[];
   };
 };
@@ -54,6 +54,14 @@ type Resumen = {
 type ClaveLista = keyof Resumen["listas"];
 
 const COLUMNAS: Record<ClaveLista, { clave: keyof PersonaDeLista; titulo: string }[]> = {
+  pagaron: [
+    { clave: "name", titulo: "Nombre" }, { clave: "phone", titulo: "Teléfono" },
+    { clave: "pedidos", titulo: "Pedidos pagados" }, { clave: "gastado", titulo: "Pagó" },
+    // CUÁNTOS YA RECIBIÓ, y no es un adorno: preguntarle «¿qué tal tu pedido?»
+    // a quien todavía lo está esperando deja peor imagen que no preguntar.
+    { clave: "entregados", titulo: "Ya entregados" },
+    { clave: "ultima", titulo: "Último pedido" }, { clave: "tags", titulo: "Etiquetas" },
+  ],
   nuevos: [
     { clave: "name", titulo: "Nombre" }, { clave: "phone", titulo: "Teléfono" },
     { clave: "pedidos", titulo: "Pedidos" }, { clave: "gastado", titulo: "Gastado" },
@@ -153,6 +161,7 @@ export function PanelDeVentas({
 
   const filas = r && lista ? r.listas[lista] ?? [] : [];
   const aQuien = aQuienSePuedeEscribir(filas);
+  const bajas = new Set(filas.filter((p) => p.opted_out && p.id).map((p) => String(p.id))).size;
 
   const descargar = () => {
     if (!lista || !filas.length) return;
@@ -239,12 +248,18 @@ export function PanelDeVentas({
                   pie={`${r.ventas.pedidos} pedido${r.ventas.pedidos === 1 ? "" : "s"} · ticket ${comoDinero(r.ventas.ticket, moneda)}`}
                   delta={cambio(r.ventas.monto, r.anterior.monto)}
                 />
+                {/* SE ABRE, y es la lista que más se va a usar: a quien pagó
+                    se le manda la encuesta, el agradecimiento y la promoción
+                    para que vuelva. El panel enseñaba a quién perseguir y no a
+                    quién cuidar. */}
                 <Cifra
                   icono={<Wallet className="h-3.5 w-3.5" />}
                   titulo="Cobrado"
                   valor={comoDinero(r.ventas.cobrado, moneda)}
-                  pie="por Yappy"
+                  pie={`${r.ventas.cuantos_pagaron} client${r.ventas.cuantos_pagaron === 1 ? "e" : "es"} pagaron`}
                   delta={cambio(r.ventas.cobrado, r.anterior.cobrado)}
+                  activa={lista === "pagaron"}
+                  onClick={() => setLista(lista === "pagaron" ? null : "pagaron")}
                 />
                 {/* ESTA ES LA CIFRA QUE PAGA EL PANEL. Es dinero que ya se pidió
                     y no entró, y hay una plantilla aprobada para recuperarlo. */}
@@ -315,9 +330,17 @@ export function PanelDeVentas({
             Va arriba y no abajo: con cuarenta filas, un botón al final del
             listado no lo encuentra nadie. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-linea-2 p-2.5">
+          {/* LA DIFERENCIA SE DICE ANTES DE ENVIAR. Decir «se mandó a 40»
+              cuando salieron 31 hace que el negocio cuente con 40 respuestas y
+              no entienda por qué llegan menos. */}
           <span className="text-xs font-semibold text-ink">
             {filas.length} {lista === "sin_pagar" ? "pedidos" : "personas"}
-            {aQuien.length !== filas.length && ` · ${aQuien.length} con teléfono`}
+            {aQuien.length !== filas.length && (
+              <span className="font-normal text-ink-2">
+                {" "}· se les puede escribir a {aQuien.length}
+                {bajas > 0 && ` (${bajas} pidieron no recibir mensajes)`}
+              </span>
+            )}
           </span>
 
           <button type="button" onClick={descargar} className="btn-soft px-3 py-1.5 text-xs">
@@ -370,7 +393,7 @@ export function PanelDeVentas({
             </thead>
             <tbody>
               {filas.map((p, i) => (
-                <tr key={i} className="border-t border-linea-2">
+                <tr key={i} className={`border-t border-linea-2 ${p.opted_out ? "opacity-50" : ""}`}>
                   {COLUMNAS[lista!].map((c) => (
                     <td key={String(c.clave)} className="px-2.5 py-1.5 text-ink">
                       {celda(p, c.clave, moneda)}
@@ -390,6 +413,7 @@ export function PanelDeVentas({
 function sugerencia(lista: ClaveLista, rango: Rango): string {
   const mes = rango.desde.toLocaleDateString("es", { month: "short", year: "2-digit" });
   const como: Record<ClaveLista, string> = {
+    pagaron: "Compraron",
     nuevos: "Nuevos",
     repiten: "Recurrentes",
     sin_pagar: "Debe pago",

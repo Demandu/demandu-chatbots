@@ -3663,7 +3663,7 @@ describe("La tienda tiene UN solo botón que gana", () => {
 
 describe("El panel de resultados de la tienda", () => {
   const mig = fs.readFileSync(
-    path.join(RAIZ, "supabase/migrations/0081_sin_cobrar_es_deuda.sql"), "utf8");
+    path.join(RAIZ, "supabase/migrations/0082_lista_de_quienes_pagaron.sql"), "utf8");
 
   test("TODO LO QUE NO ESTÁ PAGADO ES DEUDA", () => {
     // ─────────────────────────────────────────────────────────────────────────
@@ -3828,6 +3828,60 @@ describe("Aquí se cobra ANTES de preparar", () => {
     for (const s of ["sin_cobrar", "esperando", "sin_confirmar", "fallido", "anulado", "pagado"]) {
       esperar(new RegExp(`\\b${s}:`).test(ped)).verdadero(`falta el sello de ${s}`);
     }
+  });
+});
+
+describe("A quién SÍ se le puede escribir", () => {
+  const mig = fs.readFileSync(
+    path.join(RAIZ, "supabase/migrations/0082_lista_de_quienes_pagaron.sql"), "utf8");
+  const panel = sinComentarios(
+    fs.readFileSync(path.join(SRC, "components/tienda/PanelDeVentas.tsx"), "utf8"));
+
+  test("LA LISTA DE QUIENES PAGARON ES DE PERSONAS, NO DE PEDIDOS", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Quien pagó tres veces este mes recibe UNA encuesta, no tres. Agrupar en la
+    // base y no en el navegador es lo que evita que un cliente bueno reciba el
+    // mismo mensaje tres veces y silencie el chat — y ese es justo el cliente
+    // que no te puedes permitir perder.
+    // ─────────────────────────────────────────────────────────────────────────
+    const pagadores = /pagadores as \([\s\S]{0,600}?\n  \)/.exec(mig)?.[0] ?? "";
+    esperar(pagadores.length > 0).verdadero("no existe la lista de quienes pagaron");
+    esperar(/group by d\.contacto_id/.test(pagadores)).verdadero(
+      "la lista no está agrupada por persona: el mismo cliente recibiría varios mensajes",
+    );
+    esperar(/pago = 'pagado'/.test(pagadores)).verdadero("la lista incluye a quien no pagó");
+  });
+
+  test("se sabe a quién YA SE LE ENTREGÓ", () => {
+    // Preguntarle «¿qué tal tu pedido?» a alguien que todavía lo está esperando
+    // es el error clásico de las encuestas automáticas.
+    esperar(/filter \(where d\.estado = 'entregado'\)/.test(mig)).verdadero(
+      "no se distingue a quien ya recibió su pedido de quien lo espera",
+    );
+    esperar(panel.includes('clave: "entregados"')).verdadero(
+      "la pantalla no enseña quién ya recibió su pedido",
+    );
+  });
+
+  test("TODAS LAS LISTAS LLEVAN QUIÉN SE DIO DE BAJA", () => {
+    // Si `opted_out` solo se mirara al enviar, la lista diría 40 y saldrían 31
+    // sin que nadie entendiera la diferencia.
+    const listas = mig.slice(mig.indexOf("'listas'"));
+    const cuantas = (listas.match(/opted_out/g) ?? []).length;
+    esperar(cuantas >= 5).verdadero(`solo ${cuantas} listas llevan opted_out, hacen falta 5`);
+  });
+
+  test("y la pantalla lo dice ANTES de enviar", () => {
+    esperar(/pidieron no recibir mensajes/.test(panel)).verdadero(
+      "no se avisa de cuántos están dados de baja",
+    );
+  });
+
+  test("la cifra de cobrado se puede abrir", () => {
+    // El panel enseñaba a quién perseguir —los que deben— y no a quién cuidar.
+    esperar(/lista === "pagaron"/.test(panel)).verdadero(
+      "«Cobrado» no se abre: no hay forma de sacar a quién mandarle la encuesta",
+    );
   });
 });
 

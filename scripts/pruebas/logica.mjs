@@ -2782,6 +2782,23 @@ describe("Tienda: el panel de arriba de los pedidos", () => {
   test("sin teléfono no se le puede escribir", () => {
     esperar(aQuienSePuedeEscribir([{ id: "c1", phone: null }]).length).igual(0);
   });
+
+  test("QUIEN PIDIÓ NO RECIBIR MENSAJES NO ENTRA NUNCA", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // Es la regla de Meta y también la decencia mínima. Y no es solo cortesía:
+    // una difusión a alguien que pidió no recibirlas es la forma más rápida de
+    // que reporte el número y se caiga la cuenta de WhatsApp entera del
+    // cliente — todas sus conversaciones, no solo esa.
+    // ───────────────────────────────────────────────────────────────────────
+    const filas = [
+      { id: "c1", phone: "507111" },
+      { id: "c2", phone: "507222", opted_out: true },
+      { id: "c3", phone: "507333" },
+    ];
+    const quienes = aQuienSePuedeEscribir(filas);
+    esperar(quienes.length).igual(2, "se coló alguien dado de baja");
+    esperar(quienes.includes("c2")).falso();
+  });
 });
 
 process.exit(await correrPruebas());
