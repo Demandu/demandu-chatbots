@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listarFacturas, estadoDeFactura } from "@/lib/billing/facturas";
 import { reenviar, restablecer, entrarComoSoporte, eliminarCliente } from "../acciones";
+import { Tratos } from "@/components/superadmin/Tratos";
+import { descuentoActual } from "@/lib/billing/descuentos";
 import { ArrowLeft, FileText, ExternalLink, Send, TriangleAlert, Check, KeyRound, Mail, Phone, User, LifeBuoy } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +44,7 @@ export default async function FichaCliente({
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { enviada?: string; error?: string; clave?: string; reset?: string };
+  searchParams: { enviada?: string; error?: string; clave?: string; reset?: string; hecho?: string };
 }) {
   const admin = createAdminClient();
 
@@ -56,11 +58,23 @@ export default async function FichaCliente({
 
   if (!org) notFound();
 
-  const [{ data: consumo }, facturas, { data: personas }] = await Promise.all([
-    admin.rpc("consumo_de_clientes"),
-    listarFacturas(org.stripe_customer_id),
-    admin.from("memberships").select("role").eq("org_id", params.id),
-  ]);
+  const [{ data: consumo }, facturas, { data: personas }, { data: regalos }, descuento] =
+    await Promise.all([
+      admin.rpc("consumo_de_clientes"),
+      listarFacturas(org.stripe_customer_id),
+      admin.from("memberships").select("role").eq("org_id", params.id),
+      // Solo los que siguen vivos: un regalo vencido no es un trato, es
+      // historia — y la historia está en la bitácora.
+      admin
+        .from("org_regalos")
+        .select("clave, hasta, motivo")
+        .eq("org_id", params.id)
+        .gt("hasta", new Date().toISOString()),
+      // EL DESCUENTO SE LE PREGUNTA A STRIPE, no a nuestra base: se puede haber
+      // quitado desde allá, o acabado solo. Lo que se pinta tiene que ser lo
+      // que de verdad se le va a cobrar.
+      descuentoActual(org.stripe_subscription_id ?? ""),
+    ]);
 
   const mio = ((consumo as any[]) ?? []).find((c) => c.org_id === params.id) ?? null;
 
@@ -278,6 +292,24 @@ export default async function FichaCliente({
           </table>
         </div>
       )}
+
+      {searchParams?.hecho && (
+        <div className="mt-6 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
+          ✅ {searchParams.hecho}
+        </div>
+      )}
+
+      {/* VA ANTES DE LA ZONA PELIGROSA y después de todo lo demás: es lo que se
+          usa a menudo, no lo que se usa una vez. */}
+      <div className="mt-8">
+        <Tratos
+          orgId={org.id}
+          yaPaga={org.estado_cobro === "activa" && !!org.stripe_subscription_id}
+          pruebaHasta={(org.prueba_termina_at as string | null) ?? null}
+          regalos={((regalos as any[]) ?? []) as { clave: string; hasta: string; motivo: string | null }[]}
+          descuento={descuento}
+        />
+      </div>
 
       {/* ── ZONA PELIGROSA ─────────────────────────────────────────────────
           Va al final, separada y en rojo, porque borrar una cuenta arrastra en

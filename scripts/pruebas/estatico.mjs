@@ -4776,4 +4776,80 @@ describe("El candado de los planes", () => {
   });
 });
 
+
+// ─── Los tratos con un cliente ───────────────────────────────────────────────
+//
+// «Regálale un mes» significa DOS COSAS DISTINTAS y elegir mal cuesta dinero:
+// a quien todavía no paga se le alarga la prueba —una fecha nuestra—, y a quien
+// ya paga hay que darle un cupón en Stripe, porque alargarle la prueba no hace
+// absolutamente nada: se le cobra igual el día que toca.
+describe("Los tratos con un cliente", () => {
+  const REG = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/superadmin/clientes/regalos.ts"), "utf8"),
+  );
+  const DES = sinComentarios(fs.readFileSync(path.join(SRC, "lib/billing/descuentos.ts"), "utf8"));
+
+  test("a quien YA PAGA no se le alarga la prueba en silencio", () => {
+    // Sería un regalo que no regala nada: el cliente cree que tiene un mes
+    // gratis y le llega el cobro igual.
+    const i = REG.indexOf("export async function regalarDias");
+    esperar(i > 0).verdadero("cambió la forma del archivo, revisa esta prueba");
+    const cuerpo = REG.slice(i, REG.indexOf("export async function regalarFuncion"));
+    esperar(/estado_cobro === "activa"[\s\S]{0,80}stripe_subscription_id/.test(cuerpo)).verdadero(
+      "no se avisa de que ese cliente ya paga: el regalo no le ahorraría nada",
+    );
+  });
+
+  test("los descuentos van a STRIPE, no a nuestra base", () => {
+    // Un descuento apuntado solo de nuestro lado haría que la pantalla dijera
+    // «-30%» mientras la tarjeta del cliente cobra el precio entero.
+    esperar(/\/coupons/.test(DES)).verdadero("no se crea el cupón en Stripe");
+    esperar(/subscriptions\/\$\{subscriptionId\}/.test(DES)).verdadero(
+      "el cupón no se pega a la suscripción del cliente",
+    );
+    const i = REG.indexOf("export async function darDescuento");
+    const cuerpo = REG.slice(i, REG.indexOf("export async function quitarSuDescuento"));
+    esperar(/stripe_subscription_id/.test(cuerpo)).verdadero(
+      "se aplica un descuento sin comprobar que el cliente tenga suscripción",
+    );
+  });
+
+  test("un regalo SIEMPRE lleva fecha", () => {
+    // Sin fecha, el «te lo dejo un mes a ver si te sirve» se convierte en
+    // gratis de por vida en cuanto a alguien se le olvida quitarlo.
+    const dir = path.join(RAIZ, "supabase/migrations");
+    const sql = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      .map((t) => t.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n"))
+      .join("\n");
+
+    esperar(/create table if not exists public\.org_regalos[\s\S]{0,600}hasta\s+timestamptz not null/.test(sql))
+      .verdadero("la fecha del regalo dejó de ser obligatoria: habría regalos eternos");
+
+    // Y la caducidad se calcula al preguntar, no con una tarea programada que
+    // un día no corre y deja regalos vivos para siempre.
+    esperar(/r\.hasta > now\(\)/.test(sql)).verdadero(
+      "los regalos vencidos ya no se descartan al leer las capacidades",
+    );
+  });
+
+  test("«para siempre» no se cuela por descuido", () => {
+    // Con `forever` puesto sin querer en un mes gratis, ese cliente no vuelve
+    // a pagar nunca y nadie lo nota hasta que alguien mira los ingresos.
+    const i = DES.indexOf('if (d.tipo === "mes_gratis")');
+    esperar(i > 0).verdadero("cambió la forma del archivo, revisa esta prueba");
+    const cuerpo = DES.slice(i, DES.indexOf("} else {", i));
+    esperar(/forever/.test(cuerpo)).falso("un mes gratis se está aplicando para siempre");
+  });
+
+  test("cada trato queda en la bitácora", () => {
+    // Dentro de tres meses alguien va a preguntar por qué este cliente tiene la
+    // tienda gratis, y la respuesta no puede ser «ni idea».
+    const cuantos = (REG.match(/anotarComoYo\(/g) ?? []).length;
+    esperar(cuantos >= 5).verdadero(`solo ${cuantos} acciones dejan rastro; deberían ser todas`);
+  });
+});
+
 process.exit(await correrPruebas());

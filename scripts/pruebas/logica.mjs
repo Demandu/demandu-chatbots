@@ -21,6 +21,7 @@ import {
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
 import { membresiaActiva, soporteVigente } from "../../src/lib/membresia.ts";
 import { FEATURES, feature, tiene } from "../../src/lib/planes/features.ts";
+import { explicar, revisar } from "../../src/lib/billing/descuentos.ts";
 import {
   PLANTILLAS, NOMBRES_DE_PEDIDO, plantillaDe, valoresDe, faltaAlgunDato,
   dentroDeLaVentana, esFueraDeVentana, VENTANA_HORAS, MARGEN_MINUTOS, FUERA_DE_VENTANA,
@@ -3393,6 +3394,37 @@ describe("Planes por capacidad", () => {
   test("una clave que no existe no rompe la pantalla", () => {
     esperar(feature("inventada")).igual(null);
     esperar(feature("")).igual(null);
+  });
+});
+
+
+describe("Descuentos y meses gratis", () => {
+  test("un descuento imposible se para ANTES de hablar con Stripe", () => {
+    // Stripe rechaza esto con un error en inglés para programadores, y quien
+    // está dándole un trato a un cliente no tiene por qué leer eso.
+    esperar(Boolean(revisar({ tipo: "porcentaje", porcentaje: 0, meses: 1 }))).verdadero();
+    esperar(Boolean(revisar({ tipo: "porcentaje", porcentaje: 150, meses: 1 }))).verdadero();
+    esperar(Boolean(revisar({ tipo: "porcentaje", porcentaje: -10, meses: 1 }))).verdadero();
+    esperar(Boolean(revisar({ tipo: "mes_gratis", meses: 0 }))).verdadero();
+    esperar(Boolean(revisar({ tipo: "mes_gratis", meses: 999 }))).verdadero(
+      "un dedazo de 999 meses es regalar el producto para siempre",
+    );
+  });
+
+  test("los descuentos razonables pasan", () => {
+    esperar(revisar({ tipo: "mes_gratis", meses: 1 })).igual(null);
+    esperar(revisar({ tipo: "porcentaje", porcentaje: 30, meses: 3 })).igual(null);
+    esperar(revisar({ tipo: "porcentaje", porcentaje: 100, meses: null })).igual(null);
+  });
+
+  test("se dice en cristiano lo que se acaba de aplicar", () => {
+    // Quien lo da tiene que poder leer lo que hizo y darse cuenta si se
+    // equivocó, ANTES de que le llegue la factura al cliente.
+    esperar(explicar({ tipo: "mes_gratis", meses: 1 })).contiene("no se le cobra");
+    esperar(explicar({ tipo: "mes_gratis", meses: 3 })).contiene("3 meses gratis");
+    esperar(explicar({ tipo: "porcentaje", porcentaje: 30, meses: null }))
+      .contiene("mientras siga suscrito");
+    esperar(explicar({ tipo: "porcentaje", porcentaje: 20, meses: 6 })).contiene("6 cobros");
   });
 });
 
