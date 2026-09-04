@@ -6,6 +6,7 @@ import { LanaSays } from "@/components/Lana";
 import { AiTester } from "@/components/ai/AiTester";
 import { EditorDePrompt } from "@/components/EditorDePrompt";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentOrgId } from "@/lib/org";
 import { AI_DEFAULTS, aiConfigured } from "@/lib/ai/answer";
 import { saveAiSettings } from "./actions";
 import { Sparkles, BookOpen } from "lucide-react";
@@ -57,7 +58,13 @@ export default async function BotAiPage({
       .select("account_email")
       .eq("provider", "google_calendar")
       .maybeSingle(),
-    supabase.from("organizations").select("timezone, business_hours").limit(1).maybeSingle(),
+    // Por id, no «una cualquiera»: la zona horaria de otro negocio aquí sale
+    // como citas ofrecidas con horas de diferencia.
+    supabase
+      .from("organizations")
+      .select("timezone, business_hours")
+      .eq("id", (await getCurrentOrgId()) ?? "")
+      .maybeSingle(),
   ]);
 
   const horas = ((org?.business_hours as Record<string, DiaLaboral>) ?? {}) as Record<string, DiaLaboral>;

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentOrgId } from "@/lib/org";
 import { Topbar } from "@/components/Topbar";
 import { InboxClient } from "@/components/inbox/InboxClient";
 
@@ -6,6 +7,11 @@ export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
   const sb = createClient();
+  // SE PIDE LA CUENTA POR SU ID, NO «UNA CUALQUIERA». Un `.limit(1)` sobre
+  // `organizations` se apoyaba solo en RLS, y quien tiene dos accesos —soporte
+  // abierto en la cuenta de un cliente— recibía una de las dos al azar: el
+  // color de las burbujas de un negocio dentro del inbox de otro.
+  const orgId = await getCurrentOrgId();
   const [conv, mem, st, tg, attr, org, rapidas] = await Promise.all([
     sb
       .from("conversations")
@@ -20,7 +26,7 @@ export default async function InboxPage() {
     sb.from("conversation_states").select("id,name,color").order("sort"),
     sb.from("tags").select("id,name,color").order("name"),
     sb.from("custom_attributes").select("id,name,key").eq("visible", true).order("sort"),
-    sb.from("organizations").select("id, branding").limit(1).maybeSingle(),
+    sb.from("organizations").select("id, branding").eq("id", orgId ?? "").maybeSingle(),
     sb.from("quick_replies").select("id, shortcut, title, body, category, sort, uses").order("sort").order("created_at"),
   ]);
 

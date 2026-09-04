@@ -1,31 +1,45 @@
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
+import { membresiaActiva, type Membresia } from "@/lib/membresia";
 
 /**
- * Devuelve el org_id de la organización del usuario autenticado (o null).
+ * En qué cuenta estás y con qué rol. El único sitio donde se decide.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SE TRAEN TODAS LAS MEMBRESÍAS Y SE ELIGE AQUÍ, EN UN SOLO SITIO. Antes había
+ * dos consultas sueltas —una para la organización, otra para los permisos—, cada
+ * una con un `.limit(1)` sin orden. Con dos filas (dueño de la propia + soporte
+ * en la de un cliente) cada una podía caer en una fila distinta: cuenta del
+ * cliente con permisos de dueño. La regla vive en `membresia.ts`, probada.
  *
  * VA ENVUELTO EN `cache()` DE REACT, y no es un detalle: averiguar quién eres
- * cuesta DOS viajes a Supabase (la sesión y luego su membresía), y varias
+ * cuesta DOS viajes a Supabase (la sesión y luego sus membresías), y varias
  * pantallas lo preguntaban tres veces en el mismo render — seis viajes en fila
- * antes de poder dibujar nada. Con `cache()`, dentro de una misma petición se
- * resuelve una vez y las demás llamadas reciben el mismo resultado.
+ * antes de poder dibujar nada. Ahora, además, la organización y los permisos
+ * salen del MISMO viaje y del MISMO objeto: no pueden discrepar.
  *
  * No es una caché entre peticiones: cada visita vuelve a comprobar la sesión,
  * así que no hay riesgo de servirle a alguien la organización de otro.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-export const getCurrentOrgId = cache(async function getCurrentOrgId(): Promise<string | null> {
+export const membresiaDeLaSesion = cache(async function membresiaDeLaSesion(): Promise<Membresia | null> {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
+
   const { data } = await supabase
     .from("memberships")
-    .select("org_id")
-    .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
-  return (data?.org_id as string | undefined) ?? null;
+    .select("org_id, role, permisos, soporte_hasta, created_at")
+    .eq("user_id", user.id);
+
+  return membresiaActiva((data ?? []) as Membresia[]);
+});
+
+/** Devuelve el org_id de la cuenta en la que estás ahora (o null). */
+export const getCurrentOrgId = cache(async function getCurrentOrgId(): Promise<string | null> {
+  return (await membresiaDeLaSesion())?.org_id ?? null;
 });
 
 /**

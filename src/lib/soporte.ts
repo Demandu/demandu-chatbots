@@ -99,6 +99,21 @@ export async function abrirSoporte(userId: string, orgId: string): Promise<Apert
     };
   }
 
+  // UNA CUENTA A LA VEZ. Entrar a la de otro cliente sin salir de la anterior
+  // dejaba DOS accesos abiertos, y con dos el aviso rojo «estás dentro de la
+  // cuenta de X» desaparecía —lo pinta una consulta que espera una sola fila—.
+  // Sin aviso no hay botón de salir: el acceso al primer cliente seguía vivo,
+  // invisible, hasta caducar solo una hora después.
+  //
+  // Se cierra el anterior aquí, y la base lo impide además con un índice único
+  // (migración 0084) por si algún día se llama a esto desde otro sitio.
+  await admin
+    .from("memberships")
+    .delete()
+    .eq("user_id", userId)
+    .not("soporte_hasta", "is", null)
+    .neq("org_id", orgId);
+
   const hasta = new Date(Date.now() + MINUTOS * 60_000).toISOString();
 
   // Se entra como 'viewer' y encima se aplican los permisos de su ficha. Se

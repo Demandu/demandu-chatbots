@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { membresiaActiva, type Membresia } from "@/lib/membresia";
 
 export interface Catalogs {
   tags: any[];
@@ -39,7 +40,11 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
         supabase.from("bots").select("id,name").order("name"),
         supabase.from("custom_attributes").select("id,name,key,type,purpose").order("sort"),
         supabase.from("integrations").select("account_email,data").eq("provider", "google_calendar").maybeSingle(),
-        supabase.from("memberships").select("org_id").limit(1).maybeSingle(),
+        // TODAS las membresías, y se elige con la misma regla que el servidor.
+        // Un `.limit(1)` aquí devolvía la que Postgres quisiera: con una sesión
+        // de soporte abierta, el catálogo de etiquetas de una cuenta dentro de
+        // la otra.
+        supabase.from("memberships").select("org_id, role, permisos, soporte_hasta, created_at"),
       ]);
       setCatalogs({
         tags: t.data ?? [],
@@ -52,7 +57,7 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
         calendars: ((gc.data as any)?.data?.calendars as any[]) ?? [],
         googleCalendarConnected: !!gc.data,
       });
-      setOrgId((mem.data as any)?.org_id ?? null);
+      setOrgId(membresiaActiva((mem.data ?? []) as Membresia[])?.org_id ?? null);
       setLoading(false);
     })();
   }, []);

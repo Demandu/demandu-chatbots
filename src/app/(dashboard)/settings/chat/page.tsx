@@ -1,11 +1,19 @@
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentOrgId } from "@/lib/org";
 import { guardarColorBurbuja } from "../actions";
 import { BubblePicker } from "@/components/inbox/BubblePicker";
 
 export const dynamic = "force-dynamic";
 
 export default async function ChatAparienciaPage() {
-  const { data } = await createClient().from("organizations").select("id, branding").limit(1).maybeSingle();
+  // Por id, no «una cualquiera»: con soporte abierto hay dos cuentas a la vista
+  // y un `.limit(1)` devuelve la que Postgres quiera.
+  const orgId = await getCurrentOrgId();
+  const { data } = await createClient()
+    .from("organizations")
+    .select("id, branding")
+    .eq("id", orgId ?? "")
+    .maybeSingle();
   const branding = ((data as any)?.branding ?? {}) as { bubble_out?: string };
 
   return (

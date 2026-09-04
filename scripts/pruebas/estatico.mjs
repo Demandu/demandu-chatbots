@@ -4066,4 +4066,162 @@ describe("Cada cliente es un lienzo limpio", () => {
   });
 });
 
+
+// ─── Una cuenta a la vez ─────────────────────────────────────────────────────
+//
+// COSTÓ UN FALLO REAL. El dueño entró como soporte a la cuenta de un cliente y
+// la plataforma le enseñó SU PROPIA cuenta: dos filas en `memberships` y un
+// `.limit(1)` sin orden, que no devuelve «la primera» sino la que Postgres
+// quiera. Y como los permisos se preguntaban en OTRA consulta igual de suelta,
+// podía tocar la cuenta del cliente con el rol de dueño de la propia.
+describe("Una cuenta a la vez", () => {
+  test("nadie vuelve a elegir la membresía con un limit(1) suelto", () => {
+    // Solo se persigue la forma que causó el fallo: preguntarle a `memberships`
+    // EN CUÁL CUENTA ESTÁS quedándose con una fila arbitraria. Las consultas
+    // que leen otra cosa de la tabla (la marca de cambiar contraseña, por
+    // ejemplo) no eligen cuenta y no vienen al caso.
+    const permitidos = new Set(["src/lib/org.ts", "src/lib/soporte.ts", "src/lib/clientes/alta.ts"]);
+    const malos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (permitidos.has(ruta)) continue;
+      const t = sinComentarios(texto);
+      for (const m of t.matchAll(/from\(\s*["']memberships["']\s*\)([\s\S]{0,220})/g)) {
+        const cola = m[1];
+        const eligeCuenta = /\.select\([^)]*org_id/.test(cola);
+        if (eligeCuenta && /\.limit\(\s*1\s*\)|\.maybeSingle\(\)|\.single\(\)/.test(cola)) {
+          malos.push(`${ruta}: ${cola.trim().slice(0, 70)}`);
+        }
+      }
+    }
+    esperar(malos).igual(
+      [],
+      "elige la cuenta quedándose con una fila arbitraria de memberships: trae todas y pásalas por membresiaActiva()",
+    );
+  });
+
+  test("nadie pide «una organización cualquiera»", () => {
+    // `.limit(1)` sobre `organizations` se apoyaba solo en RLS. Con dos cuentas
+    // visibles —soporte abierto— devolvía una de las dos al azar: el color de
+    // las burbujas o la zona horaria de otro negocio.
+    //
+    // Un conteo (`head: true`) no trae datos de nadie: ese sí puede.
+    const malos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      const t = sinComentarios(texto);
+      for (const m of t.matchAll(/from\(\s*["']organizations["']\s*\)([\s\S]{0,200})/g)) {
+        const cola = m[1];
+        if (/head:\s*true/.test(cola)) continue;
+        if (/\.limit\(\s*1\s*\)/.test(cola)) malos.push(`${ruta}: ${cola.trim().slice(0, 70)}`);
+      }
+    }
+    esperar(malos).igual([], "pide organizations con limit(1): filtra por .eq(\"id\", orgId)");
+  });
+
+  test("los permisos salen de la misma fila que la cuenta", () => {
+    // Si `misPermisos` vuelve a consultar `memberships` por su cuenta, vuelve
+    // el cruce: cuenta del cliente + rol de dueño de la propia.
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "lib/permisos-server.ts"), "utf8"),
+    );
+    esperar(/from\(\s*["']memberships["']/.test(t)).falso(
+      "permisos-server.ts no debe consultar memberships: tiene que usar membresiaDeLaSesion()",
+    );
+    esperar(/membresiaDeLaSesion\(/.test(t)).verdadero(
+      "permisos-server.ts tiene que sacar el rol de la membresía activa",
+    );
+  });
+
+  test("abrir soporte cierra el anterior", () => {
+    // Con dos accesos abiertos el aviso rojo desaparece —lo pinta una consulta
+    // que espera una sola fila— y sin aviso no hay botón de salir: el acceso al
+    // primer cliente sigue vivo, invisible, hasta caducar solo.
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "lib/soporte.ts"), "utf8"));
+    const abrir = t.slice(t.indexOf("export async function abrirSoporte"), t.indexOf("export async function cerrarSoporte"));
+    const borra = /\.delete\(\)[\s\S]{0,220}?soporte_hasta[\s\S]{0,120}?\.neq\(/.test(abrir);
+    esperar(borra).verdadero(
+      "abrirSoporte tiene que borrar las sesiones de soporte de OTRAS cuentas antes de abrir la nueva",
+    );
+  });
+
+  test("la base también lo impide, no solo el código", () => {
+    // Las dos mitades de la regla viven en 0084. Si alguien borra el índice o
+    // el orden, el código de arriba deja de estar respaldado.
+    const dir = path.join(RAIZ, "supabase/migrations");
+    const sql = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      // `sinComentarios` NO quita los `--` de SQL, y ya nos ha hecho pasar dos
+      // pruebas que en realidad encontraban la frase dentro de un comentario.
+      .map((t) => t.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n"))
+      .join("\n");
+
+    esperar(/create unique index[\s\S]{0,200}memberships[\s\S]{0,200}soporte_hasta is not null/.test(sql))
+      .verdadero("falta el índice único que impide dos sesiones de soporte a la vez");
+    esperar(/create or replace function public\.auth_puede[\s\S]{0,900}order by/.test(sql))
+      .verdadero("auth_puede volvió a elegir la membresía sin order by");
+  });
+});
+
+
+// ─── La portada no se recorta ────────────────────────────────────────────────
+//
+// PASÓ DE VERDAD, DOS VECES. Primero la portada tapaba el logo; luego, ya con
+// el aro de Instagram, a un cliente le cortó el banner por arriba y por abajo:
+// desapareció el logo de la cabecera de su arte y el texto del pie. Desde fuera
+// parece que la tienda está rota, y no hay ningún error en ninguna parte.
+//
+// No se arregla recomendando una medida mejor: siempre habrá quien suba otra
+// cosa. Se arregla no recortando.
+describe("La portada no se recorta", () => {
+  const ESC = fs.readFileSync(path.join(SRC, "components/tienda/Escaparate.tsx"), "utf8");
+
+  test("la imagen de portada entra con contain, nunca con cover", () => {
+    const t = sinComentarios(ESC);
+    const i = t.indexOf("config.portada_url && (");
+    esperar(i > 0).verdadero("cambió la forma del componente, revisa esta prueba");
+    const bloque = t.slice(i, i + 400);
+    esperar(/object-contain/.test(bloque)).verdadero(
+      "la portada tiene que entrar con object-contain: con cover se le corta el arte al cliente",
+    );
+    esperar(/object-cover/.test(bloque)).falso(
+      "object-cover en la portada recorta lo que sobra: eso es justo el fallo",
+    );
+  });
+
+  test("con portada, la banda no impone una proporción", () => {
+    // Imponer 4:1 y meter la imagen dentro es lo que la recortaba. La
+    // proporción solo puede aplicarse cuando NO hay imagen, para que la banda
+    // de color guarde su sitio.
+    const t = sinComentarios(ESC);
+    const i = t.indexOf('proporcionDe("portada")');
+    esperar(i > 0).verdadero("cambió la forma del componente, revisa esta prueba");
+    const alrededor = t.slice(Math.max(0, i - 200), i);
+    esperar(/config\.portada_url\s*\?/.test(alrededor)).verdadero(
+      "la proporción fija solo vale sin portada: con imagen manda la imagen",
+    );
+  });
+
+  test("la instrucción que se le manda al cliente dice que se ve entera", () => {
+    // La medida y lo que hace la pantalla salen del mismo archivo justamente
+    // para que no puedan contradecirse. Si el recorte cambia y el texto no,
+    // el cliente hace lo que le pedimos y le sale mal igual.
+    //
+    // SIN COMENTARIOS, Y NO ES UN DETALLE: la primera versión de esta prueba
+    // pasaba con el texto ya roto, porque encontraba la frase en el comentario
+    // que hay justo encima explicando el arreglo. Es la tercera vez que este
+    // proyecto se traga una prueba que en realidad leía un comentario.
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "lib/tienda/imagenes.ts"), "utf8"));
+    const i = t.indexOf('clave: "portada"');
+    esperar(i > 0).verdadero("cambió la forma de imagenes.ts, revisa esta prueba");
+    const bloque = t.slice(i, t.indexOf('clave: "banner"'));
+    esperar(/no se recorta|se ve entera/i.test(bloque)).verdadero(
+      "la ficha de la portada sigue diciendo que se recorta",
+    );
+    esperar(/se recorta al centro/i.test(bloque)).falso(
+      "la ficha dice que se recorta al centro y ya no es verdad",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

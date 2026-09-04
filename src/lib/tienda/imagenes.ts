@@ -58,8 +58,14 @@ export const MEDIDAS: MedidaImagen[] = [
     forma: "ancha",
     ancho: 1200,
     alto: 300,
+    // YA NO SE RECORTA, Y ESTE TEXTO TIENE QUE DECIRLO. Antes se recortaba a
+    // 4:1 y a quien subía otra proporción le desaparecía media pieza: el logo
+    // de arriba, el texto de abajo. Ahora la portada se ve entera y esta medida
+    // es la que MEJOR queda, no la única que funciona.
     recorte:
-      "Se recorta al centro y el logo se apoya abajo a la izquierda: pon lo importante arriba y al centro.",
+      "Se ve entera, no se recorta. A 4 a 1 llena la banda justa; más alta se ve completa " +
+      "con franjas del color de tu tienda. Deja el logo del negocio fuera de la esquina de " +
+      "abajo a la izquierda: ahí se apoya la foto de perfil.",
   },
   {
     clave: "banner",
@@ -122,6 +128,7 @@ export function instruccionesDeImagenes(): string {
     ...MEDIDAS.map(linea),
     "",
     "En resumen: todo cuadrado, menos la portada y los banners que son 4 a 1 (cuatro veces más anchos que altos).",
+    "La portada es la única que admite cualquier proporción sin cortarse: 4 a 1 es la que mejor queda.",
     "Formato JPG o PNG, menos de 1 MB cada una.",
   ].join("\n");
 }

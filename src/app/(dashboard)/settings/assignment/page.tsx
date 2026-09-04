@@ -23,7 +23,9 @@ export default async function RepartoPage() {
       sb.from("assignment_settings").select("*").maybeSingle(),
       sb.from("teams").select("id, name").order("name"),
       sb.from("team_members").select("id, name, available, last_seen_at, team_id").order("name"),
-      sb.from("organizations").select("timezone").limit(1).maybeSingle(),
+      // Por id: `orgId` ya está resuelto arriba y un `.limit(1)` suelto elegía
+      // al azar entre las dos cuentas visibles durante una sesión de soporte.
+      sb.from("organizations").select("timezone").eq("id", orgId ?? "").maybeSingle(),
       sb.from("tags").select("id, name, color, grupo").order("name"),
       sb
         .from("reglas_de_reparto")

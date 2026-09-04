@@ -270,20 +270,40 @@ export function Escaparate({
           un logo con fondo blanco quedaba como un recorte pegado. Sobre el
           fondo de la tienda y con su aro, se ve como una foto de perfil. */}
       <header>
+        {/* ── LA PORTADA NO SE RECORTA NUNCA ────────────────────────────
+            Antes la banda imponía 4:1 y la imagen entraba con `object-cover`:
+            lo que sobraba se cortaba por arriba y por abajo. Al cliente le
+            desaparecía media pieza —el logo de la cabecera, el texto del pie—
+            y desde fuera parecía que la tienda estaba rota.
+
+            NO SE ARREGLA CON UNA MEDIDA MEJOR. Da igual qué número se
+            recomiende: alguien va a subir otra cosa, y cortarle el banner a un
+            negocio es de las cosas que más rápido le hacen perder la confianza
+            en la plataforma.
+
+            AHORA MANDA LA IMAGEN. La banda toma la altura que le toque por su
+            proporción, y solo si es altísima se limita —con `contain`, que deja
+            franjas del color del negocio, nunca recorta—. La proporción
+            recomendada (4:1) sigue siendo la que mejor se ve, pero ya es un
+            consejo y no una condición. */}
         <div
           className="w-full overflow-hidden"
           style={{
-            aspectRatio: proporcionDe("portada"),
-            maxHeight: 200,
-            // SIN PORTADA NO SE VE UN HUECO BLANCO: la banda se pinta con los
-            // colores del negocio. Una tienda recién creada tiene que verse
-            // terminada antes de que nadie suba nada.
+            // Sin portada, la banda guarda su sitio con el color del negocio:
+            // una tienda recién creada tiene que verse terminada antes de que
+            // nadie suba nada.
+            ...(config.portada_url ? {} : { aspectRatio: proporcionDe("portada"), maxHeight: 200 }),
             background: `linear-gradient(120deg, ${c.principal}, ${c.acento})`,
           }}
         >
           {config.portada_url && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={config.portada_url} alt="" className="h-full w-full object-cover" />
+            <img
+              src={config.portada_url}
+              alt=""
+              className="block w-full object-contain"
+              style={{ height: "auto", maxHeight: 260 }}
+            />
           )}
         </div>
 

@@ -19,6 +19,7 @@ import {
   rangoDeFechas, rangoEscrito, comoRango, cambio, comoCsv, aQuienSePuedeEscribir,
 } from "../../src/lib/tienda/panel.ts";
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
+import { membresiaActiva, soporteVigente } from "../../src/lib/membresia.ts";
 import {
   MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado, botonDelAviso,
 } from "../../src/lib/tienda/avisos.ts";
@@ -2849,6 +2850,100 @@ describe("Entrar con Apple: el secreto que caduca solo", () => {
     const dias = /DURACION_SEG = (\d+) \* 24 \* 60 \* 60/.exec(generador);
     esperar(Boolean(dias)).verdadero("cambió la forma del generador, revisa esta prueba");
     esperar(Number(dias[1]) <= 180).verdadero(`firma ${dias[1]} días y Apple acepta 180 como mucho`);
+  });
+});
+
+
+describe("En cuál de tus cuentas estás (membresiaActiva)", () => {
+  // El fallo real: el dueño entró como soporte a la cuenta de un cliente y la
+  // plataforma le enseñó SU PROPIA cuenta. Dos filas en `memberships` y un
+  // `limit(1)` sin orden.
+  const mia = {
+    org_id: "org-propia",
+    role: "owner",
+    permisos: {},
+    soporte_hasta: null,
+    created_at: "2026-08-15T02:35:15Z",
+  };
+  const soporte = (hasta) => ({
+    org_id: "org-cliente",
+    role: "viewer",
+    permisos: {},
+    soporte_hasta: hasta,
+    created_at: "2026-09-04T03:26:35Z",
+  });
+  const ahora = new Date("2026-09-04T03:30:00Z");
+
+  test("sin nada, no estás en ninguna cuenta", () => {
+    esperar(membresiaActiva([], ahora)).igual(null);
+    esperar(membresiaActiva(null, ahora)).igual(null);
+    esperar(membresiaActiva(undefined, ahora)).igual(null);
+  });
+
+  test("con una sola, esa", () => {
+    esperar(membresiaActiva([mia], ahora)?.org_id).igual("org-propia");
+  });
+
+  test("EL FALLO: con soporte abierto manda la cuenta del cliente, no la propia", () => {
+    const abierto = soporte("2026-09-04T04:26:35Z");
+    // En los dos órdenes de llegada: lo que rompía antes era justamente que el
+    // resultado dependiera de en qué orden viniesen las filas.
+    esperar(membresiaActiva([mia, abierto], ahora)?.org_id).igual("org-cliente");
+    esperar(membresiaActiva([abierto, mia], ahora)?.org_id).igual("org-cliente");
+  });
+
+  test("EL CRUCE PELIGROSO: el rol viene de la MISMA fila que la cuenta", () => {
+    // Esto es lo que de verdad importaba. Antes la organización y los permisos
+    // salían de dos consultas distintas: podía tocar cuenta del cliente con rol
+    // `owner` de la propia, y `owner` da por bueno cualquier permiso.
+    const m = membresiaActiva([mia, soporte("2026-09-04T04:26:35Z")], ahora);
+    esperar(m?.org_id).igual("org-cliente");
+    esperar(m?.role).igual("viewer");
+    esperar(m?.role === "owner").falso("un soporte NUNCA puede salir como dueño");
+  });
+
+  test("el soporte caducado no cuenta: vuelves a tu cuenta", () => {
+    const vencido = soporte("2026-09-04T03:00:00Z");
+    esperar(membresiaActiva([mia, vencido], ahora)?.org_id).igual("org-propia");
+    esperar(membresiaActiva([vencido, mia], ahora)?.org_id).igual("org-propia");
+  });
+
+  test("solo un soporte caducado y nada más: no estás en ninguna cuenta", () => {
+    // Devolver la caducada pintaría una pantalla con datos que la base ya no
+    // deja leer: tablas vacías sin explicación.
+    esperar(membresiaActiva([soporte("2026-09-04T03:00:00Z")], ahora)).igual(null);
+  });
+
+  test("justo en el instante de caducar ya no vale", () => {
+    esperar(membresiaActiva([mia, soporte("2026-09-04T03:30:00Z")], ahora)?.org_id).igual("org-propia");
+  });
+
+  test("una fecha ilegible no abre la cuenta de nadie", () => {
+    esperar(soporteVigente({ org_id: "x", soporte_hasta: "manana" }, ahora)).falso();
+    esperar(membresiaActiva([mia, { ...soporte("x"), soporte_hasta: "manana" }], ahora)?.org_id)
+      .igual("org-propia");
+  });
+
+  test("con dos propias, siempre la más antigua y siempre la misma", () => {
+    // No debería pasar (no hay selector de cuentas), pero si pasa tiene que ser
+    // estable: una pantalla que cambia de negocio al recargar es peor que un error.
+    const otra = { ...mia, org_id: "org-nueva", created_at: "2026-09-01T00:00:00Z" };
+    esperar(membresiaActiva([mia, otra], ahora)?.org_id).igual("org-propia");
+    esperar(membresiaActiva([otra, mia], ahora)?.org_id).igual("org-propia");
+  });
+
+  test("con dos soportes abiertos gana el último que se abrió", () => {
+    // La base lo impide con un índice único, pero si llegaran dos el resultado
+    // no puede ser el azar.
+    const viejo = { ...soporte("2026-09-04T03:40:00Z"), org_id: "cliente-viejo" };
+    const nuevo = { ...soporte("2026-09-04T04:26:35Z"), org_id: "cliente-nuevo" };
+    esperar(membresiaActiva([viejo, nuevo], ahora)?.org_id).igual("cliente-nuevo");
+    esperar(membresiaActiva([nuevo, viejo], ahora)?.org_id).igual("cliente-nuevo");
+  });
+
+  test("filas basura no tumban la pantalla", () => {
+    esperar(membresiaActiva([null, undefined, { role: "owner" }, mia], ahora)?.org_id)
+      .igual("org-propia");
   });
 });
 

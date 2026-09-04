@@ -1,41 +1,43 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
-import { resolverPermisos, type ClavePermiso, type Rol } from "@/lib/permisos";
+import { membresiaDeLaSesion } from "@/lib/org";
+import { resolverPermisos, type Ajustes, type ClavePermiso, type Rol } from "@/lib/permisos";
 
 /**
  * Quién eres y qué puedes, resuelto en el servidor.
  *
- * VA EN `cache()` PORQUE SE PREGUNTA MUCHAS VECES POR PANTALLA: la barra
- * lateral, el marco y la propia página lo necesitan. Sin esto serían tres
- * viajes a Supabase por navegación, en fila, antes de dibujar nada.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL ROL SALE DE LA MISMA FILA QUE LA ORGANIZACIÓN, y eso es una corrección, no
+ * una comodidad. Antes esta función hacía su propia consulta —`memberships`,
+ * `.limit(1)`, sin orden— independiente de la que elegía la cuenta. Con dos
+ * membresías (dueño de la propia + soporte en la de un cliente) eran dos sorteos
+ * distintos sobre las mismas filas: podía tocar la cuenta del CLIENTE con el rol
+ * de DUEÑO de la propia. Y `owner` da por bueno cualquier permiso.
  *
- * No es caché entre visitas: cada carga vuelve a comprobar la sesión, así que
- * un cambio de permisos se nota en la siguiente pantalla que abras.
+ * Ahora las dos cosas vienen del mismo objeto (`membresiaDeLaSesion`), así que
+ * discrepar es imposible por construcción.
+ *
+ * SIGUE EN `cache()`: la barra lateral, el marco y la propia página lo preguntan
+ * en cada render, y ahora comparten también el viaje a Supabase con
+ * `getCurrentOrgId`. No es caché entre visitas: cada carga vuelve a comprobar la
+ * sesión, así que un cambio de permisos se nota en la siguiente pantalla.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export const misPermisos = cache(async function misPermisos(): Promise<{
   rol: Rol | null;
   permisos: Set<ClavePermiso>;
   esDueno: boolean;
 }> {
-  const sb = createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
+  const m = await membresiaDeLaSesion();
+  if (!m) return { rol: null, permisos: new Set(), esDueno: false };
 
-  if (!user) return { rol: null, permisos: new Set(), esDueno: false };
-
-  const { data } = await sb
-    .from("memberships")
-    .select("role, permisos")
-    .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
-
-  const rol = ((data as any)?.role ?? null) as Rol | null;
+  const rol = ((m.role ?? null) as Rol | null);
+  // `permisos` viaja como `unknown` desde `membresia.ts` a propósito: ese
+  // archivo es puro y no debe conocer la lista de permisos. `resolverPermisos`
+  // ya trata cualquier basura como «sin ajustes», que es lo prudente.
   return {
     rol,
-    permisos: resolverPermisos(rol, (data as any)?.permisos),
+    permisos: resolverPermisos(rol, m.permisos as Ajustes),
     esDueno: rol === "owner",
   };
 });
