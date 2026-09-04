@@ -321,6 +321,7 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
           <TiendaEnVenta
             precio={Number(addonTienda.price) || PRECIO_TIENDA}
             tiendasActivas={Number(cuantasTiendas) || 0}
+            pagosActivos={pagosActivos}
           />
         </div>
       )}

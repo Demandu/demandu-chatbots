@@ -138,6 +138,7 @@
 
   .border-linea        { border-color: var(--linea); }
   .border-linea-2      { border-color: var(--linea-2); }
+  .border-linea-fuerte { border-color: var(--linea-fuerte); }
   .hover\:border-linea-fuerte:hover { border-color: var(--linea-fuerte); }
   .divide-linea > * + * { border-color: var(--linea); }
 

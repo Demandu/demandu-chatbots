@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Store, Check } from "lucide-react";
 import {
-  GANCHO, BENEFICIOS, INCLUYE, IDEAL_PARA, LETRA_CHICA,
+  CODIGO_TIENDA, GANCHO, BENEFICIOS, INCLUYE, IDEAL_PARA, LETRA_CHICA,
   PRECIO_TIENDA, precioEscrito, loQueTeAhorras, desdeCuantoSePagaSola, COMISION_APPS,
 } from "@/lib/planes/tiendaAddon";
 
@@ -30,16 +30,46 @@ import {
 export function TiendaEnVenta({
   precio = PRECIO_TIENDA,
   tiendasActivas = 0,
-  onComprar,
-  comprando = false,
+  pagosActivos = true,
 }: {
   precio?: number;
   /** Cuántas tiene ya. Cambia el texto entero: no es lo mismo vender que ampliar. */
   tiendasActivas?: number;
-  onComprar?: () => void;
-  comprando?: boolean;
+  /** ¿Está el cobro conectado? Sin esto el botón se quedaba muerto sin decir por qué. */
+  pagosActivos?: boolean;
 }) {
   const [ventas, setVentas] = useState("");
+  const [comprando, setComprando] = useState(false);
+  const [error, setError] = useState("");
+
+  /**
+   * LA COMPRA VA POR EL MISMO SITIO QUE EL RESTO DE COMPLEMENTOS.
+   *
+   * `/api/checkout` lee el precio DE LA BASE, nunca del navegador: es lo que
+   * impide que alguien se compre la tienda por un dólar cambiando el número en
+   * las herramientas del navegador. Aquí solo se manda el código.
+   */
+  const comprar = async () => {
+    setComprando(true);
+    setError("");
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: [{ code: CODIGO_TIENDA, quantity: 1 }] }),
+      });
+      const j = await res.json();
+      if (j?.url) {
+        window.location.href = j.url;
+        return;
+      }
+      setError(j?.error ?? "No pudimos abrir el pago.");
+    } catch {
+      setError("No pudimos conectar. Revisa tu internet e inténtalo de nuevo.");
+    } finally {
+      setComprando(false);
+    }
+  };
   const ahorro = loQueTeAhorras(Number(ventas.replace(/[^\d]/g, "")), precio);
   const yaTiene = tiendasActivas > 0;
 
@@ -64,7 +94,7 @@ export function TiendaEnVenta({
 
         {/* QUIEN YA PAGA UNA TIENE QUE VER SU FACTURA, no un anuncio. */}
         {yaTiene && (
-          <p className="mt-3 rounded-xl border border-linea bg-fondo px-3 py-2 text-xs text-ink-2">
+          <p className="mt-3 rounded-xl border border-linea bg-tarjeta px-3 py-2 text-xs text-ink-2">
             Tienes <b className="text-ink">{tiendasActivas}</b>{" "}
             {tiendasActivas === 1 ? "tienda activa" : "tiendas activas"}:{" "}
             <b className="text-ink">${tiendasActivas * precio} al mes</b>. Cada local lleva su
@@ -139,12 +169,24 @@ export function TiendaEnVenta({
         {/* LA LETRA CHICA NO SE ESCONDE. Una cadena tiene que poder calcular su
             factura antes de preguntar, y quien cierra un local tiene que saber
             que deja de pagarlo. Enterarse DESPUÉS es lo que rompe la confianza. */}
-        <p className="max-w-md text-[11px] leading-snug text-ink-3">{LETRA_CHICA}</p>
+        <div className="max-w-md">
+          <p className="text-[11px] leading-snug text-ink-3">{LETRA_CHICA}</p>
+          {/* EL ERROR SE ENSEÑA. Un botón que se pulsa y no pasa nada es
+              exactamente el fallo que este mismo commit vino a arreglar en el
+              constructor: el cliente cree que la plataforma está rota. */}
+          {error && <p className="mt-1.5 text-[12px] font-semibold text-alerta">{error}</p>}
+          {!pagosActivos && (
+            <p className="mt-1.5 text-[12px] text-ink-2">
+              El cobro con tarjeta todavía no está conectado en tu cuenta. Escríbenos y la
+              activamos nosotros.
+            </p>
+          )}
+        </div>
         <button
           type="button"
-          onClick={onComprar}
-          disabled={comprando || !onComprar}
-          className="btn-primario disabled:opacity-60"
+          onClick={comprar}
+          disabled={comprando || !pagosActivos}
+          className="btn-primary disabled:opacity-60"
         >
           {comprando ? "Un momento…" : yaTiene ? "Agregar otra tienda" : `Activar mi tienda · ${precioEscrito(precio)}`}
         </button>

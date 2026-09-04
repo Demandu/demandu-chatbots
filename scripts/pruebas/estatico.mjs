@@ -4417,4 +4417,80 @@ describe("Los tutoriales de los componentes", () => {
   });
 });
 
+
+// ─── Clases de estilo que no existen ─────────────────────────────────────────
+//
+// PASA, Y NO SE VE EN NINGÚN ERROR. Una clase inventada —`btn-primario` en vez
+// de `btn-primary`, `bg-fondo` en vez de `bg-tarjeta`— no rompe nada: el
+// navegador la ignora y el elemento se pinta desnudo. Un botón principal que
+// aparece como texto suelto, y ni una línea en la consola.
+//
+// Ya pasó con `text-amber-400` y `bg-fondo-2`, y volvió a pasar con la tarjeta
+// que vende la tienda. La tercera vez toca automatizarlo.
+describe("Clases de estilo", () => {
+  const CSS = fs.readFileSync(path.join(SRC, "app/globals.css"), "utf8");
+  const CONF = fs.readFileSync(path.join(RAIZ, "tailwind.config.ts"), "utf8");
+
+  // Lo que el proyecto define a mano en globals.css: `.btn-primary`, `.bg-suave`…
+  const definidas = new Set([...CSS.matchAll(/^\s*\.([a-z0-9\\:-]+)\s*[,{]/gm)].map((m) =>
+    m[1].replace(/\\:/g, ":"),
+  ));
+
+  test("los botones y tarjetas usan clases que existen", () => {
+    // `btn-`, `card-`, `input-` son TODAS del proyecto: ninguna viene de
+    // Tailwind, así que si no está en globals.css no existe en ningún sitio.
+    const malas = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      // `btn-yappy` NO es una clase: es el nombre del componente web de Yappy
+      // (`<btn-yappy>`) y del archivo que sirve su CDN.
+      for (const m of sinComentarios(texto).matchAll(/\b((?:btn|card|input)-[a-z0-9-]+)\b/g)) {
+        if (m[1] === "btn-yappy") continue;
+        if (!definidas.has(m[1])) malas.push(`${ruta}: ${m[1]}`);
+      }
+    }
+    esperar([...new Set(malas)]).igual([], "clases de componente que no existen en globals.css");
+  });
+
+  test("un botón de compra tiene que comprar", () => {
+    // ES EL MISMO FALLO QUE EL DEL TUTORIAL, y lo cometí dos veces el mismo
+    // día: una tarjeta preciosa con un botón que no llamaba a nada. Con dinero
+    // de por medio es peor: el cliente quiere pagar, pulsa, y no pasa nada.
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/planes/TiendaEnVenta.tsx"), "utf8"),
+    );
+    esperar(/\/api\/checkout/.test(t)).verdadero(
+      "la tarjeta de la tienda no llama al cobro: el botón no compra nada",
+    );
+    esperar(/CODIGO_TIENDA/.test(t)).verdadero("no manda el código del complemento");
+    // Y el error se enseña. Un fallo silencioso en un pago se lee como que la
+    // plataforma está rota.
+    esperar(/setError\(/.test(t)).verdadero("un fallo al pagar no se le dice a nadie");
+  });
+
+  test("los colores del tema existen", () => {
+    // Los tokens del proyecto son palabras en español (suave, linea, ink,
+    // tarjeta, exito, aviso, alerta) y los de Tailwind en inglés. Si una clase
+    // en español no está definida, es un invento.
+    const familias = new Set();
+    for (const c of definidas) {
+      const m = /^(?:bg|text|border|divide)-(.+)$/.exec(c);
+      if (m) familias.add(m[1]);
+    }
+    // Las raíces que SÍ vienen del tema de Tailwind (tailwind.config.ts).
+    const delTema = new Set([...CONF.matchAll(/^\s{6,8}"?([a-z][a-z0-9-]*)"?:/gm)].map((m) => m[1]));
+
+    const enEspanol = /^(suave|linea|ink|tarjeta|canvas|exito|aviso|alerta|fondo|alarma|primario|secundario|error)/;
+    const malas = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      for (const m of sinComentarios(texto).matchAll(/\b(?:bg|text|border)-([a-z][a-z0-9-]*)\b/g)) {
+        const raiz = m[1];
+        if (!enEspanol.test(raiz)) continue;      // inglés: es de Tailwind
+        if (familias.has(raiz) || delTema.has(raiz)) continue;
+        malas.push(`${ruta}: ${m[0]}`);
+      }
+    }
+    esperar([...new Set(malas)]).igual([], "colores del tema que no existen: se pintan transparentes");
+  });
+});
+
 process.exit(await correrPruebas());
