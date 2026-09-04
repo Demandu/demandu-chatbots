@@ -41,7 +41,17 @@ export const ATAJOS_DEFAULT: Atajos = {
   },
   hint: {
     enabled: true,
-    text: 'Escribe *0* para volver al inicio o *1* para hablar con una persona.',
+    // ── CINCUENTA Y TRES CARACTERES, Y ES A PROPÓSITO ──────────────────────
+    //
+    // Este texto va en el PIE del mensaje de opciones —la línea gris pequeña
+    // que WhatsApp pinta dentro del cuadro—, y Meta corta el pie en 60. El
+    // texto anterior tenía 68 con sus asteriscos: no cabía, así que se pegaba
+    // al final del cuerpo y en un menú de tres líneas se comía el mensaje que
+    // el negocio quiso escribir.
+    //
+    // Los asteriscos tampoco están: en el pie no hay negrita, salen como
+    // asteriscos y encima gastan cuatro de los sesenta.
+    text: 'Escribe 0 para volver al inicio o 1 para una persona.',
     onStart: true,
     onOptions: false,
   },

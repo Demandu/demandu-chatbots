@@ -926,6 +926,33 @@ describe("Puerta de agenda del motor", () => {
     );
   });
 
+  test("el recordatorio de atajos CABE en el pie del mensaje", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Va en el pie —la línea gris pequeña dentro del cuadro de opciones— y Meta
+    // corta el pie en 60 caracteres. El texto de fábrica tenía 68 con sus
+    // asteriscos: no cabía, así que caía al cuerpo del mensaje y en un menú de
+    // tres líneas se comía lo que el negocio quiso decir.
+    //
+    // Se comprueba en los DOS motores: si se separan, el mismo bot se ve
+    // distinto en WhatsApp y en el widget.
+    // ─────────────────────────────────────────────────────────────────────────
+    const saca = (t) => (t.match(/text:\s*['"]Escribe[^'"]*['"]/) ?? [""])[0]
+      .replace(/^text:\s*['"]/, "").replace(/['"]$/, "");
+
+    const web = saca(fs.readFileSync(path.join(SRC, "lib/flow/shortcuts.ts"), "utf8"));
+    const motor = saca(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+
+    esperar(web.length > 0 && web === motor).verdadero(
+      `los dos motores traen un recordatorio distinto de fábrica:\n      web:   "${web}"\n      motor: "${motor}"`,
+    );
+    esperar(web.replace(/\*/g, "").length <= 60).verdadero(
+      `el recordatorio de fábrica tiene ${web.length} caracteres y en el pie caben 60: se caería al cuerpo del mensaje`,
+    );
+    esperar(web.includes("*")).falso(
+      "en el pie no hay negrita: los asteriscos salen tal cual y gastan del tope",
+    );
+  });
+
   test("TODAS las puertas del motor usan la misma comprobación", () => {
     // Una entrada nueva que se autorice a su manera es una entrada sin revisar.
     for (const p of puertas) {

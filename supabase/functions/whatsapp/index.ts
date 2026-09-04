@@ -305,7 +305,11 @@ function paisDesdeTelefono(phone?: string | null): string | null {
 const ATAJOS_DEFAULT = {
   reset: { enabled: true, words: ["0", "menu", "men\u00fa", "reiniciar", "inicio"], reply: "Listo, empezamos de nuevo \ud83d\udd04" },
   agent: { enabled: true, words: ["1", "asesor", "agente", "humano", "persona"], reply: "Enseguida te atiende una persona del equipo \ud83d\ude4c Dame un momento." },
-  hint: { enabled: true, text: "Escribe *0* para volver al inicio o *1* para hablar con una persona.", onStart: true, onOptions: false },
+  // CINCUENTA Y TRES CARACTERES: este texto va en el PIE del mensaje de
+  // opciones y Meta corta el pie en 60. El anterior tenía 68 con sus
+  // asteriscos, así que no cabía y se pegaba al cuerpo, comiéndose el mensaje
+  // del negocio. Los asteriscos no van: en el pie no hay negrita.
+  hint: { enabled: true, text: "Escribe 0 para volver al inicio o 1 para una persona.", onStart: true, onOptions: false },
 };
 function leerAtajos(raw: any) {
   const a = raw ?? {};
