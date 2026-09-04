@@ -73,7 +73,7 @@ export type ComponentKey =
   | "message" | "media" | "question" | "buttons" | "condition" | "ai" | "delay"
   | "action" | "api" | "calendar" | "tags" | "human" | "assign" | "redirect"
   | "catalog" | "payment" | "whatsapp_flow" | "call_permission" | "template"
-  | "tienda" | "tienda_catalogo" | "tienda_pedido"
+  | "tienda" | "tienda_catalogo" | "tienda_pedido" | "tienda_pedir"
   | "ig_story" | "ig_comment" | "ig_dm" | "fb_comment" | "web_form" | "end";
 
 const ALL: Channel[] = ["whatsapp", "instagram", "messenger", "webchat"];
@@ -106,6 +106,7 @@ export const COMPONENTS: Record<ComponentKey, {
   tienda: { label: "Mi tienda", desc: "Manda el enlace de tu tienda.", lana: "Manda el enlace de tu tienda con un botón. No tienes que escribir la dirección: la saco de tu tienda, así que si algún día la cambias, tus conversaciones siguen funcionando. Si tienes la tienda apagada, el bloque toma la otra salida y no le manda un enlace muerto a nadie.", channels: ALL },
   tienda_catalogo: { label: "Mis productos", desc: "Enseña tu catálogo dentro del chat.", lana: "Le enseña tus productos reales sin salir de la conversación: primero las categorías y luego los productos con su precio. Lo oculto y lo agotado no se enseña, para que nadie pida algo que no le puedes vender.", channels: ALL },
   tienda_pedido: { label: "Estado del pedido", desc: "Le dice cómo va su pedido.", lana: "Cuando alguien pregunta «¿dónde va mi pedido?», este bloque lo busca por su teléfono y le contesta solo. Si le falta pagar, se lo dice — que es lo que de verdad necesita saber.", channels: ALL },
+  tienda_pedir: { label: "Pedir por el chat", desc: "Arma el pedido hablando y lo cobra.", lana: "El cliente elige productos, contesta las opciones (tamaño, sabor…), dice cuántos quiere y te deja su dirección, todo dentro de la conversación. Al final le llega el resumen con el total y su enlace para pagar por Yappy, y el pedido te entra igual que si lo hubiera hecho en la tienda. Los productos con demasiadas opciones para preguntarlas por chat abren su página en la tienda, ya listos para agregar.", channels: ALL },
   whatsapp_flow: { label: "Formulario (WhatsApp Flow)", desc: "Pide varios datos en una sola pantalla.", lana: "Un formulario nativo de WhatsApp: el cliente llena varios campos en una sola pantalla, sin ir pregunta por pregunta.", channels: ["whatsapp"] },
   call_permission: { label: "Permiso para llamar", desc: "Pide autorización antes de llamar por WhatsApp.", lana: "En WhatsApp no puedes llamar a un cliente sin que él lo autorice antes. Este bloque le manda la petición dentro de la conversación; si acepta, tu equipo puede llamarlo desde WhatsApp. Meta solo deja pedirlo una vez al día y dos veces por semana por persona, así que conviene pedirlo cuando de verdad haga falta.", channels: ["whatsapp"] },
   payment:   { label: "Cobro / pago", desc: "Cobra dentro del chat.", lana: "Cobra dentro de WhatsApp con tu pasarela de pago. (En otros canales, más adelante, será con un enlace de pago.)", channels: ["whatsapp"] },

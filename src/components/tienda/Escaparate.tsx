@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, ShoppingBag, Plus, Minus, ArrowLeft, ChevronDown } from "lucide-react";
 import { comoDinero, type GrupoVariedad } from "@/lib/tienda/variedades";
 import type { ConfigTienda } from "@/lib/tienda/config";
@@ -85,6 +85,32 @@ export function Escaparate({
   const [aviso, setAviso] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [saltando, setSaltando] = useState(false);
+
+  /**
+   * ¿Vienen a por UN producto concreto? `?p=<id>` lo abre solo.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ESTO EXISTE POR EL CHAT. Cuando un producto tiene demasiadas opciones para
+   * pedirse hablando —«elige 3 rellenos de 18»— el bot manda su enlace en vez
+   * de atascar la conversación. Sin esto, ese enlace deja al cliente en la
+   * portada de la tienda buscando a mano el producto del que acababan de
+   * hablar: el paso donde se pierde el pedido.
+   *
+   * SI EL PRODUCTO NO ESTÁ, NO PASA NADA. Puede haberse ocultado o agotado
+   * entre que el bot mandó el enlace y el cliente lo abrió. La tienda se pinta
+   * entera, como siempre.
+   *
+   * SE CORRE UNA SOLA VEZ: si volviera a correr, cerrar la ficha la reabriría
+   * y no habría forma de salir de ella.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("p");
+    if (!id) return;
+    const p = productos.find((x) => x.id === id);
+    if (p) setAbierto(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const q = busca.trim().toLowerCase();
   const visibles = useMemo(() => {

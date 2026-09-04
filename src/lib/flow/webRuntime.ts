@@ -9,6 +9,8 @@ import {
   precioDelBot, comoVaElPedido, pedidoDelQueHablar,
   type TiendaDelBot, type ProductoDelBot, type PedidoDelBot,
 } from "@/lib/tienda/paraElBot";
+import type { MensajeChat } from "@/lib/tienda/conversacionDePedido";
+import type { CarritoChat } from "@/lib/tienda/pedirPorChat";
 
 /**
  * Motor de conversación para canales que NO envían por una API externa
@@ -18,7 +20,20 @@ import {
  */
 
 export type OutMsg = { text: string; buttons?: { id: string; label: string }[] };
-type Awaiting = { nodeId: string; type: "question" | "buttons" } | null;
+/**
+ * Lo que el bot está esperando.
+ *
+ * EL CARRITO VIAJA AQUÍ DENTRO, y no en `vars`, por dos motivos. `vars` se
+ * interpola en los textos que ve el cliente, así que un carrito entero podría
+ * acabar pintado en un mensaje. Y esta es exactamente la vida que tiene que
+ * tener: mientras el bloque conduce la charla existe, y en cuanto el flujo se
+ * va, desaparece — un carrito a medias resucitando tres días después es peor
+ * que empezar de nuevo.
+ */
+type Awaiting =
+  | { nodeId: string; type: "question" | "buttons" }
+  | { nodeId: string; type: "tienda_pedir"; carrito: CarritoChat | null }
+  | null;
 
 interface Ctx {
   flow: Flow;
@@ -106,6 +121,98 @@ function push(ctx: Ctx, text: string, buttons?: FlowButton[]) {
   const opts = (buttons ?? []).map((b) => ({ id: b.id, label: b.label ?? "Opción" }));
   if (!body && !opts.length) return;
   ctx.out.push(opts.length ? { text: body || "Elige una opción", buttons: opts } : { text: body });
+}
+
+/**
+ * Un turno del pedido por chat, en el widget.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TODA LA CONVERSACIÓN LA DECIDE `conversar`, QUE NO VIVE AQUÍ. Este runtime y
+ * el motor de WhatsApp le mandan lo que la persona tocó y reciben el carrito
+ * nuevo más los mensajes ya escritos. Los dos son carteros.
+ *
+ * Es lo único que evita que un pedido hecho por el widget se cobre distinto que
+ * uno hecho por WhatsApp: no hay dos versiones de las preguntas ni dos sumas.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function pedirPorElChatWeb(
+  ctx: Ctx,
+  node: any,
+  carrito: CarritoChat | null,
+  respuesta: string,
+): Promise<{ espera: Awaiting; siguiente: string | undefined }> {
+  const noSePudo = () => ({
+    espera: null as Awaiting,
+    siguiente: salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node),
+  });
+
+  const t = await tiendaDelBotEnLaBase(ctx);
+  if (!t) return noSePudo();
+
+  // En el widget no hay teléfono: quien escribe se identifica por su
+  // conversación, que es lo único que lo señala. Por eso aquí el formulario SÍ
+  // le pregunta el teléfono y en WhatsApp no — allá ya se sabe.
+  const { data: conv } = await ctx.admin
+    .from("conversations").select("contact_id").eq("id", ctx.conversationId).maybeSingle();
+
+  // ── SE CARGA CUANDO SE USA, NO AL ARRANCAR ──────────────────────────────
+  //
+  // `conversarDePedido` arrastra el cliente de administración de Supabase, y
+  // este runtime lo cargan también las pruebas del motor, que corren sin
+  // paquetes instalados. Con el import arriba, un flujo que ni siquiera tiene
+  // el bloque de pedidos no podía ni cargarse. Aquí abajo solo pesa cuando de
+  // verdad hay alguien pidiendo.
+  const { conversar } = await import("@/lib/tienda/conversacionDePedido");
+
+  const turno = await conversar({
+    slug: t.slug,
+    carrito,
+    respuesta,
+    saludo: interp(String(node.data?.text ?? "").trim(), ctx.vars),
+    quien: {
+      contacto_id: conv?.contact_id ?? null,
+      conversacion_id: ctx.conversationId,
+      nombre: ctx.vars?.nombre ?? null,
+    },
+  });
+
+  for (const m of turno.mensajes) pintarMensajeDePedido(ctx, m);
+
+  if (turno.salida === null) {
+    return { espera: { nodeId: node.id, type: "tienda_pedir", carrito: turno.carrito }, siguiente: undefined };
+  }
+  if (turno.salida === "ok") {
+    ctx.vars.pedido_numero = String(turno.pedido?.numero ?? "");
+    ctx.vars.pedido_codigo = String(turno.pedido?.codigo ?? "");
+    ctx.vars.pedido_total = String(turno.pedido?.total ?? "");
+    return { espera: null, siguiente: salidaDe(ctx, node, "ok-") ?? defaultNext(ctx.flow, node) };
+  }
+  return noSePudo();
+}
+
+/**
+ * El mismo mensaje, con lo que el widget sabe pintar.
+ *
+ * EL WIDGET NO TIENE LISTAS, solo botones, así que una lista de diez se queda
+ * en seis y el resto se contesta escribiendo — `conversar` acepta el nombre del
+ * producto o de la opción, no solo el identificador de la fila. Pintar veinte
+ * botones sería peor que no pintarlos: nadie los lee y tapan la conversación.
+ */
+function pintarMensajeDePedido(ctx: Ctx, m: MensajeChat) {
+  if (m.tipo === "texto") return push(ctx, m.texto);
+  if (m.tipo === "enlace") return push(ctx, `${m.texto}\n\n${m.url}`);
+
+  const opciones =
+    m.tipo === "lista"
+      ? m.filas.slice(0, 6).map((f) => ({
+          id: f.id,
+          label: `${f.titulo}${f.descripcion ? ` · ${f.descripcion}` : ""}`.slice(0, 40),
+        }))
+      : m.botones.map((b) => ({ id: b.id, label: b.titulo }));
+
+  const recortada = m.tipo === "lista" && m.filas.length > 6;
+  push(ctx, m.texto, opciones);
+  if (recortada) push(ctx, "Si no ves lo que buscas, escríbeme su nombre.");
 }
 
 function evalRule(rule: ConditionRule, vars: Record<string, string>): boolean {
@@ -294,6 +401,15 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
         push(ctx, interp(node.data.text ?? "", ctx.vars) || "Estos son nuestros productos:", primeros);
         push(ctx, `Ver todo el catálogo: ${enlaceDelBot(t)}`);
         return { nodeId: node.id, type: "buttons" };
+      }
+
+      case "tienda_pedir": {
+        // Empieza sin carrito: `null` es lo que le dice a `conversar` que esta
+        // es la primera vuelta y que toca enseñar el catálogo.
+        const r = await pedirPorElChatWeb(ctx, node, null, "");
+        if (r.espera) return r.espera;
+        current = r.siguiente;
+        break;
       }
 
       case "tienda_pedido": {
@@ -714,6 +830,30 @@ export async function runWebFlow(opts: {
       } else {
         if (node?.data.variable) vars[node.data.variable] = opts.text;
         startId = node ? defaultNext(opts.flow, node) : undefined;
+      }
+    } else if (awaiting.type === "tienda_pedir") {
+      // ── OTRA VUELTA DEL PEDIDO ─────────────────────────────────────────
+      // El carrito viene DENTRO de `awaiting` y se devuelve tal cual: este
+      // runtime no lo lee ni lo toca, igual que el motor de WhatsApp.
+      //
+      // SE MANDA EL ID DEL BOTÓN SI TOCÓ UNO, y si no, lo que escribió:
+      // `conversar` entiende las dos cosas, así que quien escribe «una pizza»
+      // en vez de tocar la lista sigue pudiendo pedir.
+      if (node) {
+        const dicho = botonQueCoincide?.id ?? opts.text;
+        const r = await pedirPorElChatWeb(ctx, node, awaiting.carrito ?? null, dicho);
+        if (r.espera) {
+          await guardarSalida(ctx, opts);
+          await avanzarRecorrido(opts.admin, runId, 1, node.id);
+          return {
+            vars,
+            awaiting: r.espera,
+            out: ctx.out,
+            hintEnviado: !!opts.flowState?.hintEnviado,
+            runId,
+          };
+        }
+        startId = r.siguiente;
       }
     } else if (awaiting.type === "buttons") {
       const btn = botonQueCoincide;

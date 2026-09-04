@@ -14,7 +14,7 @@ const COMMON: Category[] = [
   // Meterla con los bloques de WhatsApp la escondería justo en Instagram, que
   // es de donde llega la mayoría de la gente a la tienda: del enlace de la
   // biografía.
-  { name: "Mi tienda", items: ["tienda", "tienda_catalogo", "tienda_pedido"] },
+  { name: "Mi tienda", items: ["tienda", "tienda_pedir", "tienda_catalogo", "tienda_pedido"] },
   { name: "Acciones", items: ["action", "api", "calendar", "tags", "human", "assign"] },
 ];
 

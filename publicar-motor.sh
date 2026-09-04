@@ -19,34 +19,37 @@
 #
 # Pasó el 4 de septiembre de 2026 probando el bloque «Mi tienda» en vivo.
 #
-# ── LO QUE HACE FALTA UNA SOLA VEZ ────────────────────────────────────────
+# ── CÓMO SE IDENTIFICA, Y POR QUÉ NO CON UN TOKEN A MANO ──────────────────
 #
-# Un token de Supabase, que se saca aquí:
-#     https://supabase.com/dashboard/account/tokens
+# Se intentó primero con `SUPABASE_ACCESS_TOKEN` y NO FUNCIONA: los tokens que
+# el panel de Supabase entrega hoy tienen un formato nuevo (45 caracteres, con
+# mayúsculas) y el CLI todavía exige el viejo (44, solo 0-9 y a-f). Rechaza
+# incluso los que el propio panel llama «legacy», con este error:
 #
-# y se guarda en la Mac (una vez, no en el repositorio):
-#     echo 'export SUPABASE_ACCESS_TOKEN=sbp_...' >> ~/.zshrc
-#     source ~/.zshrc
+#     Invalid access token format. Must be like `sbp_0102...1920`.
 #
-# NO VA EN EL REPOSITORIO. Un token en un archivo del proyecto acaba en GitHub,
-# y con él se entra a todos los proyectos de Supabase de la cuenta.
+# Así que la sesión la abre el propio CLI con `supabase login`: se identifica en
+# el navegador y se guarda su credencial en `~/.supabase`. Es lo mismo que ya
+# había pasado antes — los tokens `cli_...` que aparecen en la cuenta salieron
+# de ahí.
+#
+# LA VARIABLE SE RESPETA SI ESTÁ. Un día el CLI aceptará el formato nuevo, o
+# hará falta publicar desde un servidor sin navegador; ese caso sigue cubierto.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 cd "$(dirname "$0")"
 
 PROYECTO="${SUPABASE_PROJECT_REF:-stgedtcsuyypzjbxcpoe}"
 
-if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
-  echo "❌ Falta el token de Supabase, así que el motor NO se publicó."
-  echo ""
-  echo "   Sácalo una sola vez aquí:"
-  echo "      https://supabase.com/dashboard/account/tokens"
-  echo "   y guárdalo en tu Mac con:"
-  echo "      echo 'export SUPABASE_ACCESS_TOKEN=sbp_loQueTeDenAlli' >> ~/.zshrc"
-  echo "      source ~/.zshrc"
-  echo ""
-  echo "   Después vuelve a correr:  ./publicar-motor.sh"
-  exit 1
+# UN TOKEN CON EL FORMATO NUEVO ESTORBA EN VEZ DE AYUDAR: el CLI lo prefiere
+# sobre la sesión guardada y falla, aunque `supabase login` esté hecho. Se
+# ignora aquí en vez de pedirle a nadie que se acuerde de borrarlo.
+if [ -n "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+  if ! printf '%s' "$SUPABASE_ACCESS_TOKEN" | grep -qE '^sbp_(oauth_)?[0-9a-f]{40}$'; then
+    echo "ℹ️  Tu SUPABASE_ACCESS_TOKEN tiene el formato nuevo, que el CLI todavía no"
+    echo "   acepta. Lo ignoro y uso la sesión de 'supabase login'."
+    unset SUPABASE_ACCESS_TOKEN
+  fi
 fi
 
 echo "⬆️  Publicando el motor de WhatsApp en Supabase…"
@@ -55,14 +58,32 @@ echo "⬆️  Publicando el motor de WhatsApp en Supabase…"
 # Supabase. La puerta la guarda la firma del webhook (`X-Hub-Signature-256`), no
 # un JWT. Si se publicara con verificación, Meta recibiría 401 en cada mensaje y
 # el bot se quedaría mudo para todos los clientes a la vez.
-if npx --yes supabase@latest functions deploy whatsapp \
-     --project-ref "$PROYECTO" --no-verify-jwt; then
+SALIDA=$(npx --yes supabase@latest functions deploy whatsapp \
+           --project-ref "$PROYECTO" --no-verify-jwt 2>&1)
+CODIGO=$?
+echo "$SALIDA"
+
+if [ $CODIGO -eq 0 ]; then
   echo ""
   echo "✅ Motor publicado. Los bloques nuevos ya funcionan en WhatsApp."
-else
-  echo ""
-  echo "❌ No se pudo publicar el motor. Lo más común:"
-  echo "   • El token caducó o es de otra cuenta → saca uno nuevo."
-  echo "   • No hay internet o Supabase está caído."
-  exit 1
+  exit 0
 fi
+
+echo ""
+# SE DISTINGUE «NO ESTÁS IDENTIFICADO» DE «FALLÓ LA PUBLICACIÓN». Los dos
+# terminan igual de mal y se arreglan de forma completamente distinta; decir
+# solo «no se pudo» es mandar a alguien a adivinar.
+if echo "$SALIDA" | grep -qiE "access token|not logged in|login|unauthorized|401"; then
+  echo "❌ No estás identificado en Supabase. Es una sola vez:"
+  echo ""
+  echo "      npx --yes supabase@latest login"
+  echo ""
+  echo "   Se abre el navegador, le das «Authorize», y vuelves a correr:"
+  echo "      ./publicar-motor.sh"
+else
+  echo "❌ No se pudo publicar el motor. Arriba está el motivo exacto."
+  echo "   Si no se entiende, corre esto y mándame lo que salga:"
+  echo "      npx --yes supabase@latest functions deploy whatsapp \\"
+  echo "        --project-ref $PROYECTO --no-verify-jwt --debug"
+fi
+exit 1

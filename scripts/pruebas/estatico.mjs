@@ -908,7 +908,12 @@ describe("Búsqueda en el conocimiento del negocio", () => {
 
 // ─── La agenda entre el motor y la web ───────────────────────────────────────
 describe("Puerta de agenda del motor", () => {
-  const ruta = fs.readFileSync(path.join(RAIZ, "src/app/api/motor/agenda/route.ts"), "utf8");
+  // LA PUERTA VIVE EN UN SOLO ARCHIVO desde que hubo una segunda entrada del
+  // motor (`/api/motor/pedido`). Dos copias de una comprobación de permisos es
+  // donde empieza el agujero: se arregla una y la otra se queda como estaba.
+  const ruta = fs.readFileSync(path.join(RAIZ, "src/lib/motor/autorizado.ts"), "utf8");
+  const puertas = ["src/app/api/motor/agenda/route.ts", "src/app/api/motor/pedido/route.ts"]
+    .map((r) => fs.readFileSync(path.join(RAIZ, r), "utf8"));
   const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
 
   test("no se autoriza comparando dos copias de un secreto", () => {
@@ -919,6 +924,15 @@ describe("Puerta de agenda del motor", () => {
     esperar(ruta.includes("/auth/v1/admin/users")).verdadero(
       "la puerta del motor debe comprobar que la llave MANDA en el proyecto, no que sea idéntica a la de aquí",
     );
+  });
+
+  test("TODAS las puertas del motor usan la misma comprobación", () => {
+    // Una entrada nueva que se autorice a su manera es una entrada sin revisar.
+    for (const p of puertas) {
+      esperar(p.includes("esDelMotor(req)")).verdadero(
+        "hay una puerta del motor que no usa la comprobación compartida",
+      );
+    }
   });
 
   test("cuando la plataforma no contesta bien, queda escrito el porqué", () => {
@@ -2767,12 +2781,32 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     // LA TIENDA ES PÚBLICA: cualquiera abre la consola y manda lo que quiera.
     // Si el servidor se creyera el precio que llega, alguien pediría un saco de
     // sesenta dólares por un centavo, y el negocio se enteraría al empacarlo.
+    // SE MIRA EL CREADOR, NO LA RUTA. La creación del pedido se sacó a
+    // `crearPedido` el día que el chat empezó a tomar pedidos: hay DOS puertas
+    // —el escaparate y el motor— y las dos entran por aquí. Mirar solo una
+    // ruta dejaría la otra sin revisar, que es justo lo que esto evita.
     const ruta = sinComentarios(
-      fs.readFileSync(path.join(SRC, "app/api/tienda/pedido/route.ts"), "utf8"),
+      fs.readFileSync(path.join(SRC, "lib/tienda/crearPedido.ts"), "utf8"),
     );
-    esperar(ruta.includes("recalcularPedido(")).verdadero(
-      "la ruta de pedidos no recalcula contra el catálogo",
+    // SE MIRA DENTRO DE `crearPedido`, NO EN EL ARCHIVO ENTERO. La prueba
+    // pasaba aunque se quitara el recálculo: `presupuestar` también lo llama,
+    // y con buscar en todo el texto bastaba con que existiera en cualquier
+    // parte. Lo cazó la prueba de mutación.
+    const iCrea = ruta.indexOf("export async function crearPedido");
+    esperar(iCrea > 0).verdadero("cambió el nombre del creador, revisa esta prueba");
+    const cuerpo = ruta.slice(iCrea);
+    esperar(cuerpo.includes("recalcularPedido(")).verdadero(
+      "crearPedido no recalcula contra el catálogo: le estaría creyendo los precios a quien llama",
     );
+
+    // Y NINGUNA PUERTA PUEDE CREAR EL PEDIDO POR SU CUENTA. El día que una
+    // inserte en `pedidos` directamente, se salta el recálculo entero.
+    for (const r of ["app/api/tienda/pedido/route.ts", "app/api/motor/pedido/route.ts"]) {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, r), "utf8"));
+      esperar(/from\(["']pedidos["']\)/.test(t)).falso(
+        `${r} escribe en pedidos por su cuenta: tiene que pasar por crearPedido`,
+      );
+    }
     // El total que se guarda tiene que ser el recalculado, no uno que venga en
     // el cuerpo de la petición.
     esperar(/total,\s*$/m.test(ruta) || ruta.includes("total,")).verdadero();
@@ -3047,10 +3081,15 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     // persona quedan incompletos para siempre. Es barato hacerlo en el momento
     // y imposible reconstruirlo luego, así que se protege con una prueba.
     // ─────────────────────────────────────────────────────────────────────────
-    const ruta = path.join(SRC, "app/api/tienda/pedido/route.ts");
+    const ruta = path.join(SRC, "lib/tienda/crearPedido.ts");
     const t = sinComentarios(fs.readFileSync(ruta, "utf8"));
 
-    esperar(t.includes("contacto_id")).verdadero("el pedido no se ata a ningún contacto");
+    // NO BASTA CON QUE LA PALABRA APAREZCA: tiene que ESCRIBIRSE. La prueba
+    // pasaba con el guardado quitado, porque `contacto_id` sale también en el
+    // tipo y en el insert. Lo cazó la prueba de mutación.
+    esperar(/contacto_id:\s*contactoId/.test(t)).verdadero(
+      "el pedido no llega a guardar el contacto que encontró",
+    );
     esperar(t.includes("aWhatsapp(")).verdadero(
       "el teléfono tiene que normalizarse igual que en WhatsApp, o la persona queda partida en dos fichas",
     );
@@ -3265,12 +3304,62 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("EL MOTOR NO SABE CREAR PEDIDOS, Y NO DEBE APRENDER", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // El motor corre en Deno con la llave de servicio: podría insertar en
+    // `pedidos` él solo. Sería el error más caro del proyecto — habría DOS
+    // calculadoras de dinero con las mismas reglas copiadas, y el día que
+    // alguien arregle un redondeo en una, la otra sigue cobrando mal durante
+    // meses porque los dos caminos parecen funcionar.
+    //
+    // El motor hace de cartero: le pregunta a la plataforma y manda lo que le
+    // dicen. Esta prueba es lo que impide que un día deje de hacerlo.
+    // ─────────────────────────────────────────────────────────────────────────
+    const motor = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+    );
+    for (const tabla of ["pedidos", "pedido_lineas", "pedido_eventos"]) {
+      esperar(new RegExp(`from\\(["']${tabla}["']\\)\\s*\\n?\\s*\\.insert`).test(motor)).falso(
+        `el motor escribe en ${tabla} por su cuenta: tiene que pasar por /api/motor/pedido`,
+      );
+    }
+    esperar(motor.includes("/api/motor/pedido")).verdadero(
+      "el motor tiene que pedirle el pedido a la plataforma",
+    );
+  });
+
+  test("la conversación del pedido está escrita UNA vez para los dos motores", () => {
+    // Hay dos motores que no comparten un archivo: Deno para WhatsApp e
+    // Instagram, Node para el widget. Si cada uno tuviera sus preguntas, un día
+    // preguntarían distinto — y con un pedido eso es cobrar distinto según por
+    // dónde escribió el cliente.
+    // TIENE QUE LLAMARLA, no solo nombrar el archivo. La prueba pasaba con la
+    // importación convertida en `type MensajeChat = any`, porque el nombre del
+    // archivo seguía apareciendo en el import dinámico. Lo cazó la mutación.
+    const web = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+    esperar(web.includes("tienda/conversacionDePedido")).verdadero(
+      "el widget web se armó su propia conversación de pedido",
+    );
+    esperar(/await\s+conversar\(/.test(web)).verdadero(
+      "el widget no llega a llamar a la conversación compartida",
+    );
+    esperar(/siguientePaso\(|cabeEnElChat\(|recalcularPedido\(/.test(web)).falso(
+      "el widget está decidiendo la conversación del pedido por su cuenta",
+    );
+    const motor = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+    );
+    esperar(/siguientePaso|cabeEnElChat|recalcularPedido/.test(motor)).falso(
+      "el motor está decidiendo la conversación del pedido en vez de preguntar",
+    );
+  });
+
   test("el código del pedido viaja SIEMPRE en el mensaje", () => {
     // Es lo único que permite reconocer el pedido al llegar a la Bandeja. Si
     // solo viajara dentro del enlace de cobro, una tienda que cobra al recibir
     // mandaría un texto que nadie puede relacionar con nada.
     const t = sinComentarios(
-      fs.readFileSync(path.join(SRC, "app/api/tienda/pedido/route.ts"), "utf8"),
+      fs.readFileSync(path.join(SRC, "lib/tienda/crearPedido.ts"), "utf8"),
     );
     const iCodigo = t.indexOf("Código: ");
     esperar(iCodigo > 0).verdadero("el mensaje no lleva el código del pedido");

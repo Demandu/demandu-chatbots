@@ -1,14 +1,6 @@
 import { NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { leerConfig } from "@/lib/tienda/config";
-import { sanearGrupos } from "@/lib/tienda/variedades";
-import { recalcularPedido, type LineaPedida, type ProductoDelCatalogo } from "@/lib/tienda/recalcular";
-import { textoDelPedido, type LineaCarrito } from "@/lib/tienda/pedido";
-import { aWhatsapp, telefonoUtil } from "@/lib/tienda/telefono";
-import { paisDesdeTelefono } from "@/lib/phoneCountry";
-import { cobroPublico } from "@/lib/tienda/cobro-publico";
-import { enlaceDePago } from "@/lib/tienda/direccion";
-import { codigoDePedido } from "@/lib/tienda/yappy";
+import { crearPedido } from "@/lib/tienda/crearPedido";
+import type { LineaPedida } from "@/lib/tienda/recalcular";
 
 /**
  * Crear un pedido desde el escaparate.
@@ -17,17 +9,22 @@ import { codigoDePedido } from "@/lib/tienda/yappy";
  * EL PEDIDO SE GUARDA ANTES DE ABRIR WHATSAPP, y esa es la razón de que esta
  * ruta exista. Hasta ahora, si el cliente pulsaba el botón y no llegaba a
  * enviar el mensaje —se arrepintió, se le fue el internet, cerró sin querer—
- * ese pedido se perdía entero y el negocio nunca supo que existió. Ahora queda
- * registrado y se puede ir a buscar.
+ * ese pedido se perdía entero y el negocio nunca supo que existió.
  *
  * ES PÚBLICA A PROPÓSITO: la tienda no pide cuenta. Por eso NADA de lo que
  * llega se cree salvo qué productos y cuántos: los precios se vuelven a leer
- * del catálogo en `recalcularPedido`. Sin eso, cualquiera pediría un saco de
- * sesenta dólares por un centavo.
+ * del catálogo. Sin eso, cualquiera pediría un saco de sesenta dólares por un
+ * centavo.
  *
- * Se usa el cliente con `service_role` porque no hay sesión, y por eso mismo
- * cada consulta lleva su `tienda_id` escrito a mano: aquí no hay RLS que
- * proteja de un descuido.
+ * ── AQUÍ YA NO SE CREA EL PEDIDO, SE PIDE QUE SE CREE ─────────────────────
+ *
+ * Todo lo que era este archivo vive ahora en `crearPedido`, porque el chat
+ * empezó a tomar pedidos y necesitaba exactamente lo mismo. Dos copias de la
+ * creación de un pedido es garantizar que un día cobren distinto según por
+ * dónde pidió el cliente — y eso solo lo descubre alguien comparando recibos.
+ *
+ * Esta ruta se quedó con lo único que es suyo: leer el JSON, decir de qué
+ * canal viene y traducir el resultado a códigos HTTP.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export async function POST(req: Request) {
@@ -45,248 +42,29 @@ export async function POST(req: Request) {
   const slug = String(cuerpo?.slug ?? "").trim().toLowerCase();
   if (!slug) return NextResponse.json({ error: "Falta la tienda." }, { status: 400 });
 
-  const sb = createAdminClient();
+  const r = await crearPedido({
+    slug,
+    lineas: cuerpo?.lineas ?? [],
+    respuestas: cuerpo?.respuestas ?? {},
+    // EL CANAL LO PONE LA RUTA, NO EL NAVEGADOR. Es la única forma de que
+    // «vino de la tienda» signifique algo: si viajara en el cuerpo, cualquiera
+    // podría marcar sus pedidos como si vinieran del chat y las cuentas de qué
+    // canal vende más dejarían de valer.
+    canal: "tienda",
+  });
 
-  const { data: tienda } = await sb
-    .from("tiendas")
-    .select("id,org_id,nombre,slug,activa,config")
-    .eq("slug", slug)
-    .maybeSingle();
-
-  // Una tienda cerrada no recibe pedidos. Que el escaparate no se pinte no
-  // basta: alguien puede tener la pestaña abierta desde antes de cerrarla.
-  if (!tienda || !tienda.activa) {
-    return NextResponse.json({ error: "Esta tienda no está disponible." }, { status: 404 });
-  }
-
-  const { data: prods } = await sb
-    .from("tienda_productos")
-    .select("id,nombre,precio,oculto,stock,variedades")
-    .eq("tienda_id", tienda.id);
-
-  const catalogo: ProductoDelCatalogo[] = ((prods ?? []) as ProductoDelCatalogo[]).map((p) => ({
-    ...p,
-    variedades: sanearGrupos(p.variedades),
-  }));
-
-  const { lineas, total, rechazos } = recalcularPedido(catalogo, cuerpo?.lineas ?? []);
-  if (!lineas.length) {
+  if (!r.ok) {
     return NextResponse.json(
-      { error: rechazos[0] ?? "El pedido quedó vacío.", rechazos },
-      { status: 400 },
+      { error: r.error, ...(r.rechazos ? { rechazos: r.rechazos } : {}) },
+      { status: r.estado },
     );
   }
-
-  const config = leerConfig(tienda.config);
-  if (config.minimo_pedido > 0 && total < config.minimo_pedido) {
-    return NextResponse.json({ error: "El pedido no llega al mínimo." }, { status: 400 });
-  }
-
-  // Las respuestas se guardan CON SU ETIQUETA, no solo con el id: si mañana el
-  // negocio renombra una pregunta, el pedido viejo tiene que seguir
-  // explicándose solo.
-  const respuestas = config.preguntas
-    .map((p) => ({
-      id: p.id,
-      etiqueta: p.etiqueta,
-      valor: String(cuerpo?.respuestas?.[p.id] ?? "").trim().slice(0, 500),
-    }))
-    .filter((r) => r.valor);
-
-  const faltan = config.preguntas
-    .filter((p) => p.obligatoria && !respuestas.some((r) => r.id === p.id))
-    .map((p) => p.etiqueta);
-  if (faltan.length) {
-    return NextResponse.json({ error: `Falta ${faltan.join(", ")}.` }, { status: 400 });
-  }
-
-  const { data: numero, error: errNumero } = await sb.rpc("siguiente_numero_pedido", {
-    p_tienda: tienda.id,
-  });
-  if (errNumero || !numero) {
-    return NextResponse.json({ error: "No se pudo registrar el pedido." }, { status: 500 });
-  }
-
-  // EL CÓDIGO CORTO SE PONE SIEMPRE, se vaya a cobrar en línea o no: es lo que
-  // se dicta por teléfono y lo que usará cualquier pasarela que se enchufe
-  // después. Ponerlo solo cuando hace falta obliga a inventarlo más tarde,
-  // cuando el pedido ya está en manos de otro sistema.
-  let pedido: { id: string; numero: number; codigo: string } | null = null;
-  for (let intento = 0; intento < 3 && !pedido; intento++) {
-    const codigo = codigoDePedido();
-    const { data } = await sb
-      .from("pedidos")
-      .insert({
-        org_id: tienda.org_id,
-        tienda_id: tienda.id,
-        numero,
-        total,
-        canal: "tienda",
-        respuestas,
-        codigo,
-      })
-      .select("id,numero,codigo")
-      .single();
-    if (data) pedido = data as { id: string; numero: number; codigo: string };
-  }
-
-  if (!pedido) {
-    return NextResponse.json({ error: "No se pudo registrar el pedido." }, { status: 500 });
-  }
-
-  // Un alias constante: dentro de las funciones de abajo, TypeScript ya no
-  // recuerda que `pedido` dejó de ser nulo tres líneas antes.
-  const ped = pedido;
-
-  await sb.from("pedido_lineas").insert(
-    lineas.map((l, i) => ({
-      pedido_id: ped.id,
-      producto_id: l.producto_id,
-      nombre: l.nombre,
-      precio: l.precio,
-      cantidad: l.cantidad,
-      elegidas: l.elegidas,
-      nota: l.nota || null,
-      orden: i,
-    })),
-  );
-
-  await sb.from("pedido_eventos").insert({
-    pedido_id: ped.id,
-    que: "recibido",
-    quien: "tienda",
-    detalle: { total, lineas: lineas.length, rechazos },
-  });
-
-  // EL TEXTO LO ARMA EL SERVIDOR, con los precios de verdad. Si lo armara el
-  // navegador, el mensaje podría decir un total y el pedido guardado otro — y
-  // entonces nadie sabría cuál de los dos se cobra.
-  const paraTexto: LineaCarrito[] = lineas.map((l, i) => ({
-    clave: String(i),
-    producto_id: l.producto_id,
-    nombre: l.nombre,
-    // `textoDelPedido` suma los recargos al precio base; aquí el precio ya los
-    // trae, así que las elegidas van sin recargo para no contarlos dos veces.
-    precio: l.precio,
-    cantidad: l.cantidad,
-    elegidas: l.elegidas.map((e) => ({ ...e, recargo: 0 })),
-    nota: l.nota,
-  }));
-
-  // EL COBRO VIAJA EN EL MENSAJE, no en el carrito. Así el negocio recibe el
-  // pedido aunque el cliente nunca llegue a pagar, y puede reenviarle el enlace
-  // mañana: «aún me debes esto, aquí está». Un botón dentro del carrito existe
-  // treinta segundos y desaparece.
-  const cobro = await cobroPublico(tienda.id);
-
-  const texto = [
-    `*Pedido #${ped.numero}*`,
-    textoDelPedido({
-      tienda: config.titulo || tienda.nombre,
-      lineas: paraTexto,
-      respuestas: Object.fromEntries(respuestas.map((r) => [r.id, r.valor])),
-      preguntas: config.preguntas,
-      moneda: config.moneda,
-    }),
-    ...(cobro.yappy
-      ? ["", "Dale clic para pagar con Yappy:", enlaceDePago(tienda.slug, ped.codigo)]
-      : []),
-    // EL CÓDIGO VIAJA SIEMPRE, cobre la tienda o no. Es lo que reconoce el
-    // mensaje al llegar a la Bandeja y lo que ata la conversación con el
-    // pedido: sin él, el cliente escribe y el negocio recibe un texto suelto
-    // que nadie relaciona con nada.
-    "",
-    `Código: ${ped.codigo}`,
-  ].join("\n");
-
-  // Se ata a su persona antes de contestar: el pedido y su ficha se crean en el
-  // mismo momento o no se atan nunca.
-  await enlazarContacto();
 
   return NextResponse.json({
-    numero: ped.numero,
-    codigo: ped.codigo,
-    total,
-    texto,
-    rechazos,
+    numero: r.numero,
+    codigo: r.codigo,
+    total: r.total,
+    texto: r.texto,
+    rechazos: r.rechazos,
   });
-
-  /**
-   * Atar el pedido a la persona que lo hizo.
-   *
-   * ───────────────────────────────────────────────────────────────────────────
-   * ES LA PIEZA QUE HACE QUE ESTO SEA UN CRM Y NO UNA LISTA DE PEDIDOS. Sin
-   * `contacto_id`, «cuántas veces compró», «cuánto gasta» y «qué le gusta» no
-   * se pueden calcular — y lo peor es que NO SE PUEDEN RECUPERAR DESPUÉS: un
-   * pedido viejo sin contacto ya no sabe de quién era, salvo adivinando por el
-   * teléfono que escribió a mano.
-   *
-   * SE BUSCA POR EL NÚMERO EN FORMATO WHATSAPP porque es el mismo con el que el
-   * motor guarda a quien escribe. Así, quien pide en la tienda y luego manda el
-   * mensaje es UNA persona, no dos fichas.
-   *
-   * TODO ESTO ES «SI SE PUEDE». Un pedido sin contacto sigue siendo un pedido
-   * que hay que preparar: fallar aquí no puede tumbar la venta.
-   * ───────────────────────────────────────────────────────────────────────────
-   */
-  async function enlazarContacto() {
-    try {
-      const preguntaTel = config.preguntas.find((p) => p.tipo === "telefono");
-      const crudo = preguntaTel
-        ? (respuestas.find((r) => r.id === preguntaTel.id)?.valor ?? "")
-        : "";
-
-      const tel = aWhatsapp(crudo, config.whatsapp.numero);
-      if (!telefonoUtil(tel)) return;
-
-      const { data: existe } = await sb
-        .from("contacts")
-        .select("id,name")
-        .eq("org_id", tienda!.org_id)
-        .eq("channel", "whatsapp")
-        .eq("external_id", tel)
-        .maybeSingle();
-
-      // El nombre solo se pone si la ficha no tenía: lo que el negocio escribió
-      // a mano vale más que lo que el cliente tecleó de prisa en un formulario.
-      const nombre = nombreDelPedido();
-
-      let contactoId = existe?.id ?? null;
-      if (contactoId) {
-        if (nombre && !existe?.name) {
-          await sb.from("contacts").update({ name: nombre }).eq("id", contactoId);
-        }
-      } else {
-        const { data: creado } = await sb
-          .from("contacts")
-          .insert({
-            org_id: tienda!.org_id,
-            channel: "whatsapp",
-            external_id: tel,
-            phone: tel,
-            country: paisDesdeTelefono(tel),
-            ...(nombre ? { name: nombre } : {}),
-          })
-          .select("id")
-          .single();
-        contactoId = creado?.id ?? null;
-      }
-
-      if (contactoId) await sb.from("pedidos").update({ contacto_id: contactoId }).eq("id", ped.id);
-    } catch {
-      /* un pedido sin contacto sigue siendo un pedido */
-    }
-  }
-
-  /** El nombre que puso en el formulario, si hay una pregunta que lo pida. */
-  function nombreDelPedido(): string {
-    const limpia = (t: string) =>
-      t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    const p = config.preguntas.find(
-      (q) => q.tipo !== "lista" && limpia(q.etiqueta).includes("nombre"),
-    );
-    if (!p) return "";
-    return (respuestas.find((r) => r.id === p.id)?.valor ?? "").trim().slice(0, 120);
-  }
-
 }

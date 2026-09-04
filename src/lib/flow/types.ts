@@ -31,6 +31,7 @@ export type NodeType =
   | "tienda"
   | "tienda_catalogo"
   | "tienda_pedido"
+  | "tienda_pedir"
   | "template"
   | "ig_story"
   | "ig_comment"
@@ -194,6 +195,12 @@ export interface DemanduNodeData {
   catalogoTitulo?: string;
   /** solo para type = "tienda_pedido": qué decir si no tiene ningún pedido */
   sinPedidosMensaje?: string;
+  /* El bloque «Pedir por el chat» NO tiene más ajustes que su saludo, que va en
+     `text` como en todos los bloques. Todo lo demás —qué productos hay, qué
+     opciones tiene cada uno, qué se pregunta para la entrega, cuánto cuesta y
+     cómo se cobra— ya está en la tienda. Repetirlo aquí sería pedirle al
+     negocio que mantenga dos veces lo mismo, y el día que se separen el chat
+     vendería a un precio y la tienda a otro. */
 
   /** solo para type = "end" (Fin) */
   finalStatusId?: string;
@@ -307,6 +314,7 @@ export const NODE_META: Record<
   tienda: { label: "Mi tienda", description: "Manda el enlace de tu tienda", icon: "🏬", color: "#F5247D", bg: "rgba(245,36,125,.15)" },
   tienda_catalogo: { label: "Mis productos", description: "Enseña tu catálogo dentro del chat", icon: "📦", color: "#F5247D", bg: "rgba(245,36,125,.15)" },
   tienda_pedido: { label: "Estado del pedido", description: "Le dice cómo va su pedido", icon: "🚚", color: "#F5247D", bg: "rgba(245,36,125,.15)" },
+  tienda_pedir: { label: "Pedir por el chat", description: "Arma el pedido y lo cobra sin salir del chat", icon: "🛍️", color: "#F5247D", bg: "rgba(245,36,125,.15)" },
   template: { label: "Plantilla WA", description: "Mensaje con plantilla aprobada", icon: "🗂️", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
   ig_story: { label: "Responder Historia", description: "Reacciona a menciones/respuestas de historias IG", icon: "🎬", color: "#E1306C", bg: "rgba(225,48,108,.15)" },
   ig_comment: { label: "Comentarios IG → DM", description: "Responde comentarios y pasa a DM", icon: "💬", color: "#E1306C", bg: "rgba(225,48,108,.15)" },
@@ -320,6 +328,6 @@ export const NODE_META: Record<
 export const PALETTE_ORDER: NodeType[] = [
   "message", "media", "question", "buttons", "condition",
   "ai", "delay", "action", "api", "calendar", "tags", "human", "assign", "redirect",
-  "tienda", "tienda_catalogo", "tienda_pedido",
+  "tienda", "tienda_pedir", "tienda_catalogo", "tienda_pedido",
   "catalog", "payment", "whatsapp_flow", "call_permission", "template", "end",
 ];

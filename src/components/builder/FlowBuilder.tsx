@@ -167,6 +167,21 @@ function BuilderInner({
             { id: `no-${now}`, label: "🚫 No hay tienda activa" },
           ],
         };
+      } else if (type === "tienda_pedir") {
+        // ── LAS MISMAS DOS SALIDAS, Y LA SEGUNDA IMPORTA MÁS AQUÍ ──────────
+        // «No se pudo» cubre tres cosas que acaban igual para quien escribe:
+        // la tienda está apagada, no queda nada visible que vender, o el
+        // cliente canceló. En las tres el flujo tiene que poder seguir por
+        // otro lado —normalmente con una persona— porque quien venía a
+        // comprar es justo a quien no se puede dejar sin respuesta.
+        data = {
+          label: meta.label,
+          text: "¿Qué te gustaría pedir?",
+          buttons: [
+            { id: `ok-${now}`, label: "✅ Hizo el pedido" },
+            { id: `no-${now}`, label: "🚫 No se pudo" },
+          ],
+        };
       } else if (type === "tienda_catalogo") {
         data = {
           label: meta.label,

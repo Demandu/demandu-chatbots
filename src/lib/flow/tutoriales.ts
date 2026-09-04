@@ -388,6 +388,37 @@ export const TUTORIALES: Record<ComponentKey, Tutorial> = {
       "mensaje o a una persona: es lo que pasa en vacaciones y es cuando más importa contestar.",
   },
 
+  tienda_pedir: {
+    para: "Tomar el pedido completo hablando, y cobrarlo.",
+    pasos: [
+      "Escribe el saludo. Todo lo demás sale de tu tienda.",
+      "Los productos, sus opciones y sus precios ya están ahí.",
+      "El formulario de entrega es el mismo de tu tienda.",
+      "Conecta las dos salidas: hizo el pedido, y no se pudo.",
+    ],
+    ejemplo: [
+      bot("¿Qué te gustaría pedir?"),
+      cliente("(toca Pizza mediana)"),
+      bot("Pizza mediana — elige Masa"),
+      cliente("(toca Delgada)"),
+      bot("¿Cuántos te pongo?"),
+      cliente("2"),
+      bot("Llevas 2 cosas — $17.00\n¿Quieres agregar algo más?"),
+      cliente("(toca Terminar pedido)"),
+      bot("Dirección de entrega"),
+      cliente("Calle 50, PH Mar del Sur, apto 12B"),
+      bot("*Este es tu pedido:*\n• 2 × Pizza mediana (Delgada) — $17.00\n\n*Total: $17.00*\n\n¿Lo confirmo?"),
+      cliente("(toca Sí, confirmar)"),
+      bot("*Pedido #34*\n…\nDale clic para pagar con Yappy:\n(su enlace de pago)"),
+      nota("El pedido te entra igual que uno de la tienda, con su número y su cobro."),
+    ],
+    ojo:
+      "No te pregunta el teléfono: ya lo sabe, porque te está escribiendo desde él. Y los productos " +
+      "con demasiadas opciones para el chat —«elige 3 rellenos de 18»— no se arman aquí: el bot manda " +
+      "su página de la tienda ya abierta en ese producto. Es a propósito; preguntar eso por chat son " +
+      "seis mensajes y ahí se cae el pedido.",
+  },
+
   tienda_catalogo: {
     para: "Enseñar tus productos dentro de la conversación.",
     pasos: [

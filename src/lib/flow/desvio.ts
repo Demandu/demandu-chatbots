@@ -105,8 +105,16 @@ export function esAfirmacion(texto: string): boolean {
 }
 
 export interface EstadoDelTurno {
-  /** Qué está esperando el flujo, si algo. */
-  esperando: { type: "question" | "buttons"; nodeId: string } | null;
+  /**
+   * Qué está esperando el flujo, si algo.
+   *
+   * EL TIPO VA ABIERTO A PROPÓSITO. Aquí solo importan dos esperas —opciones y
+   * captura de dato— y el motor tiene otras (una cita, un formulario de Meta,
+   * un pedido a medias). Cerrar la lista obligaría a tocar este archivo cada
+   * vez que nace una espera nueva, y lo correcto para todas ellas es lo que ya
+   * pasa por defecto: no desviar nada, que el bloque se ocupe.
+   */
+  esperando: { type: string; nodeId: string } | null;
   /** ¿Ese bloque de pregunta guarda la respuesta en una variable? */
   capturaDato: boolean;
   /** ¿El texto coincidió con alguna de las opciones? */

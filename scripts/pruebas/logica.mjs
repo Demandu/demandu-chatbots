@@ -38,6 +38,12 @@ import {
 import {
   MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado, botonDelAviso,
 } from "../../src/lib/tienda/avisos.ts";
+import {
+  cabeEnElChat, siguientePaso, empezarProducto, elegirOpcion, avanzarGrupo,
+  meterAlCarrito, cerrarCarrito, contestar, leerCantidad, loQueYaSabemos,
+  filasDeVariedad, opcionElegida, cuantasCosas, huella, carritoVacio,
+  MAX_GRUPOS_EN_CHAT, MAX_ELECCIONES_POR_GRUPO, MAX_FILAS, MAX_POR_LINEA,
+} from "../../src/lib/tienda/pedirPorChat.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
 import { aDireccion, direccionValida, enlaceDePago, enlaceDeTienda, hostDeLaPeticion } from "../../src/lib/tienda/direccion.ts";
 import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
@@ -3425,6 +3431,321 @@ describe("Descuentos y meses gratis", () => {
     esperar(explicar({ tipo: "porcentaje", porcentaje: 30, meses: null }))
       .contiene("mientras siga suscrito");
     esperar(explicar({ tipo: "porcentaje", porcentaje: 20, meses: 6 })).contiene("6 cobros");
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * PEDIR POR EL CHAT
+ *
+ * Lo que se prueba aquí es la CONVERSACIÓN, no el dinero: el dinero lo calcula
+ * `recalcularPedido`, que ya tiene sus propias pruebas y es el mismo que usa la
+ * tienda. Aquí se comprueba que el bot pregunta lo que falta, en el orden que
+ * toca, y que no se atasca — que es donde se pierde un pedido.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const grupoUna = { nombre: "Tamaño", modo: "una", opciones: [
+  { texto: "Pequeña", recargo: 0 }, { texto: "Mediana", recargo: 250 },
+] };
+const grupoVarias = { nombre: "Extras", modo: "varias", opciones: [
+  { texto: "Queso", recargo: 100 }, { texto: "Piña", recargo: 50 },
+] };
+const grupoTres = { nombre: "Sabores", modo: "hasta_completar", cantidad: 2, opciones: [
+  { texto: "Fresa", recargo: 0 }, { texto: "Mango", recargo: 0 }, { texto: "Coco", recargo: 0 },
+] };
+
+const pizza = { id: "p1", nombre: "Pizza", precio: 700, variedades: [grupoUna] };
+const agua = { id: "p2", nombre: "Agua", precio: 100, variedades: [] };
+const preguntasEntrega = [
+  { id: "nombre", etiqueta: "Nombre completo", tipo: "texto", obligatoria: true },
+  { id: "telefono", etiqueta: "Teléfono", tipo: "telefono", obligatoria: true },
+  { id: "direccion", etiqueta: "Dirección", tipo: "parrafo", obligatoria: true },
+];
+
+describe("Pedir por el chat — qué cabe hablando", () => {
+  test("un producto sin opciones siempre cabe", () => {
+    esperar(cabeEnElChat([]).cabe).verdadero();
+    esperar(cabeEnElChat(null).cabe).verdadero();
+  });
+
+  test("demasiados grupos NO caben: son ocho mensajes para meter una cosa", () => {
+    const muchos = Array.from({ length: MAX_GRUPOS_EN_CHAT + 1 }, (_, i) => ({
+      ...grupoUna, nombre: `G${i}`,
+    }));
+    esperar(cabeEnElChat(muchos).cabe).falso();
+    esperar(cabeEnElChat(muchos.slice(0, MAX_GRUPOS_EN_CHAT)).cabe).verdadero(
+      "justo en el tope todavía cabe",
+    );
+  });
+
+  test("un grupo con más opciones de las que aguanta una lista NO cabe", () => {
+    const once = { nombre: "Sabor", modo: "una", opciones:
+      Array.from({ length: MAX_FILAS + 1 }, (_, i) => ({ texto: `S${i}`, recargo: 0 })) };
+    esperar(cabeEnElChat([once]).cabe).falso();
+    esperar(cabeEnElChat([{ ...once, opciones: once.opciones.slice(0, MAX_FILAS) }]).cabe).verdadero();
+  });
+
+  test("«elige varias» necesita una fila menos, para el botón de Listo", () => {
+    // Sin ella el cliente elige y no tiene forma de decir que ya terminó: se
+    // queda encerrado en el mismo grupo para siempre.
+    const alTope = Array.from({ length: MAX_FILAS }, (_, i) => ({ texto: `E${i}`, recargo: 0 }));
+    esperar(cabeEnElChat([{ nombre: "Extras", modo: "varias", opciones: alTope }]).cabe).falso();
+    esperar(cabeEnElChat([{ nombre: "Tam", modo: "una", opciones: alTope }]).cabe).verdadero(
+      "con «elige una» ese mismo grupo sí cabe: no hace falta el Listo",
+    );
+  });
+
+  test("«elige N de muchas» con N grande NO cabe: es un formulario", () => {
+    const cinco = { ...grupoTres, cantidad: MAX_ELECCIONES_POR_GRUPO + 1 };
+    esperar(cabeEnElChat([cinco]).cabe).falso();
+    esperar(cabeEnElChat([{ ...grupoTres, cantidad: MAX_ELECCIONES_POR_GRUPO }]).cabe).verdadero();
+  });
+
+  test("un grupo sin opciones no cabe: es una pregunta que no se puede contestar", () => {
+    esperar(cabeEnElChat([{ nombre: "Vacío", modo: "una", opciones: [] }]).cabe).falso();
+  });
+});
+
+describe("Pedir por el chat — el orden de las preguntas", () => {
+  test("sin nada en el carrito, lo primero es enseñar el catálogo", () => {
+    const c = carritoVacio("t1");
+    esperar(siguientePaso(c, [pizza, agua], preguntasEntrega).que).igual("producto");
+  });
+
+  test("al elegir un producto con opciones, se pregunta el grupo", () => {
+    const { carrito } = empezarProducto(carritoVacio("t1"), pizza);
+    const paso = siguientePaso(carrito, [pizza], preguntasEntrega);
+    esperar(paso.que).igual("variedad");
+    esperar(paso.grupo.nombre).igual("Tamaño");
+  });
+
+  test("un producto SIN opciones salta directo a la cantidad", () => {
+    const { carrito } = empezarProducto(carritoVacio("t1"), agua);
+    esperar(siguientePaso(carrito, [agua], preguntasEntrega).que).igual("cantidad");
+  });
+
+  test("contestar «elige una» AVANZA SOLO al grupo siguiente", () => {
+    // El fallo que esto caza: mirando solo el grupo de turno, un producto de
+    // tres preguntas preguntaba la primera y se saltaba las otras dos.
+    const tres = { id: "p3", nombre: "Combo", precio: 900,
+      variedades: [grupoUna, grupoVarias, grupoTres] };
+    let { carrito } = empezarProducto(carritoVacio("t1"), tres);
+    carrito = elegirOpcion(carrito, grupoUna, "Mediana");
+    const paso = siguientePaso(carrito, [tres], preguntasEntrega);
+    esperar(paso.que).igual("variedad");
+    esperar(paso.grupo.nombre).igual("Extras", "tenía que pasar al segundo grupo, no a la cantidad");
+  });
+
+  test("«elige varias» NO avanza solo: lo cierra el cliente con Listo", () => {
+    const conExtras = { id: "p4", nombre: "Hamburguesa", precio: 800, variedades: [grupoVarias] };
+    let { carrito } = empezarProducto(carritoVacio("t1"), conExtras);
+    carrito = elegirOpcion(carrito, grupoVarias, "Queso");
+    esperar(siguientePaso(carrito, [conExtras], preguntasEntrega).que).igual("variedad",
+      "sigue en el mismo grupo: puede querer otro extra");
+    carrito = avanzarGrupo(carrito);
+    esperar(siguientePaso(carrito, [conExtras], preguntasEntrega).que).igual("cantidad");
+  });
+
+  test("«elige 2 de 3» pregunta hasta juntar las dos", () => {
+    const helado = { id: "p5", nombre: "Helado", precio: 400, variedades: [grupoTres] };
+    let { carrito } = empezarProducto(carritoVacio("t1"), helado);
+    let paso = siguientePaso(carrito, [helado], preguntasEntrega);
+    esperar(paso.faltan).igual(2);
+    carrito = elegirOpcion(carrito, grupoTres, "Fresa");
+    paso = siguientePaso(carrito, [helado], preguntasEntrega);
+    esperar(paso.que).igual("variedad");
+    esperar(paso.faltan).igual(1, "le falta una y hay que decírselo");
+    carrito = elegirOpcion(carrito, grupoTres, "Mango");
+    esperar(siguientePaso(carrito, [helado], preguntasEntrega).que).igual("cantidad");
+  });
+
+  test("con algo en el carrito se pregunta si quiere más, no se cobra de una", () => {
+    let { carrito } = empezarProducto(carritoVacio("t1"), agua);
+    carrito = meterAlCarrito(carrito, 2);
+    esperar(siguientePaso(carrito, [agua], preguntasEntrega).que).igual("mas");
+  });
+
+  test("al cerrar el carrito empieza el formulario, saltando lo ya sabido", () => {
+    let { carrito } = empezarProducto(carritoVacio("t1"), agua);
+    carrito = meterAlCarrito(carrito, 1);
+    carrito = { ...carrito, respuestas: { telefono: "50761112222" } };
+    carrito = cerrarCarrito(carrito);
+    const paso = siguientePaso(carrito, [agua], preguntasEntrega);
+    esperar(paso.que).igual("pregunta");
+    esperar(paso.pregunta.id).igual("nombre", "el teléfono ya se sabe: no se vuelve a preguntar");
+  });
+
+  test("cuando no falta nada por preguntar, toca confirmar", () => {
+    let { carrito } = empezarProducto(carritoVacio("t1"), agua);
+    carrito = meterAlCarrito(carrito, 1);
+    carrito = cerrarCarrito(carrito);
+    carrito = { ...carrito, respuestas: { nombre: "Ana", telefono: "507611", direccion: "Calle 50" } };
+    esperar(siguientePaso(carrito, [agua], preguntasEntrega).que).igual("confirmar");
+  });
+
+  test("si el producto desaparece a mitad, se vuelve al catálogo y no se rompe", () => {
+    // Lo ocultaron o se agotó mientras conversaban. Quedarse pidiendo opciones
+    // de algo que ya no existe es un pedido que nunca se va a poder crear.
+    const { carrito } = empezarProducto(carritoVacio("t1"), pizza);
+    esperar(siguientePaso(carrito, [agua], preguntasEntrega).que).igual("producto");
+  });
+});
+
+describe("Pedir por el chat — lo que se guarda en el carrito", () => {
+  test("EL CARRITO NO GUARDA NI UN PRECIO", () => {
+    // Es la regla que impide que haya dos calculadoras de dinero. Si algún día
+    // alguien mete `precio` aquí, esta prueba tiene que cantarlo.
+    let { carrito } = empezarProducto(carritoVacio("t1"), pizza);
+    carrito = elegirOpcion(carrito, grupoUna, "Mediana");
+    carrito = meterAlCarrito(carrito, 2);
+    const texto = JSON.stringify(carrito);
+    esperar(texto).noContiene('"precio"', "el precio se relee del catálogo, no se guarda");
+    esperar(texto).noContiene('"recargo"', "el recargo lo pone el servidor al recalcular");
+    esperar(texto).noContiene('"total"');
+    esperar(carrito.lineas[0].elegidas).igual([{ grupo: "Tamaño", texto: "Mediana" }]);
+  });
+
+  test("una opción que el grupo no tiene NO entra al carrito", () => {
+    // Sin esta puerta, escribir cualquier cosa metería una opción inventada y
+    // el servidor tiraría la línea entera después, sin que el cliente entienda.
+    const { carrito } = empezarProducto(carritoVacio("t1"), pizza);
+    esperar(elegirOpcion(carrito, grupoUna, "Gigante")).igual(carrito);
+  });
+
+  test("en «elige una», la segunda pisa a la primera", () => {
+    let { carrito } = empezarProducto(carritoVacio("t1"), pizza);
+    carrito = elegirOpcion(carrito, grupoUna, "Pequeña");
+    carrito = elegirOpcion(carrito, grupoUna, "Mediana");
+    esperar(carrito.armando.elegidas).igual([{ grupo: "Tamaño", texto: "Mediana" }],
+      "sumar las dos cobraría los dos recargos");
+  });
+
+  test("en «elige varias», tocar dos veces lo mismo no lo cobra dos veces", () => {
+    const conExtras = { id: "p4", nombre: "Hamburguesa", precio: 800, variedades: [grupoVarias] };
+    let { carrito } = empezarProducto(carritoVacio("t1"), conExtras);
+    carrito = elegirOpcion(carrito, grupoVarias, "Queso");
+    carrito = elegirOpcion(carrito, grupoVarias, "Queso");
+    esperar(carrito.armando.elegidas.length).igual(1);
+  });
+
+  test("dos veces lo mismo se junta en una línea; con otras opciones no", () => {
+    let c = carritoVacio("t1");
+    c = empezarProducto(c, agua).carrito;
+    c = meterAlCarrito(c, 1);
+    c = empezarProducto(c, agua).carrito;
+    c = meterAlCarrito(c, 2);
+    esperar(c.lineas.length).igual(1, "en la cocina, dos renglones iguales se preparan por separado");
+    esperar(c.lineas[0].cantidad).igual(3);
+
+    let d = carritoVacio("t1");
+    d = empezarProducto(d, pizza).carrito;
+    d = elegirOpcion(d, grupoUna, "Pequeña");
+    d = meterAlCarrito(d, 1);
+    d = empezarProducto(d, pizza).carrito;
+    d = elegirOpcion(d, grupoUna, "Mediana");
+    d = meterAlCarrito(d, 1);
+    esperar(d.lineas.length).igual(2, "con piña y sin piña son dos cosas distintas");
+  });
+
+  test("el orden en que eligió no cambia si dos líneas son la misma", () => {
+    const a = huella("p1", [{ grupo: "A", texto: "x" }, { grupo: "B", texto: "y" }], "");
+    const b = huella("p1", [{ grupo: "B", texto: "y" }, { grupo: "A", texto: "x" }], "");
+    esperar(a).igual(b);
+  });
+
+  test("un producto que no cabe en el chat NO se empieza a armar", () => {
+    const imposible = { id: "p9", nombre: "Torta", precio: 3000,
+      variedades: [{ ...grupoTres, cantidad: 9 }] };
+    const antes = carritoVacio("t1");
+    const { carrito, veredicto } = empezarProducto(antes, imposible);
+    esperar(veredicto.cabe).falso();
+    esperar(carrito).igual(antes, "empezar y atascarse a la tercera pregunta es peor que no empezar");
+  });
+
+  test("nunca más de 99 de lo mismo", () => {
+    let { carrito } = empezarProducto(carritoVacio("t1"), agua);
+    carrito = meterAlCarrito(carrito, 5000);
+    esperar(carrito.lineas[0].cantidad).igual(MAX_POR_LINEA);
+  });
+});
+
+describe("Pedir por el chat — entender lo que contesta", () => {
+  test("las cantidades se entienden escritas como habla la gente", () => {
+    esperar(leerCantidad("2")).igual(2);
+    esperar(leerCantidad("quiero 3 por favor")).igual(3);
+    esperar(leerCantidad("dos")).igual(2);
+    esperar(leerCantidad("una docena")).igual(12,
+      "«una docena» empezó devolviendo UNO: lo largo tiene que ganar a lo corto");
+    esperar(leerCantidad("media docena")).igual(6);
+    esperar(leerCantidad("100")).igual(MAX_POR_LINEA);
+  });
+
+  test("lo que no se entiende devuelve nulo, no cero ni uno", () => {
+    // Tratarlo como 0 borraría el producto sin decir nada; como 1 le cobraría
+    // uno que quizá no quería. Las dos son peores que volver a preguntar.
+    esperar(leerCantidad("")).igual(null);
+    esperar(leerCantidad("no sé")).igual(null);
+    esperar(leerCantidad("0")).igual(null);
+    esperar(leerCantidad("unos cuantos")).igual(null, "«unos» no es «uno»");
+  });
+
+  test("el teléfono no se pregunta: se sabe desde donde escriben", () => {
+    const puestas = loQueYaSabemos(preguntasEntrega, { telefono: "+507 6217-1875", nombre: "Alex" });
+    esperar(puestas.telefono).igual("50762171875", "se guarda solo con dígitos, como el CRM");
+    esperar(puestas.nombre).igual("Alex");
+    esperar(puestas.direccion).igual(undefined, "la dirección sí hay que preguntarla");
+  });
+
+  test("el teléfono se reconoce por su TIPO, se llame como se llame", () => {
+    // Mucha hoja trae la pregunta con nombre propio —«A qué WhatsApp te
+    // escribo», «Celular de contacto»— y el negocio la marca como teléfono.
+    // Fiarse solo del texto de la etiqueta dejaría esa casilla sin rellenar y
+    // el bot preguntaría un número que ya tiene delante.
+    const raras = [{ id: "wa", etiqueta: "A qué número te escribo", tipo: "telefono", obligatoria: true }];
+    esperar(loQueYaSabemos(raras, { telefono: "50762171875" })).igual({ wa: "50762171875" });
+  });
+
+  test("sin teléfono conocido no se inventa nada", () => {
+    esperar(loQueYaSabemos(preguntasEntrega, {})).igual({});
+  });
+
+  test("una respuesta vacía a algo obligatorio NO avanza", () => {
+    const c = cerrarCarrito(carritoVacio("t1"));
+    esperar(contestar(c, preguntasEntrega[0], "   ")).igual(c, "hay que volver a preguntar");
+  });
+
+  test("una respuesta buena avanza a la siguiente pregunta", () => {
+    const c = cerrarCarrito(carritoVacio("t1"));
+    const d = contestar(c, preguntasEntrega[0], "Ana Pérez");
+    esperar(d.respuestas.nombre).igual("Ana Pérez");
+    esperar(d.pregunta).igual(1);
+  });
+
+  test("las filas de una variedad enseñan el recargo y respetan los topes de Meta", () => {
+    const filas = filasDeVariedad(grupoUna, [], "$", false);
+    esperar(filas.length).igual(2);
+    esperar(filas[1].descripcion).igual("+$2.50", "enterarse del recargo al final tumba el pedido");
+    esperar(filas[0].descripcion).igual(undefined, "sin recargo no se pinta nada");
+    for (const f of filas) esperar(f.titulo.length <= 24).verdadero("Meta corta a 24 y rechaza el mensaje");
+  });
+
+  test("«elige varias» siempre trae su salida, y no reofrece lo ya puesto", () => {
+    const filas = filasDeVariedad(grupoVarias, ["Queso"], "$", true);
+    esperar(filas.some((f) => f.id === "op-listo")).verdadero();
+    esperar(filas.some((f) => f.titulo === "Queso")).falso("volver a tocarlo no haría nada");
+  });
+
+  test("se distingue una opción de «ya terminé»", () => {
+    esperar(opcionElegida("op-listo")).igual({ listo: true, texto: null });
+    esperar(opcionElegida("op-Salmón a la plancha")).igual({ listo: false, texto: "Salmón a la plancha" });
+    esperar(opcionElegida("cualquier cosa")).igual({ listo: false, texto: null });
+  });
+
+  test("cuántas cosas lleva, para poder decírselo", () => {
+    let c = carritoVacio("t1");
+    c = empezarProducto(c, agua).carrito;
+    c = meterAlCarrito(c, 3);
+    esperar(cuantasCosas(c)).igual(3);
+    esperar(cuantasCosas(carritoVacio("t1"))).igual(0);
   });
 });
 

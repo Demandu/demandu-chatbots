@@ -438,12 +438,27 @@ async function waPost(pnid: string, token: string, payload: any): Promise<Result
 function sendText(pnid: string, token: string, to: string, body: string) {
   return waPost(pnid, token, { to, type: "text", text: { body: body.slice(0, 4096) } });
 }
-function sendButtons(pnid: string, token: string, to: string, body: string, buttons: any[]) {
+/**
+ * Opciones, con su pie.
+ *
+ * EL PIE ES LA LÍNEA GRIS PEQUEÑA que WhatsApp pinta DENTRO del mensaje de
+ * opciones, debajo del texto. Es donde va el recordatorio de los atajos
+ * («escribe 0 para volver al inicio»): ahí se lee sin estorbar y no ocupa un
+ * mensaje entero de la conversación.
+ *
+ * SESENTA CARACTERES Y NI UNO MÁS, y Meta no perdona: rechaza el mensaje
+ * ENTERO —opciones incluidas— si te pasas. Por eso el pie se recorta aquí, en
+ * el único sitio por el que pasan todas las opciones, y no en cada sitio que
+ * quiera poner uno.
+ */
+function sendButtons(pnid: string, token: string, to: string, body: string, buttons: any[], footer?: string) {
   const opts = buttons.slice(0, 10);
+  const pie = String(footer ?? "").trim();
+  const conPie = pie ? { footer: { text: pie.slice(0, 60) } } : {};
   if (opts.length <= 3) {
-    return waPost(pnid, token, { to, type: "interactive", interactive: { type: "button", body: { text: (body || "Elige una opción").slice(0, 1024) }, action: { buttons: opts.map((b) => ({ type: "reply", reply: { id: b.id, title: (b.label || "Opción").slice(0, 20) } })) } } });
+    return waPost(pnid, token, { to, type: "interactive", interactive: { type: "button", body: { text: (body || "Elige una opción").slice(0, 1024) }, ...conPie, action: { buttons: opts.map((b) => ({ type: "reply", reply: { id: b.id, title: (b.label || "Opción").slice(0, 20) } })) } } });
   }
-  return waPost(pnid, token, { to, type: "interactive", interactive: { type: "list", body: { text: (body || "Elige una opción").slice(0, 1024) }, action: { button: "Ver opciones", sections: [{ title: "Opciones", rows: opts.map((b) => ({ id: b.id, title: (b.label || "Opción").slice(0, 24) })) }] } } });
+  return waPost(pnid, token, { to, type: "interactive", interactive: { type: "list", body: { text: (body || "Elige una opción").slice(0, 1024) }, ...conPie, action: { button: "Ver opciones", sections: [{ title: "Opciones", rows: opts.map((b) => ({ id: b.id, title: (b.label || "Opción").slice(0, 24) })) }] } } });
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -2466,6 +2481,222 @@ async function mandarEstadoDePedido(ctx: any, node: any): Promise<string | undef
   return salidaDe(ctx, node, "ok-") ?? defaultNext(ctx.flow, node);
 }
 
+/* ── Bloque «Pedir por el chat» ─────────────────────────────────────────────── */
+
+/**
+ * EL MOTOR NO SABE PEDIR, Y ES A PROPÓSITO.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Aquí no se decide nada del pedido: ni qué se pregunta, ni en qué orden, ni
+ * cuánto suma, ni cuándo se crea. Todo eso vive en la plataforma
+ * (`src/lib/tienda/conversacionDePedido.ts`) y este motor hace de cartero: le
+ * manda lo que la persona tocó y recibe el carrito nuevo —que guarda tal cual,
+ * sin mirarlo— y los mensajes ya escritos.
+ *
+ * POR QUÉ NO SE HACE AQUÍ, TENIENDO LA LLAVE DE LA BASE. Porque hay DOS
+ * motores que no comparten un solo archivo: este, en Deno, y el del widget web,
+ * en Node. Lo que se escribe dos veces se separa; y con un menú eso es un texto
+ * distinto, pero con un PEDIDO es cobrar distinto según por dónde escribió el
+ * cliente. Es el mismo motivo por el que el bloque de calendario no habla con
+ * Google: el cálculo vive en la web y el motor pregunta.
+ *
+ * SI LA PLATAFORMA NO CONTESTA, NO SE IMPROVISA UN PEDIDO. Se avisa y se sale
+ * por «no se pudo»: un pedido a medias, cobrado a medias, es mucho peor que un
+ * «ahora no puedo, escríbeme en un momento».
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function pedirALaTienda(cuerpo: Record<string, any>): Promise<any> {
+  const base = Deno.env.get("PLATAFORMA_URL") ?? "https://platform.demandu.tech";
+  const llave = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const ctl = new AbortController();
+  const reloj = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const r = await fetch(`${base}/api/motor/pedido`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-demandu-motor": llave },
+      body: JSON.stringify(cuerpo),
+      signal: ctl.signal,
+    });
+    const crudo = await r.text();
+    if (!r.ok) {
+      // SE REGISTRA EL PORQUÉ, NO SOLO EL QUÉ. Un 401 y una tienda apagada le
+      // enseñan lo mismo al cliente y son dos mundos distintos para arreglar.
+      console.error(`[pedido] la plataforma respondió ${r.status}: ${crudo.slice(0, 200)}`);
+      return { __fallo: `http ${r.status}` };
+    }
+    try { return JSON.parse(crudo); } catch {
+      console.error(`[pedido] respuesta ilegible: ${crudo.slice(0, 200)}`);
+      return { __fallo: "respuesta ilegible" };
+    }
+  } catch (e) {
+    console.error("[pedido] no contestó:", e);
+    return { __fallo: "sin respuesta" };
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
+/**
+ * Lo mismo que el mensaje interactivo, pero escrito.
+ *
+ * ES LA RED DE SEGURIDAD DE TODO EL BLOQUE. Meta rechaza listas y botones por
+ * motivos que no dependen de nosotros —cuentas nuevas, números sin verificar,
+ * un título con un carácter raro— y sin esto el cliente se quedaría mirando un
+ * mensaje que nunca llega, a mitad de un pedido.
+ *
+ * Y SE PUEDE CONTESTAR ESCRIBIENDO: la plataforma acepta el nombre del producto
+ * o de la opción, no solo el identificador de la fila. Así el respaldo no es
+ * una disculpa, es otra forma de pedir.
+ */
+function pedidoComoTexto(m: any): string {
+  const partes: string[] = [String(m?.texto ?? "").trim()];
+  const opciones = m?.tipo === "lista" ? (m.filas ?? []) : (m.botones ?? []);
+  for (const o of opciones) {
+    const extra = o.descripcion ? ` — ${o.descripcion}` : "";
+    partes.push(`• ${o.titulo}${extra}`);
+  }
+  if (opciones.length) partes.push("", "Escríbeme cuál quieres.");
+  return partes.filter((x) => x !== undefined).join("\n").trim();
+}
+
+async function enviarMensajeDePedido(ctx: any, m: any) {
+  if (!m) return;
+
+  if (m.tipo === "texto") {
+    await say(ctx, String(m.texto ?? ""));
+    return;
+  }
+
+  let interactive: any = null;
+
+  if (m.tipo === "botones") {
+    interactive = {
+      type: "button",
+      body: { text: String(m.texto ?? "").slice(0, 1024) },
+      action: {
+        buttons: (m.botones ?? []).slice(0, 3).map((b: any) => ({
+          type: "reply",
+          // VEINTE CARACTERES EN EL BOTÓN Y 256 EN EL ID: pasarse rechaza el
+          // mensaje entero, con un error que no dice cuál de los dos fue.
+          reply: { id: String(b.id).slice(0, 256), title: String(b.titulo ?? "Opción").slice(0, 20) },
+        })),
+      },
+    };
+  } else if (m.tipo === "lista") {
+    interactive = {
+      type: "list",
+      body: { text: String(m.texto ?? "").slice(0, 1024) },
+      action: {
+        button: String(m.boton ?? "Elegir").slice(0, 20),
+        sections: [
+          {
+            title: String(m.seccion ?? "Opciones").slice(0, 24),
+            rows: (m.filas ?? []).slice(0, 10).map((f: any) => ({
+              id: String(f.id).slice(0, 200),
+              title: String(f.titulo ?? "").slice(0, 24),
+              ...(f.descripcion ? { description: String(f.descripcion).slice(0, 72) } : {}),
+            })),
+          },
+        ],
+      },
+    };
+  } else if (m.tipo === "enlace") {
+    interactive = {
+      type: "cta_url",
+      body: { text: String(m.texto ?? "").slice(0, 1024) },
+      action: {
+        name: "cta_url",
+        parameters: { display_text: String(m.boton ?? "Abrir").slice(0, 20), url: String(m.url ?? "") },
+      },
+    };
+  }
+
+  if (!interactive) return;
+
+  const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
+  if (!envio?.ok) {
+    console.error("[pedido] Meta rechazó el interactivo, va en texto:", JSON.stringify(envio));
+    await say(ctx, m.tipo === "enlace" ? `${m.texto}\n\n${m.url}` : pedidoComoTexto(m));
+    return;
+  }
+  await registrar(ctx, String(m.texto ?? ""), envio, { pedido_por_chat: m.tipo });
+}
+
+/** Quién es esta persona en el CRM, para atarle el pedido desde el primer momento. */
+async function contactoDeEstaCharla(ctx: any): Promise<string | null> {
+  try {
+    const { data } = await ctx.db
+      .from("contacts").select("id")
+      .eq("org_id", ctx.orgId).eq("channel", "whatsapp").eq("external_id", ctx.to)
+      .maybeSingle();
+    return data?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Un turno del pedido: se manda lo que dijo y se envía lo que conteste.
+ *
+ * DEVUELVE `espera` CUANDO LA CONVERSACIÓN SIGUE. Sin eso, la lista sale y el
+ * flujo se va de largo: el cliente toca un producto y no pasa nada. Es el mismo
+ * cuidado que ya necesitó el bloque de catálogo.
+ */
+async function conversarPedido(
+  ctx: any,
+  node: any,
+  carrito: any,
+  respuesta: string,
+): Promise<{ espera: any | null; siguiente: string | undefined }> {
+  const noSePudo = () => ({
+    espera: null,
+    siguiente: salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node),
+  });
+
+  const tienda = await tiendaDeEsteBot(ctx);
+  if (!tienda) {
+    console.error("[pedido] este bot no tiene tienda activa:", ctx.botId);
+    return noSePudo();
+  }
+
+  const r = await pedirALaTienda({
+    accion: "conversar",
+    slug: tienda.slug,
+    carrito: carrito ?? null,
+    respuesta: String(respuesta ?? ""),
+    saludo: interp(String(node.data?.text ?? "").trim(), ctx.vars),
+    contacto_id: await contactoDeEstaCharla(ctx),
+    conversacion_id: ctx.convId,
+    telefono: ctx.to,
+    nombre: ctx.vars?.nombre ?? null,
+  });
+
+  if (r?.__fallo) {
+    // NO SE INVENTA NADA. Un pedido a medias es peor que un «ahora no puedo».
+    await say(ctx, "Ahora mismo no puedo tomar el pedido. Escríbeme en un momento y lo cerramos.");
+    return noSePudo();
+  }
+
+  for (const m of r.mensajes ?? []) await enviarMensajeDePedido(ctx, m);
+
+  // `salida` nula = seguimos pidiendo. El carrito viaja DENTRO de `awaiting`, y
+  // eso le da justo la vida que tiene que tener: mientras el bloque conduce la
+  // charla existe, y en cuanto el flujo se va, desaparece. Un carrito a medias
+  // resucitando tres días después es peor que empezar de nuevo.
+  if (r.salida === null || r.salida === undefined) {
+    return { espera: { nodeId: node.id, type: "tienda_pedir", carrito: r.carrito ?? null }, siguiente: undefined };
+  }
+
+  if (r.salida === "ok") {
+    ctx.vars.pedido_numero = String(r.pedido?.numero ?? "");
+    ctx.vars.pedido_codigo = String(r.pedido?.codigo ?? "");
+    ctx.vars.pedido_total = String(r.pedido?.total ?? "");
+    return { espera: null, siguiente: salidaDe(ctx, node, "ok-") ?? defaultNext(ctx.flow, node) };
+  }
+
+  return noSePudo();
+}
+
 async function say(ctx: any, body: string) {
   if (esEjemplo(body)) return; // bloque sin configurar: no molestamos al cliente
   const text = interp(body, ctx.vars);
@@ -2473,12 +2704,51 @@ async function say(ctx: any, body: string) {
   const envio = await sendText(ctx.pnid, ctx.token, ctx.to, text);
   await registrar(ctx, text, envio);
 }
+/**
+ * El recordatorio de los atajos, UNA SOLA VEZ Y DONDE MENOS ESTORBA.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ESTO SALÍA DOS VECES Y UNA DE ELLAS PARA SIEMPRE. Había dos caminos que no se
+ * hablaban entre sí: `onStart` lo mandaba como MENSAJE SUELTO al terminar el
+ * turno (una vez por conversación, eso sí), y `onOptions` lo pegaba al final
+ * del texto de CADA menú, sin llevar cuenta de nada. Con los dos encendidos
+ * —que es como viene— el cliente lo recibía pegado al primer menú, otra vez
+ * como mensaje aparte un segundo después, y luego otra vez en cada menú, para
+ * siempre. Se veía como si el bot se repitiera solo.
+ *
+ * Ahora hay UNA cuenta: sale una vez por conversación, por el camino que toque
+ * primero, y quien lo manda lo apunta para que el otro no lo repita.
+ *
+ * ── Y VA EN EL PIE, NO PEGADO AL TEXTO ────────────────────────────────────
+ *
+ * El pie es la línea gris pequeña que WhatsApp pinta dentro del mensaje de
+ * opciones. Ahí se lee sin competir con lo que el negocio quiso decir. Pegado
+ * al cuerpo parecía parte del mensaje, y en un menú de tres líneas se comía el
+ * mensaje entero.
+ *
+ * SI NO CABE EN SESENTA, VUELVE AL CUERPO. Meta rechaza el mensaje ENTERO si el
+ * pie se pasa —opciones incluidas—, y quedarse sin menú por un recordatorio
+ * sería mucho peor que verlo pegado al texto.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function recordatorioDeAtajos(ctx: any): { pie?: string; pegado?: string } {
+  const hint = ctx.atajos?.hint;
+  if (!hint?.enabled || !hint?.onOptions || !hint?.text) return {};
+  if (ctx.hintYaSalio || ctx.hintPrevio) return {};
+
+  ctx.hintYaSalio = true;
+  // Los asteriscos son negrita del cuerpo; en el pie salen como asteriscos y
+  // encima gastan cuatro de los sesenta caracteres.
+  const limpio = String(hint.text).replace(/\*/g, "").trim();
+  return limpio.length <= 60 ? { pie: limpio } : { pegado: String(hint.text) };
+}
+
 async function sayButtons(ctx: any, body: string, node: any) {
   let text = interp(body, ctx.vars);
-  const hint = ctx.atajos?.hint;
-  if (hint?.enabled && hint?.onOptions && hint?.text) text = `${text}\n\n${hint.text}`;
+  const recordatorio = recordatorioDeAtajos(ctx);
+  if (recordatorio.pegado) text = `${text}\n\n${recordatorio.pegado}`;
   const buttons = node.data.buttons ?? [];
-  const envio = await sendButtons(ctx.pnid, ctx.token, ctx.to, text || "Elige una opción", buttons);
+  const envio = await sendButtons(ctx.pnid, ctx.token, ctx.to, text || "Elige una opción", buttons, recordatorio.pie);
   await registrar(ctx, text || "(opciones)", envio, {
     buttons: buttons.map((b: any) => ({ id: b.id, label: b.label })),
   });
@@ -2567,6 +2837,15 @@ async function runFrom(startId: string | undefined, ctx: any) {
 
       case "tienda_pedido": {
         current = await mandarEstadoDePedido(ctx, node);
+        break;
+      }
+
+      case "tienda_pedir": {
+        // Empieza sin carrito: `null` es lo que le dice a la plataforma que
+        // esta es la primera vuelta y que toca enseñar el catálogo.
+        const r = await conversarPedido(ctx, node, null, "");
+        if (r.espera) return r.espera;
+        current = r.siguiente;
         break;
       }
 
@@ -2816,6 +3095,12 @@ async function handleIncoming(opts: any) {
     // ¿Salió algo hacia el cliente en este turno? Lo marca `registrar`, por
     // donde pasa todo lo que se envía. Ver la red de seguridad del final.
     dijoAlgo: false,
+    // El recordatorio de los atajos («escribe 0 para volver al inicio») sale
+    // UNA vez por conversación. `hintPrevio` es «ya salió en un turno anterior»
+    // y `hintYaSalio` es «ya salió en este». Sin los dos, el aviso se repetía
+    // pegado a cada menú, para siempre.
+    hintPrevio: !!opts.flowState?.hintEnviado,
+    hintYaSalio: false,
     // Si un bloque «Redirigir» cambió de bot a mitad del recorrido, aquí queda
     // el id del flujo que se está ejecutando de verdad.
     flowIdNuevo: undefined as string | undefined,
@@ -2948,7 +3233,7 @@ async function handleIncoming(opts: any) {
         const siguiente = await mandarCatalogo(ctx, node, Number(mas[1]));
         if (siguiente === undefined) {
           await avanzarRecorrido(opts.db, runId, 1, node.id);
-          return { vars, awaiting: { nodeId: node.id, type: "tienda_catalogo" }, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+          return { vars, awaiting: { nodeId: node.id, type: "tienda_catalogo" }, hintEnviado: (opts.flowState?.hintEnviado ?? false) || !!ctx.hintYaSalio, run_id: runId, ofreciAgente: ctx.ofreciAgente };
         }
         startId = siguiente;
       } else if (prod && node) {
@@ -2964,6 +3249,20 @@ async function handleIncoming(opts: any) {
         const b = (node.data?.buttons ?? []).find((x: any) => String(x.id ?? "").startsWith("no-"));
         startId = b ? buttonTarget(opts.flow, node.id, b) : defaultNext(opts.flow, node);
       }
+    } else if (awaiting.type === "tienda_pedir") {
+      // ── OTRA VUELTA DEL PEDIDO ───────────────────────────────────────
+      // El carrito viene DENTRO de `awaiting` y se devuelve tal cual: este
+      // motor no lo lee ni lo toca. Guardarlo en `vars` habría sido más
+      // cómodo y peor — `vars` se interpola en los textos que ve el cliente,
+      // y un carrito entero acabaría pintado en un mensaje.
+      if (node) {
+        const r = await conversarPedido(ctx, node, awaiting.carrito ?? null, opts.text);
+        if (r.espera) {
+          await avanzarRecorrido(opts.db, runId, 1, node.id);
+          return { vars, awaiting: r.espera, hintEnviado: (opts.flowState?.hintEnviado ?? false) || !!ctx.hintYaSalio, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+        }
+        startId = r.siguiente;
+      }
     } else if (awaiting.type === "buttons") {
       const t = opts.text.toLowerCase();
       const btn = (node?.data.buttons ?? []).find((b: any) => b.id === opts.text || (b.label ?? "").toLowerCase() === t);
@@ -2977,7 +3276,7 @@ async function handleIncoming(opts: any) {
         await sayButtons(ctx, node.data.text ?? "", node);
         // El recorrido sigue vivo: el lead está atorado en el mismo bloque.
         await avanzarRecorrido(opts.db, runId, 1, node.id);
-        return { vars, awaiting: { nodeId: node.id, type: "buttons" }, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+        return { vars, awaiting: { nodeId: node.id, type: "buttons" }, hintEnviado: (opts.flowState?.hintEnviado ?? false) || !!ctx.hintYaSalio, run_id: runId, ofreciAgente: ctx.ofreciAgente };
       }
     }
   } else {
@@ -3039,11 +3338,19 @@ async function handleIncoming(opts: any) {
   // acaba de pedir lo hace dudar de si su solicitud entró.
   const hint = ctx.atajos?.hint;
   const acabaDePasarConAlguien = ctx.finMotivo === "agente";
-  if (hint?.enabled && hint?.onStart && hint?.text && !opts.flowState?.hintEnviado && !acabaDePasarConAlguien) {
+  // SI YA SALIÓ DENTRO DE UN MENÚ EN ESTE MISMO TURNO, NO SE REPITE SUELTO. Era
+  // el caso más común —casi todos los flujos empiezan con un menú— y el
+  // cliente recibía el mismo aviso dos veces con un segundo de diferencia.
+  if (
+    hint?.enabled && hint?.onStart && hint?.text &&
+    !opts.flowState?.hintEnviado && !ctx.hintYaSalio && !acabaDePasarConAlguien
+  ) {
     await say(ctx, hint.text);
     return { vars, awaiting: nextAwait, hintEnviado: true, run_id: runId, ofreciAgente: ctx.ofreciAgente, flow_id: ctx.flowIdNuevo };
   }
-  return { vars, awaiting: nextAwait, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId, ofreciAgente: ctx.ofreciAgente, flow_id: ctx.flowIdNuevo };
+  // `ctx.hintYaSalio` cuenta como enviado: si no, el turno siguiente lo
+  // volvería a pegar al menú y estaríamos igual que antes.
+  return { vars, awaiting: nextAwait, hintEnviado: (opts.flowState?.hintEnviado ?? false) || !!ctx.hintYaSalio, run_id: runId, ofreciAgente: ctx.ofreciAgente, flow_id: ctx.flowIdNuevo };
 }
 
 // ---- selección de flujo por disparador ----
@@ -3210,7 +3517,22 @@ function origenDelAnuncio(referral: any): any | null {
   };
 }
 
-function json(o: any) { return new Response(JSON.stringify(o), { headers: { "Content-Type": "application/json" } }); }
+/**
+ * La respuesta JSON del webhook.
+ *
+ * EL SEGUNDO ARGUMENTO ES EL CÓDIGO, y faltaba: dos sitios ya llamaban a
+ * `json({ ok: false }, 403)` y `json({ ok: false }, 500)` y el código se caía
+ * al suelo en silencio — Meta recibía un 200 y daba por bueno un webhook con
+ * firma inválida o un fallo del servidor, así que no lo reintentaba nunca.
+ * TypeScript no lo cazó porque este archivo no se compila en el proyecto: lo
+ * ejecuta Deno tal cual.
+ */
+function json(o: any, status = 200) {
+  return new Response(JSON.stringify(o), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 // ---- estados de entrega (difusiones) ----
 const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3, replied: 4 };

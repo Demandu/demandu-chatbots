@@ -830,10 +830,26 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
           pantalla: la tienda sale sola de la que tiene vinculada este chatbot.
           Preguntarla otra vez aquí sería pedir algo que la plataforma ya sabe,
           y es así como se acaba con un flujo apuntando a la tienda de otro. */}
-      {(node.type === "tienda" || node.type === "tienda_catalogo" || node.type === "tienda_pedido") && (
+      {(node.type === "tienda" || node.type === "tienda_catalogo" || node.type === "tienda_pedido" || node.type === "tienda_pedir") && (
         <div className="mb-3 rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-xs text-ink-2">
           Usa la tienda vinculada a este chatbot. No hace falta escribir la dirección: si algún
           día la cambias, tus conversaciones siguen funcionando.
+        </div>
+      )}
+
+      {/* «Pedir por el chat» NO TIENE AJUSTES, y decirlo es parte del bloque.
+          Los productos, sus opciones, sus precios, el formulario de entrega y
+          el cobro ya están en la tienda; repetirlos aquí sería pedirle al
+          negocio que mantenga dos veces lo mismo, y el día que se separen el
+          chat vendería a un precio y la tienda a otro. */}
+      {node.type === "tienda_pedir" && (
+        <div className="mb-3 rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-xs text-ink-2">
+          Lo único que se escribe aquí es el saludo. Los productos, sus opciones, el formulario de
+          entrega y el cobro con Yappy salen de tu tienda tal y como los tengas.
+          <span className="mt-1 block text-ink-3">
+            Los productos con demasiadas opciones para preguntarlas por chat abren su página en la
+            tienda, ya listos para agregar.
+          </span>
         </div>
       )}
 
