@@ -926,6 +926,83 @@ describe("Puerta de agenda del motor", () => {
     );
   });
 
+  test("WhatsApp tiene la IA de respaldo, y con las mismas reglas que el widget", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // NO LA TENÍA. `desvio.ts` decide qué pasa cuando el cliente se sale del
+    // guion, y lo usaban el widget e Instagram — no WhatsApp, que es el canal
+    // por el que entra casi todo el mundo. El cliente pagaba la IA de respaldo,
+    // la veía funcionar al probar el widget, y en WhatsApp no existía: el flujo
+    // terminado repetía el saludo, y una pregunta se guardaba como si fuera el
+    // dato que se había pedido — y así viajaba al CRM.
+    //
+    // Se comprueba también que las LISTAS coincidan: son dos copias en dos
+    // lenguajes, y el día que se separen el mismo bot entenderá cosas distintas
+    // según por dónde le escriban.
+    // ─────────────────────────────────────────────────────────────────────────
+    const motor = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+    );
+    esperar(motor.includes("decidirDesvio(")).verdadero(
+      "el motor de WhatsApp no desvía a la IA cuando el cliente se sale del guion",
+    );
+    esperar(motor.includes("puenteDeVuelta(")).verdadero(
+      "sin el puente, el cliente recibe la respuesta y se queda sin saber cómo seguir",
+    );
+
+    const arranques = (t) => {
+      const i = t.indexOf("const ARRANQUES");
+      return i < 0 ? [] : (t.slice(i, t.indexOf("];", i)).match(/"[^"]+"/g) ?? []).sort();
+    };
+    const web = arranques(fs.readFileSync(path.join(SRC, "lib/flow/desvio.ts"), "utf8"));
+    const den = arranques(motor);
+    esperar(web.length > 10).verdadero("no encontré la lista del widget, revisa esta prueba");
+    esperar(den.join(",")).igual(
+      web.join(","),
+      "las dos listas de «esto parece una pregunta» se separaron: el mismo bot entendería distinto según el canal",
+    );
+  });
+
+  test("HAY UN SOLO MOTOR DE WHATSAPP, y ninguna firma falla abierta", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // HABÍA DOS, Y EL SEGUNDO ERA UN PROTOTIPO DE 2023 QUE SEGUÍA DESPLEGADO.
+    //
+    // `src/app/api/webhooks/whatsapp/route.ts` verificaba la firma de Meta,
+    // resolvía el cliente y procesaba mensajes de verdad — pero sin
+    // deduplicación (cada reintento de Meta = flujo completo otra vez, IA
+    // cobrada dos veces), sin atajos, sin IA, sin analítica, y eligiendo el
+    // flujo por `version` en vez de por disparador. Se desplegaba con todo
+    // `src/` en cada publicación.
+    //
+    // Y su comprobación de firma FALLABA ABIERTA:
+    //
+    //     if (!secret) return true;   // «best-effort»
+    //
+    // Con la variable de entorno ausente —una rotación a medias, un despliegue
+    // de vista previa— cualquiera podía inyectar mensajes entrantes falsos en
+    // la Bandeja de cualquier cliente y disparar sus flujos y su IA.
+    //
+    // Un segundo motor no se nota nunca: los dos «funcionan». Por eso esto se
+    // prueba en vez de confiar en que nadie lo vuelva a crear.
+    // ─────────────────────────────────────────────────────────────────────────
+    const rutas = ARCHIVOS.filter(
+      (a) => /app\/api\/webhooks\/.*whatsapp/.test(a.ruta) || /lib\/flow\/runtime\.ts$/.test(a.ruta),
+    );
+    esperar(rutas.map((a) => a.ruta).join(", ")).igual(
+      "",
+      "el motor de WhatsApp vive en supabase/functions/whatsapp: un segundo motor procesa los mismos mensajes con otras reglas",
+    );
+
+    // NINGUNA firma puede dejar pasar por no tener el secreto. El webhook de
+    // Instagram falla cerrado (503) y es el criterio de toda la plataforma.
+    const abiertas = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      const t = sinComentarios(texto);
+      if (!/firma|signature/i.test(t)) continue;
+      if (/if\s*\(\s*!\s*secret\s*\)\s*return\s+true/.test(t)) abiertas.push(ruta);
+    }
+    esperar(abiertas.join(", ")).igual("", "hay una comprobación de firma que deja pasar si falta el secreto");
+  });
+
   test("el recordatorio de atajos CABE en el pie del mensaje", () => {
     // ─────────────────────────────────────────────────────────────────────────
     // Va en el pie —la línea gris pequeña dentro del cuadro de opciones— y Meta

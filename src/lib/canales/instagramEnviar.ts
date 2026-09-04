@@ -99,14 +99,72 @@ async function igPost(ruta: string, token: string, cuerpo: any): Promise<Resulta
   }
 }
 
-/** Un mensaje directo normal, dentro de la ventana de 24 h. */
-export function enviarDm(igUserId: string, token: string, destinatario: string, texto: string) {
-  return igPost(`${igUserId}/messages`, token, {
-    recipient: { id: destinatario },
+/** Una opción que el cliente puede tocar. */
+export type OpcionDm = { id: string; label: string };
+
+/**
+ * Los topes de los botones rápidos de Instagram. Pasarse hace que Meta rechace
+ * el MENSAJE ENTERO, así que el cliente se queda sin la pregunta y sin las
+ * opciones.
+ */
+export const MAX_OPCIONES_IG = 13;
+const MAX_TITULO_IG = 20;
+const MAX_CARGA_IG = 1000;
+
+/**
+ * Un mensaje directo, con sus opciones si las tiene.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LOS MENÚS LLEGABAN SIN OPCIONES. Esta función solo aceptaba texto, así que
+ * cada bloque de opciones salía a Instagram como una frase suelta: el lead veía
+ * la pregunta y nada que tocar. Se quedaba en un callejón sin salida, y en la
+ * Bandeja el agente tampoco veía qué se le había ofrecido.
+ *
+ * ── Y SE REPITEN EN EL TEXTO, A PROPÓSITO ─────────────────────────────────
+ *
+ * Los botones rápidos de Instagram SOLO SE VEN EN EL MÓVIL. En la web y en el
+ * escritorio no se pintan: quien escribe desde ahí vería otra vez la pregunta
+ * pelada, y como el motor le vuelve a mandar el mismo menú cuando no entiende,
+ * se quedaría dando vueltas para siempre.
+ *
+ * Por eso las opciones van también escritas. En el móvil es una repetición
+ * corta; en el escritorio es la única forma de saber qué se puede contestar. Y
+ * el motor acepta la respuesta escrita —compara con la etiqueta del botón— así
+ * que escribirla funciona igual que tocarla.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function enviarDm(
+  igUserId: string,
+  token: string,
+  destinatario: string,
+  texto: string,
+  opciones?: OpcionDm[],
+) {
+  const ops = (opciones ?? [])
+    .filter((o) => o && o.id && String(o.label ?? "").trim())
+    .slice(0, MAX_OPCIONES_IG);
+
+  const cuerpo = ops.length
+    ? [texto, "", ...ops.map((o) => `• ${o.label}`)].join("\n")
+    : texto;
+
+  const message: Record<string, unknown> = {
     // 1000 caracteres es el tope de Instagram, muy por debajo de WhatsApp.
     // Cortar aquí es preferible a que Meta rechace el mensaje entero.
-    message: { text: texto.slice(0, 1000) },
-  });
+    text: cuerpo.slice(0, 1000),
+  };
+
+  if (ops.length) {
+    message.quick_replies = ops.map((o) => ({
+      content_type: "text",
+      // VEINTE CARACTERES en el título y mil en la carga. Instagram no avisa:
+      // rechaza el mensaje completo.
+      title: o.label.trim().slice(0, MAX_TITULO_IG),
+      payload: String(o.id).slice(0, MAX_CARGA_IG),
+    }));
+  }
+
+  return igPost(`${igUserId}/messages`, token, { recipient: { id: destinatario }, message });
 }
 
 /** Manda una imagen o un vídeo por DM, por enlace. */

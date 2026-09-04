@@ -204,7 +204,13 @@ async function atender(e: EventoInstagram): Promise<void> {
   // El mensaje del cliente se guarda SIEMPRE, conteste el bot o no. Si un
   // agente tiene la conversación tomada, el bot se calla pero el mensaje tiene
   // que estar en la Bandeja: si no, el equipo no ve lo que le escribieron.
-  await admin.from("messages").insert({
+  // ── SI ESTO FALLA, QUE SE SEPA ──────────────────────────────────────────
+  // Este `insert` estuvo un día entero fallando en silencio —lo tumbaba un
+  // disparador de la base— y el resultado fue que NINGÚN mensaje de cliente se
+  // guardaba, en ningún canal. El bot contestaba perfecto, así que desde fuera
+  // parecía que hablaba solo. No apareció un error en ninguna parte porque
+  // nadie miraba el resultado.
+  const { error: errEntrante } = await admin.from("messages").insert({
     conversation_id: conv.id,
     org_id: canal.org_id,
     direction: "inbound",
@@ -214,11 +220,15 @@ async function atender(e: EventoInstagram): Promise<void> {
       ig: {
         tipo: e.tipo,
         mid: e.id,
+        ...(e.respuestaRapida ? { respuesta_rapida: e.respuestaRapida } : {}),
         ...(e.historiaId ? { historia_id: e.historiaId } : {}),
         ...(e.adjuntos?.length ? { adjuntos: e.adjuntos } : {}),
       },
     },
   });
+  if (errEntrante) {
+    console.error("[ig] NO SE GUARDÓ EL MENSAJE DEL CLIENTE:", errEntrante.message);
+  }
   await admin
     .from("conversations")
     .update({ last_message_at: new Date().toISOString() })
@@ -227,7 +237,10 @@ async function atender(e: EventoInstagram): Promise<void> {
   // Un humano tomó el chat: el bot no interrumpe.
   if (conv.status === "assigned") return;
 
-  const salidas = await correrElFlujo(admin, bot, conv, texto, canal.org_id);
+  // AL MOTOR VA EL IDENTIFICADOR DEL BOTÓN, no la etiqueta. Es lo que decide por
+  // dónde sigue el flujo; la etiqueta ya quedó guardada arriba, que es lo que
+  // el agente tiene que leer en la Bandeja.
+  const salidas = await correrElFlujo(admin, bot, conv, e.respuestaRapida || texto, canal.org_id);
   for (const m of salidas) {
     await mandarYGuardar(admin, canal, conv.id, e.de!, m);
   }
@@ -545,19 +558,38 @@ async function correrElFlujo(
  * Bandeja ya sabe pintar con el motivo en cristiano.
  */
 async function mandarYGuardar(
-  admin: any, canal: any, conversationId: string, destinatario: string, m: { text?: string },
+  admin: any,
+  canal: any,
+  conversationId: string,
+  destinatario: string,
+  m: { text?: string; buttons?: { id: string; label: string }[] },
 ): Promise<void> {
   const texto = String(m?.text ?? "").trim();
-  if (!texto) return;
+  const opciones = (m?.buttons ?? []).filter((b) => b && b.id && String(b.label ?? "").trim());
+  if (!texto && !opciones.length) return;
 
-  const r = await enviarDm(canal.ig_user_id, canal.access_token, destinatario, texto);
+  // ── LAS OPCIONES VIAJAN, Y ANTES SE TIRABAN ────────────────────────────
+  // Esta función solo pasaba `text`, así que todo bloque de menú llegaba a
+  // Instagram como una frase suelta: el lead veía la pregunta y nada que
+  // tocar. Quedaba atorado, y el agente en la Bandeja tampoco veía qué se le
+  // había ofrecido.
+  const r = await enviarDm(canal.ig_user_id, canal.access_token, destinatario, texto, opciones);
 
-  await admin.from("messages").insert({
+  const { error } = await admin.from("messages").insert({
     conversation_id: conversationId,
     org_id: canal.org_id,
     direction: "outbound",
     sender: "bot",
     body: texto,
-    payload: r.ok ? {} : { no_entregado: { motivo: r.error, code: r.code ?? null } },
+    payload: {
+      // Se guardan para que la Bandeja pinte lo mismo que vio el cliente.
+      ...(opciones.length ? { buttons: opciones } : {}),
+      ...(r.ok ? {} : { no_entregado: { motivo: r.error, code: r.code ?? null } }),
+    },
   });
+
+  // SI NO SE PUDO GUARDAR, QUE SE SEPA. Un `insert` sin comprobar es cómo se
+  // estuvo perdiendo el mensaje de cada cliente durante un día entero sin que
+  // apareciera un solo error en ninguna parte.
+  if (error) console.error("[ig] no pude guardar la respuesta del bot:", error.message);
 }

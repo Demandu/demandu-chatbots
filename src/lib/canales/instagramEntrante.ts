@@ -38,6 +38,16 @@ export type EventoInstagram = {
   de: string | null;
   usuario: string | null;
   texto: string;
+  /**
+   * Si tocó un botón rápido, lo que ese botón llevaba dentro.
+   *
+   * VA APARTE DEL TEXTO A PROPÓSITO, igual que en WhatsApp. Instagram manda las
+   * dos cosas: `text` con la ETIQUETA que leyó la persona y `quick_reply.payload`
+   * con el IDENTIFICADOR de la opción. El motor necesita el identificador para
+   * saber por dónde sigue el flujo; la Bandeja necesita la etiqueta, porque un
+   * uuid en el historial no le dice nada a nadie.
+   */
+  respuestaRapida?: string;
   /** Id del mensaje o del comentario: sirve para no atender dos veces. */
   id: string | null;
   /** Solo en comentarios: la llave para responder (en público o en privado). */
@@ -95,6 +105,9 @@ export function leerEventos(cuerpo: any): EventoInstagram[] {
         de: texto(m?.sender?.id) || null,
         usuario: null,
         texto: texto(msg.text),
+        ...(texto(msg?.quick_reply?.payload)
+          ? { respuestaRapida: texto(msg.quick_reply.payload) }
+          : {}),
         id: texto(msg.mid) || null,
         cuando: typeof m?.timestamp === "number" ? m.timestamp : null,
         ...(adjuntos.length ? { adjuntos } : {}),

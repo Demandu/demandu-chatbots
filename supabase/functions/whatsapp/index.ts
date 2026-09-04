@@ -351,6 +351,78 @@ function detectarAtajo(texto: string, atajos: any): "reset" | "agent" | null {
  * Copia en Deno de `src/lib/flow/desvio.ts`. Si cambias una lista, cambia la
  * otra: el canal web y WhatsApp tienen que entender lo mismo.
  */
+/* ────────────────────────────────────────────────────────────────────────────
+ * ¿EL CLIENTE SE SALIÓ DEL FLUJO?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ESTO EXISTÍA EN EL WIDGET Y EN INSTAGRAM, Y NO EN WHATSAPP — el canal por el
+ * que entra casi todo el mundo. El cliente pagaba la IA de respaldo, la veía
+ * funcionar al probar el widget, y en WhatsApp no existía.
+ *
+ * Un flujo es un guion y la gente no habla en guiones. Sin esto pasaban las
+ * tres cosas que `src/lib/flow/desvio.ts` describe, todas malas:
+ *
+ *   1. El flujo terminó → el bot vuelve al saludo y repite como perico.
+ *   2. Hay botones → «No entendí esa respuesta». El cliente preguntó algo
+ *      legítimo y se le ignora.
+ *   3. Se pidió un dato → se guarda «¿hacen envíos a Chiriquí?» COMO SI FUERA
+ *      el correo del cliente, y así viaja al CRM.
+ *
+ * Copia en Deno de `src/lib/flow/desvio.ts`. Si cambias una lista, cambia la
+ * otra: hay una prueba estática que falla si se separan.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const ARRANQUES_DE_PREGUNTA = [
+  "que", "cual", "cuanto", "cuanta", "cuantos", "cuantas", "como", "cuando",
+  "donde", "quien", "porque", "por que", "para que", "a que", "de que",
+  "tienen", "tienes", "tiene", "hay", "puedo", "puedes", "pueden", "podria",
+  "sirve", "sirven", "acepta", "aceptan", "cuesta", "cuestan", "vale", "valen",
+  "manejan", "hacen", "haces", "venden", "vendes", "entregan", "envian",
+  "me puedes", "se puede", "es posible", "quisiera saber", "necesito saber",
+  "info", "informacion", "precio", "precios", "costo", "costos",
+];
+
+function pareceUnaPregunta(texto: string): boolean {
+  const t = normalizarAtajo(texto);
+  if (!t) return false;
+  if (t.includes("?")) return true;
+  return ARRANQUES_DE_PREGUNTA.some((a) => t === a || t.startsWith(a + " "));
+}
+
+type MotivoDesvio = null | "flujo_terminado" | "otra_cosa_en_botones" | "pregunta_en_captura";
+
+function decidirDesvio(e: {
+  esperando: { type: string; nodeId: string } | null | undefined;
+  capturaDato: boolean;
+  coincidioBoton: boolean;
+  tieneSalidaPorDefecto: boolean;
+  flujoTerminado: boolean;
+  texto: string;
+  iaDeRespaldo: boolean;
+}): MotivoDesvio {
+  if (!e.iaDeRespaldo) return null;
+  if (!String(e.texto ?? "").trim()) return null;
+
+  if (e.esperando?.type === "buttons") {
+    if (e.coincidioBoton || e.tieneSalidaPorDefecto) return null;
+    return "otra_cosa_en_botones";
+  }
+  if (e.esperando?.type === "question") {
+    if (!e.capturaDato) return null;
+    return pareceUnaPregunta(e.texto) ? "pregunta_en_captura" : null;
+  }
+  if (!e.esperando && e.flujoTerminado) return "flujo_terminado";
+  return null;
+}
+
+function puenteDeVuelta(motivo: MotivoDesvio): string {
+  switch (motivo) {
+    case "otra_cosa_en_botones": return "Volviendo a lo anterior 👇";
+    case "pregunta_en_captura": return "Y volviendo a lo que te preguntaba 👇";
+    default: return "";
+  }
+}
+
 const AFIRMACIONES = new Set([
   "si", "sí", "s", "claro", "ok", "okay", "oki", "va", "vale", "sale", "dale",
   "porfa", "por favor", "porfavor", "obvio", "simon", "andale", "orale",
@@ -3177,6 +3249,66 @@ async function handleIncoming(opts: any) {
   const awaiting = opts.flowState?.awaiting;
   let startId: string | undefined;
 
+  // ── ¿SE SALIÓ DEL GUION? QUE CONTESTE LA IA Y EL FLUJO NO SE MUEVA ───────
+  //
+  // No se hace cuando nos despertó el reloj (`retomarEn`): ahí no hay mensaje
+  // del cliente que interpretar, y desviar sería contestarle a nadie.
+  const nodoEsperado = awaiting?.nodeId ? getNode(opts.flow, awaiting.nodeId) : null;
+  const botonQueCoincidio =
+    awaiting?.type === "buttons" && nodoEsperado
+      ? (nodoEsperado.data?.buttons ?? []).some(
+          (b: any) => b.id === opts.text || String(b.label ?? "").toLowerCase() === String(opts.text ?? "").toLowerCase(),
+        )
+      : false;
+
+  // EL FLUJO TERMINÓ es «no espera nada Y ya venía de un flujo». Sin la segunda
+  // parte, el primer mensaje de una conversación nueva contaría como terminado
+  // y el saludo lo daría la IA en vez del flujo del negocio.
+  const flujoTerminado = !awaiting?.nodeId && !!opts.flowState?.flow_id;
+
+  const motivoDesvio: MotivoDesvio = opts.retomarEn
+    ? null
+    : decidirDesvio({
+        esperando: awaiting?.nodeId ? { type: String(awaiting.type), nodeId: awaiting.nodeId } : null,
+        capturaDato: !!nodoEsperado?.data?.variable && nodoEsperado?.type !== "ai",
+        coincidioBoton: botonQueCoincidio,
+        tieneSalidaPorDefecto:
+          awaiting?.type === "buttons" && nodoEsperado ? !!defaultNext(opts.flow, nodoEsperado) : false,
+        flujoTerminado,
+        texto: dicho,
+        iaDeRespaldo: (opts.aiSettings as any)?.enabled !== false && (opts.aiSettings as any)?.fallback_flujo !== false,
+      });
+
+  if (motivoDesvio) {
+    const respuesta = await responderConIA(ctx, dicho);
+    const respaldo = String((opts.aiSettings as any)?.fallback ?? "").trim();
+    const limpio = String(respuesta ?? "").trim();
+
+    // Si la IA devolvió su mensaje de respaldo es que no supo: no aporta nada y
+    // se deja que el flujo siga por su camino de siempre.
+    if (limpio && (!respaldo || limpio !== respaldo)) {
+      await say(ctx, limpio);
+      const puente = puenteDeVuelta(motivoDesvio);
+      if (puente) await say(ctx, puente);
+
+      // Se vuelve a enseñar lo que el flujo estaba pidiendo: contestar la duda
+      // y dejar a la persona sin saber cómo seguir es medio arreglo.
+      if (nodoEsperado && awaiting?.type === "buttons") {
+        await sayButtons(ctx, nodoEsperado.data?.text ?? "", nodoEsperado);
+      } else if (nodoEsperado && awaiting?.type === "question") {
+        await say(ctx, nodoEsperado.data?.text ?? "");
+      }
+
+      await avanzarRecorrido(opts.db, runId, 1, nodoEsperado?.id ?? null);
+      // EL FLUJO NO SE MUEVE: se devuelve el mismo `awaiting`. En cuanto la
+      // persona conteste lo que se le pidió, sigue como si nada.
+      return {
+        vars, awaiting, hintEnviado: (opts.flowState?.hintEnviado ?? false) || !!ctx.hintYaSalio,
+        run_id: runId, ofreciAgente: ctx.ofreciAgente, flow_id: ctx.flowIdNuevo,
+      };
+    }
+  }
+
   // ¿Nos despertó el reloj de una espera larga? Entonces no hay mensaje del
   // cliente que interpretar: se retoma por el bloque exacto donde se dejó.
   if (opts.retomarEn) {
@@ -4210,7 +4342,14 @@ Deno.serve(async (req: Request) => {
       if (!conv || conv.status === "closed") {
         conv = await nuevaConversacion();
       }
-      await db.from("messages").insert({ conversation_id: conv.id, org_id: cfg.org_id, direction: "inbound", sender: "contact", body: visible });
+      // ── SI ESTO FALLA, QUE SE SEPA ────────────────────────────────────
+      // Este `insert` estuvo un día entero fallando en silencio —lo tumbaba un
+      // disparador de la base— y NINGÚN mensaje de cliente se guardaba, en
+      // ningún canal. El bot contestaba perfecto porque el flujo corre igual,
+      // así que desde fuera parecía que hablaba solo. No hubo un solo error en
+      // ninguna parte porque nadie miraba el resultado.
+      const { error: errEntrante } = await db.from("messages").insert({ conversation_id: conv.id, org_id: cfg.org_id, direction: "inbound", sender: "contact", body: visible });
+      if (errEntrante) console.error("[whatsapp] NO SE GUARDÓ EL MENSAJE DEL CLIENTE:", errEntrante.message);
       await db.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
       // Ajustes del chatbot: personalidad de la IA y atajos (0 / 1, etc.)
       const { data: botRow } = cfg.bot_id
