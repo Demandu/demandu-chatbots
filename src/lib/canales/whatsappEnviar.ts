@@ -159,15 +159,48 @@ export async function enviarConBoton(
 export function enviarPlantilla(
   pnid: string, token: string, to: string,
   nombre: string, idioma: string, valores: string[],
+  /**
+   * Lo que va al final de la dirección del botón, cuando la plantilla tiene un
+   * botón de enlace con hueco.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * NO ES LA DIRECCIÓN ENTERA, ES SOLO EL TROZO QUE FALTA. Meta guarda la
+   * plantilla con la dirección fija más un `{{1}}` al final —por ejemplo
+   * `https://store.demandu.tech/{{1}}`— y en el envío solo se manda lo que va
+   * en ese hueco. Mandar la dirección completa da un botón con la dirección
+   * repetida dos veces, que no lleva a ningún sitio.
+   *
+   * SIN ESTO, UNA PLANTILLA CON BOTÓN NO SALE. Meta rechaza el envío entero
+   * con «number of parameters does not match» — un mensaje que hace revisar el
+   * cuerpo, que no era el problema.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  colaDelBoton?: string,
 ) {
   const template: any = { name: nombre, language: { code: idioma || "es" } };
+  const componentes: any[] = [];
+
   const limpios = (valores ?? []).map((v) => String(v ?? "").replace(/\s*\n\s*/g, " ").trim());
   if (limpios.length) {
-    template.components = [{
+    componentes.push({
       type: "body",
       parameters: limpios.map((v) => ({ type: "text", text: v })),
-    }];
+    });
   }
+
+  const cola = String(colaDelBoton ?? "").trim();
+  if (cola) {
+    componentes.push({
+      type: "button",
+      sub_type: "url",
+      // El índice del botón, en texto. Es el primero y hoy solo hay uno; si
+      // algún día hay dos, este número tiene que salir de la plantilla.
+      index: "0",
+      parameters: [{ type: "text", text: cola }],
+    });
+  }
+
+  if (componentes.length) template.components = componentes;
   return waPost(pnid, token, { to, type: "template", template });
 }
 

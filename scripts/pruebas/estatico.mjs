@@ -4584,4 +4584,97 @@ describe("Los complementos y Stripe", () => {
   });
 });
 
+
+// ─── El aviso fuera de las 24 horas ──────────────────────────────────────────
+//
+// Los avisos salían SIEMPRE como texto libre, y WhatsApp solo lo entrega dentro
+// de las 24 h siguientes al último mensaje del cliente. Pasado ese rato Meta lo
+// rechaza y no pasa nada más: el pedido avanza, el negocio lo ve avanzar, y el
+// cliente no se entera. Justo los dos avisos que la gente espera —«va en
+// camino» y «entregado»— caían casi siempre fuera.
+describe("El aviso fuera de las 24 horas", () => {
+  const AV = sinComentarios(fs.readFileSync(path.join(SRC, "lib/tienda/avisar.ts"), "utf8"));
+  const ENV = sinComentarios(fs.readFileSync(path.join(SRC, "lib/canales/whatsappEnviar.ts"), "utf8"));
+
+  test("se mira la ventana ANTES de mandar", () => {
+    esperar(/dentroDeLaVentana\(/.test(AV)).verdadero(
+      "el aviso ya no mira la ventana: fuera de las 24 h se pierde en silencio",
+    );
+    // Y la hora sale de un mensaje ENTRANTE: lo que abre la ventana es que la
+    // persona escriba, no que nosotros contestemos.
+    esperar(/direction"?\s*,\s*"inbound"/.test(AV)).verdadero(
+      "la ventana se calcula con mensajes que no son del cliente",
+    );
+  });
+
+  test("fuera de la ventana se manda plantilla", () => {
+    const i = AV.indexOf("const mandarPlantilla");
+    esperar(i > 0).verdadero("cambió la forma del archivo, revisa esta prueba");
+    esperar(/enviarPlantilla\(/.test(AV.slice(i, i + 900))).verdadero(
+      "hay una rama de plantilla que no llama a enviarPlantilla",
+    );
+    // La decisión depende de la ventana de verdad, no de una constante.
+    esperar(/hayVentana\s*\n?\s*\?/.test(AV) || /hayVentana\s*\?/.test(AV)).verdadero(
+      "la elección entre texto y plantilla ya no depende de la ventana",
+    );
+  });
+
+  test("si Meta cierra la ventana a mitad, se reintenta con plantilla", () => {
+    // Mirar la hora no basta: la que tenemos es la de NUESTRO reloj, y el
+    // cliente puede haber borrado la conversación.
+    esperar(/esFueraDeVentana\(/.test(AV)).verdadero(
+      "se quitó el respaldo: un desfase de relojes deja al cliente sin aviso",
+    );
+  });
+
+  test("una plantilla con botón manda su parámetro", () => {
+    // Sin esto Meta rechaza el envío entero con «number of parameters does not
+    // match», un mensaje que hace revisar el cuerpo, que no era el problema.
+    esperar(/sub_type:\s*"url"/.test(ENV)).verdadero(
+      "enviarPlantilla no sabe mandar el botón de enlace",
+    );
+    esperar(/colaDelBoton/.test(AV)).verdadero(
+      "el aviso no le pasa a la plantilla lo que va en el botón",
+    );
+  });
+
+  test("las plantillas se crean en la cuenta del CLIENTE", () => {
+    // Es lo que más sorprende de esto: Meta las aprueba por cuenta de WhatsApp,
+    // así que las siete del WABA de Demandu no existen en el de ningún cliente.
+    // Cablear por nombre y ya habría funcionado en nuestras pruebas y en cero
+    // cuentas de verdad.
+    const alta = sinComentarios(
+      fs.readFileSync(path.join(SRC, "lib/tienda/altaDePlantillas.ts"), "utf8"),
+    );
+    esperar(/whatsapp_channels/.test(alta)).verdadero(
+      "no busca la cuenta de WhatsApp del cliente: las crearía donde no toca",
+    );
+    esperar(/waba_id/.test(alta)).verdadero("no usa el WABA del cliente");
+    // Y «ya existe» cuenta como bien: si no, el botón parecería roto en cuanto
+    // se pulse dos veces.
+    esperar(/already exists\|duplicate/.test(alta)).verdadero(
+      "una plantilla que ya existe se trata como fallo",
+    );
+  });
+
+  test("el dominio del botón no se escribe a mano", () => {
+    // Estas plantillas quedan aprobadas en Meta CON la dirección que se les
+    // puso, para siempre. El dominio ya cambió una vez.
+    const alta = sinComentarios(
+      fs.readFileSync(path.join(SRC, "lib/tienda/altaDePlantillas.ts"), "utf8"),
+    );
+    esperar(/DOMINIO_TIENDAS/.test(alta)).verdadero(
+      "el dominio de las plantillas está escrito a mano",
+    );
+  });
+
+  test("queda escrito por dónde salió cada aviso", () => {
+    // Es lo primero que hay que saber cuando un cliente jura que no recibió
+    // nada: si fue plantilla y Meta la tenía sin aprobar, el motivo está ahí.
+    esperar(/via:\s*porPlantilla/.test(AV)).verdadero(
+      "la bitácora ya no dice si el aviso salió por texto o por plantilla",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

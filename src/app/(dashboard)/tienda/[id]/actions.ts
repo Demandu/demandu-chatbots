@@ -33,11 +33,14 @@ async function tiendaDelUsuario(tiendaId: string) {
   if (!orgId) return null;
   const { data } = await createClient()
     .from("tiendas")
-    .select("id,org_id,slug,config")
+    // `bot_id` VA AQUÍ y no en una consulta aparte: es lo que dice a qué cuenta
+    // de WhatsApp pertenece la tienda, y sin él no se pueden crear sus
+    // plantillas de aviso.
+    .select("id,org_id,slug,config,bot_id")
     .eq("id", tiendaId)
     .maybeSingle();
   if (!data || data.org_id !== orgId) return null;
-  return data as { id: string; org_id: string; slug: string; config: unknown };
+  return data as { id: string; org_id: string; slug: string; config: unknown; bot_id: string | null };
 }
 
 /* ── La dirección de la tienda ─────────────────────────────────────────────── */
@@ -836,5 +839,63 @@ export async function probarYappy(_e: Estado, fd: FormData): Promise<Estado> {
       esAmbiente(fila.ambiente) === "prueba"
         ? "Conexión correcta con el Yappy de PRUEBAS. Cambia a producción cuando quieras cobrar de verdad."
         : "Conexión correcta. Ya puedes cobrar con Yappy.",
+  };
+}
+
+/**
+ * Crea en el WhatsApp del cliente las plantillas con las que se avisa fuera de
+ * las 24 horas.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ES UN BOTÓN Y NO ALGO AUTOMÁTICO A PROPÓSITO. Meta tarda de minutos a un día
+ * en aprobar, y una tienda recién encendida empieza a vender antes de eso. Un
+ * proceso invisible que a veces funciona y a veces no es peor que uno manual:
+ * el negocio tiene que poder ver en qué va y volver a intentarlo.
+ *
+ * Mientras no estén aprobadas no se rompe nada: dentro de las 24 h los avisos
+ * salen como texto libre igual que siempre.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function crearPlantillasDeAviso(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  if (!t.bot_id) {
+    return {
+      ok: false,
+      mensaje: "Primero vincula esta tienda con un chatbot que tenga WhatsApp conectado.",
+    };
+  }
+
+  const { crearPlantillasDePedido } = await import("@/lib/tienda/altaDePlantillas");
+  const r = await crearPlantillasDePedido(createClient(), t.bot_id);
+
+  if (!r.ok) {
+    return { ok: false, mensaje: r.error ?? "No se pudo crear ninguna plantilla." };
+  }
+
+  const fallaron = r.resultados.filter((x) => !x.ok);
+  revalidatePath(`/tienda/${tiendaId}`);
+
+  if (fallaron.length) {
+    // SE DICE CUÁLES FALLARON Y POR QUÉ. «Algunas fallaron» obliga a adivinar, y
+    // aquí adivinar significa volver a pulsar hasta que Meta te limite.
+    return {
+      ok: true,
+      tono: "aviso",
+      mensaje:
+        `Se crearon ${r.resultados.length - fallaron.length} de ${r.resultados.length}. ` +
+        `No salieron: ${fallaron.map((x) => `${x.etiqueta} (${x.error})`).join("; ")}`,
+    };
+  }
+
+  const yaEstaban = r.resultados.filter((x) => x.yaEstaba).length;
+  return {
+    ok: true,
+    mensaje:
+      yaEstaban === r.resultados.length
+        ? "Ya estaban todas creadas en tu WhatsApp."
+        : `Listo: ${r.resultados.length} plantillas enviadas a Meta. La aprobación tarda de unos minutos a un día.`,
   };
 }

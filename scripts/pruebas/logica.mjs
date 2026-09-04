@@ -21,6 +21,10 @@ import {
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
 import { membresiaActiva, soporteVigente } from "../../src/lib/membresia.ts";
 import {
+  PLANTILLAS, NOMBRES_DE_PEDIDO, plantillaDe, valoresDe, faltaAlgunDato,
+  dentroDeLaVentana, esFueraDeVentana, VENTANA_HORAS, MARGEN_MINUTOS, FUERA_DE_VENTANA,
+} from "../../src/lib/tienda/plantillasDePedido.ts";
+import {
   PRECIO_TIENDA, COMISION_APPS, BENEFICIOS, INCLUYE, GANCHO, LETRA_CHICA,
   loQueTeAhorras, desdeCuantoSePagaSola, precioEscrito,
 } from "../../src/lib/planes/tiendaAddon.ts";
@@ -3228,6 +3232,131 @@ describe("El complemento de la Tienda", () => {
     esperar(/próximamente|muy pronto|estamos trabajando|en desarrollo/i.test(todo)).falso(
       "el texto de venta promete algo que no está hecho",
     );
+  });
+});
+
+
+describe("Plantillas de pedido y la ventana de 24 horas", () => {
+  const hace = (horas) => new Date(Date.now() - horas * 3600_000).toISOString();
+
+  test("recién escrito: texto libre", () => {
+    esperar(dentroDeLaVentana(hace(0.5))).verdadero();
+    esperar(dentroDeLaVentana(hace(6))).verdadero();
+    esperar(dentroDeLaVentana(hace(20))).verdadero();
+  });
+
+  test("pasadas las 24 horas: plantilla", () => {
+    // Es el caso que hoy se pierde entero: quien pidió anoche y recibe hoy a
+    // mediodía lleva catorce horas sin escribir… y el «entregado» llega a las
+    // treinta y tantas.
+    esperar(dentroDeLaVentana(hace(25))).falso();
+    esperar(dentroDeLaVentana(hace(37))).falso();
+    esperar(dentroDeLaVentana(hace(470))).falso();
+  });
+
+  test("EL MARGEN VA HACIA LA PLANTILLA, no hacia el texto", () => {
+    // Equivocarse por cada lado cuesta distinto. Plantilla de más = unos
+    // centavos. Texto libre de más = el aviso NO LLEGA y el cliente no se
+    // entera de que su pedido va en camino.
+    const justoAntes = VENTANA_HORAS - MARGEN_MINUTOS / 60 - 0.05;
+    const justoDespues = VENTANA_HORAS - MARGEN_MINUTOS / 60 + 0.05;
+    esperar(dentroDeLaVentana(hace(justoAntes))).verdadero();
+    esperar(dentroDeLaVentana(hace(justoDespues))).falso(
+      "cerró la ventana sin margen: un reloj desfasado se come el aviso",
+    );
+    // Y el margen existe de verdad: a las 23:50 ya se manda plantilla.
+    esperar(dentroDeLaVentana(hace(23.9))).falso();
+  });
+
+  test("quien nunca escribió NO tiene ventana", () => {
+    // Es el caso del que pidió desde la tienda sin escribir por WhatsApp.
+    // Tratarlo como recién escrito sería mandar algo que Meta va a rechazar.
+    esperar(dentroDeLaVentana(null)).falso();
+    esperar(dentroDeLaVentana(undefined)).falso();
+    esperar(dentroDeLaVentana("")).falso();
+    esperar(dentroDeLaVentana("cualquier cosa")).falso();
+  });
+
+  test("una fecha en el futuro es un reloj roto, no una ventana", () => {
+    esperar(dentroDeLaVentana(hace(-3))).falso();
+  });
+
+  /* ── Las plantillas ───────────────────────────────────────────────────── */
+
+  test("los momentos que de verdad esperan tienen plantilla", () => {
+    // Sin estas cuatro, el aviso que más importa se pierde fuera de la ventana.
+    for (const m of ["pagado", "confirmado", "en_camino", "entregado"]) {
+      esperar(Boolean(plantillaDe(m))).verdadero(`falta la plantilla de "${m}"`);
+    }
+    // «preparando» NO tiene, a propósito: viene apagado de fábrica.
+    esperar(plantillaDe("preparando")).igual(null);
+  });
+
+  test("NINGUNA variable va al principio ni al final", () => {
+    // Meta rechaza la plantilla entera por esto, y ya nos pasó con
+    // `pedido_entregado`, que terminaba en «…{{2}}!».
+    for (const p of Object.values(PLANTILLAS)) {
+      const c = p.cuerpo.trim();
+      esperar(c.startsWith("{{")).falso(`${p.nombre} empieza con una variable`);
+      esperar(/\{\{\d+\}\}[\s!.?]*$/.test(c)).falso(`${p.nombre} termina con una variable`);
+    }
+  });
+
+  test("los huecos del cuerpo y las variables declaradas cuadran", () => {
+    // Mandar de menos o de más hace que Meta rechace el envío entero con
+    // «number of parameters does not match».
+    for (const p of Object.values(PLANTILLAS)) {
+      const huecos = new Set([...p.cuerpo.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1])));
+      esperar(huecos.size).igual(p.variables.length, `${p.nombre}: huecos ≠ variables`);
+      // Y van numerados del 1 en adelante, sin saltos.
+      esperar([...huecos].sort((a, b) => a - b)).igual(
+        p.variables.map((_, i) => i + 1),
+        `${p.nombre}: los huecos no van 1, 2, 3…`,
+      );
+    }
+  });
+
+  test("los nombres son los que acepta Meta", () => {
+    for (const p of Object.values(PLANTILLAS)) {
+      esperar(/^[a-z0-9_]+$/.test(p.nombre)).verdadero(`${p.nombre} no vale como nombre en Meta`);
+    }
+    esperar(new Set(NOMBRES_DE_PEDIDO).size).igual(
+      NOMBRES_DE_PEDIDO.length,
+      "hay dos momentos apuntando a la misma plantilla",
+    );
+  });
+
+  test("un hueco vacío NO se manda", () => {
+    // Meta acepta el envío con una variable en blanco, y lo que llega es
+    // «Tu pedido # en …», que se lee como un error de la plataforma.
+    const p = plantillaDe("pagado");
+    const buenos = valoresDe(p, { numero: 7, tienda: "Paws at Home", total: "$19.50" });
+    esperar(buenos).igual(["7", "Paws at Home", "$19.50"]);
+    esperar(faltaAlgunDato(p, buenos)).falso();
+
+    esperar(faltaAlgunDato(p, valoresDe(p, { numero: 7, tienda: "", total: "$1" }))).verdadero();
+    esperar(faltaAlgunDato(p, ["7", "Paws at Home"])).verdadero("dejó pasar una variable de menos");
+    esperar(faltaAlgunDato(p, ["7", "a", "b", "c"])).verdadero("dejó pasar una de más");
+  });
+
+  test("los dos avisos que recuperan dinero llevan botón", () => {
+    // La diferencia entre poner el enlace y no ponerlo es la diferencia entre
+    // recuperar esa venta y perderla.
+    esperar(plantillaDe("enlace_vencido").boton?.a).igual("tienda");
+    esperar(plantillaDe("pago_no_completado").boton?.a).igual("pago");
+    // Y «en camino» no lleva: no hay nada que pulsar.
+    esperar(plantillaDe("en_camino").boton).igual(undefined);
+  });
+
+  test("se reconoce cuando Meta dice que se cerró la ventana", () => {
+    esperar(esFueraDeVentana(FUERA_DE_VENTANA)).verdadero();
+    esperar(esFueraDeVentana(131047)).verdadero();
+    esperar(esFueraDeVentana(null, "Message failed to send because more than 24 hours have passed"))
+      .verdadero();
+    esperar(esFueraDeVentana(131026, "Message undeliverable")).falso(
+      "confundió otro error con la ventana: reintentaría con plantilla sin motivo",
+    );
+    esperar(esFueraDeVentana(null, "")).falso();
   });
 });
 

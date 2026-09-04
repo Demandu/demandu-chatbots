@@ -12,6 +12,8 @@ import { Cobros } from "@/components/tienda/Cobros";
 import { Direccion } from "@/components/tienda/Direccion";
 import { EncargadoDePedidos } from "@/components/tienda/EncargadoDePedidos";
 import { AvisosAlCliente } from "@/components/tienda/AvisosAlCliente";
+import { PlantillasDeAviso } from "@/components/tienda/PlantillasDeAviso";
+import { estadoDeLasPlantillas } from "@/lib/tienda/altaDePlantillas";
 import { PanelDeVentas } from "@/components/tienda/PanelDeVentas";
 import { Pedidos, type PedidoEnLista } from "@/components/tienda/Pedidos";
 import {
@@ -24,6 +26,7 @@ import {
   cambiarDireccion,
   cambiarEncargado,
   guardarAvisos,
+  crearPlantillasDeAviso,
   etiquetarContactos,
 } from "./actions";
 
@@ -39,11 +42,16 @@ export default async function TiendaDetallePage({
   const sb = createClient();
   const { data: tienda } = await sb
     .from("tiendas")
-    .select("id,nombre,slug,activa,bot_id,config,atiende_id")
+    .select("id,org_id,nombre,slug,activa,bot_id,config,atiende_id")
     .eq("id", params.id)
     .maybeSingle();
 
   if (!tienda) notFound();
+
+  // En qué va cada plantilla de aviso. Se lee de nuestra tabla, no de Meta:
+  // esta pantalla se abre muchas veces y preguntarle a Meta en cada carga es
+  // lento y gasta cuota.
+  const plantillasDeAviso = await estadoDeLasPlantillas(sb, tienda.org_id as string);
 
   const activa = esPestana(searchParams.t);
   const config = leerConfig(tienda.config);
@@ -227,6 +235,17 @@ export default async function TiendaDetallePage({
               moneda={config.moneda}
               tienda={config.titulo || tienda.nombre}
               accion={guardarAvisos}
+            />
+          )}
+
+          {/* VA JUSTO DEBAJO DE LOS AVISOS a propósito: quien acaba de redactar
+              lo que recibe su cliente es exactamente quien tiene que enterarse
+              de que fuera de las 24 h hace falta una plantilla aprobada. */}
+          {activa === "pedidos" && (
+            <PlantillasDeAviso
+              tiendaId={params.id}
+              plantillas={plantillasDeAviso}
+              accion={crearPlantillasDeAviso}
             />
           )}
 

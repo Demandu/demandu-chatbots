@@ -3,7 +3,12 @@ import { leerConfig } from "./config";
 import { textoDelAviso, botonDelAviso, type MomentoAviso } from "./avisos";
 import { comoDinero } from "./variedades";
 import { enlaceDeTienda, enlaceDePago } from "./direccion";
-import { enviarTexto, enviarConBoton } from "@/lib/canales/whatsappEnviar";
+import {
+  enviarTexto, enviarConBoton, enviarPlantilla, type ResultadoEnvio,
+} from "@/lib/canales/whatsappEnviar";
+import {
+  plantillaDe, valoresDe, faltaAlgunDato, dentroDeLaVentana, esFueraDeVentana,
+} from "./plantillasDePedido";
 
 /**
  * Mandarle al cliente el aviso de su pedido.
@@ -148,14 +153,71 @@ export async function avisarDelPedido(
         ? enlaceDePago(slug, String(ped.codigo ?? ""))
         : enlaceDeTienda(slug);
 
+  /* ── ¿TEXTO LIBRE O PLANTILLA? ─────────────────────────────────────────
+   *
+   * WhatsApp solo entrega texto libre dentro de las 24 h siguientes al último
+   * mensaje DEL CLIENTE. Pasado ese rato Meta lo rechaza y no pasa nada más: el
+   * pedido avanza, el negocio lo ve avanzar, y el cliente no se entera. Y es
+   * justo cuando más importa — quien pidió anoche y recibe hoy a mediodía lleva
+   * catorce horas sin escribir, así que «va en camino» y «entregado» caían
+   * SIEMPRE fuera.
+   *
+   * FUERA DE LA VENTANA VA PLANTILLA, DENTRO NO. Dentro, el texto libre llega
+   * igual, se lee como un mensaje normal y no cuesta; fuera, Meta abre una
+   * conversación facturable. Mandar plantilla siempre sería pagar por mensajes
+   * que ya podían salir gratis, y que además se leen peor.
+   */
+  const ultimoDelCliente = await ultimoMensajeDelCliente(sb, conversacion.id);
+  const hayVentana = dentroDeLaVentana(ultimoDelCliente);
+  const plantilla = plantillaDe(momento);
+
+  // La cola del botón: Meta guarda la dirección fija con un hueco al final y en
+  // el envío solo va lo que entra en ese hueco.
+  const colaDelBoton =
+    plantilla?.boton?.a === "pago" ? String(ped.codigo ?? "") : slug;
+
+  const mandarPlantilla = async (): Promise<ResultadoEnvio> => {
+    if (!plantilla) {
+      return { ok: false, error: "Este aviso no tiene plantilla para fuera de las 24 horas." };
+    }
+    const valores = valoresDe(plantilla, {
+      numero: ped.numero,
+      tienda: nombre,
+      total: comoDinero(Number(ped.total), config.moneda),
+    });
+    // UN HUECO VACÍO NO SE MANDA. Meta acepta el envío y lo que llega es «Tu
+    // pedido # en …», que se lee como un error de la plataforma.
+    if (faltaAlgunDato(plantilla, valores)) {
+      return { ok: false, error: "Faltan datos para armar el aviso." };
+    }
+    return enviarPlantilla(
+      canal.phone_number_id, canal.access_token, para,
+      plantilla.nombre, "es", valores,
+      plantilla.boton ? colaDelBoton : undefined,
+    );
+  };
+
   // ── Se manda ANTES de guardarlo ───────────────────────────────────────────
   // Mismo orden que la Bandeja y que el motor: guardar primero pintaría en
   // pantalla un mensaje que el cliente nunca recibió.
-  const envio = destino
-    ? await enviarConBoton(
-        canal.phone_number_id, canal.access_token, para, texto, boton!.texto, destino,
-      )
-    : await enviarTexto(canal.phone_number_id, canal.access_token, para, texto);
+  let porPlantilla = !hayVentana;
+  let envio = hayVentana
+    ? destino
+      ? await enviarConBoton(
+          canal.phone_number_id, canal.access_token, para, texto, boton!.texto, destino,
+        )
+      : await enviarTexto(canal.phone_number_id, canal.access_token, para, texto)
+    : await mandarPlantilla();
+
+  /* EL RESPALDO, Y NO SOBRA. Mirar la hora no basta: la que tenemos guardada es
+   * la de NUESTRO reloj, el cliente puede haber borrado la conversación, y
+   * entre el webhook y la escritura se van segundos. Si el texto libre se cae
+   * por la ventana, se reintenta con plantilla en el mismo momento en vez de
+   * dejar al cliente sin aviso. */
+  if (!envio.ok && hayVentana && esFueraDeVentana(envio.code, envio.error) && plantilla) {
+    porPlantilla = true;
+    envio = await mandarPlantilla();
+  }
 
   await sb.from("messages").insert({
     conversation_id: conversacion.id,
@@ -182,6 +244,11 @@ export async function avisarDelPedido(
   await anotar(envio.ok, {
     texto,
     conversacion_id: conversacion.id,
+    // POR DÓNDE SALIÓ QUEDA ESCRITO. Es lo primero que hay que saber cuando un
+    // cliente jura que no recibió nada: si fue plantilla y Meta la tenía sin
+    // aprobar, el motivo está aquí y no hay que adivinarlo.
+    via: porPlantilla ? "plantilla" : "texto",
+    ...(porPlantilla && plantilla ? { plantilla: plantilla.nombre } : {}),
     ...(destino ? { boton: boton!.texto, destino } : {}),
     ...(envio.ok ? {} : { motivo: envio.error ?? "No se pudo enviar", code: envio.code ?? null }),
   });
@@ -256,4 +323,31 @@ async function nombreDelCliente(sb: SupabaseClient, contactoId: string | null): 
   // así) no es un nombre: mejor el hueco vacío que «Hola, 50761234567».
   if (!entero || /^[\d+\s-]+$/.test(entero)) return "";
   return entero.split(/\s+/)[0];
+}
+
+/**
+ * Cuándo escribió el cliente por última vez.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ES LO ÚNICO QUE DECIDE SI HAY VENTANA. Y se pregunta por `direction`, no por
+ * `sender`: lo que abre la ventana de WhatsApp es que la persona escriba, no
+ * quién conteste de nuestro lado.
+ *
+ * SIN NINGUNO, DEVUELVE NULO Y ESO ES «NO HAY VENTANA». Pasa siempre con quien
+ * pidió desde la tienda sin haber escrito nunca: ahí solo cabe plantilla.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function ultimoMensajeDelCliente(
+  sb: SupabaseClient,
+  conversacionId: string,
+): Promise<string | null> {
+  const { data } = await sb
+    .from("messages")
+    .select("created_at")
+    .eq("conversation_id", conversacionId)
+    .eq("direction", "inbound")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.created_at as string | undefined) ?? null;
 }
