@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { comoEstaApple } from "./apple";
 
 /**
  * ¿Están vivos los servicios de los que depende la plataforma?
@@ -32,7 +33,11 @@ export const QUE_ES: Record<string, string> = {
   "meta-whatsapp": "La API de Meta. Si falla, no salen ni entran mensajes de WhatsApp, y no es cosa nuestra.",
   "inteligencia-artificial": "Anthropic, quien piensa las respuestas de Lana. Si falla, los bots contestan con su mensaje de respaldo.",
   "cobros-stripe": "Los cobros. Si falla, nadie puede contratar ni ampliar — lo ya cobrado no se toca.",
+  "entrar-con-apple":
+    "El botón «Continuar con Apple». Apple obliga a renovar su secreto cada seis meses; cuando caduca, el botón sigue apareciendo y el acceso falla al final, sin ningún aviso.",
 };
+
+
 
 async function medir(
   servicio: string,
@@ -64,6 +69,7 @@ export async function revisarServicios(origen: string): Promise<Chequeo[]> {
   const anthropic = process.env.ANTHROPIC_API_KEY ?? "";
   const stripe = process.env.STRIPE_SECRET_KEY ?? "";
   const metaToken = process.env.WHATSAPP_ACCESS_TOKEN ?? "";
+  const appleExpira = process.env.APPLE_SECRETO_EXPIRA ?? "";
 
   return Promise.all([
     // Una consulta de verdad, no un `select 1`: lo que importa no es que el
@@ -147,6 +153,13 @@ export async function revisarServicios(origen: string): Promise<Chequeo[]> {
       const j = await r.json().catch(() => ({}));
       return { ok: false, detalle: j?.error?.message ?? `Contestó ${r.status}` };
     }),
+
+    // ── El secreto de Apple ─────────────────────────────────────────────
+    // NO SE MIDE LLAMANDO A NADIE. Un secreto caducado no se nota hasta el
+    // último paso del acceso: Apple enseña su pantalla igual y falla al
+    // canjear el código. Lo único que se puede comprobar por adelantado es el
+    // calendario, y con eso basta para que no pille por sorpresa.
+    medir("entrar-con-apple", async () => comoEstaApple(appleExpira) as { ok: boolean; detalle: string }),
 
     medir("cobros-stripe", async (señal) => {
       if (!stripe) return { ok: null as any, detalle: "No hay llave de Stripe en este entorno" };

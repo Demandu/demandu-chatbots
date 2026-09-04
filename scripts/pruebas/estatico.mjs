@@ -3981,4 +3981,89 @@ describe("Las difusiones salen por una cola, no dentro de la petición", () => {
   });
 });
 
+describe("Cada cliente es un lienzo limpio", () => {
+  const MIGRACIONES = path.join(RAIZ, "supabase/migrations");
+  const sqls = fs.readdirSync(MIGRACIONES).filter((f) => f.endsWith(".sql")).sort();
+
+  /** El SQL sin sus comentarios: `sinComentarios` no quita los «--». */
+  const soloCodigo = (t) =>
+    t.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+
+  test("NINGUNA TABLA NUEVA SE QUEDA SIN RLS", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Una tabla sin RLS en este esquema la puede leer —y escribir— CUALQUIERA
+    // con la llave anónima, que viaja en el navegador de todos los visitantes
+    // de todas las tiendas. No hace falta ser cliente ni estar registrado.
+    //
+    // Pasó de verdad: `respaldo_flujos` se creó a mano, sin migración y sin
+    // RLS, y quedó abierta a lectura y escritura para `anon`. Un flujo entero
+    // de un cliente, editable desde fuera.
+    //
+    // POR ESO SE COMPRUEBA AQUÍ Y NO EN UNA REVISIÓN: la próxima tabla la va a
+    // crear alguien con prisa, y el fallo no se ve en ninguna pantalla.
+    // ─────────────────────────────────────────────────────────────────────────
+    const malas = [];
+
+    for (const f of sqls) {
+      const sql = soloCodigo(fs.readFileSync(path.join(MIGRACIONES, f), "utf8"));
+
+      const creadas = [...sql.matchAll(/create table (?:if not exists )?(?:public\.)?(\w+)/gi)]
+        .map((m) => m[1].toLowerCase());
+      if (!creadas.length) continue;
+
+      // El «enable row level security» puede estar en la misma migración o en
+      // un bucle que recorre varias tablas a la vez; las dos formas valen.
+      const encendidas = new Set(
+        [...sql.matchAll(/alter table (?:public\.)?(\w+)\s+enable row level security/gi)]
+          .map((m) => m[1].toLowerCase()),
+      );
+      const enBucle = /foreach\s+\w+\s+in\s+array/i.test(sql) && /enable row level security/i.test(sql);
+
+      for (const tabla of creadas) {
+        if (!encendidas.has(tabla) && !enBucle) malas.push(`${f} → ${tabla}`);
+      }
+    }
+
+    esperar(malas.join(", ")).igual("", "hay tablas creadas sin encender RLS");
+  });
+
+  test("un cliente nuevo nace con SU embudo y SUS etapas", () => {
+    // Si el alta no sembrara nada, el cliente entraría a un tablero sin
+    // columnas y sin forma de crear la primera — y las etapas no se pueden
+    // compartir entre clientes: son suyas y las renombra.
+    const alta = sqls
+      .map((f) => fs.readFileSync(path.join(MIGRACIONES, f), "utf8"))
+      .filter((s) => /create or replace function public\.handle_new_user|create or replace function handle_new_user/i.test(s))
+      .pop();
+
+    esperar(Boolean(alta)).verdadero("no encuentro la función del alta de usuarios");
+    const codigo = soloCodigo(alta);
+
+    esperar(/insert into organizations/i.test(codigo)).verdadero("el alta no crea organización");
+    esperar(/insert into memberships[\s\S]{0,200}'owner'/i.test(codigo)).verdadero(
+      "el alta no deja al usuario como dueño de su organización",
+    );
+    esperar(/insert into pipelines/i.test(codigo)).verdadero("el alta no siembra el embudo");
+    esperar(/insert into conversation_states/i.test(codigo)).verdadero("el alta no siembra las etapas");
+  });
+
+  test("lo que se comparte entre clientes NO puede ser el nombre", () => {
+    // Dos negocios pueden llamarse igual, tener el mismo cliente y usar la
+    // misma etiqueta. Lo único único de verdad tiene que llevar el `org_id`
+    // dentro, o el segundo cliente que se registre choca con el primero.
+    const todo = sqls.map((f) => soloCodigo(fs.readFileSync(path.join(MIGRACIONES, f), "utf8"))).join("\n");
+
+    // Un contacto se identifica por (organización, canal, id externo).
+    esperar(/unique\s*\(\s*org_id\s*,\s*channel\s*,\s*external_id\s*\)/i.test(todo)).verdadero(
+      "los contactos no están acotados por organización: dos clientes con el mismo comprador chocarían",
+    );
+    // Y las etiquetas y las etapas, por (organización, nombre).
+    for (const tabla of ["tags", "conversation_states"]) {
+      esperar(new RegExp(`${tabla}[\\s\\S]{0,900}?unique\\s*\\(\\s*org_id\\s*,\\s*name`, "i").test(todo)).verdadero(
+        `${tabla} no está acotada por organización`,
+      );
+    }
+  });
+});
+
 process.exit(await correrPruebas());

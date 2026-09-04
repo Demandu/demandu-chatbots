@@ -18,6 +18,7 @@ import {
 import {
   rangoDeFechas, rangoEscrito, comoRango, cambio, comoCsv, aQuienSePuedeEscribir,
 } from "../../src/lib/tienda/panel.ts";
+import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
 import {
   MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado, botonDelAviso,
 } from "../../src/lib/tienda/avisos.ts";
@@ -2798,6 +2799,56 @@ describe("Tienda: el panel de arriba de los pedidos", () => {
     const quienes = aQuienSePuedeEscribir(filas);
     esperar(quienes.length).igual(2, "se coló alguien dado de baja");
     esperar(quienes.includes("c2")).falso();
+  });
+});
+
+describe("Entrar con Apple: el secreto que caduca solo", () => {
+  const hoy = new Date(Date.UTC(2026, 8, 4));
+
+  test("SIN FECHA NO SE PINTA VERDE", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // Es la regla del tablero de estado: «no pude medirlo» va en gris. Decir
+    // que está bien porque nadie apuntó la fecha es exactamente la
+    // tranquilidad falsa que hace inútil un tablero de salud.
+    // ───────────────────────────────────────────────────────────────────────
+    for (const v of ["", null, undefined, "no sé", "04/03/2027"]) {
+      esperar(comoEstaApple(v, hoy).ok === null).verdadero(`«${v}» debería ser gris`);
+    }
+  });
+
+  test("caducado es ROJO, y dice desde cuándo", () => {
+    // Cuando caduca, el botón sigue apareciendo y el acceso falla en el último
+    // paso: desde fuera parece que se rompió la plataforma. Hay que poder
+    // verlo sin adivinarlo.
+    const r = comoEstaApple("2026-08-30", hoy);
+    esperar(r.ok).falso();
+    esperar(/caducó hace 5 días/.test(r.detalle)).verdadero(r.detalle);
+  });
+
+  test("un mes antes ya avisa", () => {
+    // Renovarlo exige entrar a la cuenta de Apple y firmar de nuevo: avisar el
+    // mismo día no sirve de nada.
+    esperar(comoEstaApple("2026-10-01", hoy).ok).falso("faltan 27 días y no avisó");
+    esperar(comoEstaApple("2026-10-04", hoy).ok).falso("faltan 30 días justos: avisa");
+    esperar(comoEstaApple("2026-10-05", hoy).ok).verdadero("faltan 31 días: todavía no molesta");
+  });
+
+  test("el mismo día cuenta como caducado hoy, no como −1", () => {
+    // Se compara por DÍA y en UTC. Con horas de por medio, «caduca hoy» daría
+    // 0 o −1 según la hora a la que se abriera la pantalla, y un tablero que
+    // cambia de color según cuándo lo mires no se lo cree nadie.
+    esperar(diasParaElSecretoDeApple("2026-09-04", hoy)).igual(0);
+    esperar(diasParaElSecretoDeApple("2026-09-04", new Date(Date.UTC(2026, 8, 4, 23, 59)))).igual(0);
+  });
+
+  test("seis meses es el máximo que permite Apple", () => {
+    // El generador firma 180 días. Si alguien lo subiera, Apple rechaza el
+    // secreto entero y el botón deja de funcionar desde el primer día.
+    const generador = fs.readFileSync(
+      path.join(import.meta.dirname, "../apple-secreto.mjs"), "utf8");
+    const dias = /DURACION_SEG = (\d+) \* 24 \* 60 \* 60/.exec(generador);
+    esperar(Boolean(dias)).verdadero("cambió la forma del generador, revisa esta prueba");
+    esperar(Number(dias[1]) <= 180).verdadero(`firma ${dias[1]} días y Apple acepta 180 como mucho`);
   });
 });
 
