@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { enviarTexto, enviarArchivo, enviarPlantilla, type ResultadoEnvio } from "@/lib/canales/whatsappEnviar";
 import { enviarDm, enviarAdjuntoDm } from "@/lib/canales/instagramEnviar";
 
@@ -131,7 +132,13 @@ export async function POST(req: Request) {
 
   // ── Entrega por el canal que toque ──────────────────────────────────────
   if (conv.channel === "whatsapp") {
-    const { data: canal } = await sb
+    // ── EL TOKEN CON LA LLAVE DE SERVICIO ─────────────────────────────
+    // Un agente SÍ puede contestar desde la Bandeja —es su trabajo— pero NO
+    // debe poder leer el token de Meta. Antes esta consulta iba con su sesión,
+    // así que el mismo permiso que le deja responder le dejaba sacarse el
+    // token desde la consola del navegador y mandar mensajes por fuera.
+    // Quién puede llegar aquí ya se comprobó arriba, contra su conversación.
+    const { data: canal } = await createAdminClient()
       .from("whatsapp_channels")
       .select("phone_number_id, access_token")
       .eq("org_id", conv.org_id)
@@ -179,7 +186,7 @@ export async function POST(req: Request) {
   // WhatsApp para reabrirla: pasado ese plazo, no hay forma de escribirle. El
   // agente tiene que enterarse en el momento, no descubrirlo por el silencio.
   if (conv.channel === "instagram") {
-    const { data: canal } = await sb
+    const { data: canal } = await createAdminClient()
       .from("instagram_channels")
       .select("ig_user_id, access_token")
       .eq("org_id", conv.org_id)

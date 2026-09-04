@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import {
   exchangeCode, fetchUserEmail, fetchCalendars, publicOrigin,
@@ -40,7 +41,7 @@ export async function GET(req: Request) {
     // Conserva el refresh_token previo si Google no lo devuelve esta vez
     let refresh = tokens.refresh_token ?? null;
     if (!refresh) {
-      const { data: prev } = await supabase
+      const { data: prev } = await createAdminClient()
         .from("integrations")
         .select("refresh_token")
         .eq("org_id", orgId)

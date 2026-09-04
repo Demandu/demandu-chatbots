@@ -16,18 +16,25 @@ export async function syncForms(formData: FormData) {
   const supabase = createClient();
   const { data: ch } = await supabase
     .from("whatsapp_channels")
-    .select("waba_id, access_token")
+    .select("waba_id")
     .eq("bot_id", botId)
     .maybeSingle();
 
-  if (!ch?.waba_id || !ch?.access_token) {
+  // ── EL TOKEN POR SU PROPIA PUERTA ──────────────────────────────────────
+  // La columna dejó de ser legible con la sesión: cualquier miembro la leía
+  // desde la consola. `token_de_whatsapp` comprueba el permiso de conexiones
+  // y devuelve nulo a quien no lo tenga — que aquí acaba en «sin canal», el
+  // mensaje correcto para alguien que no debería manejar formularios.
+  const { data: tokenWa } = await supabase.rpc("token_de_whatsapp", { p_bot_id: botId });
+
+  if (!ch?.waba_id || !tokenWa) {
     redirect(`/bots/${botId}/forms?error=sin_canal`);
   }
 
   let errParam = "";
   try {
     const res = await fetch(
-      `${GRAPH}/${ch.waba_id}/flows?fields=id,name,status,categories&limit=200&access_token=${ch.access_token}`,
+      `${GRAPH}/${ch.waba_id}/flows?fields=id,name,status,categories&limit=200&access_token=${tokenWa}`,
     );
     const j = await res.json();
     if (!res.ok || !Array.isArray(j?.data)) {

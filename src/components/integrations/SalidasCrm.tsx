@@ -96,7 +96,7 @@ export function SalidasCrm({ salidas }: { salidas: SalidaFila[] }) {
 
                     <div className="mt-2 flex items-center gap-2">
                       <code className="truncate rounded bg-suave px-2 py-1 font-mono text-[11px] text-ink-2">
-                        {s.secreto}
+                        {s.secreto || "•••  (necesitas el permiso de conexiones)"}
                       </code>
                       <button
                         type="button"

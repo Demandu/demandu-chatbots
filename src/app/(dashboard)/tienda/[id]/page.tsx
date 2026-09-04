@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, AlertTriangle, Bot, ExternalLink } from "lucide-react";
 import { Topbar } from "@/components/Topbar";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { leerConfig, loQueFaltaParaVender } from "@/lib/tienda/config";
 import { DOMINIO_TIENDAS, enlaceDeTienda } from "@/lib/tienda/direccion";
 import { TiendaNav, esPestana } from "@/components/tienda/TiendaNav";
@@ -51,7 +52,12 @@ export default async function TiendaDetallePage({
   // En qué va cada plantilla de aviso. Se lee de nuestra tabla, no de Meta:
   // esta pantalla se abre muchas veces y preguntarle a Meta en cada carga es
   // lento y gasta cuota.
-  const plantillasDeAviso = await estadoDeLasPlantillas(sb, tienda.org_id as string);
+  // CON LA LLAVE DE SERVICIO: pregunta a Meta por las plantillas y para eso
+  // necesita el token del canal, que ya no es legible con la sesión.
+  const plantillasDeAviso = await estadoDeLasPlantillas(
+    createAdminClient(),
+    tienda.org_id as string,
+  );
 
   const activa = esPestana(searchParams.t);
   const config = leerConfig(tienda.config);

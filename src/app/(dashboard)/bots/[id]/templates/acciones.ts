@@ -17,10 +17,20 @@ async function canalDe(botId: string) {
   const sb = createClient();
   const { data } = await sb
     .from("whatsapp_channels")
-    .select("waba_id, phone_number_id, access_token, display_number")
+    .select("waba_id, phone_number_id, display_number")
     .eq("bot_id", botId)
     .maybeSingle();
-  return data as
+  if (!data) return null;
+
+  // ── EL TOKEN VIENE POR SU PROPIA PUERTA ────────────────────────────────
+  // La columna ya no es legible para una sesión normal. `token_de_whatsapp`
+  // comprueba el permiso de conexiones y devuelve nulo a quien no lo tenga;
+  // las funciones de abajo ya saben decir «este chatbot no tiene WhatsApp
+  // conectado», que es el mensaje correcto para un agente que no debería
+  // estar manejando plantillas.
+  const { data: token } = await sb.rpc("token_de_whatsapp", { p_bot_id: botId });
+
+  return { ...(data as any), access_token: (token as string | null) ?? null } as
     | { waba_id: string | null; phone_number_id: string | null; access_token: string | null; display_number: string | null }
     | null;
 }

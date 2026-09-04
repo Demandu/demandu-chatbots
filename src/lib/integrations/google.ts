@@ -1,3 +1,4 @@
+import { createAdminClient } from "@/lib/supabase/admin";
 /**
  * Helpers de OAuth 2.0 para Google Calendar.
  * El Client ID/Secret viven en variables de entorno (Netlify), nunca en el código.
@@ -122,7 +123,20 @@ export async function fetchCalendars(accessToken: string): Promise<GCalItem[]> {
  * la organización no tiene Google Calendar conectado.
  */
 export async function getValidAccessTokenForOrg(supabase: any, orgId: string): Promise<string | null> {
-  const { data } = await supabase
+  // ── EL TOKEN SE LEE CON LA LLAVE DE SERVICIO, NO CON LA SESIÓN ──────────
+  //
+  // `integrations.access_token` y `refresh_token` dejaron de ser legibles para
+  // una sesión normal: cualquier miembro de la cuenta —un agente que solo
+  // debería atender chats— podía leer el refresh token de Google desde la
+  // consola del navegador, y con él entrar a la agenda y a las hojas del
+  // cliente.
+  //
+  // NO SE ABRE NADA CON ESTO: quien llama ya resolvió `orgId` a partir de su
+  // propia sesión, así que el alcance es el mismo de antes. Lo único que
+  // cambia es que el token no viaja por un camino donde alguien pueda
+  // interceptarlo con una consulta suelta.
+  const sb = createAdminClient();
+  const { data } = await sb
     .from("integrations")
     .select("access_token, refresh_token, token_expiry")
     .eq("org_id", orgId)
@@ -139,7 +153,10 @@ export async function getValidAccessTokenForOrg(supabase: any, orgId: string): P
   try {
     const t = await refreshAccessToken(data.refresh_token as string);
     const newExpiry = new Date(Date.now() + (t.expires_in ?? 3600) * 1000).toISOString();
-    await supabase
+    // El refresco también con la llave de servicio: es la misma fila y el mismo
+    // motivo. Con la sesión funcionaría (escribir sí está permitido), pero
+    // dejar dos caminos para la misma columna es cómo se acaba abriendo uno.
+    await sb
       .from("integrations")
       .update({ access_token: t.access_token, token_expiry: newExpiry, updated_at: new Date().toISOString() })
       .eq("org_id", orgId)

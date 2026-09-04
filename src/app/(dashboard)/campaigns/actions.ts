@@ -20,10 +20,18 @@ const MAX_RECIPIENTS = 5000;
 async function getChannel(supabase: ReturnType<typeof createClient>, botId: string) {
   const { data } = await supabase
     .from("whatsapp_channels")
-    .select("waba_id, phone_number_id, access_token, display_number")
+    .select("waba_id, phone_number_id, display_number")
     .eq("bot_id", botId)
     .maybeSingle();
-  return data as
+  if (!data) return null;
+
+  // ── EL TOKEN POR SU PROPIA PUERTA ──────────────────────────────────────
+  // La columna dejó de ser legible con la sesión de un usuario: cualquier
+  // miembro de la cuenta la leía desde la consola del navegador. Ahora la
+  // entrega una función que comprueba el permiso de conexiones.
+  const { data: token } = await supabase.rpc("token_de_whatsapp", { p_bot_id: botId });
+
+  return { ...(data as any), access_token: (token as string | null) ?? null } as
     | { waba_id: string | null; phone_number_id: string | null; access_token: string | null; display_number: string | null }
     | null;
 }
@@ -44,8 +52,11 @@ export async function syncTemplates(formData: FormData) {
   if (!botId) return;
   const supabase = createClient();
   const ch = await getChannel(supabase, botId);
-  if (!ch?.waba_id || !ch?.access_token) {
+  if (!ch || !ch.waba_id || !ch.access_token) {
     redirect(`/bots/${botId}/templates?error=sin_canal`);
+    // `redirect` lanza, pero TypeScript no lo sabe aquí: sin este `return` el
+    // resto del cuerpo se compila creyendo que `ch` puede ser nulo.
+    return;
   }
 
   let errParam = "";

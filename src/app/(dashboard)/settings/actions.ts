@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
@@ -419,7 +420,11 @@ export async function disconnectIntegration(formData: FormData) {
   const supabase = createClient();
   // Intenta revocar el token en Google (best-effort)
   if (provider === "google_calendar") {
-    const { data } = await supabase
+    // Los tokens ya no son legibles con la sesión del usuario: se piden con la
+    // llave de servicio. El alcance no cambia —`orgId` ya salió de su propia
+    // sesión— pero el token deja de estar al alcance de una consulta suelta
+    // desde el navegador.
+    const { data } = await createAdminClient()
       .from("integrations")
       .select("access_token, refresh_token")
       .eq("org_id", orgId)

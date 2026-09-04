@@ -20,15 +20,46 @@ export default async function IntegrationsPage({
   const sb = createClient();
   const [{ data }, { data: wa }, { data: bots }, { data: intereses }, { data: llaves }, { data: sheets }, { data: salidas }] = await Promise.all([
     sb.from("integrations").select("provider, account_email, data, created_at").eq("org_id", orgId ?? "").eq("provider", "google_calendar").maybeSingle(),
-    sb.from("whatsapp_channels").select("*").eq("org_id", orgId ?? "").maybeSingle(),
+    // COLUMNAS EXPLÍCITAS, NO `*`. El token dejó de ser legible para una sesión
+    // normal, y `*` lo pediría igual: la consulta entera fallaría y esta
+    // pantalla se quedaría diciendo «WhatsApp no conectado» a todo el mundo.
+    sb.from("whatsapp_channels")
+      .select("id, org_id, bot_id, phone_number_id, waba_id, display_number, catalog_id, llamadas, created_at")
+      .eq("org_id", orgId ?? "")
+      .maybeSingle(),
     sb.from("bots").select("id,name,channel").order("created_at", { ascending: false }),
     sb.from("interes_integraciones").select("proveedor").eq("org_id", orgId ?? ""),
     sb.from("api_keys").select("id, nombre, prefijo, created_at, ultimo_uso, revocada_at")
       .eq("org_id", orgId ?? "").order("created_at", { ascending: false }),
     sb.from("sheets_config").select("hoja_id, hoja_nombre, activo, ultimo_error")
       .eq("org_id", orgId ?? "").maybeSingle(),
-    sb.from("salidas").select("*").eq("org_id", orgId ?? "").order("created_at", { ascending: false }),
+    // EL SECRETO NO VIENE EN LA LISTA. La columna dejó de ser legible para una
+    // sesión normal —cualquier miembro la leía desde la consola— y se pide
+    // abajo, una por una, por una puerta que comprueba el permiso.
+    sb.from("salidas")
+      .select("id, org_id, nombre, url, eventos, activa, ultimo_intento_at, ultimo_estado, ultimo_error, created_at")
+      .eq("org_id", orgId ?? "")
+      .order("created_at", { ascending: false }),
   ]);
+
+  // ── EL SECRETO DE FIRMA, UNO POR UNO Y POR LA PUERTA ────────────────────
+  //
+  // El cliente lo necesita de verdad: es con lo que su sistema comprueba que un
+  // aviso viene de Demandu, y la pantalla tiene un botón para copiarlo. Pero
+  // pedirlo en la lista lo ponía al alcance de cualquier miembro con una
+  // consulta suelta desde el navegador.
+  //
+  // `secreto_de_salida` comprueba el permiso de conexiones y devuelve nulo a
+  // quien no lo tenga: un agente ve sus webhooks y no ve el secreto, que es
+  // exactamente lo que debe pasar.
+  const filasSalidas = ((salidas as any[]) ?? []);
+  const secretos = await Promise.all(
+    filasSalidas.map((f) => sb.rpc("secreto_de_salida", { p_id: f.id })),
+  );
+  const salidasConSecreto = filasSalidas.map((f, i) => ({
+    ...f,
+    secreto: (secretos[i]?.data as string | null) ?? "",
+  }));
 
   const google = data as any | null;
   const calendars = (google?.data?.calendars as any[]) ?? [];
@@ -116,7 +147,7 @@ export default async function IntegrationsPage({
       </div>
 
       <div className="mt-4">
-        <SalidasCrm salidas={((salidas as any[]) ?? []) as SalidaFila[]} />
+        <SalidasCrm salidas={salidasConSecreto as SalidaFila[]} />
       </div>
 
       <div className="mt-4">

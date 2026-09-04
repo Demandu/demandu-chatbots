@@ -78,9 +78,17 @@ export default async function BotInstallPage({
   const channel = (bot.channel as string) ?? "webchat";
   const { data: wa } = await supabase
     .from("whatsapp_channels")
-    .select("display_number, phone_number_id, waba_id, access_token")
+    .select("display_number, phone_number_id, waba_id")
     .eq("bot_id", params.id)
     .maybeSingle();
+
+  // ── EL TOKEN NO SE LEE DE LA FILA, SE PIDE ──────────────────────────────
+  // La columna dejó de ser legible para una sesión normal: cualquier miembro
+  // —un agente que solo debería atender chats— la leía desde la consola del
+  // navegador. Ahora la entrega una función que comprueba el permiso de
+  // conexiones. Quien no lo tiene recibe nulo y ve la pantalla sin el
+  // diagnóstico de Meta, que es exactamente lo correcto.
+  const { data: tokenWa } = await supabase.rpc("token_de_whatsapp", { p_bot_id: params.id });
 
   // `page_name` no se pide: con este camino no hay página de Facebook y la
   // columna siempre viene vacía. Enseñarla solo podía confundir.
@@ -93,9 +101,9 @@ export default async function BotInstallPage({
   // Estado real en Meta. Se consulta en el servidor: el token nunca llega al
   // navegador. Si Meta no contesta, la pantalla sigue funcionando igual.
   const diagnostico =
-    channel === "whatsapp" && wa?.phone_number_id && wa?.waba_id && wa?.access_token
+    channel === "whatsapp" && wa?.phone_number_id && wa?.waba_id && tokenWa
       ? interpretarEstado(
-          await consultarMeta(wa.phone_number_id as string, wa.waba_id as string, wa.access_token as string),
+          await consultarMeta(wa.phone_number_id as string, wa.waba_id as string, String(tokenWa)),
         )
       : null;
 

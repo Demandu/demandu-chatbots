@@ -926,6 +926,81 @@ describe("Puerta de agenda del motor", () => {
     );
   });
 
+  test("NINGÚN SECRETO SE PIDE CON LA SESIÓN DEL USUARIO", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // El secreto de Yappy, los tokens de Meta, el refresh token de Google y el
+    // secreto de firma de los webhooks los leía CUALQUIER miembro de la cuenta
+    // —un `agent` o un `viewer`, alguien que solo debería atender chats— desde
+    // la consola del navegador: las cinco políticas comprobaban solo `org_id`.
+    //
+    // Ahora esas columnas no están concedidas a `authenticated`, y quien las
+    // necesita de verdad las pide por una función que comprueba el permiso de
+    // conexiones. Esta prueba impide que alguien vuelva a pedirlas directo:
+    // dejaría de funcionar en silencio, o peor, alguien «arreglaría» la
+    // consulta volviendo a abrir la columna.
+    //
+    // `select("*")` sobre esas tablas también se prohíbe: expande a todas las
+    // columnas, incluida la secreta, y la consulta ENTERA falla — la pantalla
+    // se quedaría diciendo «no conectado» a todo el mundo.
+    // ─────────────────────────────────────────────────────────────────────────
+    const TABLAS = ["whatsapp_channels", "instagram_channels", "integrations", "salidas", "tienda_cobros"];
+    const SECRETAS = ["access_token", "refresh_token", "secreto"];
+    const malos = [];
+
+    for (const { ruta, texto } of ARCHIVOS) {
+      const t = sinComentarios(texto);
+
+      // ── QUIÉN QUEDA FUERA, Y POR QUÉ ────────────────────────────────────
+      // Solo se mira lo que CREA un cliente con la sesión del usuario. Un
+      // archivo que RECIBE el cliente por parámetro (`sb: SupabaseClient`) no
+      // decide con cuál se le llama: eso lo decide quien lo llama, y ese sí
+      // pasa por aquí. Mirarlo también llenaba esto de falsos positivos —
+      // `avisar.ts`, `cobrar-pedido.ts`, `baja.ts`— que se llaman siempre con
+      // la llave de servicio.
+      if (!/createClient\(\)/.test(t)) continue;
+
+      for (const tabla of TABLAS) {
+        // TODAS las consultas a esa tabla, no solo la primera: un archivo
+        // puede tener varias y la mala ser la segunda.
+        let desde = 0;
+        for (;;) {
+          const i = t.indexOf(`from("${tabla}")`, desde);
+          if (i < 0) break;
+          desde = i + 1;
+
+          // Se corta en el `.maybeSingle()`/`.single()`/`;` para no leerse la
+          // consulta siguiente: así fue como esta prueba acusó a un archivo
+          // por un `select("*")` que era de OTRA tabla, tres líneas más abajo.
+          const fin = Math.min(
+            ...[".maybeSingle(", ".single(", ";"]
+              .map((f) => { const j = t.indexOf(f, i); return j < 0 ? i + 400 : j; }),
+          );
+          const consulta = t.slice(i, fin);
+
+          // ── CON QUÉ CLIENTE SE PIDE ─────────────────────────────────────
+          // El nombre del cliente va justo ANTES del `.from(`, así que se mira
+          // hacia atrás. Un archivo puede usar los dos —la sesión para lo suyo
+          // y la llave de servicio para lo que habla con Meta— y mirar solo el
+          // archivo entero acusaba consultas que ya estaban bien.
+          const antes = t.slice(Math.max(0, i - 140), i);
+          if (/createAdminClient\(\)[\s\S]{0,10}$|\badmin[\s\S]{0,3}$/.test(antes)) continue;
+
+          const sel = consulta.match(/\.select\(\s*"([^"]*)"/);
+          if (!sel) continue; // `select(CONSTANTE)`: se revisa donde se define
+          if (sel[1].trim() === "*") { malos.push(`${ruta} → ${tabla}: select("*")`); continue; }
+          for (const col of SECRETAS) {
+            if (sel[1].includes(col)) malos.push(`${ruta} → ${tabla}.${col}`);
+          }
+        }
+      }
+    }
+
+    esperar(malos.join("\n      ")).igual(
+      "",
+      "hay un secreto pedido con la sesión del usuario: tiene que ir por token_de_whatsapp / secreto_de_salida o con la llave de servicio",
+    );
+  });
+
   test("WhatsApp tiene la IA de respaldo, y con las mismas reglas que el widget", () => {
     // ─────────────────────────────────────────────────────────────────────────
     // NO LA TENÍA. `desvio.ts` decide qué pasa cuando el cliente se sale del

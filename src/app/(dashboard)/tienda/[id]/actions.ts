@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import { aCentavos, sanearGrupos } from "@/lib/tienda/variedades";
 import { leerConfig, sanearPreguntas, soloDigitos, type ConfigTienda } from "@/lib/tienda/config";
@@ -575,7 +576,9 @@ export async function cambiarEstadoPedido(_e: Estado, fd: FormData): Promise<Est
   const momento = momentoDelEstado(estado);
   if (!momento) return { ok: true, mensaje: "" };
 
-  const aviso = await avisarDelPedido(sb, pedidoId, momento);
+  // Mismo motivo: avisar al cliente sale por WhatsApp y hace falta el token
+  // del canal. Es el mismo camino que ya usa el IPN de Yappy.
+  const aviso = await avisarDelPedido(createAdminClient(), pedidoId, momento);
   if (aviso.enviado) return { ok: true, mensaje: "Listo. Le avisamos al cliente por WhatsApp." };
 
   // Sin motivo = el aviso estaba apagado o ya se había mandado. No es un fallo
@@ -799,7 +802,11 @@ export async function probarYappy(_e: Estado, fd: FormData): Promise<Estado> {
   if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
 
   const sb = createClient();
-  const { data: fila } = await sb
+  // EL SECRETO SE LEE CON LA LLAVE DE SERVICIO. Dejó de ser legible con la
+  // sesión: cualquier miembro de la cuenta lo sacaba desde la consola del
+  // navegador. Aquí hace falta de verdad —es con lo que se firma la prueba
+  // contra Yappy— y quién puede llegar hasta aquí ya lo decidió `tiendaDelUsuario`.
+  const { data: fila } = await createAdminClient()
     .from("tienda_cobros")
     .select("id,comercio,secreto,dominio,ambiente")
     .eq("tienda_id", tiendaId)
@@ -869,7 +876,10 @@ export async function crearPlantillasDeAviso(_e: Estado, fd: FormData): Promise<
   }
 
   const { crearPlantillasDePedido } = await import("@/lib/tienda/altaDePlantillas");
-  const r = await crearPlantillasDePedido(createClient(), t.bot_id);
+  // CON LA LLAVE DE SERVICIO: esto habla con Meta y necesita el token del
+  // canal, que ya no es legible con la sesión de nadie. Quién puede llegar
+  // aquí lo decidió esta acción más arriba; el alcance no cambia.
+  const r = await crearPlantillasDePedido(createAdminClient(), t.bot_id);
 
   if (!r.ok) {
     return { ok: false, mensaje: r.error ?? "No se pudo crear ninguna plantilla." };
