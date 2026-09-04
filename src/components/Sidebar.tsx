@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Clock, Crown,
+  Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Crown,
   Store,
 } from "lucide-react";
 import { Logo } from "./Logo";
@@ -17,11 +17,14 @@ const MAIN = [
   { href: "/dashboard", label: "Inicio", icon: Home },
   { href: "/bots", label: "Chatbots", icon: Bot },
   { href: "/inbox", label: "Conversaciones", icon: MessagesSquare },
-  // Va aquí, justo debajo de Conversaciones, porque es lo mismo visto en el
-  // futuro: charlas que el chatbot va a retomar solo. Escondida dentro de la
-  // Bandeja nadie la encontraría, y es la única forma de enterarse —y de
-  // impedir— que el bot escriba esta tarde.
-  { href: "/inbox/programados", label: "En espera", icon: Clock },
+  // «En espera» (/inbox/programados) SE QUITÓ DEL MENÚ por decisión del dueño:
+  // nadie la usaba y ocupaba un sitio de primer nivel en un menú corto.
+  //
+  // LA PANTALLA SIGUE VIVA en su dirección. Es el único sitio donde se ven —y
+  // se pueden cancelar— los mensajes que un bloque de Espera dejó programados
+  // para dentro de horas. Si un día alguien necesita frenar un envío, se entra
+  // por la dirección; borrarla dejaría esos mensajes saliendo sin forma humana
+  // de pararlos.
   { href: "/crm", label: "Embudo", icon: KanbanSquare },
   { href: "/contacts", label: "Contactos", icon: Users },
   // La tienda va en Principal y no en Ajustes porque no es una configuración:
@@ -65,10 +68,11 @@ export function Sidebar({
   // estaba en otra pestaña o recargó, la solicitud quedaba invisible.
   const pendientes = usePendientes();
 
-  // Todas las direcciones del menú, para decidir cuál se ilumina. Con
-  // `startsWith` a secas, estando en «/inbox/programados» se encendían DOS
-  // opciones a la vez —«Conversaciones» y «En espera»— y el menú dejaba de
-  // decirte dónde estás. Gana siempre la coincidencia más larga.
+  // Todas las direcciones del menú, para decidir cuál se ilumina. Gana la
+  // coincidencia MÁS LARGA: con `startsWith` a secas, una pantalla dentro de
+  // otra encendía dos opciones a la vez y el menú dejaba de decirte dónde
+  // estás. Se queda aunque ahora mismo ninguna opción anide dentro de otra:
+  // la próxima que se añada lo volvería a romper.
   const TODAS = [...MAIN, ...CONFIG].map((i) => i.href);
 
   const Item = ({ href, label, icon: Icon }: (typeof MAIN)[number]) => {
