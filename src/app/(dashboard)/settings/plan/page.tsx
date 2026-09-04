@@ -11,6 +11,8 @@ import { CancelarPlan } from "@/components/billing/CancelarPlan";
 import { BorrarCuenta } from "@/components/billing/BorrarCuenta";
 import { VENTAS, linkWhatsApp, linkCorreo } from "@/lib/contacto";
 import { Check, TriangleAlert, Sparkles } from "lucide-react";
+import { TiendaEnVenta } from "@/components/planes/TiendaEnVenta";
+import { CODIGO_TIENDA, PRECIO_TIENDA } from "@/lib/planes/tiendaAddon";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +28,7 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
   const supabase = createClient();
   const orgId = await getCurrentOrgId();
 
-  const [usage, contratados, { data: plans }, { data: addons }, { data: cobro }, { data: org }] = await Promise.all([
+  const [usage, contratados, { data: plans }, { data: addons }, { data: cobro }, { data: org }, { data: cuantasTiendas }] = await Promise.all([
     getUsage(supabase, orgId),
     getAddons(supabase, orgId),
     // Los planes públicos MÁS el plan a la medida de esta cuenta, si tiene uno.
@@ -39,6 +41,9 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
     orgId
       ? supabase.from("organizations").select("name, datos_borrados_at").eq("id", orgId).maybeSingle()
       : Promise.resolve({ data: null }),
+    // Cuántas tiendas se le cobran. LO CUENTA LA BASE, no la pantalla: la
+    // factura no puede depender de que un render haga bien la suma.
+    orgId ? supabase.rpc("tiendas_que_se_cobran", { p_org_id: orgId }) : Promise.resolve({ data: 0 }),
   ]);
 
   const todos = (plans as any[]) ?? [];
@@ -46,7 +51,13 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
   const aMedida = todos.filter((p) => p.org_id === orgId);
   const listaPlanes = todos.filter((p) => !p.org_id && p.code !== "scale");
   const empresa = todos.find((p) => p.code === "scale" && !p.org_id);
-  const listaAddons = (addons as any[]) ?? [];
+  // LA TIENDA SE SACA DE LA LISTA GENÉRICA. Los demás complementos son
+  // consumibles —mil mensajes, un giga— que se compran solos cuando hacen
+  // falta. La tienda es un producto de 59 al mes que cambia lo que el negocio
+  // puede hacer, y como una línea más de la lista no la compra nadie.
+  const todosAddons = (addons as any[]) ?? [];
+  const addonTienda = todosAddons.find((a) => a.code === CODIGO_TIENDA) ?? null;
+  const listaAddons = todosAddons.filter((a) => a.code !== CODIGO_TIENDA);
 
   const estado = ((cobro as any[]) ?? [])[0] ?? null;
   const pagosActivos = stripeConfigured();
@@ -303,6 +314,17 @@ export default async function PlanPage({ searchParams }: { searchParams: { pago?
       )}
 
       {/* Complementos con carrito */}
+      {/* VA ANTES DE «Amplía tu plan» a propósito: es lo que más cambia lo que
+          el cliente puede hacer, y lo que más margen deja. */}
+      {addonTienda && (
+        <div className="mb-7">
+          <TiendaEnVenta
+            precio={Number(addonTienda.price) || PRECIO_TIENDA}
+            tiendasActivas={Number(cuantasTiendas) || 0}
+          />
+        </div>
+      )}
+
       <h3 className="mb-1 font-display text-base font-semibold text-ink">Amplía tu plan</h3>
       <p className="mb-4 text-xs text-ink-3">
         Elige lo que necesites, revisa tu carrito a la derecha y paga. Se activa al instante.

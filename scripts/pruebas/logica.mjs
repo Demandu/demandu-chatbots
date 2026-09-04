@@ -21,6 +21,10 @@ import {
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
 import { membresiaActiva, soporteVigente } from "../../src/lib/membresia.ts";
 import {
+  PRECIO_TIENDA, COMISION_APPS, BENEFICIOS, INCLUYE, GANCHO, LETRA_CHICA,
+  loQueTeAhorras, desdeCuantoSePagaSola, precioEscrito,
+} from "../../src/lib/planes/tiendaAddon.ts";
+import {
   tiendaDelBot, enlaceDelBot, mensajeDeTienda, productosQueSePuedenOfrecer,
   categoriasDelBot, precioDelBot, paginaDeCatalogo, desdeDondeSigue, productoElegido,
   comoVaElPedido, pedidoDelQueHablar, MAX_FILAS_LISTA,
@@ -3158,6 +3162,72 @@ describe("La tienda dentro del chat", () => {
     const a = { numero: 4, estado: "preparando", total: 1, created_at: "vaya fecha" };
     const b = { numero: 8, estado: "preparando", total: 1, created_at: null };
     esperar(pedidoDelQueHablar([a, b])?.numero).igual(8);
+  });
+});
+
+
+describe("El complemento de la Tienda", () => {
+  test("NUNCA se enseña un ahorro negativo", () => {
+    // A quien vende poco no se le dice «te ahorras -$34». Prometer con un
+    // número que insulta es peor que no poner la calculadora.
+    esperar(loQueTeAhorras(100)).igual(0);
+    esperar(loQueTeAhorras(0)).igual(0);
+    esperar(loQueTeAhorras(-500)).igual(0);
+    esperar(loQueTeAhorras("no es un número")).igual(0);
+  });
+
+  test("la cuenta del ahorro es la comisión menos lo que cuesta", () => {
+    // 3.000 × 25% = 750 de comisión; menos 59 = 691.
+    esperar(loQueTeAhorras(3000)).igual(691);
+    esperar(loQueTeAhorras(10000)).igual(2441);
+  });
+
+  test("el punto en el que se paga sola sale de la misma cuenta", () => {
+    // Si el precio o la comisión cambian, este número tiene que moverse solo.
+    // Escrito a mano, un día diría 236 con el precio ya en otro sitio.
+    const punto = desdeCuantoSePagaSola();
+    esperar(punto * COMISION_APPS >= PRECIO_TIENDA).verdadero(
+      `con ${punto} de ventas todavía no se paga`,
+    );
+    // Y ES EL MÁS BAJO QUE CUMPLE: un peso menos y ya no se paga.
+    esperar((punto - 1) * COMISION_APPS < PRECIO_TIENDA).verdadero(
+      `${punto} no es el punto justo, sobra margen`,
+    );
+    // LO QUE DE VERDAD IMPORTA: QUE SE MUEVA CON EL PRECIO. La primera versión
+    // de esta prueba calculaba lo esperado con la misma fórmula, así que un
+    // número escrito a mano —que hoy da la misma cifra— la pasaba igual. El
+    // día que el precio cambie, ese número mentiría en la pantalla.
+    esperar(desdeCuantoSePagaSola(80)).igual(320);
+    esperar(desdeCuantoSePagaSola(120)).igual(480);
+  });
+
+  test("se dice que es por tienda y que apagarla deja de cobrarse", () => {
+    // Una cadena tiene que poder calcular su factura sola, y quien cierra un
+    // local tiene que poder dejar de pagarlo sin llamar a nadie. Enterarse
+    // DESPUÉS es de las cosas que más rápido rompen la confianza.
+    esperar(/por cada tienda|por tienda/i.test(LETRA_CHICA)).verdadero(LETRA_CHICA);
+    esperar(/apagada no se cobra/i.test(LETRA_CHICA)).verdadero(LETRA_CHICA);
+    esperar(/por tienda/i.test(precioEscrito())).verdadero(precioEscrito());
+  });
+
+  test("el argumento no es una lista de funciones", () => {
+    // El primero tiene que ser el dinero que YA está perdiendo, no una
+    // característica. Contra quien se compite es contra las apps de delivery.
+    esperar(BENEFICIOS.length >= 5).verdadero("el argumento se quedó corto");
+    esperar(/%|comisión|regalar/i.test(BENEFICIOS[0].titulo + BENEFICIOS[0].texto)).verdadero(
+      "el primer beneficio ya no habla de la comisión que paga hoy",
+    );
+    esperar(/comisión/i.test(GANCHO)).verdadero(GANCHO);
+    esperar(INCLUYE.length >= 6).verdadero("la lista de lo que incluye se quedó corta");
+  });
+
+  test("no se promete nada que no esté construido", () => {
+    // Cada promesa que no se cumpla es una baja el mes siguiente, y cuesta
+    // mucho más que la venta que trajo.
+    const todo = [GANCHO, LETRA_CHICA, ...INCLUYE, ...BENEFICIOS.map((b) => b.titulo + b.texto)].join(" ");
+    esperar(/próximamente|muy pronto|estamos trabajando|en desarrollo/i.test(todo)).falso(
+      "el texto de venta promete algo que no está hecho",
+    );
   });
 });
 

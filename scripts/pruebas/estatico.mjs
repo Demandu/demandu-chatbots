@@ -4335,4 +4335,86 @@ describe("La tienda dentro del chat", () => {
   });
 });
 
+
+// ─── Los tutoriales de 30 segundos ───────────────────────────────────────────
+//
+// El botón «▶ Ver tutorial (30 seg)» estuvo en la pantalla SIN HACER NADA —ni
+// un `onClick`— y al lado, la caja de «Lana explica» enseñaba la frase de una
+// línea mientras el texto bueno de los 28 componentes era dato muerto que nadie
+// veía. Estas reglas existen para que ninguna de las dos cosas vuelva.
+describe("Los tutoriales de los componentes", () => {
+  const TUT = fs.readFileSync(path.join(SRC, "lib/flow/tutoriales.ts"), "utf8");
+  const CH = fs.readFileSync(path.join(SRC, "lib/channels.ts"), "utf8");
+  const INS = fs.readFileSync(path.join(SRC, "components/builder/Inspector.tsx"), "utf8");
+
+  const clavesDocumentadas = () => {
+    const i = CH.indexOf("export type ComponentKey");
+    return [...CH.slice(i, CH.indexOf(";", i)).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  };
+
+  test("todo componente que se puede arrastrar tiene su tutorial", () => {
+    // Sin esto, el bloque nuevo sale a producción con un botón que no abre
+    // nada: exactamente el estado del que venimos.
+    const t = sinComentarios(TUT);
+    const conTutorial = new Set([...t.matchAll(/^  ([a-z_]+): \{$/gm)].map((m) => m[1]));
+    const faltan = clavesDocumentadas().filter((k) => !conTutorial.has(k));
+    esperar(faltan).igual([], "componentes sin tutorial de 30 segundos");
+  });
+
+  test("ningún tutorial se queda a medias", () => {
+    // Un tutorial con los pasos vacíos se pinta como una caja en blanco, que es
+    // peor que no tener botón.
+    const t = sinComentarios(TUT);
+    const vacios = [];
+    for (const m of t.matchAll(/^  ([a-z_]+): \{([\s\S]*?)^  \},$/gm)) {
+      const cuerpo = m[2];
+      // SE MIRA DENTRO DE CADA CORCHETE, NO A PARTIR DE ÉL. La primera versión
+      // usaba `pasos: \[[\s\S]*?"` y con `pasos: []` encontraba la comilla del
+      // EJEMPLO de más abajo: pasaba con el tutorial ya vacío.
+      const dentro = (campo) => {
+        const r = new RegExp(`${campo}: \\[([^\\]]*)\\]`).exec(cuerpo);
+        return r ? r[1] : "";
+      };
+      const tienePasos = /"[^"]/.test(dentro("pasos"));
+      const tieneEjemplo = /\(/.test(dentro("ejemplo"));
+      const tieneOjo = /ojo:\s*\n?\s*"[^"]/.test(cuerpo) || /ojo:\s*"[^"]/.test(cuerpo);
+      if (!tienePasos || !tieneEjemplo || !tieneOjo) vacios.push(m[1]);
+    }
+    esperar(vacios).igual([], "tutoriales sin pasos, sin ejemplo o sin el «ojo»");
+  });
+
+  test("son de treinta segundos: cuatro pasos como mucho", () => {
+    // Quien abre esto está a mitad de armar un flujo. Un manual de dos páginas
+    // no se lee, y no leerlo cuesta lo mismo que no tenerlo.
+    const t = sinComentarios(TUT);
+    const largos = [];
+    for (const m of t.matchAll(/^  ([a-z_]+): \{([\s\S]*?)^  \},$/gm)) {
+      const pasos = /pasos: \[([\s\S]*?)\],/.exec(m[2]);
+      if (pasos && (pasos[1].match(/^\s*"/gm) ?? []).length > 4) largos.push(m[1]);
+    }
+    esperar(largos).igual([], "tutoriales con más de 4 pasos: ya no son 30 segundos");
+  });
+
+  test("el botón del tutorial de verdad abre algo", () => {
+    // La regla que caza el fallo original: un botón sin `onClick`.
+    const t = sinComentarios(INS);
+    const i = t.indexOf("Ver tutorial");
+    esperar(i > 0).verdadero("desapareció el botón del tutorial");
+    const alrededor = t.slice(Math.max(0, i - 500), i);
+    esperar(/onClick=/.test(alrededor)).verdadero(
+      "el botón «Ver tutorial» volvió a no hacer nada: es una promesa pintada",
+    );
+    esperar(/tutorialDe\(/.test(t)).verdadero("el panel no lee los tutoriales");
+  });
+
+  test("«Lana explica» enseña el texto bueno, no la frase de una línea", () => {
+    // Los 28 textos de `channels.ts` fueron dato muerto durante meses porque el
+    // panel pintaba `meta.description` en su lugar.
+    const t = sinComentarios(INS);
+    esperar(/COMPONENTS\[/.test(t)).verdadero(
+      "el panel no usa la explicación de channels.ts: vuelve a ser dato muerto",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

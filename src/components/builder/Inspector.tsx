@@ -10,6 +10,8 @@ import type { Catalogs } from "@/lib/catalogs";
 import { MediaUpload } from "./MediaUpload";
 import { LanaAvatar } from "@/components/Lana";
 import { EditorDePrompt } from "@/components/EditorDePrompt";
+import { tutorialDe } from "@/lib/flow/tutoriales";
+import { COMPONENTS } from "@/lib/channels";
 
 interface Props {
   node: DemanduNode | null;
@@ -32,7 +34,14 @@ const NO_VALUE = new Set<NodeActionType>(["opt_out"]);
 
 export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgId }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
-  useEffect(() => setMenuOpen(false), [node?.id]);
+  // SE CIERRA AL CAMBIAR DE BLOQUE. Si se quedara abierto, al pinchar otro
+  // bloque saldría el tutorial del anterior desplegado — y quien lo lea va a
+  // configurar mal el que tiene delante.
+  const [verTutorial, setVerTutorial] = useState(false);
+  useEffect(() => {
+    setMenuOpen(false);
+    setVerTutorial(false);
+  }, [node?.id]);
 
   if (!node) {
     return (
@@ -42,6 +51,7 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
     );
   }
   const meta = NODE_META[node.type as NodeType];
+  const tutorial = tutorialDe(node.type);
   const d = node.data;
   const actions = d.actions ?? [];
   const buttons = d.buttons ?? [];
@@ -95,19 +105,80 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
         <h3 className="font-display text-base font-semibold text-white">{meta.label}</h3>
       </div>
 
-      {/* Lana explica este bloque (texto ahora; mini-video por bloque después) */}
-      <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-pink/25 bg-pink/5 p-3">
-        <LanaAvatar size={34} />
-        <div className="min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-wide text-pink">Lana explica</div>
-          <p className="mt-0.5 text-[12px] leading-snug text-muted">{meta.description}</p>
-          <button
-            type="button"
-            className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-surface-border bg-surface-raised px-2 py-1 text-[11px] font-semibold text-muted transition hover:border-pink hover:text-pink"
-          >
-            ▶ Ver tutorial (30 seg)
-          </button>
+      {/* ── LANA EXPLICA, Y AHORA DE VERDAD ────────────────────────────────
+          Dos cosas estaban rotas aquí y ninguna se veía:
+
+          1. Este botón NO HACÍA NADA. Ni siquiera tenía un `onClick`. Era una
+             promesa pintada en la pantalla.
+          2. Peor: la explicación buena de cada bloque ya estaba escrita en
+             `channels.ts` —28 textos, con el porqué de cada uno— y esta caja
+             enseñaba en su lugar la frase corta de una línea. Ese campo era
+             dato muerto desde el día que se escribió. */}
+      <div className="mb-3 rounded-xl border border-pink/25 bg-pink/5 p-3">
+        <div className="flex items-start gap-2.5">
+          <LanaAvatar size={34} />
+          <div className="min-w-0">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-pink">Lana explica</div>
+            <p className="mt-0.5 text-[12px] leading-snug text-muted">
+              {COMPONENTS[node.type as keyof typeof COMPONENTS]?.lana ?? meta.description}
+            </p>
+            {tutorial && (
+              <button
+                type="button"
+                onClick={() => setVerTutorial((v) => !v)}
+                className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-surface-border bg-surface-raised px-2 py-1 text-[11px] font-semibold text-muted transition hover:border-pink hover:text-pink"
+              >
+                {verTutorial ? "▾ Cerrar tutorial" : "▶ Ver tutorial (30 seg)"}
+              </button>
+            )}
+          </div>
         </div>
+
+        {tutorial && verTutorial && (
+          <div className="mt-3 border-t border-pink/20 pt-3">
+            <p className="text-[12px] font-semibold text-white">{tutorial.para}</p>
+
+            <ol className="mt-2 space-y-1">
+              {tutorial.pasos.map((paso, i) => (
+                <li key={i} className="flex gap-2 text-[12px] leading-snug text-muted">
+                  <span className="mt-[1px] grid h-4 w-4 flex-none place-items-center rounded-full bg-pink/20 text-[10px] font-bold text-pink">
+                    {i + 1}
+                  </span>
+                  <span>{paso}</span>
+                </li>
+              ))}
+            </ol>
+
+            {/* EL EJEMPLO ES UNA CONVERSACIÓN, no una descripción. «Manda un
+                texto» no explica nada; ver el mensaje que le llega al cliente
+                sí. Por eso se pinta como un chat. */}
+            <div className="mt-3 space-y-1 rounded-lg bg-surface-raised p-2.5">
+              {tutorial.ejemplo.map((l, i) =>
+                l.quien === "nota" ? (
+                  <p key={i} className="text-[11px] italic leading-snug text-muted-2">{l.texto}</p>
+                ) : (
+                  <div key={i} className={l.quien === "cliente" ? "flex justify-end" : "flex"}>
+                    <span
+                      className={
+                        "inline-block max-w-[85%] rounded-lg px-2 py-1 text-[11px] leading-snug " +
+                        (l.quien === "cliente" ? "bg-violet/20 text-white" : "bg-surface text-muted")
+                      }
+                    >
+                      {l.texto}
+                    </span>
+                  </div>
+                ),
+              )}
+            </div>
+
+            {/* EL «OJO» ES LA PARTE QUE AHORRA LA LLAMADA A SOPORTE: el fallo
+                concreto que de verdad comete la gente con ESE bloque. */}
+            <div className="mt-2 flex gap-2 rounded-lg border border-aviso/30 bg-aviso-suave px-2.5 py-2">
+              <span className="text-[11px]">⚠️</span>
+              <p className="text-[11px] leading-snug text-muted">{tutorial.ojo}</p>
+            </div>
+          </div>
+        )}
       </div>
       <p className="mb-4 text-[10px] text-muted-2">ID: {node.id}</p>
 
