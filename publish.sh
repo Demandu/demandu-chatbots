@@ -42,11 +42,39 @@ if [ "$PENDIENTES" = "0" ]; then
   exit 0
 fi
 
+# ── ¿CAMBIÓ EL MOTOR? ENTONCES HAY UN SEGUNDO SITIO QUE PUBLICAR ────────────
+#
+# Esta plataforma vive en DOS SITIOS y durante meses solo se publicó uno: las
+# pantallas van a Netlify y el motor de WhatsApp va a Supabase. Los bloques
+# nuevos aparecían en el constructor, se guardaban bien, y en WhatsApp no hacían
+# NADA — el motor que corría era de semanas atrás y no conocía ese bloque. El
+# flujo se quedaba sin salida, el cliente sin respuesta, y la red de seguridad
+# lo pasaba con una persona. Todo parecía funcionar. (Pasó el 4 sep 2026.)
+#
+# Se mira contra lo que ya está subido, no contra el último commit: si el motor
+# cambió hace tres commits y nunca se publicó, sigue haciendo falta.
+MOTOR="supabase/functions/whatsapp/index.ts"
+MOTOR_CAMBIO=""
+if [ "$PENDIENTES" != "0" ] && [ "$PENDIENTES" != "?" ]; then
+  git diff --name-only "@{u}..HEAD" 2>/dev/null | grep -q "^$MOTOR$" && MOTOR_CAMBIO="si"
+fi
+
 echo "⬆️  Subiendo $PENDIENTES commit(s)…"
 if git push origin main; then
   echo ""
   echo "✅ Publicado. Netlify construirá en ~1-2 min."
   echo "   Míralo aquí: https://app.netlify.com/projects/demandu-chatbots/deploys"
+
+  if [ -n "$MOTOR_CAMBIO" ]; then
+    echo ""
+    echo "🔧 El motor de WhatsApp también cambió. Publicándolo en Supabase…"
+    ./publicar-motor.sh || {
+      echo ""
+      echo "⚠️  LAS PANTALLAS SÍ SE PUBLICARON, EL MOTOR NO."
+      echo "   Los bloques nuevos se verán en el constructor pero no harán nada"
+      echo "   en WhatsApp hasta que corras:  ./publicar-motor.sh"
+    }
+  fi
 else
   echo ""
   echo "❌ El push falló. Lo más común:"
