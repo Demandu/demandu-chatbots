@@ -3885,4 +3885,100 @@ describe("A quién SÍ se le puede escribir", () => {
   });
 });
 
+describe("Las difusiones salen por una cola, no dentro de la petición", () => {
+  // SE MIRA EL CÓDIGO, NO LOS COMENTARIOS. `sinComentarios` no quita los «--»
+  // de SQL, y la cabecera de esta migración explica justamente lo que hay que
+  // comprobar: buscar la frase encontraría la explicación aunque alguien
+  // hubiera borrado la línea que importa.
+  const mig = fs
+    .readFileSync(path.join(RAIZ, "supabase/migrations/0083_cola_de_difusiones.sql"), "utf8")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("--"))
+    .join("\n");
+  const acc = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/campaigns/actions.ts"), "utf8"));
+  const ruta = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/api/campanas/enviar/route.ts"), "utf8"));
+
+  test("LA PANTALLA YA NO MANDA NADA: solo encola", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Antes recorría la audiencia llamando a Meta una vez por contacto mientras
+    // el navegador esperaba. Con mil, la función se corta a mitad y el
+    // resultado es el peor posible: unos recibieron, otros no, NADIE SABE
+    // QUIÉNES, y volver a pulsar se lo repite a los que ya lo tenían.
+    // ─────────────────────────────────────────────────────────────────────────
+    esperar(/graph\.facebook/i.test(acc.slice(acc.indexOf("export async function sendCampaign")))).falso(
+      "sendCampaign todavía llama a Meta: con mil contactos se va a cortar a mitad",
+    );
+    esperar(/status: "pendiente"/.test(acc)).verdadero("la audiencia no se encola");
+    esperar(/status: "encolada"/.test(acc)).verdadero("la campaña no nace encolada");
+  });
+
+  test("QUE NADIE RECIBA DOS VECES", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Dos tandas solapadas —el reloj dispara cada minuto y una tanda puede
+    // tardar más— leerían los mismos pendientes y mandarían el mensaje por
+    // duplicado. Eso no se arregla mirando después: se arregla al TOMAR el
+    // lote. `for update skip locked` hace que el segundo salte esas filas en
+    // vez de esperarlas —esperar sería igual de malo: acabaría mandándolas él.
+    // ─────────────────────────────────────────────────────────────────────────
+    esperar(/for update skip locked/.test(mig)).verdadero(
+      "sin «skip locked» dos tandas solapadas mandan el mismo mensaje dos veces",
+    );
+    // Y se marcan como tomadas EN LA MISMA sentencia que las selecciona: en dos
+    // pasos queda un hueco por el que pasan las dos.
+    esperar(/update campaign_recipients[\s\S]{0,200}status\s*=\s*'enviando'/.test(mig)).verdadero(
+      "las filas no se marcan al tomarlas",
+    );
+  });
+
+  test("UN ENVÍO DEL QUE NO SE SABE NADA NO SE REINTENTA A CIEGAS", () => {
+    // Rescatar una fila que quizá sí salió es mandársela dos veces a alguien.
+    // Solo se rescata lo que no tiene NI identificador de Meta NI error
+    // apuntado —o sea, lo que nunca llegó a intentarse— y un par de veces.
+    const i = mig.indexOf("x.status = 'enviando'");
+    esperar(i > 0).verdadero("cambió la consulta de rescate, revisa esta prueba");
+    const rescate = mig.slice(i, i + 400);
+    esperar(rescate.includes("wa_message_id is null")).verdadero(
+      "se reintentan envíos que quizá ya salieron",
+    );
+    esperar(rescate.includes("error is null")).verdadero(
+      "se reintentan envíos que ya fallaron con motivo",
+    );
+    esperar(/intentos < \d/.test(rescate)).verdadero("no hay tope de reintentos");
+  });
+
+  test("cada resultado se apunta EN CUANTO SE SABE", () => {
+    // Si se apuntara al final de la tanda y la función muriera, lo ya enviado
+    // figuraría como pendiente y volvería a salir.
+    const i = ruta.indexOf("Promise.all(trozo.map");
+    const j = ruta.indexOf('from("campaign_recipients")');
+    esperar(i > 0 && j > i).verdadero("los resultados no se guardan dentro del bucle");
+  });
+
+  test("la tanda se para sola antes de que la corten", () => {
+    // Una función cortada a mitad es justo el fallo del que venimos.
+    esperar(/PRESUPUESTO_MS/.test(ruta)).verdadero("la tanda no tiene límite de tiempo");
+    esperar(/while \(Date\.now\(\) - arranque < PRESUPUESTO_MS\)/.test(ruta)).verdadero(
+      "el presupuesto no controla el bucle",
+    );
+  });
+
+  test("solo la tarea programada puede vaciar la cola", () => {
+    esperar(/llamadaDeTareaProgramada\(req, "difusiones"\)/.test(ruta)).verdadero(
+      "cualquiera puede disparar los envíos",
+    );
+    esperar(/revoke execute on function public\.campanas_tomar_lote/.test(mig)).verdadero(
+      "la función de la cola es alcanzable desde el navegador",
+    );
+  });
+
+  test("quien se dio de baja no entra ni en la cola", () => {
+    // Una fila en la cola es una fila que alguien puede reintentar después.
+    esperar(/eq\("opted_out", false\)/.test(acc)).verdadero(
+      "se encolan contactos dados de baja",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

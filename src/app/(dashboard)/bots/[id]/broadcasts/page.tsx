@@ -64,6 +64,9 @@ export default async function BotBroadcastsPage({
   const ERR: Record<string, string> = {
     sin_canal: "Este bot no tiene WhatsApp conectado (pestaña Conexión).",
     sin_plantilla: "Elige una plantilla válida.",
+    sin_audiencia:
+      "No hay a quién mandarle: con esa etiqueta no queda ningún contacto de WhatsApp que no se haya dado de baja.",
+    no_campaign: "No se pudo crear la difusión. Inténtalo otra vez.",
   };
 
   return (

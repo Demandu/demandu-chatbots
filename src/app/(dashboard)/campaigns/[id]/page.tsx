@@ -7,7 +7,11 @@ import { ArrowLeft } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-const RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, read: 3, replied: 4 };
+// `pendiente` y `enviando` son de la cola: todavía no salieron. Van en cero para
+// que no cuenten como enviados en el embudo de arriba.
+const RANK: Record<string, number> = {
+  pendiente: 0, enviando: 0, queued: 0, sent: 1, delivered: 2, read: 3, replied: 4,
+};
 
 // Etiqueta humana por destinatario
 function label(status: string) {
@@ -17,6 +21,7 @@ function label(status: string) {
     case "delivered": return { t: "Entregado (no leído)", c: "bg-sky-500/15 text-sky-600" };
     case "sent": return { t: "Enviado", c: "bg-suave text-ink-2" };
     case "failed": return { t: "Falló", c: "bg-danger/15 text-danger" };
+    case "enviando": return { t: "Saliendo…", c: "bg-warning/20 text-aviso" };
     default: return { t: "En cola", c: "bg-suave text-ink-3" };
   }
 }
@@ -46,6 +51,13 @@ export default async function CampaignDetail({ params }: { params: { id: string 
     if (rk >= 3) funnel.read++;
     if (rk >= 4) funnel.replied++;
   }
+  // ── CUÁNTO LLEVA ─────────────────────────────────────────────────────────
+  // Una difusión de mil tarda un rato, y sin esto la pantalla no dice nada
+  // durante todo ese rato: parecería colgada justo cuando está trabajando.
+  const enCola = recs.filter((r) => r.status === "pendiente" || r.status === "enviando").length;
+  const yaSalieron = recs.length - enCola;
+  const enMarcha = enCola > 0;
+
   const base = funnel.sent || recs.length || 1;
   const pctOf = (n: number) => Math.round((n / base) * 100) + "%";
 
@@ -65,6 +77,29 @@ export default async function CampaignDetail({ params }: { params: { id: string 
           Plantilla: <b className="text-ink-2">{(campaign as any).template_name ?? "—"}</b> ·{" "}
           {(campaign as any).audience_count} destinatarios · {new Date((campaign as any).created_at).toLocaleString()}
         </p>
+
+        {/* ── Cuánto lleva ────────────────────────────────────────────────
+            SE PINTA SOLO MIENTRAS QUEDA GENTE EN LA COLA. Una difusión de mil
+            tarda un rato, y sin esto la pantalla no dice nada durante todo ese
+            rato: parece colgada justo cuando está trabajando, y quien la mira
+            vuelve a pulsar «enviar». */}
+        {enMarcha && (
+          <div className="mt-4 rounded-2xl border border-warning/50 bg-warning/10 p-3">
+            <p className="text-sm font-semibold text-ink">
+              Saliendo: {yaSalieron} de {recs.length}
+            </p>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-suave">
+              <div
+                className="h-full rounded-full bg-violet transition-all"
+                style={{ width: `${Math.round((yaSalieron / (recs.length || 1)) * 100)}%` }}
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-ink-2">
+              Van saliendo por tandas para no saturar WhatsApp. Puedes cerrar esta pantalla: siguen
+              solos. Recarga para ver cómo va.
+            </p>
+          </div>
+        )}
 
         {/* Embudo */}
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">

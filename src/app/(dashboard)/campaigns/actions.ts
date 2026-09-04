@@ -6,7 +6,15 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 
 const GRAPH = "https://graph.facebook.com/v20.0";
-const MAX_RECIPIENTS = 500;
+/**
+ * Tope de una difusión.
+ *
+ * NO ES UN LÍMITE TÉCNICO NUESTRO —la cola aguanta lo que le echen— sino el
+ * recordatorio de que Meta tiene su propio tope de clientes distintos cada 24 h
+ * según el nivel del número. Pasado ese, los envíos empiezan a rebotar uno a
+ * uno y la campaña sale a medias sin que se entienda por qué.
+ */
+const MAX_RECIPIENTS = 5000;
 
 /** Lee el canal de WhatsApp de un BOT (waba_id, phone_number_id, token). */
 async function getChannel(supabase: ReturnType<typeof createClient>, botId: string) {
@@ -84,7 +92,28 @@ export async function syncTemplates(formData: FormData) {
   redirect(`/bots/${botId}/templates?synced=1`);
 }
 
-/** Crea una difusión desde un BOT y envía la plantilla a su audiencia. */
+/**
+ * Encola una difusión. NO la envía.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ANTES ENVIABA AQUÍ MISMO, con un `for` que llamaba a Meta una vez por
+ * contacto mientras el navegador esperaba. Con cuarenta pasaba; con mil, la
+ * función se corta a mitad —nadie mantiene una petición abierta un minuto— y el
+ * resultado es el peor posible: unos recibieron, otros no, NADIE SABE QUIÉNES,
+ * y volver a pulsar «enviar» se lo repite a los que ya lo tenían.
+ *
+ * Hay clientes que van a mandar más de mil.
+ *
+ * AHORA ESTO SOLO ESCRIBE LA LISTA y contesta. El reloj de la base va sacando
+ * lotes cada minuto (`/api/campanas/enviar`) y cada intento queda apuntado en
+ * su fila: si algo se cae, se ve exactamente dónde se quedó y quién sí recibió.
+ *
+ * LA AUDIENCIA SE CONGELA AL ENCOLAR, y es deliberado. Si se calculara al
+ * enviar, alguien que se etiqueta mientras la difusión está saliendo entraría a
+ * mitad — y la campaña diría 400 y habrían salido 430. Lo que se ve al pulsar
+ * es lo que se manda.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export async function sendCampaign(formData: FormData) {
   const orgId = await getCurrentOrgId();
   if (!orgId) return;
@@ -103,12 +132,15 @@ export async function sendCampaign(formData: FormData) {
 
   const { data: tpl } = await supabase
     .from("whatsapp_templates")
-    .select("name, language, variables")
+    .select("name, language")
     .eq("id", templateId)
     .maybeSingle();
   if (!tpl) redirect(`/bots/${botId}/broadcasts?error=sin_plantilla`);
 
-  // Audiencia: contactos de WhatsApp no dados de baja (opcional por etiqueta)
+  // Audiencia: contactos de WhatsApp no dados de baja (opcional por etiqueta).
+  // `opted_out` se filtra AQUÍ y no al enviar: quien pidió no recibir mensajes
+  // no puede ni siquiera entrar en la lista, porque una fila en la cola es una
+  // fila que alguien puede reintentar después.
   let q = supabase
     .from("contacts")
     .select("id, name, phone")
@@ -116,8 +148,10 @@ export async function sendCampaign(formData: FormData) {
     .eq("channel", "whatsapp")
     .eq("opted_out", false);
   if (tag) q = q.contains("tags", [tag]);
-  const { data: contacts } = await q.limit(MAX_RECIPIENTS + 1);
+  const { data: contacts } = await q.limit(MAX_RECIPIENTS);
   const audience = (contacts ?? []).filter((c) => c.phone);
+
+  if (!audience.length) redirect(`/bots/${botId}/broadcasts?error=sin_audiencia`);
 
   const { data: campaign } = await supabase
     .from("campaigns")
@@ -127,55 +161,37 @@ export async function sendCampaign(formData: FormData) {
       name,
       template_name: (tpl as any).name,
       template_language: (tpl as any).language,
-      status: "sending",
+      status: "encolada",
       audience_count: audience.length,
     })
     .select("id")
     .single();
   if (!campaign) redirect(`/bots/${botId}/broadcasts?error=no_campaign`);
 
-  const vars = (tpl as any).variables ?? 0;
+  // POR TROZOS: mil filas en un solo `insert` es una petición enorme que puede
+  // rebotar por tamaño. En trozos de doscientos entra siempre, y si uno falla
+  // los anteriores ya están encolados y saldrán igual.
+  const filas = audience.map((c) => ({
+    campaign_id: (campaign as any).id,
+    org_id: orgId,
+    contact_id: c.id,
+    phone: c.phone,
+    name: c.name,
+    status: "pendiente",
+  }));
 
-  for (const c of audience.slice(0, MAX_RECIPIENTS)) {
-    const components =
-      vars > 0
-        ? [{ type: "body", parameters: Array.from({ length: vars }, (_, i) => ({ type: "text", text: i === 0 ? c.name || "" : "" })) }]
-        : undefined;
-
-    let wamid: string | null = null;
-    let error: string | null = null;
-    try {
-      const res = await fetch(`${GRAPH}/${ch.phone_number_id}/messages`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${ch.access_token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          to: c.phone,
-          type: "template",
-          template: { name: (tpl as any).name, language: { code: (tpl as any).language || "es" }, ...(components ? { components } : {}) },
-        }),
-      });
-      const j = await res.json();
-      if (res.ok && j?.messages?.[0]?.id) wamid = j.messages[0].id;
-      else error = j?.error?.message ?? "error";
-    } catch (e) {
-      error = (e as Error)?.message ?? "red";
-    }
-
-    await supabase.from("campaign_recipients").insert({
-      campaign_id: (campaign as any).id,
-      org_id: orgId,
-      contact_id: c.id,
-      phone: c.phone,
-      name: c.name,
-      wa_message_id: wamid,
-      status: wamid ? "sent" : "failed",
-      error,
-      sent_at: wamid ? new Date().toISOString() : null,
-    });
+  let encolados = 0;
+  for (let i = 0; i < filas.length; i += 200) {
+    const { error } = await supabase.from("campaign_recipients").insert(filas.slice(i, i + 200));
+    if (error) break;
+    encolados += Math.min(200, filas.length - i);
   }
 
-  await supabase.from("campaigns").update({ status: "sent" }).eq("id", (campaign as any).id);
+  // EL NÚMERO QUE SE ENSEÑA ES EL QUE DE VERDAD ESTÁ EN LA COLA. Si un trozo
+  // falló, la campaña no puede decir que va a mandar mil.
+  if (encolados !== filas.length) {
+    await supabase.from("campaigns").update({ audience_count: encolados }).eq("id", (campaign as any).id);
+  }
 
   revalidatePath(`/bots/${botId}/broadcasts`);
   redirect(`/campaigns/${(campaign as any).id}`);
