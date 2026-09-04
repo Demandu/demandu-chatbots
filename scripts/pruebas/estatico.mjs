@@ -3661,4 +3661,108 @@ describe("La tienda tiene UN solo botón que gana", () => {
   });
 });
 
+describe("El panel de resultados de la tienda", () => {
+  const mig = fs.readFileSync(
+    path.join(RAIZ, "supabase/migrations/0080_panel_de_ventas.sql"), "utf8");
+
+  test("SIN PAGAR NO ES LO MISMO QUE SIN COBRO", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Un pedido de una tienda que cobra al entregar tiene `pago = 'sin_cobro'`
+    // y NO es una deuda: es lo normal. Meterlo en «sin pagar» inventaría una
+    // cartera vencida que no existe y haría que el negocio persiguiera a gente
+    // que no le debe nada — por WhatsApp, que es peor.
+    // ─────────────────────────────────────────────────────────────────────────
+    const deudores = /deudores as \([\s\S]{0,400}?\)/.exec(mig)?.[0] ?? "";
+    esperar(deudores.length > 0).verdadero("cambió la forma de la consulta, revisa esta prueba");
+    esperar(deudores.includes("'sin_cobro'")).falso(
+      "los pedidos que se cobran al entregar cuentan como deuda",
+    );
+    esperar(deudores.includes("'pendiente'") && deudores.includes("'expirado'")).verdadero(
+      "faltan estados de cobro fallido en la lista de impagos",
+    );
+  });
+
+  test("los cancelados no cuentan en NINGUNA cifra de dinero", () => {
+    // Un pedido cancelado no es una venta ni una deuda. Se filtra una sola vez,
+    // arriba del todo, para que ninguna cifra pueda olvidarse de hacerlo.
+    const todos = /todos as \([\s\S]{0,400}?\n  \)/.exec(mig)?.[0] ?? "";
+    esperar(/estado <> 'cancelado'/.test(todos)).verdadero(
+      "los cancelados entran en las sumas",
+    );
+  });
+
+  test("CLIENTE NUEVO ES QUIEN COMPRA POR PRIMERA VEZ, no quien se registró", () => {
+    // Un contacto puede llevar meses escribiendo; el día que compra es el día
+    // que se convierte, y ese es el número que dice si el mes fue bueno.
+    esperar(/min\(created_at\) as primera_vez/.test(mig)).verdadero(
+      "no se calcula la primera compra de cada persona",
+    );
+    esperar(/primera_vez >= p_desde/.test(mig)).verdadero("«nuevos» no usa la primera compra");
+    esperar(/primera_vez <  ?p_desde/.test(mig)).verdadero("«repiten» no usa la primera compra");
+  });
+
+  test("LEAD ES QUIEN TODAVÍA NO HA COMPRADO", () => {
+    // Contar como lead a alguien que ya compró tres veces infla el embudo y
+    // esconde justo lo que hay que mirar.
+    esperar(/not exists \(select 1 from todos t where t\.contacto_id = c\.id\)/.test(mig)).verdadero(
+      "los leads incluyen a gente que ya compró",
+    );
+  });
+
+  test("el rango es [desde, hasta), abierto por arriba", () => {
+    // Con «<= hasta» un pedido de las 23:59 del día 30 cae en septiembre y en
+    // octubre a la vez, y la suma del año no cuadra con la de los meses.
+    esperar(/created_at >= p_desde and created_at < p_hasta/.test(mig)).verdadero(
+      "el rango está cerrado por arriba: los meses se van a solapar",
+    );
+  });
+
+  test("la función respeta el permiso de la organización", () => {
+    // Es una función que devuelve teléfonos de personas. `security invoker`
+    // más la comprobación explícita: lo mismo que hace `crm_board`.
+    esperar(/security invoker/.test(mig)).verdadero("la función corre con permisos de más");
+    esperar(/not in \(select auth_org_ids\(\)\)/.test(mig)).verdadero(
+      "no se comprueba de quién es la tienda",
+    );
+  });
+
+  test("la lista se puede DESCARGAR y ETIQUETAR, o el panel es de presumir", () => {
+    // Un número que no se puede abrir es un número que no sirve: se lee, se
+    // asiente y se olvida.
+    const p = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/tienda/PanelDeVentas.tsx"), "utf8"));
+    esperar(p.includes("comoCsv(")).verdadero("la lista no se puede descargar");
+    esperar(p.includes("accionEtiquetar")).verdadero("la lista no se puede etiquetar");
+    esperar(/broadcasts\?tag=/.test(p)).verdadero(
+      "no se puede pasar de la lista a mandarles una plantilla",
+    );
+  });
+
+  test("EL GRUPO ES UNA ETIQUETA, no un objeto nuevo", () => {
+    // Las etiquetas ya existen en la ficha, en la Bandeja, en el buscador y en
+    // el selector de audiencia de las difusiones. Un grupo que solo entendiera
+    // esta pantalla sería una lista que ninguna otra puede usar.
+    const acc = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"));
+    esperar(/from\(\s*["']tags["']\s*\)[\s\S]{0,200}insert/.test(acc)).verdadero(
+      "la etiqueta no se da de alta en el catálogo: sería invisible en las demás pantallas",
+    );
+    // Y NO SE PISAN LAS QUE YA TENÍA: escribir el array a pelo borraría el
+    // resto de etiquetas de esa persona, y eso no se deshace.
+    esperar(/\[\.\.\.actuales, etiqueta\]/.test(acc)).verdadero(
+      "al etiquetar se borran las etiquetas que ya tenía",
+    );
+  });
+
+  test("la difusión llega con la audiencia ya puesta", () => {
+    // Escribir la etiqueta otra vez a mano es donde alguien se equivoca y le
+    // manda la plantilla a toda su base de contactos.
+    const b = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/broadcasts/page.tsx"), "utf8"));
+    esperar(/defaultValue=\{searchParams\?\.tag/.test(b)).verdadero(
+      "la pantalla de difusiones no recoge la etiqueta que le mandan",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

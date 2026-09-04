@@ -564,6 +564,82 @@ export async function guardarAvisos(_e: Estado, fd: FormData): Promise<Estado> {
   };
 }
 
+/**
+ * Ponerle la misma etiqueta a un montón de gente de golpe.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ES EL PUENTE ENTRE EL PANEL Y LOS ENVÍOS, y por eso no se inventó un objeto
+ * «grupo» nuevo. Las etiquetas YA existen en la ficha del contacto, en la
+ * Bandeja, en el buscador y en el selector de audiencia de las difusiones. Un
+ * concepto paralelo que solo entiende esta pantalla sería una lista que nadie
+ * más puede usar — y la gracia es justamente poder usarla.
+ *
+ * LA ETIQUETA SE CREA SI NO EXISTE, para que aparezca luego en los selectores
+ * de toda la plataforma. Una etiqueta que solo vive dentro del array de un
+ * contacto es invisible en todas las demás pantallas.
+ *
+ * SE AÑADE, NUNCA SE REEMPLAZA: quien ya tenía «Mayorista» lo conserva. Y no se
+ * duplica, que llenaría la ficha de la misma palabra repetida.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function etiquetarContactos(_e: Estado, fd: FormData): Promise<Estado> {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return { ok: false, mensaje: "No encuentro tu organización." };
+
+  const etiqueta = s(fd.get("etiqueta")).slice(0, 40);
+  if (!etiqueta) return { ok: false, mensaje: "Escribe el nombre de la etiqueta." };
+
+  let ids: string[] = [];
+  try {
+    ids = JSON.parse(s(fd.get("ids")) || "[]");
+  } catch {
+    ids = [];
+  }
+  ids = [...new Set(ids.map((x) => String(x)).filter(Boolean))].slice(0, 2000);
+  if (!ids.length) return { ok: false, mensaje: "No hay a quién etiquetar." };
+
+  const sb = createClient();
+
+  // Que exista en el catálogo, para que se pueda elegir desde cualquier otra
+  // pantalla. Si ya existe, esto no hace nada.
+  const { data: yaEsta } = await sb
+    .from("tags")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("name", etiqueta)
+    .maybeSingle();
+  if (!yaEsta) await sb.from("tags").insert({ org_id: orgId, name: etiqueta });
+
+  // SE LEEN LAS QUE YA TIENEN. Escribir el array a pelo borraría el resto de
+  // etiquetas de esa persona, y eso no se puede deshacer.
+  const { data: gente } = await sb
+    .from("contacts")
+    .select("id,tags")
+    .eq("org_id", orgId)
+    .in("id", ids);
+
+  let puestas = 0;
+  for (const c of (gente ?? []) as { id: string; tags: string[] | null }[]) {
+    const actuales = Array.isArray(c.tags) ? c.tags : [];
+    if (actuales.includes(etiqueta)) continue;
+    const { error } = await sb
+      .from("contacts")
+      .update({ tags: [...actuales, etiqueta] })
+      .eq("id", c.id);
+    if (!error) puestas++;
+  }
+
+  const yaLaTenian = (gente?.length ?? 0) - puestas;
+  return {
+    ok: true,
+    mensaje:
+      puestas === 0
+        ? `Ya todos tenían «${etiqueta}».`
+        : `Listo: «${etiqueta}» en ${puestas} contacto${puestas === 1 ? "" : "s"}` +
+          (yaLaTenian > 0 ? ` (${yaLaTenian} ya la tenían).` : "."),
+  };
+}
+
 /* ── Cobros ────────────────────────────────────────────────────────────────── */
 
 /**

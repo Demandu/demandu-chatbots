@@ -19,7 +19,7 @@ export default async function BotBroadcastsPage({
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { error?: string };
+  searchParams: { error?: string; tag?: string };
 }) {
   const supabase = createClient();
   let { data: bot } = await supabase.from("bots").select("id, name, channel").eq("id", params.id).maybeSingle();
@@ -101,7 +101,17 @@ export default async function BotBroadcastsPage({
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-ink-2">Etiqueta (opcional)</label>
-                  <input name="tag" className="input-l" placeholder="Vacío = todos los contactos de WhatsApp" />
+                  <input
+                    name="tag"
+                    // LLEGA PUESTA DESDE EL PANEL DE LA TIENDA. Ahí se acaba de
+                    // etiquetar a un grupo de gente concreta —los que no
+                    // pagaron, los nuevos del mes— y escribir la etiqueta otra
+                    // vez a mano es donde se equivoca uno y le manda la
+                    // plantilla a toda la base de contactos.
+                    defaultValue={searchParams?.tag ?? ""}
+                    className="input-l"
+                    placeholder="Vacío = todos los contactos de WhatsApp"
+                  />
                 </div>
                 <button className="btn-primary w-full" disabled={!connected || !approved.length}>
                   <Send className="h-4 w-4" /> Enviar difusión

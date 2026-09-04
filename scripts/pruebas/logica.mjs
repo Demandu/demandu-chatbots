@@ -16,6 +16,9 @@ import {
   MEDIDAS, PROPORCION, proporcionDe, comoMedida, instruccionesDeImagenes,
 } from "../../src/lib/tienda/imagenes.ts";
 import {
+  rangoDeFechas, rangoEscrito, comoRango, cambio, comoCsv, aQuienSePuedeEscribir,
+} from "../../src/lib/tienda/panel.ts";
+import {
   MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado, botonDelAviso,
 } from "../../src/lib/tienda/avisos.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
@@ -2643,6 +2646,129 @@ describe("Tienda: las medidas de las imágenes", () => {
       esperar(texto.includes(m.titulo)).verdadero(`falta ${m.titulo}`);
     }
     esperar(/4 a 1/.test(texto)).verdadero("no dice el resumen de las proporciones");
+  });
+});
+
+describe("Tienda: el panel de arriba de los pedidos", () => {
+  // Un miércoles cualquiera, a media tarde.
+  const ahora = new Date(2026, 8, 16, 15, 30);
+
+  test("«HOY» INCLUYE LOS PEDIDOS DE ESTA TARDE", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // Si el final del rango fuera «hoy a las 00:00», los pedidos que el
+    // negocio acaba de ver entrar no aparecerían en «Hoy» — y esa es
+    // exactamente la pantalla donde los va a buscar. Sale un número, es
+    // plausible, y está mal.
+    // ───────────────────────────────────────────────────────────────────────
+    const r = rangoDeFechas("hoy", ahora);
+    esperar(r.desde.getDate()).igual(16);
+    esperar(r.desde.getHours()).igual(0);
+    esperar(r.hasta > ahora).verdadero("el rango termina antes de ahora mismo");
+    esperar(r.hasta.getDate()).igual(17);
+  });
+
+  test("«este mes» empieza el día 1 A LAS CERO HORAS", () => {
+    // Usar la hora actual dejaría fuera todo lo del día 1 por la mañana.
+    const r = rangoDeFechas("mes", ahora);
+    esperar(r.desde.getDate()).igual(1);
+    esperar(r.desde.getMonth()).igual(8);
+    esperar(r.desde.getHours() + r.desde.getMinutes()).igual(0);
+  });
+
+  test("«últimos 7 días» son siete, contando hoy", () => {
+    const r = rangoDeFechas("semana", ahora);
+    esperar(r.desde.getDate()).igual(10);
+    esperar(Math.round((r.hasta - r.desde) / 86400000)).igual(7);
+  });
+
+  test("«mes pasado» NO se solapa con este mes", () => {
+    // Con un rango cerrado por arriba, un pedido del 31 a las 23:59 caería en
+    // los dos meses y la suma del año no cuadraría con la de los meses.
+    const pasado = rangoDeFechas("mes_pasado", ahora);
+    const este = rangoDeFechas("mes", ahora);
+    esperar(pasado.hasta.getTime()).igual(este.desde.getTime());
+    esperar(pasado.desde.getMonth()).igual(7);
+  });
+
+  test("UNA FECHA ESCRITA NO SE LEE COMO UTC", () => {
+    // `new Date("2026-09-01")` es medianoche UTC: en Panamá eso es el 31 de
+    // agosto a las 19:00, así que el negocio pide septiembre y le falta el
+    // primer día. Es invisible hasta que alguien cuadra a mano.
+    const r = rangoEscrito("2026-09-01", "2026-09-30");
+    esperar(r.desde.getMonth()).igual(8, "el mes se corrió");
+    esperar(r.desde.getDate()).igual(1, "se perdió el primer día");
+  });
+
+  test("el «hasta» escrito incluye su día entero", () => {
+    // Quien escribe «al 30» quiere el 30, no hasta el 30 a las cero horas.
+    const r = rangoEscrito("2026-09-01", "2026-09-30");
+    esperar(r.hasta.getDate()).igual(1);
+    esperar(r.hasta.getMonth()).igual(9, "el final tiene que ser el 1 de octubre");
+  });
+
+  test("un rango al revés o a medias no se acepta", () => {
+    esperar(rangoEscrito("2026-09-30", "2026-09-01") === null).verdadero();
+    esperar(rangoEscrito("", "2026-09-30") === null).verdadero();
+    esperar(rangoEscrito("30/09/2026", "2026-09-30") === null).verdadero();
+    // Un solo día SÍ vale: del 5 al 5 es el 5 entero.
+    esperar(rangoEscrito("2026-09-05", "2026-09-05") !== null).verdadero();
+  });
+
+  test("el rango se lee por el ÚLTIMO DÍA INCLUIDO", () => {
+    // Decir «al 1 de octubre» cuando octubre no entra es la forma más rápida
+    // de que alguien crea que la cifra está mal.
+    esperar(comoRango(rangoEscrito("2026-09-01", "2026-09-30"))).igual("1 – 30 de septiembre");
+    esperar(comoRango(rangoEscrito("2026-09-05", "2026-09-05"))).igual("5 de septiembre");
+  });
+
+  test("DE CERO A ALGO ES «NUEVO», NO INFINITO", () => {
+    // El primer mes de cualquier tienda pasa por aquí. Una pantalla que enseña
+    // «Infinity%» el primer día no la vuelve a abrir nadie.
+    esperar(cambio(500, 0).texto).igual("nuevo");
+    esperar(cambio(120, 100).texto).igual("+20%");
+    esperar(cambio(80, 100).texto).igual("-20%");
+    esperar(cambio(0, 100).texto).igual("-100%");
+    esperar(cambio(100, 100) === null).verdadero("sin cambio no se pinta nada");
+  });
+
+  test("EL TELÉFONO NO PUEDE SALIR COMO 5,07624E+10", () => {
+    // Excel convierte un número largo a notación científica y la lista de
+    // contactos se vuelve inservible. No se recupera después.
+    const csv = comoCsv(
+      [{ id: "1", name: "Ana", phone: "50762381138", gastado: 1763 }],
+      [{ clave: "name", titulo: "Nombre" }, { clave: "phone", titulo: "Teléfono" }, { clave: "gastado", titulo: "Gastado" }],
+    );
+    esperar(csv.includes("'50762381138")).verdadero("el teléfono no está protegido");
+    esperar(csv.includes("$17.63")).verdadero("el importe no se convirtió de centavos");
+  });
+
+  test("PUNTO Y COMA, y las comillas dobladas", () => {
+    // El Excel en español separa por punto y coma; con comas mete todo en la
+    // primera columna y quien lo recibe cree que el archivo está roto. Y un
+    // nombre con un separador dentro desplazaría todas las columnas.
+    const csv = comoCsv(
+      [{ name: 'Ana "La jefa"; S.A.', phone: "507" }],
+      [{ clave: "name", titulo: "Nombre" }, { clave: "phone", titulo: "Teléfono" }],
+    );
+    esperar(csv.split("\r\n")[0]).igual('"Nombre";"Teléfono"');
+    esperar(csv.split("\r\n")[1].startsWith('"Ana ""La jefa""; S.A."')).verdadero(csv);
+  });
+
+  test("UNA PERSONA CON DOS PEDIDOS SIN PAGAR ES UNA PERSONA", () => {
+    // La lista de impagos es de PEDIDOS, así que el mismo contacto puede salir
+    // dos veces. Mandarle dos mensajes iguales es la forma más rápida de que
+    // te silencie.
+    const filas = [
+      { id: "c1", phone: "507111", numero: 1 },
+      { id: "c1", phone: "507111", numero: 2 },
+      { id: "c2", phone: "507222", numero: 3 },
+      { id: "c3", phone: "" },
+    ];
+    esperar(aQuienSePuedeEscribir(filas).length).igual(2, "no se agrupó por persona");
+  });
+
+  test("sin teléfono no se le puede escribir", () => {
+    esperar(aQuienSePuedeEscribir([{ id: "c1", phone: null }]).length).igual(0);
   });
 });
 

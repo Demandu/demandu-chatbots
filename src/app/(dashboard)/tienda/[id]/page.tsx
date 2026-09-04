@@ -12,6 +12,7 @@ import { Cobros } from "@/components/tienda/Cobros";
 import { Direccion } from "@/components/tienda/Direccion";
 import { EncargadoDePedidos } from "@/components/tienda/EncargadoDePedidos";
 import { AvisosAlCliente } from "@/components/tienda/AvisosAlCliente";
+import { PanelDeVentas } from "@/components/tienda/PanelDeVentas";
 import { Pedidos, type PedidoEnLista } from "@/components/tienda/Pedidos";
 import {
   guardarDiseno,
@@ -23,6 +24,7 @@ import {
   cambiarDireccion,
   cambiarEncargado,
   guardarAvisos,
+  etiquetarContactos,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -198,6 +200,18 @@ export default async function TiendaDetallePage({
               atiendeId={(tienda as any).atiende_id ?? null}
               equipo={(equipo ?? []) as { id: string; name: string | null; available: boolean }[]}
               accion={cambiarEncargado}
+            />
+          )}
+
+          {/* ARRIBA DE TODO Y CERRADO. Quien entra a Pedidos viene a
+              despachar; los números son para el dueño, que entra menos veces y
+              con otra pregunta en la cabeza. */}
+          {activa === "pedidos" && (
+            <PanelDeVentas
+              tiendaId={params.id}
+              botId={tienda.bot_id ?? null}
+              moneda={config.moneda}
+              accionEtiquetar={etiquetarContactos}
             />
           )}
 
