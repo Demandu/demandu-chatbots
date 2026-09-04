@@ -41,11 +41,21 @@ export function estadoDelCobro(
   pago: string,
   iniciadoEn: string | null | undefined,
   ahora: Date = new Date(),
-): "sin_cobro" | "esperando" | "sin_confirmar" | "pagado" | "fallido" | "anulado" {
+): "sin_cobrar" | "esperando" | "sin_confirmar" | "pagado" | "fallido" | "anulado" {
   if (pago === "pagado") return "pagado";
   if (pago === "anulado") return "anulado";
   if (pago === "rechazado" || pago === "cancelado" || pago === "expirado") return "fallido";
-  if (pago !== "pendiente") return "sin_cobro";
+  // ── «SIN COBRAR» NO ES UN ESTADO NEUTRO, ES UN PROBLEMA ──────────────────
+  //
+  // Aquí SIEMPRE se cobra antes de preparar, y siempre por Yappy: no existe la
+  // tienda que cobra al entregar. Así que un pedido que nunca llegó a tener un
+  // cobro es un pedido que no debería prepararse — o el cobro falló al crearse,
+  // o la tienda no tiene Yappy configurado.
+  //
+  // ANTES ESTO NO PINTABA NADA en el tablero, y por eso era peligroso: un
+  // pedido sin cobrar se veía exactamente igual que uno normal. Hay dos así en
+  // la base ahora mismo, por $32,50.
+  if (pago !== "pendiente") return "sin_cobrar";
 
   // Un pendiente sin fecha viene de antes de que se guardara la hora: se trata
   // como sin confirmar, que es lo prudente — no como recién empezado.

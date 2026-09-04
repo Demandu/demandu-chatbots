@@ -58,11 +58,22 @@ export const COLUMNAS: { clave: EstadoPedido; titulo: string; siguiente?: Estado
  * El cobro, de un vistazo.
  *
  * SIN ESTO EL TABLERO MIENTE: un pedido pagado y uno por cobrar se ven igual, y
- * el negocio entrega los dos. «Sin cobro» no pinta nada a propósito — es lo
- * normal en una tienda que cobra al recibir, y una etiqueta en cada tarjeta
- * para decir «nada que ver aquí» solo tapa las que sí importan.
+ * el negocio entrega los dos.
+ *
+ * AQUÍ SIEMPRE SE COBRA ANTES DE PREPARAR, y siempre por Yappy: no existe la
+ * tienda que cobra al entregar. Por eso TODOS los estados que no son «pagado»
+ * llevan sello — antes «sin cobro» no pintaba nada, tratado como si fuera lo
+ * normal, y era justo el peligroso.
  */
 const SELLOS: Record<string, { texto: string; color: string; pista?: string }> = {
+  // EL SELLO QUE FALTABA. Un pedido que nunca llegó a cobrarse se veía igual
+  // que uno normal —sin sello ninguno— y se podía preparar y entregar. Aquí
+  // siempre se cobra antes de preparar, así que esto es una alarma.
+  sin_cobrar: {
+    texto: "Sin cobrar",
+    color: "#dc2626",
+    pista: "Nunca se le creó un cobro. Revisa que Yappy esté configurado, o reenvíale el enlace de pago.",
+  },
   esperando: {
     texto: "Pagando…",
     color: "#d97706",
@@ -85,6 +96,9 @@ const SELLOS: Record<string, { texto: string; color: string; pista?: string }> =
     pista: "El cobro se ejecutó y luego se anuló. No es lo mismo que uno que nunca entró.",
   },
 };
+
+/** ¿Está cobrado de verdad? Es lo único que deja avanzar un pedido. */
+const pagado = (p: PedidoEnLista) => estadoDelCobro(p.pago, p.pago_iniciado_en) === "pagado";
 
 const cuando = (iso: string) => {
   const d = new Date(iso);
@@ -247,7 +261,28 @@ export function Pedidos({
                   )}
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {col.siguiente && (
+                    {/* ── NO SE PREPARA LO QUE NO ESTÁ COBRADO ────────────────
+                        Es la regla del negocio: aquí siempre se cobra antes de
+                        procesar. Hasta ahora el tablero dejaba arrastrar
+                        cualquier pedido, así que uno sin pagar podía prepararse
+                        y entregarse — y eso solo se descubre al cuadrar caja.
+
+                        LA SALIDA NO SE ESCONDE. Si Yappy falló y el negocio
+                        cobró por transferencia, tiene que poder seguir: se
+                        marca a mano, queda apuntado quién y cuándo, y el pedido
+                        avanza. Bloquear sin salida convierte una regla en una
+                        trampa. */}
+                    {col.siguiente && !pagado(p) ? (
+                      <form action={enviar}>
+                        <input type="hidden" name="tienda_id" value={tiendaId} />
+                        <input type="hidden" name="pedido_id" value={p.id} />
+                        <input type="hidden" name="estado" value="cobrado_por_fuera" />
+                        <button className="mt-2 inline-flex items-center gap-1 rounded-lg border border-dashed px-2 py-1 text-[11px] font-bold text-ink-2 transition hover:text-ink"
+                          title="Solo si ya te pagó por otra vía. Queda apuntado.">
+                          Marcar cobrado
+                        </button>
+                      </form>
+                    ) : col.siguiente ? (
                       <form action={enviar}>
                         <input type="hidden" name="tienda_id" value={tiendaId} />
                         <input type="hidden" name="pedido_id" value={p.id} />
@@ -259,7 +294,7 @@ export function Pedidos({
                           }
                         />
                       </form>
-                    )}
+                    ) : null}
                     {p.estado !== "entregado" && (
                       <form action={enviar}>
                         <input type="hidden" name="tienda_id" value={tiendaId} />

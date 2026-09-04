@@ -342,8 +342,12 @@ export function leerConfig(crudo: unknown): ConfigTienda {
  * Se pregunta ANTES de dejar publicar. Una tienda sin número de WhatsApp se ve
  * perfecta y no vende nada: el cliente llena el carrito, pulsa el botón y no
  * pasa nada. Es el fallo más caro posible porque nadie se entera.
+ *
+ * EL COBRO ENTRA AQUÍ Y NO ES OPCIONAL: en esta plataforma se cobra antes de
+ * procesar el pedido, siempre por Yappy. Una tienda sin Yappy recoge pedidos
+ * que nadie puede cobrar.
  */
-export function loQueFaltaParaVender(c: ConfigTienda): string[] {
+export function loQueFaltaParaVender(c: ConfigTienda, cobraConYappy: boolean): string[] {
   const falta: string[] = [];
   if (!c.titulo.trim()) falta.push("el nombre que se lee arriba");
   if (!c.whatsapp.numero) falta.push("el WhatsApp al que llegan los pedidos");
@@ -351,5 +355,13 @@ export function loQueFaltaParaVender(c: ConfigTienda): string[] {
     falta.push("el WhatsApp completo, con código de país");
   }
   if (!c.preguntas.length) falta.push("al menos una pregunta en el formulario");
+
+  // ── SIN COBRO NO HAY TIENDA ───────────────────────────────────────────────
+  // Aquí siempre se cobra ANTES de procesar el pedido, y siempre por Yappy. Una
+  // tienda publicada sin Yappy recoge pedidos que nadie puede cobrar: el
+  // cliente pide, el negocio prepara, y el dinero no está por ningún lado. Se
+  // veía perfecta y era el fallo más caro de todos.
+  if (!cobraConYappy) falta.push("el cobro con Yappy, que es como se paga antes de preparar");
+
   return falta;
 }

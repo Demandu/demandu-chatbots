@@ -41,7 +41,7 @@ import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
 type Resumen = {
   ventas: {
     pedidos: number; monto: number; cobrado: number; sin_pagar: number;
-    cuantos_sin_pagar: number; sin_cobro_en_linea: number; ticket: number;
+    cuantos_sin_pagar: number; nunca_cobrados: number; ticket: number;
   };
   anterior: { pedidos: number; monto: number; cobrado: number };
   gente: { compradores: number; nuevos: number; repiten: number; leads: number };
@@ -243,11 +243,7 @@ export function PanelDeVentas({
                   icono={<Wallet className="h-3.5 w-3.5" />}
                   titulo="Cobrado"
                   valor={comoDinero(r.ventas.cobrado, moneda)}
-                  pie={
-                    r.ventas.sin_cobro_en_linea > 0
-                      ? `${r.ventas.sin_cobro_en_linea} se cobran al entregar`
-                      : "por Yappy"
-                  }
+                  pie="por Yappy"
                   delta={cambio(r.ventas.cobrado, r.anterior.cobrado)}
                 />
                 {/* ESTA ES LA CIFRA QUE PAGA EL PANEL. Es dinero que ya se pidió
@@ -256,7 +252,15 @@ export function PanelDeVentas({
                   icono={<AlertCircle className="h-3.5 w-3.5" />}
                   titulo="Sin pagar"
                   valor={comoDinero(r.ventas.sin_pagar, moneda)}
-                  pie={`${r.ventas.cuantos_sin_pagar} pedido${r.ventas.cuantos_sin_pagar === 1 ? "" : "s"}`}
+                  // LOS «NUNCA COBRADOS» SE DICEN APARTE porque se arreglan
+                  // distinto: uno rechazado es del cliente —se le reenvía el
+                  // enlace— y uno que nunca se creó es nuestro, de
+                  // configuración. Meterlos en el mismo saco hace que el
+                  // negocio persiga clientes cuando el fallo es suyo.
+                  pie={
+                    `${r.ventas.cuantos_sin_pagar} pedido${r.ventas.cuantos_sin_pagar === 1 ? "" : "s"}` +
+                    (r.ventas.nunca_cobrados > 0 ? ` · ${r.ventas.nunca_cobrados} sin cobrar nunca` : "")
+                  }
                   alerta={r.ventas.cuantos_sin_pagar > 0}
                   activa={lista === "sin_pagar"}
                   onClick={() => setLista(lista === "sin_pagar" ? null : "sin_pagar")}

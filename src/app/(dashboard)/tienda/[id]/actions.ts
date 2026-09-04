@@ -456,22 +456,89 @@ export async function cambiarEstadoPedido(_e: Estado, fd: FormData): Promise<Est
   const pedidoId = s(fd.get("pedido_id"));
   const estado = s(fd.get("estado"));
   if (!pedidoId) return { ok: false, mensaje: "No sé qué pedido mover." };
-  if (!ESTADOS.includes(estado)) return { ok: false, mensaje: "Ese estado no existe." };
 
   const sb = createClient();
+
+  // ── COBRADO POR FUERA ─────────────────────────────────────────────────────
+  //
+  // No mueve el pedido: marca el cobro. Viene del mismo formulario porque en el
+  // tablero ocupa el sitio del botón de avanzar — cuando no se puede avanzar,
+  // esto es lo único que hay que hacer.
+  //
+  // ES UNA SALIDA, NO UN ATAJO. Aquí siempre se cobra antes de preparar y
+  // siempre por Yappy; pero si Yappy falló y el negocio cobró por
+  // transferencia, tiene que poder seguir. Queda apuntado en la bitácora con
+  // quién y cuándo, y la referencia lo dice en la propia tarjeta: dentro de un
+  // mes nadie va a poder confundirlo con un cobro de Yappy.
+  if (estado === "cobrado_por_fuera") {
+    const { data: antes } = await sb
+      .from("pedidos")
+      .select("pago")
+      .eq("id", pedidoId)
+      .eq("tienda_id", tiendaId)
+      .maybeSingle();
+
+    if (!antes) return { ok: false, mensaje: "Ese pedido no es de esta tienda." };
+    if (antes.pago === "pagado") return { ok: true, mensaje: "Ese pedido ya estaba cobrado." };
+
+    const { error } = await sb
+      .from("pedidos")
+      .update({
+        pago: "pagado",
+        pagado_en: new Date().toISOString(),
+        pago_referencia: "Cobrado por fuera",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", pedidoId)
+      .eq("tienda_id", tiendaId);
+
+    if (error) return { ok: false, mensaje: "No se pudo marcar como cobrado." };
+
+    await sb.from("pedido_eventos").insert({
+      pedido_id: pedidoId,
+      que: "pago_por_fuera",
+      quien: "panel",
+      detalle: { antes: antes.pago },
+    });
+
+    revalidatePath(`/tienda/${tiendaId}`);
+    return {
+      ok: true,
+      tono: "aviso",
+      mensaje: "Marcado como cobrado por fuera. Queda apuntado que no entró por Yappy.",
+    };
+  }
+
+  if (!ESTADOS.includes(estado)) return { ok: false, mensaje: "Ese estado no existe." };
 
   // EL ESTADO DE ANTES SE MIRA PRIMERO, y no por curiosidad: arrastrar una
   // tarjeta al sitio donde ya estaba no es un cambio, y no puede volver a
   // avisar al cliente ni ensuciar la bitácora.
   const { data: antes } = await sb
     .from("pedidos")
-    .select("estado")
+    .select("estado,pago")
     .eq("id", pedidoId)
     .eq("tienda_id", tiendaId)
     .maybeSingle();
 
   if (!antes) return { ok: false, mensaje: "Ese pedido no es de esta tienda." };
   if (antes.estado === estado) return { ok: true, mensaje: "" };
+
+  // ── NO SE PREPARA LO QUE NO ESTÁ COBRADO ──────────────────────────────────
+  //
+  // La comprobación va AQUÍ y no solo en la pantalla: la pantalla es una
+  // comodidad, esto es la puerta. Un formulario armado a mano no puede saltarse
+  // la regla del negocio.
+  //
+  // CANCELAR SIEMPRE SE PUEDE. Es justo lo que hay que hacer con un pedido que
+  // no se cobró, y bloquearlo dejaría esos pedidos atrapados para siempre.
+  if (estado !== "cancelado" && antes.pago !== "pagado") {
+    return {
+      ok: false,
+      mensaje:
+        "Este pedido todavía no está cobrado. Reenvíale el enlace de pago, o márcalo como cobrado si ya te pagó por otra vía.",
+    };
+  }
 
   // Acotado a la tienda además de por id: un id de otra tienda no puede mover
   // el pedido de otro cliente.

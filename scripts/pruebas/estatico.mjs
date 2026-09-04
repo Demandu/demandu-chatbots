@@ -3663,22 +3663,26 @@ describe("La tienda tiene UN solo botón que gana", () => {
 
 describe("El panel de resultados de la tienda", () => {
   const mig = fs.readFileSync(
-    path.join(RAIZ, "supabase/migrations/0080_panel_de_ventas.sql"), "utf8");
+    path.join(RAIZ, "supabase/migrations/0081_sin_cobrar_es_deuda.sql"), "utf8");
 
-  test("SIN PAGAR NO ES LO MISMO QUE SIN COBRO", () => {
+  test("TODO LO QUE NO ESTÁ PAGADO ES DEUDA", () => {
     // ─────────────────────────────────────────────────────────────────────────
-    // Un pedido de una tienda que cobra al entregar tiene `pago = 'sin_cobro'`
-    // y NO es una deuda: es lo normal. Meterlo en «sin pagar» inventaría una
-    // cartera vencida que no existe y haría que el negocio persiguiera a gente
-    // que no le debe nada — por WhatsApp, que es peor.
+    // La primera versión dejó `sin_cobro` fuera, tratándolo como «esta tienda
+    // cobra al entregar». No existe esa tienda: aquí SIEMPRE se cobra antes de
+    // procesar, y siempre por Yappy. `sin_cobro` significa que el cobro nunca
+    // llegó a crearse — y con el criterio anterior esos pedidos no salían en
+    // ninguna cifra: ni cobrados ni por cobrar. Simplemente no existían.
     // ─────────────────────────────────────────────────────────────────────────
-    const deudores = /deudores as \([\s\S]{0,400}?\)/.exec(mig)?.[0] ?? "";
+    const deudores = /deudores as \([\s\S]{0,400}?\n  \)/.exec(mig)?.[0] ?? "";
     esperar(deudores.length > 0).verdadero("cambió la forma de la consulta, revisa esta prueba");
-    esperar(deudores.includes("'sin_cobro'")).falso(
-      "los pedidos que se cobran al entregar cuentan como deuda",
+    esperar(/pago <> 'pagado'/.test(deudores)).verdadero(
+      "hay estados de cobro que no cuentan ni como cobrados ni como deuda",
     );
-    esperar(deudores.includes("'pendiente'") && deudores.includes("'expirado'")).verdadero(
-      "faltan estados de cobro fallido en la lista de impagos",
+
+    // Y SE CUENTAN APARTE los que nunca llegaron a tener cobro: uno rechazado
+    // es problema del cliente, uno que no se creó es de configuración.
+    esperar(/'nunca_cobrados'/.test(mig)).verdadero(
+      "no se distingue el cobro que nunca se creó del que el cliente no completó",
     );
   });
 
@@ -3762,6 +3766,68 @@ describe("El panel de resultados de la tienda", () => {
     esperar(/defaultValue=\{searchParams\?\.tag/.test(b)).verdadero(
       "la pantalla de difusiones no recoge la etiqueta que le mandan",
     );
+  });
+});
+
+describe("Aquí se cobra ANTES de preparar", () => {
+  const acc = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"));
+
+  test("NO SE PUEDE AVANZAR UN PEDIDO SIN COBRAR", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Es la regla del negocio: ninguna tienda cobra al entregar, siempre se
+    // cobra antes de procesar y siempre por Yappy. El tablero dejaba arrastrar
+    // cualquier tarjeta, así que un pedido sin pagar podía prepararse y
+    // entregarse — y eso solo se descubre al cuadrar caja, cuando ya se fue.
+    //
+    // VA EN EL SERVIDOR y no solo en la pantalla: la pantalla es una comodidad,
+    // esto es la puerta.
+    // ─────────────────────────────────────────────────────────────────────────
+    esperar(/antes\.pago !== "pagado"/.test(acc)).verdadero(
+      "el servidor deja avanzar un pedido que no está cobrado",
+    );
+  });
+
+  test("CANCELAR SIEMPRE SE PUEDE", () => {
+    // Es justo lo que hay que hacer con un pedido que no se cobró. Bloquearlo
+    // dejaría esos pedidos atrapados en «Recibidos» para siempre.
+    esperar(/estado !== "cancelado" && antes\.pago !== "pagado"/.test(acc)).verdadero(
+      "el bloqueo también impide cancelar",
+    );
+  });
+
+  test("LA SALIDA EXISTE Y QUEDA APUNTADA", () => {
+    // Si Yappy falló y el negocio cobró por transferencia, tiene que poder
+    // seguir. Bloquear sin salida convierte una regla en una trampa — y quien
+    // se queda atrapado se va a la competencia, no nos escribe.
+    esperar(acc.includes('"cobrado_por_fuera"')).verdadero("no hay forma de marcar un cobro externo");
+    esperar(/que: "pago_por_fuera"/.test(acc)).verdadero(
+      "el cobro externo no queda en la bitácora: dentro de un mes nadie sabrá que no fue Yappy",
+    );
+    esperar(/pago_referencia: "Cobrado por fuera"/.test(acc)).verdadero(
+      "en la tarjeta se confundirá con un cobro de Yappy",
+    );
+  });
+
+  test("una tienda sin Yappy NO PUEDE PUBLICARSE", () => {
+    // Recogería pedidos que nadie puede cobrar: el cliente pide, el negocio
+    // prepara, y el dinero no está por ningún lado.
+    const cfg = sinComentarios(fs.readFileSync(path.join(SRC, "lib/tienda/config.ts"), "utf8"));
+    esperar(/loQueFaltaParaVender\(c: ConfigTienda, cobraConYappy: boolean\)/.test(cfg)).verdadero(
+      "publicar no comprueba el cobro",
+    );
+    esperar(/if \(!cobraConYappy\) falta\.push/.test(cfg)).verdadero(
+      "el cobro se pide pero no se exige",
+    );
+  });
+
+  test("el tablero pinta sello a TODO lo que no está pagado", () => {
+    // Antes «sin cobro» no pintaba nada, tratado como lo normal, y era justo el
+    // peligroso: se veía igual que un pedido cobrado.
+    const ped = sinComentarios(fs.readFileSync(path.join(SRC, "components/tienda/Pedidos.tsx"), "utf8"));
+    for (const s of ["sin_cobrar", "esperando", "sin_confirmar", "fallido", "anulado", "pagado"]) {
+      esperar(new RegExp(`\\b${s}:`).test(ped)).verdadero(`falta el sello de ${s}`);
+    }
   });
 });
 

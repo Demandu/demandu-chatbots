@@ -50,7 +50,6 @@ export default async function TiendaDetallePage({
   // El nombre de la tienda sirve de título mientras nadie ponga uno propio: es
   // mejor que una cabecera en blanco en el escaparate.
   const configConNombre = { ...config, titulo: config.titulo || tienda.nombre };
-  const falta = loQueFaltaParaVender(configConNombre);
 
   const [{ data: prods }, { data: bot }, { data: cobros }] = await Promise.all([
     sb
@@ -78,6 +77,12 @@ export default async function TiendaDetallePage({
     .eq("tienda_id", params.id)
     .eq("proveedor", "yappy")
     .neq("secreto", "");
+
+  // EL COBRO ENTRA EN «¿PUEDE VENDER?». Aquí se cobra antes de procesar el
+  // pedido, siempre por Yappy: una tienda publicada sin Yappy recoge pedidos
+  // que nadie puede cobrar — se ve perfecta y es el fallo más caro de todos.
+  const cobraConYappy = Boolean(cobros?.activo) && Boolean(cobros?.comercio) && (conSecreto ?? 0) > 0;
+  const falta = loQueFaltaParaVender(configConNombre, cobraConYappy);
 
   // Los pedidos, con sus líneas de una sola consulta: uno por pedido serían
   // cincuenta viajes en una tienda con movimiento.

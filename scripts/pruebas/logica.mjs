@@ -1258,14 +1258,18 @@ describe("Tienda: cómo se ve y qué pregunta", () => {
     // EL FALLO MÁS CARO DE TODOS, porque no se ve: la tienda queda preciosa,
     // el cliente llena el carrito, pulsa el botón y no pasa nada.
     const sin = leerConfig({ titulo: "Paws at Home" });
-    esperar(loQueFaltaParaVender(sin).length > 0).verdadero();
-    esperar(loQueFaltaParaVender(sin).join(" ").includes("WhatsApp")).verdadero();
+    esperar(loQueFaltaParaVender(sin, true).length > 0).verdadero();
+    esperar(loQueFaltaParaVender(sin, true).join(" ").includes("WhatsApp")).verdadero();
 
     const corto = leerConfig({ titulo: "Paws at Home", whatsapp: { numero: "62381" } });
-    esperar(loQueFaltaParaVender(corto).join(" ").includes("código de país")).verdadero();
+    esperar(loQueFaltaParaVender(corto, true).join(" ").includes("código de país")).verdadero();
 
     const lista = leerConfig({ titulo: "Paws at Home", whatsapp: { numero: "+507 6238-1138" } });
-    esperar(loQueFaltaParaVender(lista)).igual([]);
+    esperar(loQueFaltaParaVender(lista, true)).igual([]);
+
+    // SIN YAPPY NO PUEDE VENDER, por bien configurado que esté todo lo demás:
+    // aquí se cobra antes de procesar el pedido y no hay otra vía.
+    esperar(loQueFaltaParaVender(lista, false).join(" ").includes("Yappy")).verdadero();
   });
 
   test("un banner sin imagen no se pinta", () => {
@@ -2089,8 +2093,16 @@ describe("Tienda: un cobro sin respuesta no se da por vivo para siempre", () => 
     }
   });
 
-  test("un pedido que nunca intentó cobrar en línea no lleva sello", () => {
-    esperar(estadoDelCobro("sin_cobro", null, ahora)).igual("sin_cobro");
+  test("UN PEDIDO QUE NUNCA SE COBRÓ ES UNA ALARMA, no un caso neutro", () => {
+    // ───────────────────────────────────────────────────────────────────────
+    // Antes esto devolvía «sin_cobro» y el tablero no pintaba nada, tratándolo
+    // como lo normal de una tienda que cobra al entregar. No existe esa
+    // tienda: aquí SIEMPRE se cobra antes de preparar y siempre por Yappy. Un
+    // pedido sin cobro es un cobro que falló al crearse o una tienda sin
+    // Yappy configurado — y se veía exactamente igual que uno pagado.
+    // ───────────────────────────────────────────────────────────────────────
+    esperar(estadoDelCobro("sin_cobro", null, ahora)).igual("sin_cobrar");
+    esperar(estadoDelCobro("", null, ahora)).igual("sin_cobrar");
   });
 
   test("un pago devuelto NO se cuenta igual que uno que nunca entró", () => {
