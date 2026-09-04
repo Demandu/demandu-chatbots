@@ -20,6 +20,7 @@ import {
 } from "../../src/lib/tienda/panel.ts";
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
 import { membresiaActiva, soporteVigente } from "../../src/lib/membresia.ts";
+import { FEATURES, feature, tiene } from "../../src/lib/planes/features.ts";
 import {
   PLANTILLAS, NOMBRES_DE_PEDIDO, plantillaDe, valoresDe, faltaAlgunDato,
   dentroDeLaVentana, esFueraDeVentana, VENTANA_HORAS, MARGEN_MINUTOS, FUERA_DE_VENTANA,
@@ -3357,6 +3358,41 @@ describe("Plantillas de pedido y la ventana de 24 horas", () => {
       "confundió otro error con la ventana: reintentaría con plantilla sin motivo",
     );
     esperar(esFueraDeVentana(null, "")).falso();
+  });
+});
+
+
+describe("Planes por capacidad", () => {
+  test("ANTE LA DUDA, NO LA TIENE", () => {
+    // Una lista que no se pudo leer no puede leerse como «lo tiene todo»: eso
+    // convertiría un fallo de la base en barra libre. Al revés el cliente ve la
+    // función apagada, que es molesto pero se arregla escribiendo.
+    esperar(tiene(null, "ia")).falso();
+    esperar(tiene(undefined, "ia")).falso();
+    esperar(tiene("ia", "ia")).falso("una cadena no es una lista de capacidades");
+    esperar(tiene({}, "ia")).falso();
+    esperar(tiene([], "ia")).falso();
+  });
+
+  test("con la capacidad en la lista, sí", () => {
+    esperar(tiene(["ia"], "ia")).verdadero();
+    esperar(tiene(["tienda", "ia"], "tienda")).verdadero();
+    esperar(tiene(["tienda"], "ia")).falso();
+  });
+
+  test("cada función dice QUÉ SE PIERDE sin ella, no solo qué es", () => {
+    // «Respuestas con IA» no mueve a nadie. «La pregunta que no está en tu flujo
+    // se queda sin respuesta» sí, porque eso le pasa hoy.
+    for (const f of Object.values(FEATURES)) {
+      esperar(f.sinElla.length > 40).verdadero(`${f.clave} no explica qué se pierde`);
+      esperar(Boolean(f.desdeElPlan)).verdadero(`${f.clave} no dice desde qué plan viene`);
+      esperar(Boolean(f.complemento)).verdadero(`${f.clave} no dice cómo comprarla suelta`);
+    }
+  });
+
+  test("una clave que no existe no rompe la pantalla", () => {
+    esperar(feature("inventada")).igual(null);
+    esperar(feature("")).igual(null);
   });
 });
 

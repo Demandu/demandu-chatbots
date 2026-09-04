@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
+import { puedeUsar } from "@/lib/planes/tiene";
 import { aDireccion, direccionValida, enlaceLegible } from "@/lib/tienda/direccion";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
@@ -28,6 +29,20 @@ export async function crearTienda(
 
   const orgId = await getCurrentOrgId();
   if (!orgId) return { ok: false, mensaje: "Vuelve a iniciar sesión e inténtalo otra vez." };
+
+  /* ── EL FRENO DE VERDAD ESTÁ AQUÍ, NO EN LA PANTALLA ───────────────────
+   *
+   * La pantalla enseña la tienda apagada con su mensaje, y eso es lo correcto
+   * de cara al cliente. Pero una pantalla apagada no impide nada: esta acción
+   * se puede llamar por debajo sin pasar por ningún botón. Si el candado
+   * viviera solo allá, no habría candado. */
+  if (!(await puedeUsar("tienda"))) {
+    return {
+      ok: false,
+      mensaje:
+        "Tu plan no incluye la Tienda en WhatsApp. Puedes activarla desde Configuración → Mi plan.",
+    };
+  }
 
   const botId = s(formData.get("bot_id"));
 

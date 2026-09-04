@@ -199,6 +199,29 @@ export async function aiAnswer(opts: {
       : ai.fallback;
   }
 
+  /* ── ¿SU PLAN INCLUYE LA IA? ─────────────────────────────────────────
+   *
+   * VA AQUÍ Y NO EN LA PANTALLA. Una pantalla apagada no impide nada: la
+   * acción se puede llamar por debajo. El freno tiene que estar donde se gasta
+   * el dinero, que es la línea de abajo.
+   *
+   * Y VA DESPUÉS DEL INTERRUPTOR DEL CHATBOT, antes de la llave: son dos «no»
+   * distintos y el de más arriba manda.
+   *
+   * LO PREGUNTA LA BASE. Junta el plan, los complementos contratados y lo que
+   * la cuenta conserva por encima de su plan; calcularlo aquí sería tenerlo
+   * escrito dos veces y acabar con la pantalla diciendo una cosa y el motor
+   * haciendo otra.
+   *
+   * AL NO TENERLA, EL BOT NO SE CALLA: sigue con sus flujos y sus botones y
+   * solo deja de pensar respuestas nuevas. Degradar es mejor que cortar.
+   */
+  if (!(await orgConIA(opts.admin, opts.orgId))) {
+    return opts.diagnostico
+      ? "⚠️ Tu plan no incluye Lana IA. Puedes activarla desde Configuración → Mi plan."
+      : ai.fallback;
+  }
+
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
     console.warn("[ai] ANTHROPIC_API_KEY no configurada — usando respuesta de respaldo");
@@ -337,4 +360,22 @@ function explicarFallo(status: number, detail: string): string {
     return "⚠️ El servicio de IA está fallando ahora mismo. No es tu configuración; intenta más tarde.";
   }
   return `⚠️ La IA respondió con un error (${status}). Revisa la configuración de la llave.`;
+}
+
+/**
+ * ¿La cuenta tiene la IA encendida por su plan, un complemento o por conservarla?
+ *
+ * ANTE LA DUDA, SÍ. Es al revés que en las pantallas, y es deliberado: si la
+ * base no contesta, dejar sin respuesta al cliente de un negocio que SÍ paga la
+ * IA es mucho peor que unos centavos de más. El freno existe para el que no la
+ * compró, no para castigar un mal minuto de la base.
+ */
+async function orgConIA(admin: any, orgId: string): Promise<boolean> {
+  try {
+    const { data, error } = await admin.rpc("org_puede", { p_org_id: orgId, p_clave: "ia" });
+    if (error) return true;
+    return data !== false;
+  } catch {
+    return true;
+  }
 }

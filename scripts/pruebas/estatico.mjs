@@ -4677,4 +4677,103 @@ describe("El aviso fuera de las 24 horas", () => {
   });
 });
 
+
+// ─── El candado de los planes ────────────────────────────────────────────────
+//
+// LA PANTALLA APAGADA NO ES UN CANDADO. Enseñar la función en gris con el
+// mensaje de upgrade es lo correcto de cara al cliente, pero la acción del
+// servidor se puede llamar por debajo sin pasar por ningún botón. Si el freno
+// viviera solo en la pantalla, cualquiera usaría la IA gratis.
+describe("El candado de los planes", () => {
+  test("la IA se frena donde se GASTA, en los dos motores", () => {
+    // Node (webchat y prueba del panel).
+    // SE MIDE DENTRO DE `aiAnswer`, no desde el principio del archivo: la
+    // primera versión buscaba `ANTHROPIC_API_KEY` y la encontraba en una
+    // función de más arriba que solo comprueba si la llave existe.
+    const nodo = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8"));
+    const desde = nodo.indexOf("export async function aiAnswer");
+    esperar(desde > 0).verdadero("cambió la forma del archivo, revisa esta prueba");
+    const llave = nodo.indexOf("const key = process.env.ANTHROPIC_API_KEY", desde);
+    esperar(llave > desde).verdadero("cambió la forma del archivo, revisa esta prueba");
+    esperar(/orgConIA\(/.test(nodo.slice(desde, llave))).verdadero(
+      "en Node no se comprueba el plan ANTES de llamar al modelo",
+    );
+
+    // Deno (WhatsApp e Instagram).
+    const wa = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+    );
+    esperar(/if \(!\(await tieneIA\(ctx\)\)\) return ai\.fallback/.test(wa)).verdadero(
+      "en WhatsApp no se comprueba el plan antes de pensar la respuesta",
+    );
+  });
+
+  test("crear una tienda se frena en la ACCIÓN, no solo en la pantalla", () => {
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/actions.ts"), "utf8"),
+    );
+    const i = t.indexOf("export async function crearTienda");
+    const j = t.indexOf("from(\"tiendas\")", i);
+    esperar(i >= 0 && j > i).verdadero("cambió la forma del archivo, revisa esta prueba");
+    esperar(/puedeUsar\(\s*"tienda"\s*\)/.test(t.slice(i, j))).verdadero(
+      "se puede crear una tienda sin tenerla en el plan llamando la acción por debajo",
+    );
+  });
+
+  test("ante un fallo de la base, la IA sigue contestando", () => {
+    // Es al revés que en las pantallas, y es deliberado: dejar mudo al cliente
+    // de un negocio que SÍ paga la IA es mucho peor que unos centavos de más.
+    const nodo = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8"));
+    const i = nodo.indexOf("async function orgConIA");
+    esperar(i > 0).verdadero("cambió la forma del archivo, revisa esta prueba");
+    const cuerpo = nodo.slice(i, i + 400);
+    esperar(/if \(error\) return true/.test(cuerpo)).verdadero(
+      "un error de la base apaga la IA de quien sí la paga",
+    );
+    esperar(/catch[\s\S]{0,40}return true/.test(cuerpo)).verdadero(
+      "una excepción apaga la IA de quien sí la paga",
+    );
+  });
+
+  test("nadie puede preguntar qué tiene contratado OTRO cliente", () => {
+    // `org_features(org_id)` y `org_puede(org_id, ...)` reciben el id como
+    // parámetro: con una sesión cualquiera se podría consultar el negocio del
+    // vecino. Las pantallas usan las que sacan el id de la sesión.
+    const dir = path.join(RAIZ, "supabase/migrations");
+    const sql = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      // `sinComentarios` NO quita los `--` de SQL, y ya nos ha colado pruebas
+      // que encontraban la frase dentro de un comentario.
+      .map((t) => t.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n"))
+      .join("\n");
+
+    esperar(/revoke execute on function public\.org_features\(uuid\) from authenticated/.test(sql))
+      .verdadero("cualquiera con sesión puede leer las capacidades de otra cuenta");
+    esperar(/revoke execute on function public\.org_puede\(uuid, text\) from authenticated/.test(sql))
+      .verdadero("cualquiera con sesión puede preguntar qué tiene contratado otro");
+  });
+
+  test("los clientes de antes conservan lo que ya usaban", () => {
+    // El día que un plan deja de incluir algo, a quien ya lo usaba NO se le
+    // puede apagar: cambiaría su producto sin que él hiciera nada.
+    const dir = path.join(RAIZ, "supabase/migrations");
+    const sql = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      .map((t) => t.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n"))
+      .join("\n");
+
+    esperar(/features_extra/.test(sql)).verdadero("no existe la vía para conservar capacidades");
+    // Y los dos respaldos: quien usaba IA y quien ya tiene tienda montada.
+    esperar(/kind = 'ai_message'[\s\S]{0,400}features_extra|features_extra[\s\S]{0,400}kind = 'ai_message'/.test(sql))
+      .verdadero("no se salvó a quien ya usaba la IA");
+    esperar(/from tiendas t where t\.org_id = o\.id/.test(sql)).verdadero(
+      "no se salvó a quien ya tiene una tienda montada",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

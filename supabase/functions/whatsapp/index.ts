@@ -659,6 +659,20 @@ async function buscarConocimiento(db: any, orgId: string, botId: string, pregunt
  * Si algo falla, contesta que NO. Ante la duda, el bot responde: un cliente sin
  * respuestas por un error nuestro es mucho peor que unos centavos de IA.
  */
+async function tieneIA(ctx: any): Promise<boolean> {
+  try {
+    const { data, error } = await ctx.db.rpc("org_puede", {
+      p_org_id: ctx.orgId,
+      p_clave: "ia",
+    });
+    if (error) return true;
+    return data !== false;
+  } catch (e) {
+    console.error("[ia] no pude leer el plan:", e);
+    return true;
+  }
+}
+
 async function pasoElTopeDeIA(ctx: any): Promise<boolean> {
   try {
     const { data: org } = await ctx.db
@@ -1315,6 +1329,17 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
   // solo deja de pensar respuestas nuevas. Degradar es mejor que cortar — el
   // cliente sigue atendiendo mientras se habla con él para subirlo de plan.
   if (await pasoElTopeDeIA(ctx)) return ai.fallback;
+
+  /* ── ¿SU PLAN INCLUYE LA IA? ─────────────────────────────────────────────
+   *
+   * Gemelo del de `src/lib/ai/answer.ts`. Va aquí, justo antes de pensar la
+   * respuesta, porque es donde se gasta: una pantalla apagada no impide que el
+   * motor llame al modelo.
+   *
+   * ANTE LA DUDA, SÍ. Si la base no contesta, dejar mudo al cliente de un
+   * negocio que SÍ paga la IA es mucho peor que unos centavos de más.
+   */
+  if (!(await tieneIA(ctx))) return ai.fallback;
 
   const kbRows = await buscarConocimiento(ctx.db, ctx.orgId, ctx.botId, pregunta);
   const kb = kbRows.length

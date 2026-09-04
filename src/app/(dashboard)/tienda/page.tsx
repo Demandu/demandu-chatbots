@@ -5,11 +5,18 @@ import { createClient } from "@/lib/supabase/server";
 import { NuevaTienda } from "@/components/tienda/NuevaTienda";
 import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
 import { crearTienda } from "./actions";
+import { puedeUsar } from "@/lib/planes/tiene";
+import { FuncionBloqueada } from "@/components/planes/FuncionBloqueada";
 
 export const dynamic = "force-dynamic";
 
 export default async function TiendaPage() {
   const sb = createClient();
+
+  // ¿Su plan la incluye? Quien ya tiene tiendas montadas la conserva aunque su
+  // plan cambie (`features_extra`), así que esto no le apaga la tienda a nadie
+  // de un día para otro.
+  const puedeTienda = await puedeUsar("tienda");
 
   // RLS ya recorta a la organización del usuario: no hace falta filtrar aquí,
   // y filtrar de más solo abre la puerta a que un día no coincidan.
@@ -47,9 +54,18 @@ export default async function TiendaPage() {
           de Conversaciones — no a un correo que nadie mira.
         </p>
 
-        <div className="mb-6">
-          <NuevaTienda accion={crearTienda} bots={(bots ?? []) as { id: string; name: string | null }[]} />
-        </div>
+        {/* SE ENSEÑA APAGADA, NO SE ESCONDE. Esconder lo que no está en el plan
+            parece más limpio y vende cero: nadie sube a un plan cuyas ventajas
+            no ha visto nunca. */}
+        {!puedeTienda ? (
+          <div className="mb-6">
+            <FuncionBloqueada clave="tienda" />
+          </div>
+        ) : (
+          <div className="mb-6">
+            <NuevaTienda accion={crearTienda} bots={(bots ?? []) as { id: string; name: string | null }[]} />
+          </div>
+        )}
 
         {lista.length === 0 ? (
           <div className="flex gap-3 rounded-2xl border border-linea-2 bg-tarjeta p-5">
