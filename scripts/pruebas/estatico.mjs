@@ -4493,4 +4493,95 @@ describe("Clases de estilo", () => {
   });
 });
 
+
+// ─── Los complementos y Stripe ───────────────────────────────────────────────
+//
+// LOS PLANES SE SINCRONIZABAN DESDE EL PRIMER DÍA; LOS COMPLEMENTOS NO, y nadie
+// lo notó porque el cobro funcionaba igual: armaba el precio al vuelo. Lo que no
+// se ve es que cada compra crea un producto NUEVO en Stripe — veinte clientes
+// con la tienda son veinte productos con el mismo nombre, y ninguna forma de
+// saber cuánto factura ese complemento ni de subirle el precio en un sitio.
+describe("Los complementos y Stripe", () => {
+  const ADD = fs.readFileSync(path.join(SRC, "lib/billing/stripeAddons.ts"), "utf8");
+  const CHK = fs.readFileSync(path.join(SRC, "lib/billing/stripe.ts"), "utf8");
+  const ACC = fs.readFileSync(path.join(SRC, "app/superadmin/complementos/actions.ts"), "utf8");
+
+  test("guardar un complemento lo registra en Stripe", () => {
+    // SE MIRA DENTRO DE `guardarComplemento`, NO EL ARCHIVO ENTERO. La primera
+    // versión buscaba el nombre en todo el archivo y lo encontraba en el
+    // `import` y en `resincronizar`: quitar la llamada del guardado la pasaba.
+    const t = sinComentarios(ACC);
+    const i = t.indexOf("export async function guardarComplemento");
+    esperar(i > 0).verdadero("cambió la forma del archivo, revisa esta prueba");
+    const guardar = t.slice(i, t.indexOf("export async function resincronizar"));
+    esperar(/const sync = await syncAddonToStripe\(/.test(guardar)).verdadero(
+      "guardar un complemento ya no lo crea en Stripe: vuelve a haber que hacerlo a mano",
+    );
+    esperar(/stripe_price_id:\s*sync\.priceId/.test(t)).verdadero(
+      "no se guarda el identificador del precio, así que la próxima compra crea otro producto",
+    );
+  });
+
+  test("si Stripe falla, el complemento NO se pierde", () => {
+    // Perder el trabajo del equipo porque un tercero tuvo un mal minuto no es
+    // una opción. Es la misma regla que ya tenían los planes.
+    const t = sinComentarios(ACC);
+    const i = t.indexOf("syncAddonToStripe(");
+    const antes = t.slice(0, i);
+    esperar(/from\("addons"\)[\s\S]{0,120}upsert\(/.test(antes)).verdadero(
+      "ahora se sincroniza ANTES de guardar: si Stripe falla se pierde el complemento",
+    );
+    esperar(/stripe_error:\s*sync\.error/.test(t)).verdadero(
+      "el error de Stripe no queda apuntado y nadie sabe qué reintentar",
+    );
+  });
+
+  test("el cobro usa el precio del catálogo cuando existe", () => {
+    const t = sinComentarios(CHK);
+    esperar(/stripe_price_id/.test(t)).verdadero(
+      "el cobro no lee el precio sincronizado: sigue creando un producto por compra",
+    );
+    // LA RAMA TIENE QUE DEPENDER DEL PRECIO DE VERDAD. Comprobar solo que el
+    // texto `line_items[...][price]` existe no sirve: con la condición puesta a
+    // `false` la línea sigue ahí y no se ejecuta nunca.
+    esperar(/if\s*\(precioDelCatalogo\)\s*\{[\s\S]{0,200}?line_items\[\$\{i\}\]\[price\]/.test(t))
+      .verdadero("el cobro nunca manda el precio del catálogo a Stripe");
+    // Y EL RESPALDO SE QUEDA: un complemento sin sincronizar tiene que poder
+    // comprarse igual, o un fallo de Stripe al guardarlo deja al cliente sin
+    // poder pagar.
+    esperar(/price_data/.test(t)).verdadero(
+      "se quitó el respaldo: un complemento sin sincronizar ya no se puede comprar",
+    );
+  });
+
+  test("un complemento de una sola vez no abre una suscripción", () => {
+    // Mandar `recurring` en algo que se paga una vez le abriría un cargo
+    // mensual a quien compró una instalación asistida.
+    const t = sinComentarios(ADD);
+    const i = t.indexOf("recurring[interval]");
+    esperar(i > 0).verdadero("cambió la forma del archivo, revisa esta prueba");
+    const antes = t.slice(Math.max(0, i - 200), i);
+    esperar(/if\s*\(a\.recurring\)/.test(antes)).verdadero(
+      "el intervalo mensual se manda siempre: un pago único se convierte en suscripción",
+    );
+  });
+
+  test("apagar un complemento lo archiva en Stripe", () => {
+    // Dejarlo vivo allá permite que alguien con un enlace viejo lo siga
+    // contratando después de que lo quitamos de la venta.
+    const t = sinComentarios(ACC);
+    esperar(/archiveAddonInStripe\(/.test(t)).verdadero(
+      "apagar un complemento lo deja contratable en Stripe",
+    );
+  });
+
+  test("hay UNA sola forma de llamar a Stripe", () => {
+    // Con dos copias, el día que Stripe cambie una cabecera se arregla una y la
+    // otra se queda rota sin que nadie lo note.
+    esperar(/from "@\/lib\/billing\/stripePlans"/.test(sinComentarios(ADD))).verdadero(
+      "stripeAddons.ts tiene su propia copia de la llamada a Stripe",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

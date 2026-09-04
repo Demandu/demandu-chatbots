@@ -17,7 +17,14 @@ function form(params: Record<string, string>): string {
     .join("&");
 }
 
-async function stripe(path: string, params: Record<string, string>, method = "POST") {
+/**
+ * Una llamada a Stripe.
+ *
+ * SE EXPORTA para que `stripeAddons.ts` use EXACTAMENTE la misma: con dos
+ * copias, el día que Stripe cambie una cabecera o haya que reintentar, se
+ * arregla una y la otra se queda rota sin que nadie lo note.
+ */
+export async function stripe(path: string, params: Record<string, string>, method = "POST") {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) throw new Error("Stripe no está configurado");
 

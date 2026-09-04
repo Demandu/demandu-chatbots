@@ -54,7 +54,7 @@ export async function createCheckout(opts: {
   // Precios desde la base, NUNCA desde el navegador
   const { data, error } = await opts.admin
     .from("addons")
-    .select("code, name, description, price, recurring")
+    .select("code, name, description, price, recurring, stripe_price_id")
     .in("code", wanted.map((i) => i.code))
     .eq("active", true);
 
@@ -85,14 +85,33 @@ export async function createCheckout(opts: {
     const qty = Math.min(99, Math.max(1, Math.floor(item.quantity)));
 
     params[`line_items[${i}][quantity]`] = String(qty);
-    params[`line_items[${i}][price_data][currency]`] = "usd";
-    params[`line_items[${i}][price_data][product_data][name]`] = a.name;
-    if (a.description) {
-      params[`line_items[${i}][price_data][product_data][description]`] = a.description.slice(0, 300);
-    }
-    params[`line_items[${i}][price_data][unit_amount]`] = String(Math.round(Number(a.price) * 100));
-    if (a.recurring) {
-      params[`line_items[${i}][price_data][recurring][interval]`] = "month";
+
+    // ── EL PRECIO DEL CATÁLOGO SI LO HAY ────────────────────────────────
+    //
+    // Con `stripe_price_id` la venta queda colgada del producto REAL de
+    // Stripe, y los informes cuadran: se puede ver cuánto factura la tienda
+    // como producto y subirle el precio en un solo sitio.
+    //
+    // Armarlo al vuelo —lo que se hacía siempre— crea un producto NUEVO en
+    // cada compra: veinte clientes con la tienda son veinte productos
+    // distintos con el mismo nombre.
+    //
+    // EL RESPALDO SE QUEDA A PROPÓSITO. Un complemento sin sincronizar tiene
+    // que poder comprarse igual: si Stripe falló al guardarlo, el cliente no
+    // tiene por qué enterarse ni quedarse sin poder pagar.
+    const precioDelCatalogo = String((a as any).stripe_price_id ?? "").trim();
+    if (precioDelCatalogo) {
+      params[`line_items[${i}][price]`] = precioDelCatalogo;
+    } else {
+      params[`line_items[${i}][price_data][currency]`] = "usd";
+      params[`line_items[${i}][price_data][product_data][name]`] = a.name;
+      if (a.description) {
+        params[`line_items[${i}][price_data][product_data][description]`] = a.description.slice(0, 300);
+      }
+      params[`line_items[${i}][price_data][unit_amount]`] = String(Math.round(Number(a.price) * 100));
+      if (a.recurring) {
+        params[`line_items[${i}][price_data][recurring][interval]`] = "month";
+      }
     }
     // Guarda qué se compró para poder activarlo al confirmarse el pago
     params[`metadata[item_${i}]`] = `${a.code}:${qty}`;
