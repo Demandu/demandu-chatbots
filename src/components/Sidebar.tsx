@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Crown,
-  Store,
+  Store, Clock,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
-import { usePendientes } from "@/lib/pendientes";
+import { usePendientes, useEsperando } from "@/lib/pendientes";
 
 // Lenguaje simple para gente no técnica. Cada opción dice en humano qué es.
 // "Envíos masivos" (solo WhatsApp) NO va aquí: vive dentro de cada chatbot.
@@ -17,20 +17,33 @@ const MAIN = [
   { href: "/dashboard", label: "Inicio", icon: Home },
   { href: "/bots", label: "Chatbots", icon: Bot },
   { href: "/inbox", label: "Conversaciones", icon: MessagesSquare },
-  // «En espera» (/inbox/programados) SE QUITÓ DEL MENÚ por decisión del dueño:
-  // nadie la usaba y ocupaba un sitio de primer nivel en un menú corto.
-  //
-  // LA PANTALLA SIGUE VIVA en su dirección. Es el único sitio donde se ven —y
-  // se pueden cancelar— los mensajes que un bloque de Espera dejó programados
-  // para dentro de horas. Si un día alguien necesita frenar un envío, se entra
-  // por la dirección; borrarla dejaría esos mensajes saliendo sin forma humana
-  // de pararlos.
   { href: "/crm", label: "Embudo", icon: KanbanSquare },
   { href: "/contacts", label: "Contactos", icon: Users },
   // La tienda va en Principal y no en Ajustes porque no es una configuración:
   // es un sitio donde se trabaja todos los días —cargar productos, agotar,
   // cambiar precios— igual que la Bandeja o el Embudo.
   { href: "/tienda", label: "Tienda", icon: Store },
+];
+
+/**
+ * Las que solo salen cuando hay algo que hacer en ellas.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * «EN ESPERA» ESTABA FIJA Y ESTORBABA. Un menú corto no puede permitirse una
+ * opción que el 90% de los días lleva a una lista vacía: la gente aprende a no
+ * mirarla, y entonces tampoco la mira el día que sí importa.
+ *
+ * PERO LA PANTALLA VALE, y mucho, ese día: es el ÚNICO sitio donde se ven —y se
+ * pueden CANCELAR— los mensajes que un bloque de Espera dejó programados para
+ * dentro de horas. Sin ella, un envío programado sale sí o sí.
+ *
+ * Así que aparece sola cuando hay algo esperando, con cuántos. Es el mismo
+ * patrón que ya usa Conversaciones para avisar de quién espera a una persona:
+ * el menú te habla cuando tiene algo que decir, y calla cuando no.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const CUANDO_HAY = [
+  { href: "/inbox/programados", label: "En espera", icon: Clock },
 ];
 
 const CONFIG = [
@@ -67,19 +80,22 @@ export function Sidebar({
   // un aviso emergente porque el aviso se lo lleva el viento: si el agente
   // estaba en otra pestaña o recargó, la solicitud quedaba invisible.
   const pendientes = usePendientes();
+  // Mensajes que un bloque de Espera dejó programados. Mientras sean cero, la
+  // opción no existe.
+  const esperando = useEsperando();
 
   // Todas las direcciones del menú, para decidir cuál se ilumina. Gana la
   // coincidencia MÁS LARGA: con `startsWith` a secas, una pantalla dentro de
   // otra encendía dos opciones a la vez y el menú dejaba de decirte dónde
   // estás. Se queda aunque ahora mismo ninguna opción anide dentro de otra:
   // la próxima que se añada lo volvería a romper.
-  const TODAS = [...MAIN, ...CONFIG].map((i) => i.href);
+  const TODAS = [...MAIN, ...CUANDO_HAY, ...CONFIG].map((i) => i.href);
 
   const Item = ({ href, label, icon: Icon }: (typeof MAIN)[number]) => {
     const encaja = (h: string) => pathname === h || pathname.startsWith(h + "/");
     const mejor = TODAS.filter(encaja).sort((a, b) => b.length - a.length)[0];
     const active = encaja(href) && mejor === href;
-    const aviso = href === "/inbox" ? pendientes : 0;
+    const aviso = href === "/inbox" ? pendientes : href === "/inbox/programados" ? esperando : 0;
     return (
       <Link
         href={href}
@@ -116,6 +132,10 @@ export function Sidebar({
       {MAIN.map((i) => (
         <Item key={i.href} {...i} />
       ))}
+
+      {/* SOLO SI HAY ALGO. Con cero esperando, esta opción no existe. */}
+      {esperando > 0 &&
+        CUANDO_HAY.map((i) => <Item key={i.href} {...i} />)}
 
       <p className="px-2.5 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-muted-2">
         Ajustes

@@ -37,3 +37,41 @@ export function usePendientes(): number {
   }, []);
   return n;
 }
+
+/* ── Lo que el chatbot va a mandar solo, más tarde ─────────────────────────── */
+
+/**
+ * Cuántos mensajes dejó programados un bloque de Espera.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ESTE NÚMERO ES LO QUE HACE APARECER LA OPCIÓN «En espera» EN EL MENÚ. Estaba
+ * fija y estorbaba: el 90% de los días llevaba a una lista vacía, y la gente
+ * aprende a no mirar lo que nunca tiene nada — y entonces tampoco lo mira el
+ * día que sí importa.
+ *
+ * VIAJA POR EL MISMO VIGILANTE que los pendientes, a propósito. Ese ya consulta
+ * la base cada 8 segundos; añadir otra consulta por su cuenta sería duplicar el
+ * tráfico de cada pestaña abierta de cada cliente para pintar un número.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const EVENTO_ESPERANDO = "demandu:esperando";
+
+let ultimoEsperando = 0;
+
+export function anunciarEsperando(n: number) {
+  ultimoEsperando = Math.max(0, Number(n) || 0);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(EVENTO_ESPERANDO, { detail: ultimoEsperando }));
+  }
+}
+
+export function useEsperando(): number {
+  const [n, setN] = useState(ultimoEsperando);
+  useEffect(() => {
+    setN(ultimoEsperando);
+    const oir = (e: Event) => setN(Number((e as CustomEvent).detail) || 0);
+    window.addEventListener(EVENTO_ESPERANDO, oir);
+    return () => window.removeEventListener(EVENTO_ESPERANDO, oir);
+  }, []);
+  return n;
+}

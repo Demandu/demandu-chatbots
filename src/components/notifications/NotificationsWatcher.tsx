@@ -7,7 +7,7 @@ import {
   EVENTO_PREFS, avisoEscritorio, debeAvisar, leerPrefs, reproducirTono, type PrefsAviso,
 } from "@/lib/notifications";
 import { lanzarAviso } from "./Toasts";
-import { anunciarPendientes } from "@/lib/pendientes";
+import { anunciarPendientes, anunciarEsperando } from "@/lib/pendientes";
 
 /**
  * Vigila mensajes nuevos en toda la plataforma (no solo en la Bandeja) y avisa
@@ -84,6 +84,17 @@ export function NotificationsWatcher() {
     // horario de silencio: es un dato, no una interrupción. Y sobre todo,
     // sobrevive a recargar la página — el aviso emergente no.
     anunciarPendientes(((pedidos as any[]) ?? []).length);
+
+    // Lo que el chatbot va a mandar solo más tarde. Es lo que hace aparecer la
+    // opción «En espera» en el menú: mientras sea cero, esa opción no existe.
+    //
+    // SE CUENTA, NO SE TRAE. Un cliente con quinientas esperas programadas no
+    // necesita quinientas filas viajando cada 8 segundos para pintar un número.
+    const { count: enEspera } = await sb
+      .from("esperas_pendientes")
+      .select("id", { count: "exact", head: true })
+      .eq("estado", "pendiente");
+    anunciarEsperando(Number(enEspera) || 0);
 
     const solicitud = ((pedidos as any[]) ?? [])[0];
     const marcaHandoff = solicitud ? new Date(solicitud.handoff_requested_at).getTime() : 0;
