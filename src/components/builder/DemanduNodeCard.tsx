@@ -73,7 +73,16 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
           : text || meta.description}
       </div>
 
-      {(type === "buttons" || type === "api" || type === "call_permission") && d.buttons && (
+      {/* Los tres de la tienda dibujan sus salidas igual que los botones: todos
+          tienen un desenlace bueno y uno que hay que atender (tienda apagada,
+          no eligió nada, no tiene pedidos). */}
+      {(type === "buttons" ||
+        type === "api" ||
+        type === "call_permission" ||
+        type === "tienda" ||
+        type === "tienda_catalogo" ||
+        type === "tienda_pedido") &&
+        d.buttons && (
         <div className="flex flex-col gap-1.5 px-3.5 pb-3.5">
           {d.buttons.map((b) => (
             <div

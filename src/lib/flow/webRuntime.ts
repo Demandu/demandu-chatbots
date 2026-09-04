@@ -4,6 +4,11 @@ import { aiAnswer, type AiSettings } from "@/lib/ai/answer";
 import { detectarAtajo, leerAtajos, type Atajos } from "./shortcuts";
 import { abrirRecorrido, avanzarRecorrido, cerrarRecorrido, type MotivoFin } from "./flowRuns";
 import { decidirDesvio, puenteDeVuelta, esAfirmacion, type MotivoDesvio } from "./desvio";
+import {
+  tiendaDelBot, enlaceDelBot, mensajeDeTienda, productosQueSePuedenOfrecer,
+  precioDelBot, comoVaElPedido, pedidoDelQueHablar,
+  type TiendaDelBot, type ProductoDelBot, type PedidoDelBot,
+} from "@/lib/tienda/paraElBot";
 
 /**
  * Motor de conversación para canales que NO envían por una API externa
@@ -61,6 +66,39 @@ const PLACEHOLDERS = new Set([
   "Captura datos en tu sitio", "Cierra el flujo",
 ]);
 const esEjemplo = (t?: string | null) => !!t && PLACEHOLDERS.has(t.trim());
+
+/**
+ * La tienda dentro del widget web.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AQUÍ NO HAY LISTAS INTERACTIVAS. WhatsApp tiene un mensaje de lista con hasta
+ * diez filas; el widget solo tiene botones. Así que el catálogo se degrada a
+ * botones —que es lo que hay— y el enlace de la tienda va en el propio texto.
+ *
+ * SE DEGRADA, NO SE CALLA. Un bloque que en WhatsApp funciona y en el widget no
+ * hace nada es el peor de los dos mundos: el negocio arma su flujo, lo prueba
+ * en el panel, se ve bien, y en su sitio web no pasa nada. Eso es exactamente
+ * lo que hoy le ocurre a `catalog`, `payment` y `template`, que caen en el
+ * `default` y solo mandan su texto.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function tiendaDelBotEnLaBase(ctx: Ctx) {
+  if (!ctx.botId) return null;
+  const { data } = await ctx.admin
+    .from("tiendas")
+    .select("id, slug, nombre, activa, config")
+    .eq("org_id", ctx.orgId)
+    .eq("bot_id", ctx.botId)
+    .eq("activa", true)
+    .order("nombre");
+  return tiendaDelBot((data ?? []) as TiendaDelBot[]);
+}
+
+/** La salida por prefijo, igual que en el motor de WhatsApp. */
+function salidaDe(ctx: Ctx, node: any, prefijo: string): string | undefined {
+  const b = (node.data?.buttons ?? []).find((x: any) => String(x.id ?? "").startsWith(prefijo));
+  return b ? buttonTarget(ctx.flow, node.id, b) : undefined;
+}
 
 function push(ctx: Ctx, text: string, buttons?: FlowButton[]) {
   if (esEjemplo(text) && !(buttons ?? []).length) return;
@@ -212,6 +250,81 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
       case "condition":
         current = evalCondition(ctx.flow, node, ctx.vars);
         break;
+
+      // ── LOS TRES DE LA TIENDA ─────────────────────────────────────────
+      case "tienda": {
+        const t = await tiendaDelBotEnLaBase(ctx);
+        const m = mensajeDeTienda(t, node.data.text, node.data.tiendaBoton);
+        if (!m) {
+          // Tienda apagada o sin vincular: por la otra salida, sin mandar un
+          // enlace muerto.
+          current = salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+          break;
+        }
+        // En el widget el botón de enlace no existe: va dentro del texto.
+        push(ctx, `${m.texto}\n\n${m.enlace}`);
+        ctx.vars.tienda_enlace = m.enlace;
+        current = salidaDe(ctx, node, "ok-") ?? defaultNext(ctx.flow, node);
+        break;
+      }
+
+      case "tienda_catalogo": {
+        const t = await tiendaDelBotEnLaBase(ctx);
+        if (!t) {
+          current = salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+          break;
+        }
+        const { data: crudos } = await ctx.admin
+          .from("tienda_productos")
+          .select("id, nombre, precio, categoria, oculto, stock, orden")
+          .eq("tienda_id", t.id).order("orden").order("nombre");
+        const productos = productosQueSePuedenOfrecer((crudos ?? []) as ProductoDelBot[]);
+        if (!productos.length) {
+          current = salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+          break;
+        }
+        const moneda = String((t as any)?.config?.moneda ?? "$");
+        // TRES BOTONES Y EL ENLACE. El widget no tiene listas, y una fila de
+        // veinte botones no la lee nadie: se enseñan los primeros y para el
+        // resto está la tienda, que es donde de verdad se compra.
+        const primeros = productos.slice(0, 3).map((p) => ({
+          id: `prod-${p.id}`,
+          label: `${p.nombre} · ${precioDelBot(p.precio, moneda)}`.slice(0, 40),
+        }));
+        push(ctx, interp(node.data.text ?? "", ctx.vars) || "Estos son nuestros productos:", primeros);
+        push(ctx, `Ver todo el catálogo: ${enlaceDelBot(t)}`);
+        return { nodeId: node.id, type: "buttons" };
+      }
+
+      case "tienda_pedido": {
+        const t = await tiendaDelBotEnLaBase(ctx);
+        const sinPedidos = () => {
+          const txt = String(node.data.sinPedidosMensaje ?? "").trim();
+          if (txt) push(ctx, txt);
+          return salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+        };
+        if (!t) { current = sinPedidos(); break; }
+
+        // En el widget no hay teléfono: se busca por la conversación, que es
+        // lo único que identifica a quien está escribiendo.
+        const { data: conv } = await ctx.admin
+          .from("conversations").select("contact_id").eq("id", ctx.conversationId).maybeSingle();
+        if (!conv?.contact_id) { current = sinPedidos(); break; }
+
+        const { data: pedidos } = await ctx.admin
+          .from("pedidos").select("numero, estado, pago, total, created_at")
+          .eq("tienda_id", t.id).eq("contacto_id", conv.contact_id)
+          .order("created_at", { ascending: false }).limit(10);
+
+        const p = pedidoDelQueHablar((pedidos ?? []) as PedidoDelBot[]);
+        if (!p) { current = sinPedidos(); break; }
+
+        push(ctx, comoVaElPedido(p, String((t as any)?.config?.moneda ?? "$")));
+        ctx.vars.pedido_numero = String(p.numero);
+        ctx.vars.pedido_estado = String(p.estado);
+        current = salidaDe(ctx, node, "ok-") ?? defaultNext(ctx.flow, node);
+        break;
+      }
       case "tags": {
         // EL BLOQUE «Segmenta el contacto» NO HACÍA NADA en el canal web:
         // no tenía caso, así que caía en el `default` y seguía de largo. Un

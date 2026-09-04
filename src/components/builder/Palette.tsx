@@ -9,6 +9,12 @@ const COMMON: Category[] = [
   { name: "Mensajes", items: ["message", "media", "question", "buttons"] },
   { name: "Lógica", items: ["condition", "delay", "redirect"] },
   { name: "Inteligencia", items: ["ai"] },
+  // ── MI TIENDA VA EN COMÚN, NO EN «Comercio & WhatsApp» ────────────────────
+  // La tienda es una página web y el enlace vale igual en cualquier canal.
+  // Meterla con los bloques de WhatsApp la escondería justo en Instagram, que
+  // es de donde llega la mayoría de la gente a la tienda: del enlace de la
+  // biografía.
+  { name: "Mi tienda", items: ["tienda", "tienda_catalogo", "tienda_pedido"] },
   { name: "Acciones", items: ["action", "api", "calendar", "tags", "human", "assign"] },
 ];
 

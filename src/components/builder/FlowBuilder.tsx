@@ -151,6 +151,44 @@ function BuilderInner({
             { id: `no-${now}`, label: "🚫 No aceptó" },
           ],
         };
+      } else if (type === "tienda") {
+        // ── DOS SALIDAS DESDE EL PRIMER MOMENTO ────────────────────────────
+        // La segunda es «la tienda está apagada», y no es un caso raro: el
+        // negocio la apaga en vacaciones, mientras la monta, o cuando se le
+        // acabó el inventario. Si el bloque naciera con una sola salida, el
+        // flujo se quedaría mudo justo esos días — o peor, mandaría un enlace
+        // a una pantalla muerta.
+        data = {
+          label: meta.label,
+          text: "Mira nuestro catálogo completo y haz tu pedido aquí 👇",
+          tiendaBoton: "Ver la tienda",
+          buttons: [
+            { id: `ok-${now}`, label: "🏬 Mandó la tienda" },
+            { id: `no-${now}`, label: "🚫 No hay tienda activa" },
+          ],
+        };
+      } else if (type === "tienda_catalogo") {
+        data = {
+          label: meta.label,
+          text: "Estos son nuestros productos:",
+          catalogoTitulo: "Ver productos",
+          catalogoPorCategoria: true,
+          buttons: [
+            { id: `ok-${now}`, label: "🛍️ Eligió un producto" },
+            { id: `no-${now}`, label: "🚫 No eligió nada" },
+          ],
+        };
+      } else if (type === "tienda_pedido") {
+        data = {
+          label: meta.label,
+          text: "",
+          sinPedidosMensaje:
+            "No encuentro ningún pedido con este número. Si lo hiciste con otro teléfono, dime cuál y lo busco.",
+          buttons: [
+            { id: `ok-${now}`, label: "📦 Tiene pedido" },
+            { id: `no-${now}`, label: "🚫 No tiene pedidos" },
+          ],
+        };
       } else if (type === "payment") {
         data = { label: meta.label, text: "Cobro con pasarela", currency: "MXN", gateway: "stripe" };
       } else if (type === "condition") {

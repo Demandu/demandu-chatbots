@@ -23,6 +23,14 @@ export type NodeType =
   | "call_permission"
   | "payment"
   | "catalog"
+  // ── LOS TRES DE LA TIENDA DE DEMANDU ─────────────────────────────────────
+  // No confundir con `catalog`, que es el catálogo de META COMMERCE (SKUs
+  // subidos a Facebook). Estos tres hablan de la tienda del cliente, la de
+  // `tiendas` y `tienda_productos`, y saben cuál es sola: `tiendas.bot_id` ya
+  // vincula cada tienda con su chatbot.
+  | "tienda"
+  | "tienda_catalogo"
+  | "tienda_pedido"
   | "template"
   | "ig_story"
   | "ig_comment"
@@ -172,6 +180,21 @@ export interface DemanduNodeData {
   tagIdsAdd?: string[];
   tagIdsRemove?: string[];
   leadGroupId?: string;
+  /* ── LOS TRES DE LA TIENDA ────────────────────────────────────────────
+     CASI NO SE CONFIGURAN, Y ES A PROPÓSITO. La tienda sale de
+     `tiendas.bot_id`, que ya la vincula con el chatbot: volver a preguntarla
+     en cada bloque sería pedir algo que la plataforma ya sabe, y es así como
+     se acaba con un flujo apuntando a la tienda equivocada. Lo único que se
+     escribe aquí son las palabras. */
+  /** solo para type = "tienda": el texto y la etiqueta del botón */
+  tiendaBoton?: string;
+  /** solo para type = "tienda_catalogo": empezar por categorías o por productos */
+  catalogoPorCategoria?: boolean;
+  /** solo para type = "tienda_catalogo": qué se le dice al abrir la lista */
+  catalogoTitulo?: string;
+  /** solo para type = "tienda_pedido": qué decir si no tiene ningún pedido */
+  sinPedidosMensaje?: string;
+
   /** solo para type = "end" (Fin) */
   finalStatusId?: string;
   reopenOnMessage?: boolean;
@@ -280,7 +303,10 @@ export const NODE_META: Record<
   whatsapp_flow: { label: "WhatsApp Flow", description: "Formulario nativo de WhatsApp", icon: "📋", color: "#25D366", bg: "rgba(37,211,102,.16)" },
   call_permission: { label: "Permiso para llamar", description: "Pide autorización para llamarle", icon: "📞", color: "#25D366", bg: "rgba(37,211,102,.16)" },
   payment: { label: "Pago", description: "Cobro con pasarela", icon: "💳", color: "#FFC857", bg: "rgba(255,200,87,.15)" },
-  catalog: { label: "Catálogo", description: "Venta de productos por WhatsApp", icon: "🛒", color: "#6E42FF", bg: "rgba(110,66,255,.15)" },
+  catalog: { label: "Catálogo Meta", description: "Productos subidos al catálogo de Facebook", icon: "🛒", color: "#6E42FF", bg: "rgba(110,66,255,.15)" },
+  tienda: { label: "Mi tienda", description: "Manda el enlace de tu tienda", icon: "🏬", color: "#F5247D", bg: "rgba(245,36,125,.15)" },
+  tienda_catalogo: { label: "Mis productos", description: "Enseña tu catálogo dentro del chat", icon: "📦", color: "#F5247D", bg: "rgba(245,36,125,.15)" },
+  tienda_pedido: { label: "Estado del pedido", description: "Le dice cómo va su pedido", icon: "🚚", color: "#F5247D", bg: "rgba(245,36,125,.15)" },
   template: { label: "Plantilla WA", description: "Mensaje con plantilla aprobada", icon: "🗂️", color: "#3A85FF", bg: "rgba(58,133,255,.15)" },
   ig_story: { label: "Responder Historia", description: "Reacciona a menciones/respuestas de historias IG", icon: "🎬", color: "#E1306C", bg: "rgba(225,48,108,.15)" },
   ig_comment: { label: "Comentarios IG → DM", description: "Responde comentarios y pasa a DM", icon: "💬", color: "#E1306C", bg: "rgba(225,48,108,.15)" },
@@ -294,5 +320,6 @@ export const NODE_META: Record<
 export const PALETTE_ORDER: NodeType[] = [
   "message", "media", "question", "buttons", "condition",
   "ai", "delay", "action", "api", "calendar", "tags", "human", "assign", "redirect",
+  "tienda", "tienda_catalogo", "tienda_pedido",
   "catalog", "payment", "whatsapp_flow", "call_permission", "template", "end",
 ];

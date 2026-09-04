@@ -3,6 +3,11 @@ import { horariosLibres, agendar } from "@/lib/agenda";
 import { accionesDelPrompt } from "@/lib/ai/acciones";
 import { emitir } from "@/lib/salidas";
 import { prometioUnaPersona } from "@/lib/ai/promesas";
+import {
+  tiendaDelBot, enlaceDelBot, productosQueSePuedenOfrecer, precioDelBot,
+  comoVaElPedido, pedidoDelQueHablar,
+  type TiendaDelBot, type ProductoDelBot, type PedidoDelBot,
+} from "@/lib/tienda/paraElBot";
 
 /**
  * LAS HERRAMIENTAS DEL AGENTE — lado Next (canal web y prueba del panel).
@@ -231,6 +236,51 @@ export async function armarHerramientas(
     });
   }
 
+  /* ── LAS TRES DE LA TIENDA ──────────────────────────────────────────────
+   *
+   * SON LA RESPUESTA A LA PREGUNTA QUE MÁS LLEGA: «¿tienen X?» y «¿cuánto
+   * cuesta?». Sin esto, la IA contesta con lo que haya en el conocimiento
+   * cargado —que casi nunca tiene precios al día— o se lo inventa, que es
+   * peor: un precio inventado por WhatsApp es una discusión con un cliente.
+   *
+   * NO HACE FALTA CONFIGURAR NADA. Los productos salen de la tienda vinculada
+   * a este chatbot. Es el mismo diseño de `etiquetar`: la capacidad es código,
+   * la política —qué productos, a qué precio— es dato del cliente. */
+  if (quiere.includes("ver_catalogo")) {
+    tools.push({
+      name: "ver_catalogo",
+      description:
+        "Consulta los productos y precios REALES de la tienda del negocio. Úsala SIEMPRE antes de " +
+        "decir un precio o de afirmar que algo está disponible: nunca inventes ni supongas precios.",
+      input_schema: {
+        type: "object",
+        properties: {
+          busca: { type: "string", description: "Palabra que describe lo que busca la persona. Vacío = todo el catálogo." },
+        },
+      },
+    });
+  }
+
+  if (quiere.includes("estado_de_pedido")) {
+    tools.push({
+      name: "estado_de_pedido",
+      description:
+        "Consulta cómo va el pedido de la persona con la que estás hablando. Se identifica sola por " +
+        "su número: no le pidas datos para esto.",
+      input_schema: { type: "object", properties: {} },
+    });
+  }
+
+  if (quiere.includes("enlace_de_tienda")) {
+    tools.push({
+      name: "enlace_de_tienda",
+      description:
+        "Da el enlace de la tienda para que la persona haga su pedido. Úsala cuando ya resolviste su " +
+        "duda y toca cerrar.",
+      input_schema: { type: "object", properties: {} },
+    });
+  }
+
   if (quiere.includes("consultar_sistema") && ai.sistemaUrl) {
     tools.push({
       name: "consultar_sistema",
@@ -325,6 +375,71 @@ export async function ejecutarHerramienta(
 ): Promise<string> {
   try {
     switch (nombre) {
+      /* ── LAS TRES DE LA TIENDA ────────────────────────────────────────
+       * SIEMPRE DEVUELVEN UNA FRASE QUE EL MODELO PUEDE USAR, nunca vacío ni
+       * un error crudo. Una herramienta que contesta con silencio hace que el
+       * modelo se invente la respuesta, que es exactamente de lo que veníamos
+       * huyendo. */
+      case "ver_catalogo": {
+        const t = await laTiendaDelBot(ctx);
+        if (!t) return "Este negocio no tiene tienda en línea activa. No inventes productos ni precios.";
+
+        const { data: crudos } = await ctx.admin
+          .from("tienda_productos")
+          .select("id, nombre, precio, categoria, oculto, stock, orden, descripcion")
+          .eq("tienda_id", t.id).order("orden").order("nombre");
+
+        let productos = productosQueSePuedenOfrecer((crudos ?? []) as ProductoDelBot[]);
+        const busca = String(args?.busca ?? "").trim().toLowerCase();
+        if (busca) {
+          const coincide = productos.filter((p: any) =>
+            [p.nombre, p.categoria, p.descripcion].some((c) => String(c ?? "").toLowerCase().includes(busca)),
+          );
+          // SI NO COINCIDE NADA SE DEVUELVE TODO, no una lista vacía: casi
+          // siempre es que la persona lo llamó de otra forma, y con el catálogo
+          // delante el modelo sí sabe si lo tienen o no.
+          if (coincide.length) productos = coincide;
+        }
+
+        if (!productos.length) return "La tienda no tiene productos disponibles ahora mismo.";
+
+        const moneda = String((t as any)?.config?.moneda ?? "$");
+        // TREINTA COMO MUCHO: el catálogo entero de una tienda grande se come
+        // el contexto del modelo y encarece cada respuesta.
+        const lineas = productos.slice(0, 30).map((p: any) =>
+          `- ${p.nombre}${p.categoria ? ` (${p.categoria})` : ""}: ${precioDelBot(p.precio, moneda)}`,
+        );
+        const mas = productos.length > 30 ? `\n(y ${productos.length - 30} más — mándale el enlace de la tienda)` : "";
+        return `Productos disponibles de ${t.nombre}:\n${lineas.join("\n")}${mas}\n\n` +
+          `Enlace para pedir: ${enlaceDelBot(t)}`;
+      }
+
+      case "estado_de_pedido": {
+        const t = await laTiendaDelBot(ctx);
+        if (!t) return "Este negocio no tiene tienda en línea. No puedes consultar pedidos.";
+
+        const { data: conv } = await ctx.admin
+          .from("conversations").select("contact_id").eq("id", ctx.conversationId).maybeSingle();
+        if (!conv?.contact_id) {
+          return "No pude identificar a esta persona. Pídele el número de su pedido y pásalo a una persona del equipo.";
+        }
+
+        const { data: pedidos } = await ctx.admin
+          .from("pedidos").select("numero, estado, pago, total, created_at")
+          .eq("tienda_id", t.id).eq("contacto_id", conv.contact_id)
+          .order("created_at", { ascending: false }).limit(10);
+
+        const p = pedidoDelQueHablar((pedidos ?? []) as PedidoDelBot[]);
+        if (!p) return "Esta persona no tiene ningún pedido a su nombre. No inventes uno.";
+        return comoVaElPedido(p, String((t as any)?.config?.moneda ?? "$"));
+      }
+
+      case "enlace_de_tienda": {
+        const t = await laTiendaDelBot(ctx);
+        if (!t) return "Este negocio no tiene tienda en línea activa. No des ningún enlace.";
+        return `Enlace de la tienda (dáselo tal cual): ${enlaceDelBot(t)}`;
+      }
+
       case "ver_horarios": {
         const r = await horariosLibres(ctx.orgId, {
           durationMin: Number(args?.duracion) || 30,
@@ -499,5 +614,29 @@ export async function ejecutarHerramienta(
   } catch (e: any) {
     console.error(`[herramienta ${nombre}]`, e);
     return "Hubo un error al ejecutarla. Sigue la conversación sin ella.";
+  }
+}
+
+/**
+ * La tienda de este chatbot, para las herramientas.
+ *
+ * SALE DE `tiendas.bot_id`, que ya vincula cada tienda con su bot. Y solo si
+ * está ACTIVA: el negocio la apaga en vacaciones o mientras la monta, y darle a
+ * la IA un catálogo de una tienda apagada es hacerle prometer productos que
+ * nadie va a poder comprar.
+ */
+async function laTiendaDelBot(ctx: ContextoAgente): Promise<TiendaDelBot | null> {
+  if (!ctx.botId) return null;
+  try {
+    const { data } = await ctx.admin
+      .from("tiendas")
+      .select("id, slug, nombre, activa, config")
+      .eq("org_id", ctx.orgId)
+      .eq("bot_id", ctx.botId)
+      .eq("activa", true)
+      .order("nombre");
+    return tiendaDelBot((data ?? []) as TiendaDelBot[]);
+  } catch {
+    return null;
   }
 }

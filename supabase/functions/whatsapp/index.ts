@@ -699,6 +699,11 @@ async function pasoElTopeDeIA(ctx: any): Promise<boolean> {
 const CLAVES_DE_ACCION = [
   "etiquetar", "pasar_a_humano", "guardar_dato",
   "ver_horarios", "agendar_cita", "consultar_sistema",
+  // Las de la tienda. ESTA LISTA TIENE QUE SER IDÉNTICA a la de
+  // `src/lib/ai/acciones.ts`: si una acción existe en un motor y no en el otro,
+  // el mismo prompt hace cosas distintas en WhatsApp y en la web, y el cliente
+  // no tiene forma de verlo. Hay una prueba estática que lo comprueba.
+  "ver_catalogo", "estado_de_pedido", "enlace_de_tienda",
 ];
 
 /**
@@ -922,6 +927,45 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
     });
   }
 
+  /* ── LAS TRES DE LA TIENDA ──────────────────────────────────────────────
+   * Gemelas de las de `src/lib/ai/herramientas.ts`. Los NOMBRES y los
+   * argumentos son idénticos a propósito: hay una prueba estática que falla si
+   * una lista tiene algo que la otra no. */
+  if (quiere.includes("ver_catalogo")) {
+    tools.push({
+      name: "ver_catalogo",
+      description:
+        "Consulta los productos y precios REALES de la tienda del negocio. Úsala SIEMPRE antes de " +
+        "decir un precio o de afirmar que algo está disponible: nunca inventes ni supongas precios.",
+      input_schema: {
+        type: "object",
+        properties: {
+          busca: { type: "string", description: "Palabra que describe lo que busca la persona. Vacío = todo el catálogo." },
+        },
+      },
+    });
+  }
+
+  if (quiere.includes("estado_de_pedido")) {
+    tools.push({
+      name: "estado_de_pedido",
+      description:
+        "Consulta cómo va el pedido de la persona con la que estás hablando. Se identifica sola por " +
+        "su número: no le pidas datos para esto.",
+      input_schema: { type: "object", properties: {} },
+    });
+  }
+
+  if (quiere.includes("enlace_de_tienda")) {
+    tools.push({
+      name: "enlace_de_tienda",
+      description:
+        "Da el enlace de la tienda para que la persona haga su pedido. Úsala cuando ya resolviste su " +
+        "duda y toca cerrar.",
+      input_schema: { type: "object", properties: {} },
+    });
+  }
+
   if (quiere.includes("consultar_sistema") && ai.sistemaUrl) {
     tools.push({
       name: "consultar_sistema",
@@ -978,6 +1022,65 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
 async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any): Promise<string> {
   try {
     switch (nombre) {
+      case "ver_catalogo": {
+        const t = await tiendaDeEsteBot(ctx);
+        if (!t) return "Este negocio no tiene tienda en línea activa. No inventes productos ni precios.";
+
+        const { data: crudos } = await ctx.db
+          .from("tienda_productos")
+          .select("id, nombre, precio, categoria, oculto, stock, orden, descripcion")
+          .eq("tienda_id", t.id).order("orden").order("nombre");
+
+        let productos = productosQueSePuedenOfrecer(crudos ?? []);
+        const busca = String(args?.busca ?? "").trim().toLowerCase();
+        if (busca) {
+          const coincide = productos.filter((p: any) =>
+            [p.nombre, p.categoria, p.descripcion].some((c: any) => String(c ?? "").toLowerCase().includes(busca)),
+          );
+          // Sin coincidencias se devuelve TODO, no una lista vacía: casi siempre
+          // es que la persona lo llamó de otra forma.
+          if (coincide.length) productos = coincide;
+        }
+        if (!productos.length) return "La tienda no tiene productos disponibles ahora mismo.";
+
+        const moneda = String(t?.config?.moneda ?? "$");
+        const lineas = productos.slice(0, 30).map((p: any) =>
+          `- ${p.nombre}${p.categoria ? ` (${p.categoria})` : ""}: ${precioDelBot(p.precio, moneda)}`,
+        );
+        const mas = productos.length > 30 ? `\n(y ${productos.length - 30} más — mándale el enlace de la tienda)` : "";
+        return `Productos disponibles de ${t.nombre}:\n${lineas.join("\n")}${mas}\n\nEnlace para pedir: ${enlaceDeTienda(t.slug)}`;
+      }
+
+      case "estado_de_pedido": {
+        const t = await tiendaDeEsteBot(ctx);
+        if (!t) return "Este negocio no tiene tienda en línea. No puedes consultar pedidos.";
+
+        const { data: contacto } = await ctx.db
+          .from("contacts").select("id")
+          .eq("org_id", ctx.orgId).eq("channel", "whatsapp").eq("external_id", ctx.to)
+          .maybeSingle();
+        if (!contacto?.id) {
+          return "No pude identificar a esta persona. Pídele el número de su pedido y pásalo a una persona del equipo.";
+        }
+
+        const { data: pedidos } = await ctx.db
+          .from("pedidos").select("numero, estado, pago, total, created_at")
+          .eq("tienda_id", t.id).eq("contacto_id", contacto.id)
+          .order("created_at", { ascending: false }).limit(10);
+
+        const todos = pedidos ?? [];
+        const vivos = todos.filter((p: any) => p.estado !== "cancelado");
+        const p = (vivos.length ? vivos : todos)[0];
+        if (!p) return "Esta persona no tiene ningún pedido a su nombre. No inventes uno.";
+        return comoVaElPedido(p, String(t?.config?.moneda ?? "$"));
+      }
+
+      case "enlace_de_tienda": {
+        const t = await tiendaDeEsteBot(ctx);
+        if (!t) return "Este negocio no tiene tienda en línea activa. No des ningún enlace.";
+        return `Enlace de la tienda (dáselo tal cual): ${enlaceDeTienda(t.slug)}`;
+      }
+
       case "ver_horarios": {
         const r = await pedirAgenda({
           accion: "horarios",
@@ -2058,6 +2161,286 @@ async function sayFlujo(ctx: any, node: any): Promise<boolean> {
   return !!envio?.ok;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LA TIENDA DE DEMANDU, DENTRO DEL CHAT
+ *
+ * OJO CON LA CONFUSIÓN DE NOMBRES: el bloque `catalog` de más arriba habla del
+ * catálogo de META COMMERCE —SKUs subidos a Facebook—. Lo de aquí es la tienda
+ * del cliente, la de `tiendas` y `tienda_productos`, que es la que de verdad
+ * usan nuestros negocios.
+ *
+ * ── ESTO ESTÁ DUPLICADO A PROPÓSITO ────────────────────────────────────────
+ *
+ * La misma decisión vive en `src/lib/tienda/paraElBot.ts`, para el widget web y
+ * para la IA. Este archivo corre en Deno y no puede importar de `src/`, así que
+ * se copia — igual que ya pasa con las herramientas del agente. Hay una prueba
+ * estática que falla si las dos copias se separan.
+ *
+ * QUÉ SE COPIA Y QUÉ NO: se copia la DECISIÓN (qué tienda, qué productos se
+ * pueden ofrecer, cómo se cuenta un estado). La consulta a la base y el envío
+ * son de cada motor.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** El dominio de las tiendas. Espejo de DOMINIO_TIENDAS en src/lib/tienda/direccion.ts. */
+const DOMINIO_TIENDAS = (Deno.env.get("DOMINIO_TIENDAS") ?? "store.demandu.tech").trim().toLowerCase();
+
+function enlaceDeTienda(slug: string): string {
+  return `https://${DOMINIO_TIENDAS}/${slug}`;
+}
+
+/** «$7.50». Los precios viven en centavos enteros en toda la plataforma. */
+function precioDelBot(centavos: number, moneda = "$"): string {
+  const n = Number(centavos);
+  if (!Number.isFinite(n)) return `${moneda}0.00`;
+  return `${moneda}${(n / 100).toFixed(2)}`;
+}
+
+/**
+ * La tienda que puede anunciar este flujo.
+ *
+ * NO SE CONFIGURA EN EL BLOQUE: `tiendas.bot_id` ya vincula cada tienda con su
+ * chatbot. Volver a preguntarla sería pedir algo que la plataforma ya sabe, y
+ * es así como se acaba con un flujo apuntando a la tienda de otro.
+ *
+ * UNA TIENDA APAGADA NO CUENTA. `activa` existe porque el negocio la apaga en
+ * vacaciones, mientras la monta, o cuando se le acabó el inventario. Mandar el
+ * enlace de una tienda apagada es peor que no mandar nada: el cliente hace el
+ * viaje y se encuentra una pantalla muerta.
+ */
+async function tiendaDeEsteBot(ctx: any): Promise<any | null> {
+  if (!ctx.botId) return null;
+  try {
+    const { data } = await ctx.db
+      .from("tiendas")
+      .select("id, slug, nombre, activa, config")
+      .eq("org_id", ctx.orgId)
+      .eq("bot_id", ctx.botId)
+      .eq("activa", true)
+      .order("nombre");
+    const t = (data ?? [])[0];
+    return t && t.slug ? t : null;
+  } catch (e) {
+    console.error("[tienda] no pude leer la tienda del bot:", (e as Error)?.message);
+    return null;
+  }
+}
+
+/** La salida por prefijo, igual que en el bloque de API. */
+function salidaDe(ctx: any, node: any, prefijo: string): string | undefined {
+  const b = (node.data?.buttons ?? []).find((x: any) => String(x.id ?? "").startsWith(prefijo));
+  return b ? buttonTarget(ctx.flow, node.id, b) : undefined;
+}
+
+/** Bloque «Mi tienda»: el enlace, con botón. */
+async function mandarTienda(ctx: any, node: any): Promise<string | undefined> {
+  const d = node.data ?? {};
+  const tienda = await tiendaDeEsteBot(ctx);
+
+  if (!tienda) {
+    // NO SE MANDA NADA Y SE AVISA POR LA OTRA SALIDA. El flujo del cliente
+    // suele llevar de ahí a una persona, que es justo lo que hace falta el día
+    // que la tienda está apagada.
+    console.error("[tienda] este bot no tiene ninguna tienda activa vinculada:", ctx.botId);
+    return salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+  }
+
+  const enlace = enlaceDeTienda(tienda.slug);
+  const texto = interp(String(d.text ?? "").trim(), ctx.vars) ||
+    "Mira nuestro catálogo completo y haz tu pedido aquí 👇";
+  // VEINTE CARACTERES ES EL TOPE DE WHATSAPP y no avisa: manda el botón con el
+  // texto cortado a media palabra.
+  const boton = (String(d.tiendaBoton ?? "").trim() || "Ver la tienda").slice(0, 20);
+
+  const interactive = {
+    type: "cta_url",
+    body: { text: texto.slice(0, 1024) },
+    action: { name: "cta_url", parameters: { display_text: boton, url: enlace } },
+  };
+
+  const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
+
+  if (!envio?.ok) {
+    // El botón de enlace no está disponible en todas las cuentas. Antes que
+    // dejar al cliente sin la tienda, se manda el enlace en texto.
+    console.error("[tienda] Meta rechazó el botón, mando el enlace en texto:", JSON.stringify(envio));
+    await say(ctx, `${texto}\n\n${enlace}`);
+  } else {
+    await registrar(ctx, `${texto}\n\n${enlace}`, envio, { tienda: tienda.slug });
+  }
+
+  ctx.vars.tienda_enlace = enlace;
+  ctx.vars.tienda_nombre = tienda.nombre ?? "";
+  return salidaDe(ctx, node, "ok-") ?? defaultNext(ctx.flow, node);
+}
+
+/**
+ * Qué productos se pueden ofrecer.
+ *
+ * LO OCULTO NO SE ENSEÑA Y LO AGOTADO TAMPOCO. `oculto` es el negocio diciendo
+ * «esto no lo enseñes»; `stock: 0` es agotado de verdad. Ofrecer por chat algo
+ * que no se puede comprar es una conversación que termina en disculpa.
+ *
+ * CUIDADO CON EL STOCK NULO: es «no llevo control de existencias», NO es cero.
+ * Es el valor de la mayoría de los productos, y tratarlo como agotado vaciaría
+ * el catálogo entero de casi todas las tiendas.
+ */
+function productosQueSePuedenOfrecer(productos: any[]): any[] {
+  return (productos ?? [])
+    .filter((p: any) => p && p.id && String(p.nombre ?? "").trim())
+    .filter((p: any) => !p.oculto)
+    .filter((p: any) => p.stock === null || p.stock === undefined || Number(p.stock) > 0);
+}
+
+/** Diez filas es el tope de una lista de WhatsApp. Meta rechaza el mensaje entero si te pasas. */
+const MAX_FILAS_LISTA = 10;
+
+/** Bloque «Mis productos»: la lista, con paginación. */
+async function mandarCatalogo(ctx: any, node: any, desde = 0): Promise<string | undefined> {
+  const d = node.data ?? {};
+  const tienda = await tiendaDeEsteBot(ctx);
+  if (!tienda) {
+    console.error("[catálogo] este bot no tiene tienda activa:", ctx.botId);
+    return salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+  }
+
+  const moneda = String(tienda?.config?.moneda ?? "$");
+  const { data: crudos } = await ctx.db
+    .from("tienda_productos")
+    .select("id, nombre, precio, categoria, oculto, stock, orden")
+    .eq("tienda_id", tienda.id)
+    .order("orden")
+    .order("nombre");
+
+  const productos = productosQueSePuedenOfrecer(crudos ?? []);
+  if (!productos.length) {
+    // Una tienda sin productos visibles no es un error del flujo, pero tampoco
+    // hay nada que enseñar. Se va por la salida de «no hay».
+    return salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+  }
+
+  const inicio = Math.max(0, Math.floor(Number(desde) || 0));
+  const restantes = productos.length - inicio;
+  const hayMas = restantes > MAX_FILAS_LISTA;
+  const cuantos = hayMas ? MAX_FILAS_LISTA - 1 : MAX_FILAS_LISTA;
+
+  const filas = productos.slice(inicio, inicio + cuantos).map((p: any) => ({
+    // TÍTULO A 24 Y DESCRIPCIÓN A 72: pasarse rechaza el mensaje entero, y el
+    // error de Meta no dice cuál de los dos fue.
+    id: `prod-${p.id}`.slice(0, 200),
+    title: String(p.nombre).slice(0, 24),
+    description: [precioDelBot(p.precio, moneda), p.categoria ? String(p.categoria) : ""]
+      .filter(Boolean).join(" · ").slice(0, 72),
+  }));
+
+  if (hayMas) {
+    filas.push({
+      id: `mas-${inicio + cuantos}`,
+      title: "Ver más productos",
+      description: `Quedan ${productos.length - inicio - cuantos}`.slice(0, 72),
+    });
+  }
+
+  const texto = interp(String(d.text ?? "").trim(), ctx.vars) || "Estos son nuestros productos:";
+  const interactive = {
+    type: "list",
+    body: { text: texto.slice(0, 1024) },
+    footer: { text: enlaceDeTienda(tienda.slug).slice(0, 60) },
+    action: {
+      button: (String(d.catalogoTitulo ?? "").trim() || "Ver productos").slice(0, 20),
+      sections: [{ title: String(tienda.nombre ?? "Productos").slice(0, 24), rows: filas }],
+    },
+  };
+
+  const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
+  await registrar(ctx, texto, envio, { productos: filas.length, desde: inicio });
+
+  if (!envio?.ok) {
+    console.error("[catálogo] Meta rechazó la lista:", JSON.stringify(envio));
+    // Sin lista, al menos el enlace: el cliente puede seguir comprando.
+    await say(ctx, `${texto}\n\n${enlaceDeTienda(tienda.slug)}`);
+    return salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+  }
+
+  // Se queda esperando qué elige. Sin esto la lista sale y el flujo sigue de
+  // largo: el cliente toca un producto y no pasa nada.
+  return undefined;
+}
+
+/**
+ * Cómo se le cuenta a un cliente el estado de su pedido.
+ *
+ * NO SE DICE «recibido», SE DICE QUÉ SIGNIFICA: los estados internos son
+ * palabras del panel. Y EL IMPAGO MANDA SOBRE EL ESTADO — aquí se cobra antes
+ * de preparar, así que un pedido sin pagar está parado, y eso es lo que de
+ * verdad necesita saber.
+ */
+function comoVaElPedido(p: any, moneda = "$"): string {
+  const n = `#${p.numero}`;
+  const monto = precioDelBot(p.total, moneda);
+  const pagado = String(p.pago ?? "").trim() === "pagado";
+
+  if (p.estado === "cancelado") {
+    return `Tu pedido ${n} fue cancelado. Si quieres volver a pedir, escríbenos y te ayudamos.`;
+  }
+  if (!pagado) {
+    return `Tu pedido ${n} de ${monto} está esperando el pago. En cuanto se registre lo empezamos a preparar.`;
+  }
+  const segun: Record<string, string> = {
+    recibido: `Tu pedido ${n} de ${monto} ya está pagado y lo vamos a confirmar en breve.`,
+    confirmado: `Tu pedido ${n} de ${monto} está confirmado. Ya lo estamos preparando.`,
+    preparando: `Tu pedido ${n} de ${monto} se está preparando 📦`,
+    en_camino: `Tu pedido ${n} de ${monto} va en camino 🚚`,
+    entregado: `Tu pedido ${n} de ${monto} fue entregado. ¡Gracias por tu compra!`,
+  };
+  return segun[p.estado] ?? `Tu pedido ${n} de ${monto} está pagado y en proceso.`;
+}
+
+/** Bloque «Estado del pedido». */
+async function mandarEstadoDePedido(ctx: any, node: any): Promise<string | undefined> {
+  const d = node.data ?? {};
+  const tienda = await tiendaDeEsteBot(ctx);
+  const sinPedidos = () => salidaDe(ctx, node, "no-") ?? defaultNext(ctx.flow, node);
+
+  if (!tienda) return sinPedidos();
+
+  // SE IDENTIFICA POR EL CONTACTO, NO POR EL TELÉFONO SUELTO. El pedido guarda
+  // `contacto_id` cuando se sabe quién pidió, y ese contacto es el mismo que el
+  // de esta conversación. Buscar por el texto del teléfono fallaría con los
+  // formatos (+507, 507, con guiones) que cada quien escribe distinto.
+  const { data: contacto } = await ctx.db
+    .from("contacts").select("id")
+    .eq("org_id", ctx.orgId).eq("channel", "whatsapp").eq("external_id", ctx.to)
+    .maybeSingle();
+
+  if (!contacto?.id) return sinPedidos();
+
+  const { data: pedidos } = await ctx.db
+    .from("pedidos")
+    .select("numero, estado, pago, total, created_at")
+    .eq("tienda_id", tienda.id)
+    .eq("contacto_id", contacto.id)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  const todos = pedidos ?? [];
+  // LOS CANCELADOS NO CUENTAN salvo que no haya otra cosa. Quien pregunta
+  // «¿dónde va mi pedido?» pregunta por el que acaba de hacer; contestarle con
+  // uno cancelado de hace un mes es la respuesta más confusa posible.
+  const vivos = todos.filter((p: any) => p.estado !== "cancelado");
+  const elegido = (vivos.length ? vivos : todos)[0];
+
+  if (!elegido) {
+    const texto = String(d.sinPedidosMensaje ?? "").trim();
+    if (texto) await say(ctx, texto);
+    return sinPedidos();
+  }
+
+  await say(ctx, comoVaElPedido(elegido, String(tienda?.config?.moneda ?? "$")));
+  ctx.vars.pedido_numero = String(elegido.numero);
+  ctx.vars.pedido_estado = String(elegido.estado);
+  return salidaDe(ctx, node, "ok-") ?? defaultNext(ctx.flow, node);
+}
+
 async function say(ctx: any, body: string) {
   if (esEjemplo(body)) return; // bloque sin configurar: no molestamos al cliente
   const text = interp(body, ctx.vars);
@@ -2137,6 +2520,28 @@ async function runFrom(startId: string | undefined, ctx: any) {
       case "catalog": {
         await sayCatalogo(ctx, node);
         current = defaultNext(ctx.flow, node);
+        break;
+      }
+
+      // ── LOS TRES DE LA TIENDA DE DEMANDU ──────────────────────────────
+      // No confundir con `catalog`, que es el de Meta Commerce.
+      case "tienda": {
+        current = await mandarTienda(ctx, node);
+        break;
+      }
+
+      case "tienda_catalogo": {
+        const siguiente = await mandarCatalogo(ctx, node, 0);
+        // `undefined` aquí NO es «se acabó»: la lista salió y hay que esperar
+        // a que elija. Si se siguiera de largo, el cliente tocaría un producto
+        // y no pasaría nada.
+        if (siguiente === undefined) return { nodeId: node.id, type: "tienda_catalogo" };
+        current = siguiente;
+        break;
+      }
+
+      case "tienda_pedido": {
+        current = await mandarEstadoDePedido(ctx, node);
         break;
       }
 
@@ -2505,6 +2910,35 @@ async function handleIncoming(opts: any) {
       if (node?.data.variable) vars[node.data.variable] = opts.text;
       // El bloque de IA se queda escuchando: la siguiente pregunta vuelve a él.
       startId = node?.type === "ai" ? node.id : (node ? defaultNext(opts.flow, node) : undefined);
+    } else if (awaiting.type === "tienda_catalogo") {
+      // ── QUÉ ELIGIÓ DE LA LISTA ───────────────────────────────────────
+      // Tres respuestas posibles y las tres importan: un producto, «ver más»,
+      // o cualquier otra cosa (escribió en vez de tocar).
+      const elegido = String(opts.text ?? "").trim();
+      const mas = /^mas-(\d+)$/.exec(elegido);
+      const prod = /^prod-(.+)$/.exec(elegido);
+
+      if (mas && node) {
+        // Otra página, sin salir del bloque.
+        const siguiente = await mandarCatalogo(ctx, node, Number(mas[1]));
+        if (siguiente === undefined) {
+          await avanzarRecorrido(opts.db, runId, 1, node.id);
+          return { vars, awaiting: { nodeId: node.id, type: "tienda_catalogo" }, hintEnviado: opts.flowState?.hintEnviado ?? false, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+        }
+        startId = siguiente;
+      } else if (prod && node) {
+        // SE GUARDA QUÉ ELIGIÓ para que el resto del flujo pueda usarlo, y se
+        // sale por «eligió un producto».
+        vars.producto_id = prod[1];
+        const b = (node.data?.buttons ?? []).find((x: any) => String(x.id ?? "").startsWith("ok-"));
+        startId = b ? buttonTarget(opts.flow, node.id, b) : defaultNext(opts.flow, node);
+      } else if (node) {
+        // Escribió en vez de tocar. NO se le repite la lista sin más: quien
+        // escribe casi siempre está preguntando otra cosa, y volver a mandarle
+        // el mismo menú es la forma más rápida de que se vaya.
+        const b = (node.data?.buttons ?? []).find((x: any) => String(x.id ?? "").startsWith("no-"));
+        startId = b ? buttonTarget(opts.flow, node.id, b) : defaultNext(opts.flow, node);
+      }
     } else if (awaiting.type === "buttons") {
       const t = opts.text.toLowerCase();
       const btn = (node?.data.buttons ?? []).find((b: any) => b.id === opts.text || (b.label ?? "").toLowerCase() === t);

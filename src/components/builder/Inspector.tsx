@@ -131,7 +131,7 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
       </Field>
 
       {d.text !== undefined &&
-        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template", "condition", "tags", "action", "ig_story", "ig_comment", "fb_comment", "web_form"].includes(node.type) && (
+        !["calendar", "media", "api", "whatsapp_flow", "payment", "catalog", "template", "condition", "tags", "action", "ig_story", "ig_comment", "fb_comment", "web_form", "tienda_pedido"].includes(node.type) && (
           <Field label="Mensaje">
             <textarea className="input min-h-[80px]" value={d.text} onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
@@ -754,6 +754,81 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
       )}
 
       {/* ── Pago: cobro con pasarela ── */}
+      {/* ── LOS TRES DE LA TIENDA ─────────────────────────────────────────
+          CASI NO HAY QUE CONFIGURARLOS, y es lo que hay que dejar claro en la
+          pantalla: la tienda sale sola de la que tiene vinculada este chatbot.
+          Preguntarla otra vez aquí sería pedir algo que la plataforma ya sabe,
+          y es así como se acaba con un flujo apuntando a la tienda de otro. */}
+      {(node.type === "tienda" || node.type === "tienda_catalogo" || node.type === "tienda_pedido") && (
+        <div className="mb-3 rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-xs text-ink-2">
+          Usa la tienda vinculada a este chatbot. No hace falta escribir la dirección: si algún
+          día la cambias, tus conversaciones siguen funcionando.
+        </div>
+      )}
+
+      {node.type === "tienda" && (
+        <Field label="Texto del botón">
+          <input
+            className="input"
+            value={d.tiendaBoton ?? ""}
+            placeholder="Ver la tienda"
+            maxLength={20}
+            onChange={(e) => onChange({ tiendaBoton: e.target.value })}
+          />
+          {/* VEINTE CARACTERES ES EL TOPE DE WHATSAPP, y no avisa: manda el
+              mensaje con el texto cortado a media palabra. */}
+          <span className="mt-1 block text-[11px] text-ink-3">
+            Máximo 20 caracteres: es lo que deja WhatsApp.
+          </span>
+        </Field>
+      )}
+
+      {node.type === "tienda_catalogo" && (
+        <>
+          <Field label="Texto del menú">
+            <input
+              className="input"
+              value={d.catalogoTitulo ?? ""}
+              placeholder="Ver productos"
+              maxLength={20}
+              onChange={(e) => onChange({ catalogoTitulo: e.target.value })}
+            />
+          </Field>
+          <label className="mb-3 flex cursor-pointer items-start gap-2 text-xs text-ink-2">
+            <input
+              type="checkbox"
+              checked={d.catalogoPorCategoria !== false}
+              onChange={(e) => onChange({ catalogoPorCategoria: e.target.checked })}
+              className="mt-0.5"
+            />
+            <span>
+              Empezar por categorías
+              <span className="block text-[11px] text-ink-3">
+                Recomendado con muchos productos: WhatsApp solo deja enseñar 10 a la vez.
+                Sin categorías, la lista empieza directo por los productos.
+              </span>
+            </span>
+          </label>
+        </>
+      )}
+
+      {node.type === "tienda_pedido" && (
+        <Field label="Si no tiene ningún pedido">
+          <textarea
+            className="input min-h-[70px]"
+            value={d.sinPedidosMensaje ?? ""}
+            placeholder="No encuentro ningún pedido con este número…"
+            onChange={(e) => onChange({ sinPedidosMensaje: e.target.value })}
+          />
+          {/* El texto del pedido NO se escribe: lo arma la plataforma con el
+              estado real. Dejar que se escriba a mano sería dejar que el
+              negocio prometa un estado que no es. */}
+          <span className="mt-1 block text-[11px] text-ink-3">
+            Lo demás lo escribe la plataforma con el estado real del pedido.
+          </span>
+        </Field>
+      )}
+
       {node.type === "payment" && (
         <>
           <Field label="Pasarela">

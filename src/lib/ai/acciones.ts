@@ -61,6 +61,26 @@ export const ACCIONES: Accion[] = [
     pista: "Pídele que confirme la hora con la persona antes de reservar.",
   },
   {
+    clave: "ver_catalogo",
+    nombre: "Ver mi catálogo",
+    desc: "Consulta los productos y precios de tu tienda",
+    pista:
+      "Sale de tu tienda de Demandu, no hay que escribir nada: lo oculto y lo agotado no lo enseña. " +
+      "Úsala para que conteste «¿tienen X?» y «¿cuánto cuesta?» sin inventar.",
+  },
+  {
+    clave: "estado_de_pedido",
+    nombre: "Estado de un pedido",
+    desc: "Le dice a la persona cómo va su pedido",
+    pista: "Lo busca por su teléfono. Si le falta pagar, se lo dice — que es lo que necesita saber.",
+  },
+  {
+    clave: "enlace_de_tienda",
+    nombre: "Mandar mi tienda",
+    desc: "Da el enlace de tu tienda para que pida",
+    pista: "Úsala al final: primero que resuelva la duda, y luego el enlace para cerrar.",
+  },
+  {
     clave: "consultar_sistema",
     nombre: "Consultar tu sistema",
     desc: "Pregunta a una dirección tuya (inventario, precios…)",

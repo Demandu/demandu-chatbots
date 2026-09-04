@@ -4224,4 +4224,115 @@ describe("La portada no se recorta", () => {
   });
 });
 
+
+// ─── La tienda dentro del chat ───────────────────────────────────────────────
+//
+// La misma decisión vive en TRES sitios: `src/lib/tienda/paraElBot.ts` (puro,
+// para el widget y la IA), el motor de WhatsApp en Deno, y las herramientas del
+// agente. Deno no puede importar de `src/`, así que se copia — igual que ya
+// pasa con las herramientas del agente. Estas reglas son lo único que impide
+// que las copias se separen sin que nadie se entere.
+describe("La tienda dentro del chat", () => {
+  const WA = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+  const PURO = fs.readFileSync(path.join(SRC, "lib/tienda/paraElBot.ts"), "utf8");
+
+  test("el motor de WhatsApp ejecuta los tres bloques de la tienda", () => {
+    // Un tipo sin `case` no rompe nada visible: el motor lo salta en silencio y
+    // el cliente ve que su bloque «no hace nada».
+    const casos = new Set([...sinComentarios(WA).matchAll(/case "(\w+)":/g)].map((m) => m[1]));
+    for (const t of ["tienda", "tienda_catalogo", "tienda_pedido"]) {
+      esperar(casos.has(t)).verdadero(`el motor de WhatsApp no sabe ejecutar "${t}"`);
+    }
+  });
+
+  test("el motor del webchat también, y no los deja mudos", () => {
+    // Es el fallo de `catalog`, `payment` y `template`: caen en el `default` y
+    // solo mandan su texto. El negocio arma el flujo, lo prueba en el panel, se
+    // ve bien, y en su sitio web no pasa nada.
+    const web = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+    const casos = new Set([...web.matchAll(/case "(\w+)":/g)].map((m) => m[1]));
+    for (const t of ["tienda", "tienda_catalogo", "tienda_pedido"]) {
+      esperar(casos.has(t)).verdadero(`el webchat deja mudo el bloque "${t}"`);
+    }
+  });
+
+  test("una tienda APAGADA no se manda por ningún motor", () => {
+    // Es la regla que más importa y está en tres sitios. Mandar el enlace de
+    // una tienda apagada es peor que no mandar nada: el cliente hace el viaje y
+    // se encuentra una pantalla muerta.
+    const wa = sinComentarios(WA);
+    const i = wa.indexOf("async function tiendaDeEsteBot");
+    esperar(i > 0).verdadero("cambió la forma del motor, revisa esta prueba");
+    esperar(/\.eq\(\s*"activa"\s*,\s*true\s*\)/.test(wa.slice(i, i + 700))).verdadero(
+      "el motor de WhatsApp trae tiendas apagadas",
+    );
+    esperar(/soloActivas/.test(sinComentarios(PURO))).verdadero(
+      "la lógica compartida ya no distingue una tienda apagada",
+    );
+  });
+
+  test("el stock NULO no se trata como agotado", () => {
+    // `stock: null` es «no llevo control de existencias». Es el valor de la
+    // mayoría de los productos: tratarlo como cero vaciaría el catálogo entero
+    // de casi todas las tiendas, y en el motor de Deno no hay prueba unitaria
+    // que lo cace.
+    const wa = sinComentarios(WA);
+    const i = wa.indexOf("function productosQueSePuedenOfrecer");
+    esperar(i > 0).verdadero("cambió la forma del motor, revisa esta prueba");
+    const cuerpo = wa.slice(i, i + 500);
+    esperar(/stock === null/.test(cuerpo) && /undefined/.test(cuerpo)).verdadero(
+      "el motor de WhatsApp trata el stock nulo como agotado",
+    );
+  });
+
+  test("las tres herramientas de la tienda están en los DOS motores", () => {
+    // Si una herramienta existe en un motor y no en el otro, el mismo prompt
+    // hace cosas distintas en WhatsApp y en la web, y el cliente no tiene forma
+    // de verlo.
+    const nodo = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8"));
+    const wa = sinComentarios(WA);
+    for (const h of ["ver_catalogo", "estado_de_pedido", "enlace_de_tienda"]) {
+      esperar(nodo.includes(`name: "${h}"`)).verdadero(`falta declarar "${h}" en el motor de Node`);
+      esperar(wa.includes(`name: "${h}"`)).verdadero(`falta declarar "${h}" en el motor de WhatsApp`);
+      esperar(nodo.includes(`case "${h}"`)).verdadero(`falta ejecutar "${h}" en el motor de Node`);
+      esperar(wa.includes(`case "${h}"`)).verdadero(`falta ejecutar "${h}" en el motor de WhatsApp`);
+    }
+  });
+
+  test("la lista de WhatsApp nunca pasa de 10 filas", () => {
+    // Meta rechaza el mensaje ENTERO si te pasas, con un error que no dice cuál
+    // es el problema. Un catálogo de 48 productos —el tamaño de una tienda real
+    // nuestra— hay que partirlo sí o sí.
+    const wa = sinComentarios(WA);
+    const m = /MAX_FILAS_LISTA = (\d+)/.exec(wa);
+    esperar(Boolean(m)).verdadero("el motor ya no declara el tope de filas");
+    esperar(Number(m[1]) <= 10).verdadero(`el motor manda hasta ${m[1]} filas y Meta acepta 10`);
+
+    const puro = /MAX_FILAS_LISTA = (\d+)/.exec(sinComentarios(PURO));
+    esperar(Boolean(puro)).verdadero("la lógica compartida ya no declara el tope");
+    esperar(puro[1]).igual(m[1], "los dos motores no están de acuerdo en cuántas filas caben");
+  });
+
+  test("el catálogo espera a que la persona elija", () => {
+    // Sin esto la lista sale y el flujo sigue de largo: el cliente toca un
+    // producto y no pasa nada. Es el fallo más fácil de cometer aquí porque
+    // TODO parece funcionar hasta que alguien toca.
+    //
+    // SE MIRA DENTRO DEL `case`, NO EL ARCHIVO ENTERO. La primera versión de
+    // esta prueba buscaba la frase en todo el motor, y la encontraba en el
+    // recogedor de la respuesta: quitar el `return` del bloque la dejaba pasar.
+    const wa = sinComentarios(WA);
+    const i = wa.indexOf('case "tienda_catalogo": {');
+    esperar(i > 0).verdadero("cambió la forma del motor, revisa esta prueba");
+    const cuerpo = wa.slice(i, wa.indexOf("break;", i) + 6);
+    esperar(/return \{ nodeId: node\.id, type: "tienda_catalogo" \}/.test(cuerpo)).verdadero(
+      "el bloque de catálogo no se queda esperando: la lista sale y el flujo sigue de largo, " +
+        "así que el cliente toca un producto y no pasa nada",
+    );
+    esperar(/awaiting\.type === "tienda_catalogo"/.test(wa)).verdadero(
+      "nadie recoge lo que la persona eligió de la lista",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

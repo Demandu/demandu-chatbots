@@ -73,6 +73,7 @@ export type ComponentKey =
   | "message" | "media" | "question" | "buttons" | "condition" | "ai" | "delay"
   | "action" | "api" | "calendar" | "tags" | "human" | "assign" | "redirect"
   | "catalog" | "payment" | "whatsapp_flow" | "call_permission" | "template"
+  | "tienda" | "tienda_catalogo" | "tienda_pedido"
   | "ig_story" | "ig_comment" | "ig_dm" | "fb_comment" | "web_form" | "end";
 
 const ALL: Channel[] = ["whatsapp", "instagram", "messenger", "webchat"];
@@ -95,7 +96,16 @@ export const COMPONENTS: Record<ComponentKey, {
   tags:      { label: "Etiquetar", desc: "Marca al contacto (ej. 'interesado').", lana: "Le pones una etiqueta al contacto (por ejemplo 'interesado' o 'cliente') para segmentarlo después.", channels: ALL },
   redirect:  { label: "Ir a otra conversación", desc: "Salta a otro flujo del chatbot.", lana: "Envía al cliente a otra de tus conversaciones automáticas. Sirve para reutilizar partes sin repetirlas.", channels: ALL },
   template:  { label: "Enviar plantilla de WhatsApp", desc: "Mensaje aprobado por Meta.", lana: "Envía una plantilla aprobada por Meta. Es la única forma de escribirle primero a alguien en WhatsApp fuera de las 24 horas.", channels: ["whatsapp"] },
-  catalog:   { label: "Mostrar producto / catálogo", desc: "Vende productos por WhatsApp.", lana: "Muestra productos de tu catálogo directo en el chat para que el cliente compre sin salir de WhatsApp.", channels: ["whatsapp"] },
+  catalog:   { label: "Catálogo de Meta", desc: "Productos subidos a Facebook.", lana: "Muestra productos del catálogo que subiste a Facebook Commerce. OJO: no son los de tu tienda de Demandu — para esos usa el bloque «Mis productos».", channels: ["whatsapp"] },
+
+  // ── LOS TRES DE LA TIENDA DE DEMANDU ──────────────────────────────────
+  // Van en TODOS los canales a propósito. La tienda es una página web: el
+  // enlace sirve igual en WhatsApp, en Instagram y en el widget. Limitarlos a
+  // WhatsApp dejaría fuera justo el canal por el que llega la gente a la
+  // tienda, que es la biografía de Instagram.
+  tienda: { label: "Mi tienda", desc: "Manda el enlace de tu tienda.", lana: "Manda el enlace de tu tienda con un botón. No tienes que escribir la dirección: la saco de tu tienda, así que si algún día la cambias, tus conversaciones siguen funcionando. Si tienes la tienda apagada, el bloque toma la otra salida y no le manda un enlace muerto a nadie.", channels: ALL },
+  tienda_catalogo: { label: "Mis productos", desc: "Enseña tu catálogo dentro del chat.", lana: "Le enseña tus productos reales sin salir de la conversación: primero las categorías y luego los productos con su precio. Lo oculto y lo agotado no se enseña, para que nadie pida algo que no le puedes vender.", channels: ALL },
+  tienda_pedido: { label: "Estado del pedido", desc: "Le dice cómo va su pedido.", lana: "Cuando alguien pregunta «¿dónde va mi pedido?», este bloque lo busca por su teléfono y le contesta solo. Si le falta pagar, se lo dice — que es lo que de verdad necesita saber.", channels: ALL },
   whatsapp_flow: { label: "Formulario (WhatsApp Flow)", desc: "Pide varios datos en una sola pantalla.", lana: "Un formulario nativo de WhatsApp: el cliente llena varios campos en una sola pantalla, sin ir pregunta por pregunta.", channels: ["whatsapp"] },
   call_permission: { label: "Permiso para llamar", desc: "Pide autorización antes de llamar por WhatsApp.", lana: "En WhatsApp no puedes llamar a un cliente sin que él lo autorice antes. Este bloque le manda la petición dentro de la conversación; si acepta, tu equipo puede llamarlo desde WhatsApp. Meta solo deja pedirlo una vez al día y dos veces por semana por persona, así que conviene pedirlo cuando de verdad haga falta.", channels: ["whatsapp"] },
   payment:   { label: "Cobro / pago", desc: "Cobra dentro del chat.", lana: "Cobra dentro de WhatsApp con tu pasarela de pago. (En otros canales, más adelante, será con un enlace de pago.)", channels: ["whatsapp"] },

@@ -21,6 +21,11 @@ import {
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
 import { membresiaActiva, soporteVigente } from "../../src/lib/membresia.ts";
 import {
+  tiendaDelBot, enlaceDelBot, mensajeDeTienda, productosQueSePuedenOfrecer,
+  categoriasDelBot, precioDelBot, paginaDeCatalogo, desdeDondeSigue, productoElegido,
+  comoVaElPedido, pedidoDelQueHablar, MAX_FILAS_LISTA,
+} from "../../src/lib/tienda/paraElBot.ts";
+import {
   MOMENTOS, MAX_AVISO, sanearAvisos, rellenarAviso, textoDelAviso, momentoDelEstado, botonDelAviso,
 } from "../../src/lib/tienda/avisos.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
@@ -2973,6 +2978,186 @@ describe("El logo llena el círculo, o no", () => {
   test("la instrucción al cliente explica los dos casos", () => {
     const t = instruccionesDeImagenes();
     esperar(/propio fondo/i.test(t)).verdadero("la ayuda no dice cuándo marcar la casilla");
+  });
+});
+
+
+describe("La tienda dentro del chat", () => {
+  const viva = { id: "t1", slug: "paws-at-home", nombre: "Paws at Home", activa: true };
+  const apagada = { id: "t2", slug: "de-vacaciones", nombre: "Cerrada", activa: false };
+
+  test("una tienda APAGADA no se manda nunca", () => {
+    // `activa` existe porque el negocio la apaga en vacaciones, mientras la
+    // monta, o cuando se le acabó el inventario. Mandar ese enlace es peor que
+    // no mandar nada: el cliente hace el viaje y encuentra una pantalla muerta.
+    esperar(tiendaDelBot([apagada])).igual(null);
+    esperar(tiendaDelBot([apagada, viva])?.slug).igual("paws-at-home");
+    esperar(mensajeDeTienda(tiendaDelBot([apagada]))).igual(null);
+  });
+
+  test("sin tienda no hay enlace, y se dice que no lo hay", () => {
+    esperar(tiendaDelBot([])).igual(null);
+    esperar(tiendaDelBot(null)).igual(null);
+    esperar(enlaceDelBot(null)).igual(null);
+  });
+
+  test("con varias tiendas siempre la misma, nunca al azar", () => {
+    const a = { ...viva, slug: "aaa", nombre: "Aaa" };
+    const b = { ...viva, slug: "bbb", nombre: "Bbb" };
+    esperar(tiendaDelBot([a, b])?.slug).igual("aaa");
+    esperar(tiendaDelBot([b, a])?.slug).igual("aaa");
+  });
+
+  test("el botón se recorta a 20, que es el tope de WhatsApp", () => {
+    // Meta no avisa: manda el mensaje con el texto cortado a media palabra.
+    const m = mensajeDeTienda(viva, "Pide aquí", "Ver todo nuestro catálogo completo");
+    esperar(m?.boton.length <= 20).verdadero(`el botón mide ${m?.boton.length}`);
+  });
+
+  test("un bloque sin configurar no manda un mensaje en blanco", () => {
+    const m = mensajeDeTienda(viva, "   ", "  ");
+    esperar(Boolean(m?.texto)).verdadero("mandó texto vacío");
+    esperar(Boolean(m?.boton)).verdadero("mandó un botón sin etiqueta");
+  });
+
+  /* ── Qué se puede ofrecer ─────────────────────────────────────────────── */
+
+  const p = (id, extra = {}) => ({ id, nombre: `P${id}`, precio: 1000, ...extra });
+
+  test("lo oculto no se ofrece", () => {
+    esperar(productosQueSePuedenOfrecer([p("1"), p("2", { oculto: true })]).length).igual(1);
+  });
+
+  test("lo agotado no se ofrece, pero el stock NULO sí", () => {
+    // `stock: null` es «no llevo control de existencias», NO es cero. Es el
+    // valor de la mayoría de los productos: tratarlo como agotado vaciaría el
+    // catálogo entero de casi todas las tiendas.
+    const r = productosQueSePuedenOfrecer([
+      p("1", { stock: null }), p("2", { stock: 0 }), p("3", { stock: 5 }), p("4"),
+    ]);
+    esperar(r.map((x) => x.id)).igual(["1", "3", "4"]);
+  });
+
+  test("el orden manda sobre el nombre", () => {
+    const r = productosQueSePuedenOfrecer([
+      { id: "a", nombre: "Zeta", precio: 1, orden: 1 },
+      { id: "b", nombre: "Alfa", precio: 1, orden: 2 },
+    ]);
+    esperar(r.map((x) => x.nombre)).igual(["Zeta", "Alfa"]);
+  });
+
+  test("los precios se leen en dinero, no en centavos", () => {
+    esperar(precioDelBot(750)).igual("$7.50");
+    esperar(precioDelBot(1534, "B/.")).igual("B/.15.34");
+    esperar(precioDelBot(NaN)).igual("$0.00");
+  });
+
+  test("sin ninguna categoría no se inventa una sola llamada «Otros»", () => {
+    esperar(categoriasDelBot([p("1"), p("2")])).igual([]);
+    const con = categoriasDelBot([p("1", { categoria: "Perros" }), p("2")]);
+    esperar(con.map((c) => c.nombre)).igual(["Perros", "Otros"]);
+  });
+
+  /* ── La lista de WhatsApp ─────────────────────────────────────────────── */
+
+  test("NUNCA más de 10 filas: Meta rechaza el mensaje entero", () => {
+    // EL DIEZ VA ESCRITO A MANO Y NO COMO `MAX_FILAS_LISTA`. La primera versión
+    // de esta prueba comparaba contra la propia constante: subir la constante a
+    // 25 la dejaba pasar tan campante, que es exactamente el cambio del que
+    // tiene que protegernos. El diez es de Meta, no nuestro.
+    esperar(MAX_FILAS_LISTA <= 10).verdadero(`el tope está en ${MAX_FILAS_LISTA} y Meta acepta 10`);
+    const muchos = Array.from({ length: 48 }, (_, i) => p(String(i)));
+    const pag = paginaDeCatalogo(muchos, 0);
+    esperar(pag.filas.length <= 10).verdadero(`mandó ${pag.filas.length} filas`);
+  });
+
+  test("cuando hay más, la última fila lo dice", () => {
+    const muchos = Array.from({ length: 48 }, (_, i) => p(String(i)));
+    const pag = paginaDeCatalogo(muchos, 0);
+    esperar(pag.hayMas).verdadero();
+    esperar(pag.filas[pag.filas.length - 1].id.startsWith("mas-")).verdadero();
+    // Una lista que se corta en el décimo sin decirlo hace creer que la tienda
+    // tiene diez cosas.
+    esperar(pag.filas.filter((f) => f.id.startsWith("prod-")).length).igual(9);
+  });
+
+  test("si caben justos, no se desperdicia una fila en «ver más»", () => {
+    const diez = Array.from({ length: 10 }, (_, i) => p(String(i)));
+    const pag = paginaDeCatalogo(diez, 0);
+    esperar(pag.hayMas).falso();
+    esperar(pag.filas.length).igual(10);
+  });
+
+  test("los títulos y descripciones se recortan a lo que acepta Meta", () => {
+    const largo = [{ id: "x", nombre: "Comida premium para perro adulto de raza grande", precio: 1000,
+      categoria: "Una categoría con un nombre larguísimo que no cabe de ninguna manera aquí" }];
+    const f = paginaDeCatalogo(largo, 0).filas[0];
+    esperar(f.titulo.length <= 24).verdadero(`título de ${f.titulo.length}`);
+    esperar(f.descripcion.length <= 72).verdadero(`descripción de ${f.descripcion.length}`);
+  });
+
+  test("se entiende qué tocó la persona", () => {
+    esperar(productoElegido("prod-abc-123")).igual("abc-123");
+    esperar(desdeDondeSigue("mas-9")).igual(9);
+    esperar(productoElegido("mas-9")).igual(null);
+    esperar(desdeDondeSigue("prod-abc")).igual(null);
+    // Escribió en vez de tocar: ni una cosa ni la otra.
+    esperar(productoElegido("hola")).igual(null);
+    esperar(desdeDondeSigue("hola")).igual(null);
+  });
+
+  /* ── El estado del pedido ─────────────────────────────────────────────── */
+
+  const ped = (extra) => ({ numero: 7, estado: "preparando", pago: "pagado", total: 1950, ...extra });
+
+  test("EL IMPAGO MANDA SOBRE EL ESTADO", () => {
+    // Aquí se cobra antes de preparar: decirle «lo estamos preparando» a quien
+    // no ha pagado sería mentirle, y lo que necesita saber es que falta pagar.
+    const t = comoVaElPedido(ped({ pago: null }));
+    esperar(/esperando el pago/.test(t)).verdadero(t);
+    esperar(/preparando/.test(t)).falso(t);
+  });
+
+  test("no se dice «recibido», se dice qué significa", () => {
+    const t = comoVaElPedido(ped({ estado: "recibido" }));
+    esperar(/recibido/i.test(t)).falso("le está diciendo la palabra del panel");
+  });
+
+  test("cada estado dice dónde está el pedido", () => {
+    esperar(/camino/.test(comoVaElPedido(ped({ estado: "en_camino" })))).verdadero();
+    esperar(/entregado/.test(comoVaElPedido(ped({ estado: "entregado" })))).verdadero();
+    esperar(/cancelado/.test(comoVaElPedido(ped({ estado: "cancelado" })))).verdadero();
+    // Un estado que no conocemos no deja al cliente sin respuesta.
+    esperar(comoVaElPedido(ped({ estado: "inventado" })).length > 10).verdadero();
+  });
+
+  test("un cancelado no dice que falta pagar", () => {
+    // El cancelado se comprueba ANTES que el impago: casi todos los cancelados
+    // lo están justamente porque no se pagaron, y decirle «espera el pago» de
+    // un pedido muerto es la respuesta más confusa posible.
+    const t = comoVaElPedido(ped({ estado: "cancelado", pago: null }));
+    esperar(/esperando el pago/.test(t)).falso(t);
+  });
+
+  test("se habla del ÚLTIMO pedido, y los cancelados no cuentan", () => {
+    const viejo = { numero: 1, estado: "entregado", total: 100, created_at: "2026-01-01T00:00:00Z" };
+    const nuevo = { numero: 9, estado: "preparando", total: 200, created_at: "2026-09-01T00:00:00Z" };
+    const cancelado = { numero: 12, estado: "cancelado", total: 300, created_at: "2026-09-03T00:00:00Z" };
+    esperar(pedidoDelQueHablar([viejo, nuevo, cancelado])?.numero).igual(9);
+    esperar(pedidoDelQueHablar([cancelado, nuevo, viejo])?.numero).igual(9);
+  });
+
+  test("si TODO está cancelado, se habla del cancelado y no de nada", () => {
+    const c = { numero: 3, estado: "cancelado", total: 100, created_at: "2026-09-03T00:00:00Z" };
+    esperar(pedidoDelQueHablar([c])?.numero).igual(3);
+    esperar(pedidoDelQueHablar([])).igual(null);
+    esperar(pedidoDelQueHablar(null)).igual(null);
+  });
+
+  test("sin fecha legible manda el número, que en una tienda siempre sube", () => {
+    const a = { numero: 4, estado: "preparando", total: 1, created_at: "vaya fecha" };
+    const b = { numero: 8, estado: "preparando", total: 1, created_at: null };
+    esperar(pedidoDelQueHablar([a, b])?.numero).igual(8);
   });
 });
 
