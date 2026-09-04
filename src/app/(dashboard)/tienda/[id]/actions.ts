@@ -204,6 +204,10 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
     ...previa,
     titulo: s(fd.get("titulo")),
     logo_url: s(fd.get("logo_url")),
+    // Una casilla sin marcar NO VIAJA en el formulario: si esto fuera
+    // `fd.get(...) === "on"` a secas estaría bien, pero conviene dejarlo
+    // explícito — desmarcarla tiene que poder apagarla, no solo encenderla.
+    logo_llena: fd.get("logo_llena") !== null,
     portada_url: s(fd.get("portada_url")),
     banners,
     categorias,

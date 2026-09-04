@@ -144,6 +144,28 @@ export function EditorDiseno({
                 placeholder="https://…/logo.png"
                 className="input-l"
               />
+              {/* ── LA CASILLA QUE SALVA LOS DOS TIPOS DE LOGO ────────────
+                  Un logo con el nombre del negocio sobre transparente pierde
+                  el nombre si se recorta al círculo. Uno cuadrado con su
+                  propio fondo queda como una estampilla si no lo llena. Son
+                  casos opuestos y no se pueden adivinar desde el código, así
+                  que lo decide quien tiene el logo delante. */}
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-ink-2">
+                <input
+                  type="checkbox"
+                  name="logo_llena"
+                  defaultChecked={config.logo_llena === true}
+                  className="mt-0.5"
+                />
+                <span>
+                  Mi logo tiene su propio fondo
+                  <span className="block text-[11px] opacity-70">
+                    Márcalo si tu logo es cuadrado y de color: así llena el círculo entero.
+                    Déjalo sin marcar si tiene el fondo transparente, para que no se le corte
+                    el nombre.
+                  </span>
+                </span>
+              </label>
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-ink-2">

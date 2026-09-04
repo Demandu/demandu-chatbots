@@ -48,9 +48,13 @@ export const MEDIDAS: MedidaImagen[] = [
     forma: "cuadrada",
     ancho: 512,
     alto: 512,
-    // CABE ENTERO, NO SE RECORTA. Un logo con el nombre del negocio dentro
-    // recortado en círculo pierde justo el nombre.
-    recorte: "Se ve entero dentro de un círculo. Fondo transparente (PNG) queda mejor.",
+    // DOS CASOS OPUESTOS, Y EL NEGOCIO ELIGE. Un logo con el nombre dentro
+    // pierde justo el nombre si se recorta al círculo; uno cuadrado con su
+    // propio fondo queda como una estampilla si no lo llena. Lo decide la
+    // casilla «Mi logo tiene su propio fondo» del editor.
+    recorte:
+      "Va dentro de un círculo. Si tiene fondo transparente (PNG) se ve entero; si es cuadrado " +
+      "y de color, marca «Mi logo tiene su propio fondo» y llena el círculo.",
   },
   {
     clave: "portada",

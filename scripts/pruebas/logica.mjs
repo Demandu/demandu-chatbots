@@ -2947,4 +2947,33 @@ describe("En cuál de tus cuentas estás (membresiaActiva)", () => {
   });
 });
 
+
+describe("El logo llena el círculo, o no", () => {
+  // Dos casos opuestos y reales: un logo con el nombre del negocio sobre
+  // transparente pierde el nombre si se recorta al círculo; uno cuadrado con
+  // su propio fondo queda como una estampilla si no lo llena. No se puede
+  // adivinar mirando la imagen —vive en otro dominio y el navegador no deja
+  // leer sus píxeles—, así que lo decide el negocio con una casilla.
+  test("por defecto NO llena: perder el nombre es peor que verse feo", () => {
+    esperar(leerConfig({}).logo_llena).igual(false);
+    esperar(CONFIG_POR_DEFECTO.logo_llena ?? false).igual(false);
+  });
+
+  test("solo el true de verdad la enciende", () => {
+    esperar(leerConfig({ logo_llena: true }).logo_llena).igual(true);
+    // Nada de `Boolean(...)`: una casilla que llega como "false" o como "0"
+    // desde un formulario mal armado encendería el recorte, y el cliente vería
+    // su logo cortado sin haber tocado nada.
+    esperar(leerConfig({ logo_llena: "false" }).logo_llena).igual(false);
+    esperar(leerConfig({ logo_llena: "on" }).logo_llena).igual(false);
+    esperar(leerConfig({ logo_llena: 1 }).logo_llena).igual(false);
+    esperar(leerConfig({ logo_llena: null }).logo_llena).igual(false);
+  });
+
+  test("la instrucción al cliente explica los dos casos", () => {
+    const t = instruccionesDeImagenes();
+    esperar(/propio fondo/i.test(t)).verdadero("la ayuda no dice cuándo marcar la casilla");
+  });
+});
+
 process.exit(await correrPruebas());

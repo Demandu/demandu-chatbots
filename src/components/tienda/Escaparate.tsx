@@ -326,13 +326,27 @@ export function Escaparate({
               }}
             >
               {config.logo_url ? (
-                // ENTERO, NO RECORTADO: un logo con el nombre del negocio dentro
-                // recortado al círculo pierde justo el nombre.
+                // ── DOS TIPOS DE LOGO, Y NO SE PUEDEN TRATAR IGUAL ────────
+                //
+                // Un logo con el nombre del negocio sobre fondo transparente
+                // tiene que verse ENTERO: recortarlo al círculo le come justo
+                // el nombre. Un logo cuadrado con su propio fondo de color
+                // tiene que LLENARLO: dejarlo entero lo deja como una
+                // estampilla pegada dentro del círculo, con un borde de otro
+                // color alrededor. Se ve mal y parece un error de la tienda.
+                //
+                // NO SE PUEDE ADIVINAR MIRANDO LA IMAGEN: vive en otro dominio
+                // y el navegador no deja leer sus píxeles. Así que lo elige el
+                // negocio, con un interruptor y viéndolo al momento.
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={config.logo_url}
                   alt={config.titulo}
-                  className="h-[86%] w-[86%] object-contain"
+                  className={
+                    config.logo_llena
+                      ? "h-full w-full object-cover"
+                      : "h-[86%] w-[86%] object-contain"
+                  }
                 />
               ) : (
                 <span className="text-3xl font-bold" style={{ color: c.principal }}>

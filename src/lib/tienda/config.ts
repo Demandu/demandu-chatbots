@@ -69,6 +69,20 @@ export type ConfigTienda = {
   /** Lo que se lee arriba. Puede no ser el nombre legal del negocio. */
   titulo: string;
   logo_url?: string;
+  /**
+   * Si el logo trae su propio fondo y tiene que LLENAR el círculo.
+   *
+   * NO SE PUEDE ADIVINAR, Y HAY QUE PREGUNTARLO. Los dos casos son reales y
+   * opuestos: un logo con el nombre del negocio sobre transparente se destroza
+   * si se recorta al círculo —pierde justo el nombre—, y un logo cuadrado con
+   * su propio fondo de color queda como una estampilla pegada dentro del
+   * círculo si no lo llena. Mirar los píxeles no vale: la imagen vive en otro
+   * dominio y el navegador no deja leerla.
+   *
+   * Por defecto NO llena: equivocarse por ese lado se ve feo; por el otro se
+   * pierde el nombre del negocio, que es peor.
+   */
+  logo_llena?: boolean;
   /** Foto ancha de cabecera, detrás del logo. */
   portada_url?: string;
   /** Rotan solos. Vacío = no se pinta la franja. */
@@ -285,6 +299,7 @@ export function leerConfig(crudo: unknown): ConfigTienda {
   return {
     titulo: String(c.titulo ?? "").trim(),
     logo_url: c.logo_url ? String(c.logo_url) : undefined,
+    logo_llena: c.logo_llena === true,
     portada_url: c.portada_url ? String(c.portada_url) : undefined,
     banners: Array.isArray(c.banners)
       ? (c.banners as BannerTienda[])
