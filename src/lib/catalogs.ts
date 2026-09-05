@@ -15,11 +15,24 @@ export interface Catalogs {
   /** Calendarios de Google Calendar si la integración está conectada */
   calendars: any[];
   googleCalendarConnected: boolean;
+  /* ── CALENDLY ────────────────────────────────────────────────────────────
+     Los tipos de cita NO salen de una consulta a Supabase como todo lo demás
+     de aquí: viven en Calendly y pedirlos necesita el token, que desde la 0092
+     no es legible con la sesión del usuario — a propósito, para que no viaje
+     al navegador. Por eso van por una ruta del servidor.
+
+     `calendlyRoto` distingue «no tienes Calendly» de «lo tienes y dejó de
+     responder». Son dos arreglos distintos, y enseñar el primero cuando pasa
+     el segundo manda al cliente a configurar lo que ya estaba bien. */
+  calendlyConectado: boolean;
+  calendlyRoto: boolean;
+  calendlyTipos: { uri: string; nombre: string; duracion: number; activo: boolean }[];
 }
 
 const EMPTY: Catalogs = {
   tags: [], members: [], groups: [], teams: [], states: [], bots: [], attributes: [],
   calendars: [], googleCalendarConnected: false,
+  calendlyConectado: false, calendlyRoto: false, calendlyTipos: [],
 };
 
 /** Lee los catálogos de la organización (RLS los aísla) para poblar los selectores. */
@@ -46,6 +59,20 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
         // la otra.
         supabase.from("memberships").select("org_id, role, permisos, soporte_hasta, created_at"),
       ]);
+
+      // Calendly va aparte y NO bloquea al resto: es el único catálogo que
+      // depende de un servicio ajeno, y si Calendly tarda, el constructor
+      // entero se quedaría en blanco esperando por un selector.
+      let cal = { conectado: false, roto: false, tipos: [] as any[] };
+      try {
+        const r = await fetch("/api/integrations/calendly/tipos");
+        if (r.ok) {
+          const j = await r.json();
+          cal = { conectado: !!j.conectado, roto: !!j.roto, tipos: j.tipos ?? [] };
+        }
+      } catch {
+        /* sin Calendly el bloque sigue sirviendo con Google */
+      }
       setCatalogs({
         tags: t.data ?? [],
         members: m.data ?? [],
@@ -56,6 +83,9 @@ export function useCatalogs(): { catalogs: Catalogs; loading: boolean; orgId: st
         attributes: at.data ?? [],
         calendars: ((gc.data as any)?.data?.calendars as any[]) ?? [],
         googleCalendarConnected: !!gc.data,
+        calendlyConectado: cal.conectado,
+        calendlyRoto: cal.roto,
+        calendlyTipos: cal.tipos,
       });
       setOrgId(membresiaActiva((mem.data ?? []) as Membresia[])?.org_id ?? null);
       setLoading(false);

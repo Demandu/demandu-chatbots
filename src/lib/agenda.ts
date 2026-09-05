@@ -3,7 +3,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getValidAccessTokenForOrg, freeBusy, createCalendarEvent } from "@/lib/integrations/google";
 import { computeSlots, type Slot } from "@/lib/integrations/availability";
 import * as calendly from "@/lib/integrations/calendly";
-import { agendaQueManda, leerPreferida, tipoDeEventoDeCalendly } from "@/lib/agendaElegida";
+import {
+  agendaDelBloque, leerPreferida, leerEleccionDelBloque, tipoDeEventoDeCalendly,
+  type EleccionDelBloque,
+} from "@/lib/agendaElegida";
 
 /**
  * Agendar citas. UNA sola implementación, tres puertas de entrada.
@@ -82,22 +85,22 @@ async function ajustesDeOrg(orgId: string) {
  * ¿Con qué agenda trabaja este cliente?
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * LO ELIGE EL NEGOCIO, y solo se le pregunta si tiene las DOS conectadas. Con
- * una sola no hay decisión que tomar y el selector ni aparece.
+ * SE DECIDE EN DOS ALTURAS, y la de abajo manda:
  *
- * Si no eligió, gana Calendly — y no es un desempate al azar: quien se toma el
- * trabajo de conectar Calendly es porque su disponibilidad de verdad vive ahí
- * (antelación mínima, tope de citas por día, horarios por tipo de cita).
- * Ofrecer los huecos que calculamos sobre su Google sería ofrecer horas que su
- * propio Calendly rechazaría.
+ *   1. EL BLOQUE «Agendar cita», si fijó una. Sirve para el negocio que usa
+ *      Google para lo interno y Calendly para las demos, y quiere que ESTE
+ *      bloque agende siempre en una en concreto.
+ *   2. LA CUENTA (Ajustes → Integraciones), que es lo que sigue un bloque que
+ *      nadie tocó — y lo único que hay para las herramientas de la IA, que no
+ *      tienen bloque donde elegir.
  *
- * La regla entera está en `agendaElegida.ts`, que es puro y se prueba solo.
- * Aquí queda lo que necesita la base: quién está conectado de verdad.
+ * Sin nada elegido en ninguna de las dos, manda la que YA ESTABA FUNCIONANDO:
+ * Google si está conectado. Conectar Calendly no puede mover la agenda de un
+ * bot que ya agendaba — eso rompió una cuenta y está contado entero en
+ * `agendaElegida.ts`.
  *
- * NO SE PREGUNTA EN EL BLOQUE. La agenda es una propiedad del negocio, no de
- * una conversación; ponerlo en cada bloque abre la puerta a que un flujo de
- * hace seis meses siga agendando donde ya nadie mira. Lo que SÍ es por bloque
- * —y ya funcionaba— es QUÉ TIPO DE CITA se agenda.
+ * La regla vive ahí, pura y probada. Aquí queda solo lo que necesita la base:
+ * quién está conectado DE VERDAD.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 type Conexion =
@@ -105,7 +108,13 @@ type Conexion =
   | { cual: "google" }
   | { cual: "ninguna" };
 
-async function conexionDeAgenda(orgId: string): Promise<Conexion> {
+async function conexionDeAgenda(
+  orgId: string,
+  // LA ELECCIÓN DEL BLOQUE, si la hay. Llega desde el nodo «Agendar cita» y
+  // manda sobre la de la cuenta, pero SOLO si esa agenda está conectada: un
+  // bloque que apunta a una agenda desconectada no puede dejar al bot mudo.
+  eleccionDelBloque?: EleccionDelBloque | null,
+): Promise<Conexion> {
   const sb = createAdminClient();
   const [{ data: fila }, { data: org }] = await Promise.all([
     sb.from("integrations").select("data").eq("org_id", orgId).eq("provider", "calendly").maybeSingle(),
@@ -121,7 +130,7 @@ async function conexionDeAgenda(orgId: string): Promise<Conexion> {
     if (token) cal = { token, d: (fila.data ?? {}) as Record<string, unknown> };
   }
 
-  const manda = agendaQueManda(leerPreferida(org?.agenda_preferida), {
+  const manda = agendaDelBloque(eleccionDelBloque, leerPreferida(org?.agenda_preferida), {
     // Google no se comprueba aquí: `horariosLibres` y `agendarCita` ya saben
     // decir «no hay agenda conectada» cuando su token no sirve, y pedirlo
     // ahora costaría un viaje a Google en CADA mensaje que toque agenda.
@@ -139,13 +148,19 @@ async function conexionDeAgenda(orgId: string): Promise<Conexion> {
     };
   }
 
-  // SI CONECTÓ CALENDLY Y SU TOKEN SE ROMPIÓ, NO SE CAE A GOOGLE EN SILENCIO:
-  // lo que hay que hacer es decírselo, no agendar calladamente en otra agenda
-  // que quizá lleva meses sin mirar. Salvo que haya elegido Google a mano —
-  // entonces Google es lo que pidió y no hay nada que avisar.
-  if (fila && !cal && leerPreferida(org?.agenda_preferida) !== "google") {
-    return { cual: "ninguna" };
-  }
+  // ── CALENDLY CONECTADO PERO CON EL TOKEN ROTO ────────────────────────────
+  //
+  // No se cae a Google en silencio: sería agendar en una agenda que este
+  // negocio quizá lleva meses sin mirar, y sin que nadie se entere de que su
+  // Calendly dejó de funcionar. Se dice que no hay agenda, que es la verdad.
+  //
+  // SALVO QUE ALGUIEN HAYA PEDIDO GOOGLE A PROPÓSITO —el bloque o la cuenta—.
+  // Entonces Google no es un apaño silencioso: es exactamente lo que pidieron,
+  // y el Calendly roto no tiene por qué estorbar.
+  const pidieronGoogle =
+    eleccionDelBloque === "google" || leerPreferida(org?.agenda_preferida) === "google";
+
+  if (fila && !cal && !pidieronGoogle) return { cual: "ninguna" };
 
   return { cual: "google" };
 }
@@ -185,14 +200,23 @@ async function apuntarPlanGratis(orgId: string): Promise<void> {
  */
 export async function horariosLibres(
   orgId: string,
-  opts: { calendarId?: string; durationMin?: number; days?: number; maxSlots?: number } = {},
+  opts: {
+    calendarId?: string;
+    /** Tipo de cita de Calendly. CAMPO APARTE del de Google, a propósito. */
+    calendlyTipo?: string;
+    /** Qué agenda pidió el bloque. Ausente = la que use la cuenta. */
+    agendaProveedor?: EleccionDelBloque | null;
+    durationMin?: number;
+    days?: number;
+    maxSlots?: number;
+  } = {},
 ): Promise<{ slots: Slot[]; calendarId: string; conectado: boolean; enlace?: string }> {
   const durationMin = Number(opts.durationMin) || 30;
   const days = Number(opts.days) || 14;
   const maxSlots = Number(opts.maxSlots) || 6;
   const calendarId = String(opts.calendarId || "").trim() || "primary";
 
-  const conexion = await conexionDeAgenda(orgId);
+  const conexion = await conexionDeAgenda(orgId, leerEleccionDelBloque(opts.agendaProveedor));
 
   // CALENDLY CONECTADO PERO CON EL TOKEN ROTO. No se cae a Google sin más:
   // sería agendar en una agenda que este negocio quizá lleva meses sin mirar.
@@ -206,12 +230,12 @@ export async function horariosLibres(
   // mínima, tope de citas por día, horarios por tipo— así que calcular por
   // nuestra cuenta sería ofrecer horas que él va a rechazar.
   if (conexion.cual === "calendly") {
-    // SOLO SI ES DE VERDAD UN TIPO DE EVENTO DE CALENDLY. El bloque guarda un
-    // único campo para las dos agendas, así que aquí puede llegar un correo o
-    // un id de Google de una configuración anterior — y mandárselo a Calendly
-    // no da un error entendible, da CERO HORARIOS, que se lee como «no hay
-    // huecos». Pasó en producción. Ver `tipoDeEventoDeCalendly`.
-    const tipo = tipoDeEventoDeCalendly(opts.calendarId);
+    // ── DEL CAMPO DE CALENDLY, NUNCA DEL DE GOOGLE ────────────────────
+    // Los bloques viejos no tienen `calendlyTipo` —se guardaba todo en
+    // `calendarId`— así que ahí no hay nada que mirar: se cae al primer tipo
+    // activo. `tipoDeEventoDeCalendly` sigue comprobando la forma porque el
+    // valor puede venir de una petición a la API pública, no solo del bloque.
+    const tipo = tipoDeEventoDeCalendly(opts.calendlyTipo);
     const { timeZone: zona } = await ajustesDeOrg(orgId);
 
     try {
@@ -291,6 +315,8 @@ export async function agendar(
     inicioISO: string;
     durationMin?: number;
     calendarId?: string;
+    calendlyTipo?: string;
+    agendaProveedor?: EleccionDelBloque | null;
     titulo?: string;
     descripcion?: string;
     correoInvitado?: string;
@@ -304,7 +330,7 @@ export async function agendar(
   const durationMin = Number(d.durationMin) || 30;
   const calendarId = String(d.calendarId || "").trim() || "primary";
 
-  const conexion = await conexionDeAgenda(orgId);
+  const conexion = await conexionDeAgenda(orgId, leerEleccionDelBloque(d.agendaProveedor));
 
   // Mismo caso que arriba: Calendly conectado y con el token roto. Se dice con
   // esas palabras, para que el negocio sepa QUÉ arreglar — «no hay agenda
@@ -335,9 +361,8 @@ export async function agendar(
       return conElEnlace("Esta agenda no permite reservar por API. Manda el enlace.");
     }
 
-    // Mismo cuidado que en `horariosLibres`: un id de Google guardado en el
-    // bloque no puede viajar a Calendly como tipo de evento.
-    const elTipo = tipoDeEventoDeCalendly(d.calendarId) || (await primerTipoDeEvento(conexion));
+    // Del campo de Calendly, igual que en `horariosLibres`.
+    const elTipo = tipoDeEventoDeCalendly(d.calendlyTipo) || (await primerTipoDeEvento(conexion));
     if (!elTipo) {
       return { ok: false, motivo: "sin_datos", error: "Este Calendly no tiene ningún tipo de cita activo." };
     }

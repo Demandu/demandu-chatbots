@@ -166,8 +166,26 @@ export interface DemanduNodeData {
   aiProvider?: "demandu" | "anthropic" | "openai" | "gemini";
   systemPrompt?: string;
   knowledgeBaseId?: string;
-  /** solo para type = "calendar" */
+  /* ── solo para type = "calendar" ──────────────────────────────────────
+     DOS CAMPOS, UNO POR AGENDA, Y NO ES DUPLICAR POR GUSTO.
+
+     Antes había uno solo (`calendarId`) para las dos, «para no obligar a
+     nadie a reconfigurar al cambiar de proveedor». Rompió una cuenta en
+     producción: al conectar Calendly, el id del calendario de Google
+     —`contacto@demandu.tech`— viajó a Calendly como tipo de evento. Calendly
+     no da un error entendible ante eso: da CERO HORARIOS, que se lee igual
+     que «no hay huecos», y el bot empezó a pasar a la gente con un humano.
+
+     Con un campo por agenda eso no puede pasar, y además cambiar de proveedor
+     y volver no pierde lo que había configurado antes. */
+  /** Cuál de las dos agendas usa ESTE bloque. Ausente o "cuenta" = la que use la cuenta. */
+  agendaProveedor?: "cuenta" | "google" | "calendly";
+  /** Calendario de Google. SOLO de Google. */
   calendarId?: string;
+  /** Tipo de cita de Calendly (la URL de su API). SOLO de Calendly. */
+  calendlyTipo?: string;
+  /** Texto al mandar el enlace de agenda cuando no se puede reservar por API. */
+  textoConEnlace?: string;
   durationMin?: number;
   /** claves de atributo que alimentan el evento (invitado, nombre, empresa) */
   attendeeAttr?: string;

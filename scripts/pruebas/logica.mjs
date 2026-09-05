@@ -10,7 +10,10 @@ import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
-import { agendaQueManda, hayQueElegir, leerPreferida, tipoDeEventoDeCalendly } from "../../src/lib/agendaElegida.ts";
+import {
+  agendaQueManda, hayQueElegir, leerPreferida, tipoDeEventoDeCalendly,
+  agendaDelBloque, leerEleccionDelBloque,
+} from "../../src/lib/agendaElegida.ts";
 import {
   nuevoVerificador, retoDe, urlDeAutorizacion, ventanaDeBusqueda, MAX_DIAS,
   necesitaPlanDePago, firmaValida as firmaDeCalendlyValida, TOLERANCIA_SEG,
@@ -3951,6 +3954,44 @@ describe("Qué agenda usa el chatbot", () => {
     esperar(agendaQueManda("google", con(false, true))).igual("calendly");
     esperar(agendaQueManda("calendly", con(false, false))).igual("ninguna");
     esperar(agendaQueManda("google", con(false, false))).igual("ninguna");
+  });
+
+  test("el bloque puede fijar su agenda, y manda sobre la de la cuenta", () => {
+    // El caso real: Google para lo interno, Calendly para las demos. Un bloque
+    // que agenda demos tiene que poder decir «yo siempre en Calendly» aunque
+    // la cuenta esté en Google.
+    esperar(agendaDelBloque("calendly", "google", con(true, true))).igual("calendly");
+    esperar(agendaDelBloque("google", "calendly", con(true, true))).igual("google");
+  });
+
+  test("«la de la cuenta» es el valor de fábrica, y eso mantiene vivo el argumento bueno", () => {
+    // La objeción sensata a elegir por bloque era el flujo olvidado: uno de
+    // hace seis meses agendando donde ya nadie mira. Con «cuenta» por defecto
+    // eso no pasa — un bloque que nadie tocó SIGUE a la cuenta, así que
+    // cambiarla en Ajustes mueve todos los bloques que no pidieron otra cosa.
+    esperar(agendaDelBloque("cuenta", "calendly", con(true, true))).igual("calendly");
+    esperar(agendaDelBloque("cuenta", "google", con(true, true))).igual("google");
+    esperar(agendaDelBloque(undefined, "calendly", con(true, true))).igual("calendly");
+    esperar(agendaDelBloque(null, null, con(true, true))).igual("google", "sin nada elegido, lo que ya funcionaba");
+  });
+
+  test("un bloque NO puede fijar una agenda desconectada", () => {
+    // Si pudiera, desconectar Calendly dejaría mudos todos los bloques que lo
+    // hubieran fijado — y el dueño no tiene forma de saber cuáles son.
+    esperar(agendaDelBloque("calendly", null, con(true, false))).igual("google");
+    esperar(agendaDelBloque("google", null, con(false, true))).igual("calendly");
+    esperar(agendaDelBloque("calendly", null, con(false, false))).igual("ninguna");
+  });
+
+  test("cualquier basura en el bloque se lee como «la de la cuenta»", () => {
+    esperar(leerEleccionDelBloque("google")).igual("google");
+    esperar(leerEleccionDelBloque("calendly")).igual("calendly");
+    esperar(leerEleccionDelBloque("cuenta")).igual("cuenta");
+    esperar(leerEleccionDelBloque(undefined)).igual("cuenta", "los bloques de antes no tienen el campo");
+    esperar(leerEleccionDelBloque(null)).igual("cuenta");
+    esperar(leerEleccionDelBloque("")).igual("cuenta");
+    esperar(leerEleccionDelBloque("outlook")).igual("cuenta");
+    esperar(leerEleccionDelBloque(7)).igual("cuenta");
   });
 
   test("cualquier basura guardada se lee como «que decida la plataforma»", () => {

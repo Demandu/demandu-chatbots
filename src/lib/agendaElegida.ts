@@ -114,6 +114,60 @@ export function tipoDeEventoDeCalendly(valor: unknown): string | null {
   return /^https:\/\/api\.calendly\.com\/event_types\/[A-Za-z0-9-]+$/.test(v) ? v : null;
 }
 
+/** Lo que puede elegir un bloque «Agendar cita». */
+export type EleccionDelBloque = "cuenta" | "google" | "calendly";
+
+/**
+ * Qué agenda usa ESTE bloque.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ EL BLOQUE PUEDE ELEGIR, DESPUÉS DE HABER DICHO QUE NO
+ *
+ * El argumento en contra era «la agenda es del negocio, no del bloque». Suena
+ * bien y es falso: EL BLOQUE YA GUARDABA CONFIGURACIÓN DEL PROVEEDOR — ese
+ * `calendarId` es un calendario de Google. La elección de proveedor ya era por
+ * bloque; lo único que pasaba es que era invisible y vivía en un campo
+ * compartido con Calendly.
+ *
+ * Y eso es exactamente lo que rompió una cuenta en producción: al conectar
+ * Calendly, el valor de Google se le mandó a Calendly como tipo de evento.
+ *
+ * Con la elección al lado de su propia configuración, ese fallo no puede
+ * repetirse: quien elige Google escoge de sus calendarios de Google, y quien
+ * elige Calendly escoge de sus tipos de cita. Nunca hay un campo que signifique
+ * dos cosas — y son dos campos distintos, así que ni al cambiar de proveedor se
+ * pisan.
+ *
+ * ── «CUENTA» ES EL VALOR DE FÁBRICA, Y ESO SALVA EL ARGUMENTO BUENO ───────
+ *
+ * Lo único que valía de la objeción original era el riesgo del flujo olvidado:
+ * un bloque de hace seis meses agendando donde ya nadie mira. Con «cuenta» por
+ * defecto, un bloque que nadie tocó SIGUE A LA CUENTA, así que cambiar la
+ * agenda en Ajustes mueve todos los bloques que no pidieron otra cosa. Solo se
+ * queda quieto el que alguien fijó a propósito.
+ *
+ * Y el selector de Ajustes no sobra: es lo que usan las herramientas de la IA
+ * (`ver_horarios`, `agendar_cita`), que no tienen bloque donde elegir.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function agendaDelBloque(
+  eleccion: EleccionDelBloque | null | undefined,
+  preferidaDeLaCuenta: AgendaPreferida,
+  conectadas: { google: boolean; calendly: boolean },
+): AgendaQueManda {
+  // SOLO SI ESA AGENDA ESTÁ CONECTADA, igual que con la preferencia de la
+  // cuenta: un bloque que apunta a una agenda desconectada no puede dejar al
+  // bot sin agendar, se cae a lo que la cuenta tenga.
+  if (eleccion === "google" && conectadas.google) return "google";
+  if (eleccion === "calendly" && conectadas.calendly) return "calendly";
+  return agendaQueManda(preferidaDeLaCuenta, conectadas);
+}
+
+/** Cualquier cosa rara guardada en el bloque se lee como «la de la cuenta». */
+export function leerEleccionDelBloque(v: unknown): EleccionDelBloque {
+  return v === "google" || v === "calendly" ? v : "cuenta";
+}
+
 /**
  * ¿Se le enseña el selector?
  *

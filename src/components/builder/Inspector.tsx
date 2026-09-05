@@ -440,22 +440,92 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
 
       {node.type === "calendar" && (
         <>
-          {!catalogs?.googleCalendarConnected ? (
-            <div className="mb-4 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-muted">
-              Aún no has conectado Google Calendar. Conéctalo en{" "}
-              <a href="/settings/integrations" target="_blank" className="font-semibold text-pink hover:underline">Configuración → Integraciones</a>{" "}
-              y luego elige aquí el calendario.
-            </div>
-          ) : (
-            <Field label="Calendario de Google">
-              <select className="input" value={d.calendarId ?? ""} onChange={(e) => onChange({ calendarId: e.target.value })}>
-                <option value="">Selecciona un calendario…</option>
-                {(catalogs?.calendars ?? []).map((c: any) => (
-                  <option key={c.id} value={c.id}>{c.summary}{c.primary ? " (principal)" : ""}</option>
-                ))}
-              </select>
-            </Field>
-          )}
+          {/* ── QUÉ AGENDA USA ESTE BLOQUE, Y SU CONFIGURACIÓN DEBAJO ─────
+              La elección y su configuración van JUNTAS porque separarlas es lo
+              que rompió una cuenta: el bloque guardaba un calendario de Google
+              en un campo que Calendly también leía, y al conectar Calendly ese
+              valor viajó a Calendly como tipo de cita. Cero horarios, y el bot
+              pasando a la gente con un humano sin un solo error a la vista.
+
+              Aquí eso no puede pasar: cada agenda tiene su propio selector y su
+              propio campo guardado. */}
+          {(() => {
+            const google = !!catalogs?.googleCalendarConnected;
+            const calendly = !!catalogs?.calendlyConectado;
+            const elegido = d.agendaProveedor ?? "cuenta";
+
+            if (!google && !calendly) {
+              return (
+                <div className="mb-4 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-muted">
+                  Aún no has conectado ninguna agenda. Conecta Google Calendar o Calendly en{" "}
+                  <a href="/settings/integrations" target="_blank" className="font-semibold text-pink hover:underline">Configuración → Integraciones</a>{" "}
+                  y vuelve aquí para elegir.
+                </div>
+              );
+            }
+
+            return (
+              <>
+                {/* Con una sola agenda conectada no se pregunta: no hay nada
+                    que elegir y el selector solo añadiría ruido. */}
+                {google && calendly && (
+                  <Field label="¿Qué agenda usa este bloque?">
+                    <select
+                      className="input"
+                      value={elegido}
+                      onChange={(e) => onChange({ agendaProveedor: e.target.value as any })}
+                    >
+                      <option value="cuenta">La que use la cuenta</option>
+                      <option value="google">Google Calendar</option>
+                      <option value="calendly">Calendly</option>
+                    </select>
+                    <p className="mt-1 text-[11px] text-muted-2">
+                      «La que use la cuenta» sigue lo que elijas en Integraciones, así que
+                      cambiarlo allí mueve también este bloque. Fíjalo solo si este bloque
+                      tiene que agendar siempre en una en concreto.
+                    </p>
+                  </Field>
+                )}
+
+                {/* Se enseñan los dos ajustes cuando está en «cuenta», porque
+                    entonces cualquiera de las dos puede acabar usándose y el
+                    cliente tiene que poder dejar las dos listas. */}
+                {google && elegido !== "calendly" && (
+                  <Field label="Calendario de Google">
+                    <select className="input" value={d.calendarId ?? ""} onChange={(e) => onChange({ calendarId: e.target.value })}>
+                      <option value="">Selecciona un calendario…</option>
+                      {(catalogs?.calendars ?? []).map((c: any) => (
+                        <option key={c.id} value={c.id}>{c.summary}{c.primary ? " (principal)" : ""}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+
+                {calendly && elegido !== "google" && (
+                  <Field label="Tipo de cita de Calendly">
+                    {catalogs?.calendlyRoto ? (
+                      <div className="rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-muted">
+                        Tu Calendly dejó de responder. Vuelve a conectarlo en{" "}
+                        <a href="/settings/integrations" target="_blank" className="font-semibold text-pink hover:underline">Integraciones</a>.
+                      </div>
+                    ) : (
+                      <>
+                        <select className="input" value={d.calendlyTipo ?? ""} onChange={(e) => onChange({ calendlyTipo: e.target.value })}>
+                          <option value="">El primero que tengas activo</option>
+                          {(catalogs?.calendlyTipos ?? []).filter((t: any) => t.activo).map((t: any) => (
+                            <option key={t.uri} value={t.uri}>{t.nombre} · {t.duracion} min</option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[11px] text-muted-2">
+                          La duración la manda Calendly, no el campo de abajo.
+                        </p>
+                      </>
+                    )}
+                  </Field>
+                )}
+              </>
+            );
+          })()}
           <Field label="Duración de la cita">
             <div className="flex items-center gap-2">
               <input type="number" min={5} step={5} className="input w-28" value={d.durationMin ?? 30} onChange={(e) => onChange({ durationMin: Number(e.target.value) })} />

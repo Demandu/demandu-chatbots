@@ -29,6 +29,10 @@ export async function POST(req: Request) {
   if (b.accion === "horarios") {
     const r = await horariosLibres(orgId, {
       calendarId: b.calendario,
+      // DOS CAMPOS, UNO POR AGENDA. Compartir uno solo es lo que rompió una
+      // cuenta: el id de Google acabó viajando a Calendly como tipo de cita.
+      calendlyTipo: b.calendly_tipo,
+      agendaProveedor: b.agenda,
       durationMin: b.duracion,
       days: b.dias,
       maxSlots: b.cuantos,
@@ -41,6 +45,8 @@ export async function POST(req: Request) {
       inicioISO: String(b.inicio ?? ""),
       durationMin: b.duracion,
       calendarId: b.calendario,
+      calendlyTipo: b.calendly_tipo,
+      agendaProveedor: b.agenda,
       titulo: b.titulo,
       descripcion: b.descripcion,
       correoInvitado: b.correo,

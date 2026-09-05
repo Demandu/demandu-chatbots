@@ -1697,7 +1697,12 @@ async function sayCalendario(ctx: any, node: any) {
   const r = await pedirAgenda({
     accion: "horarios",
     org_id: ctx.orgId,
+    // LA ELECCIÓN DEL BLOQUE VIAJA ENTERA, y cada agenda con su propio campo.
+    // Antes había uno solo para las dos y por eso un calendario de Google
+    // acabó pidiéndosele a Calendly, que devolvió cero horarios.
+    agenda: d.agendaProveedor || undefined,
     calendario: d.calendarId || undefined,
+    calendly_tipo: d.calendlyTipo || undefined,
     duracion: Number(d.durationMin) || 30,
     cuantos: 6,
   });
@@ -1768,7 +1773,9 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
     org_id: ctx.orgId,
     inicio: inicioISO,
     duracion: Number(d.durationMin) || 30,
+    agenda: d.agendaProveedor || undefined,
     calendario: d.calendarId || undefined,
+    calendly_tipo: d.calendlyTipo || undefined,
     titulo: d.tituloEvento || `Cita con ${nombre ?? "cliente"}`,
     descripcion: d.descripcionEvento || "Cita agendada desde WhatsApp.",
     correo: correo || undefined,

@@ -1125,6 +1125,68 @@ describe("Puerta de agenda del motor", () => {
     }
   });
 
+  test("EL CAMPO DE GOOGLE NUNCA SE LE PASA A CALENDLY", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // LA RAÍZ DEL PEOR FALLO QUE HA TENIDO LA AGENDA, y la regla que impide
+    // que vuelva.
+    //
+    // El bloque «Agendar cita» guardaba UN solo campo, `calendarId`, para las
+    // dos agendas — «así nadie reconfigura sus flujos al cambiar de
+    // proveedor». El día que un cliente con Google conectó Calendly, ese valor
+    // —`contacto@demandu.tech`— viajó a Calendly como tipo de cita. Calendly no
+    // devuelve un error entendible ante eso: devuelve CERO HORARIOS, que se lee
+    // igual que «no hay huecos esta semana». El bot dejó de agendar y empezó a
+    // pasar a la gente con un humano, sin un solo error a la vista.
+    //
+    // Ahora hay un campo por agenda. Esta prueba comprueba que el de Calendly
+    // se lee de `calendlyTipo` y NUNCA de `calendarId`.
+    // ─────────────────────────────────────────────────────────────────────────
+    const agenda = fs.readFileSync(path.join(SRC, "lib/agenda.ts"), "utf8");
+    const t = sinComentarios(agenda);
+
+    const usos = [...t.matchAll(/tipoDeEventoDeCalendly\(([^)]*)\)/g)].map((m) => m[1].trim());
+    esperar(usos.length >= 2).verdadero(
+      "el tipo de evento de Calendly tiene que comprobarse al ver horarios Y al agendar",
+    );
+    for (const u of usos) {
+      esperar(/calendlyTipo/.test(u)).verdadero(
+        `el tipo de cita de Calendly se está sacando de \`${u}\` — tiene que salir de \`calendlyTipo\`, nunca del campo de Google`,
+      );
+      esperar(/calendarId/.test(u)).falso(
+        `\`${u}\` mezcla el campo de Google con el de Calendly: es exactamente el fallo que rompió una cuenta`,
+      );
+    }
+
+    // Y los dos campos siguen siendo dos en el catálogo de bloques.
+    const tipos = fs.readFileSync(path.join(SRC, "lib/flow/types.ts"), "utf8");
+    esperar(/calendlyTipo\?:/.test(tipos)).verdadero("desapareció el campo propio de Calendly");
+    esperar(/calendarId\?:/.test(tipos)).verdadero("desapareció el campo propio de Google");
+
+    // ── LAS DOS LLAMADAS DEL BLOQUE, NO «alguna del archivo» ─────────────
+    //
+    // `/calendly_tipo/.test(wa)` se conformaba con encontrarlo en CUALQUIER
+    // sitio: el mutante que lo quitaba de «ver horarios» no lo cazaba, porque
+    // seguía estando en «agendar». Una prueba así da tranquilidad falsa.
+    //
+    // Y se ancla en las dos funciones DEL BLOQUE, no en `accion: "horarios"`:
+    // hay otra llamada con esa misma acción —la herramienta `ver_horarios` de
+    // la IA— que NO manda nada de esto Y HACE BIEN. La IA no tiene bloque
+    // donde elegir, así que usa la agenda de la cuenta, que es justo lo que
+    // debe pasar. Anclar por la acción acusaba a esa llamada de un fallo que
+    // no tiene.
+    for (const fn of ["sayCalendario", "agendarElegido"]) {
+      const i = wa.indexOf(`function ${fn}(`);
+      esperar(i > 0).verdadero(`no encuentro ${fn} en el motor`);
+      const cuerpo = wa.slice(i, i + 900);
+      esperar(/calendly_tipo/.test(cuerpo)).verdadero(
+        `${fn} no manda el tipo de cita de Calendly por su propio campo`,
+      );
+      esperar(/agenda:/.test(cuerpo)).verdadero(
+        `${fn} no manda qué agenda eligió el bloque: al otro lado llegaría siempre lo mismo`,
+      );
+    }
+  });
+
   test("cuando la plataforma no contesta bien, queda escrito el porqué", () => {
     esperar(wa.includes("__fallo")).verdadero(
       "un fallo de la agenda tiene que distinguirse de «no hay horarios»: son dos arreglos distintos",
