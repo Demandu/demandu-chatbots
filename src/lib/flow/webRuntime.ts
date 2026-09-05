@@ -60,6 +60,8 @@ interface Ctx {
    * y la conversación se quedaría atorada en un nodo inexistente.
    */
   flowIdNuevo: string | null;
+  /** La tienda que eligió el agente. Nulo = como se decidía antes. */
+  tiendaElegida: string | null;
 }
 
 function interp(t: string | undefined, vars: Record<string, string>) {
@@ -117,7 +119,7 @@ async function tiendaDelBotEnLaBase(ctx: Ctx) {
     .eq("bot_id", ctx.botId)
     .eq("activa", true)
     .order("nombre");
-  return tiendaDelBot((data ?? []) as TiendaDelBot[]);
+  return tiendaDelBot((data ?? []) as TiendaDelBot[], true, ctx.tiendaElegida);
 }
 
 /** La salida por prefijo, igual que en el motor de WhatsApp. */
@@ -844,6 +846,12 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
           conversationId: ctx.conversationId,
           vars: ctx.vars,
           pasoAHumano: false,
+          // Sin esto, las herramientas de la tienda (`ver_catalogo`,
+          // `estado_de_pedido`) seguirían resolviendo por orden alfabético
+          // aunque el agente hubiera elegido tienda. La elección tiene que
+          // valer para el flujo Y para la IA, o el mismo bot enseñaría dos
+          // catálogos distintos según por dónde pase.
+          tiendaElegida: ctx.tiendaElegida,
         };
         const answer = await aiAnswer({
           admin: ctx.admin,
@@ -999,6 +1007,13 @@ export async function runWebFlow(opts: {
    * respuesta del bot dos veces.
    */
   guardarEnBandeja?: boolean;
+  /**
+   * La tienda con la que trabaja el agente de este bot.
+   *
+   * Viene resuelta desde fuera —quien carga el bot ya sabe su agente— para no
+   * gastar un viaje más a la base en cada mensaje.
+   */
+  tiendaElegida?: string | null;
 }): Promise<{
   vars: Record<string, string>;
   awaiting: Awaiting;
@@ -1038,6 +1053,7 @@ export async function runWebFlow(opts: {
     ultimoNodo: null,
     finMotivo: null,
     flowIdNuevo: null,
+    tiendaElegida: opts.tiendaElegida ?? null,
   };
 
   // Analítica: el recorrido que venía abierto de turnos anteriores.

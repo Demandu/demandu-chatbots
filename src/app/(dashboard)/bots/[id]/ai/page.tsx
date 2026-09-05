@@ -8,7 +8,10 @@ import { EditorDePrompt } from "@/components/EditorDePrompt";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { AI_DEFAULTS, aiConfigured } from "@/lib/ai/answer";
-import { saveAiSettings } from "./actions";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { agenteDelBot } from "@/lib/ai/agentes";
+import { ACCIONES } from "@/lib/ai/acciones";
+import { saveAiSettings, elegirTiendaDelAgente, usarOtroAgente } from "./actions";
 import { Sparkles, BookOpen } from "lucide-react";
 import { EstadoDeAgenda } from "@/components/bots/EstadoDeAgenda";
 import { loQueFaltaParaAgendar, type DiaLaboral } from "@/lib/ai/agenda";
@@ -23,13 +26,13 @@ export default async function BotAiPage({
   searchParams?: { guardado?: string };
 }) {
   const supabase = createClient();
-  let { data: bot } = await supabase.from("bots").select("id, name, channel, ai").eq("id", params.id).maybeSingle();
+  let { data: bot } = await supabase.from("bots").select("id, org_id, name, channel, ai, agente_id").eq("id", params.id).maybeSingle();
   if (!bot) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) redirect("/login");
     for (let i = 0; i < 3 && !bot; i++) {
       await new Promise((r) => setTimeout(r, 120));
-      ({ data: bot } = await supabase.from("bots").select("id, name, channel, ai").eq("id", params.id).maybeSingle());
+      ({ data: bot } = await supabase.from("bots").select("id, org_id, name, channel, ai, agente_id").eq("id", params.id).maybeSingle());
     }
   }
   if (!bot) notFound();
@@ -89,7 +92,23 @@ export default async function BotAiPage({
         .join(" · ")
     : "ningún día abierto";
 
-  const ai = { ...AI_DEFAULTS, ...(((bot as any).ai as any) ?? {}) };
+  // ── LA CONFIGURACIÓN SALE DEL AGENTE, CON `bots.ai` DE RESPALDO ──────────
+  // Es exactamente lo que lee el motor, así que lo que se ve aquí es lo que
+  // contesta el bot. Leerlo de otro sitio sería la forma más fácil de que el
+  // panel dijera una cosa y el chatbot hiciera otra.
+  const elAgente = await agenteDelBot(createAdminClient(), bot as any);
+  const ai = { ...AI_DEFAULTS, ...elAgente.ajustes };
+
+  // ── LAS DOS ELECCIONES QUE SOLO SE ENSEÑAN SI SIRVEN ─────────────────────
+  // Otros agentes de la cuenta (para que otro canal hable igual) y las tiendas
+  // (para elegir con cuál trabaja). Con uno solo de cada, no hay decisión que
+  // tomar y la pantalla no pregunta nada.
+  const [{ data: otrosAgentes }, { data: susTiendas }] = await Promise.all([
+    supabase.from("agentes").select("id, nombre").eq("org_id", (bot as any).org_id).order("nombre"),
+    supabase.from("tiendas").select("id, nombre, activa").eq("org_id", (bot as any).org_id).order("nombre"),
+  ]);
+  const agentes = ((otrosAgentes as any[]) ?? []);
+  const tiendas = ((susTiendas as any[]) ?? []);
   const lista = aiConfigured();
   // El interruptor de ESTE chatbot. Desde que corta de verdad, apagado
   // significa que no contesta ni gasta — hay que verlo sin buscarlo.
@@ -109,6 +128,41 @@ export default async function BotAiPage({
           guión, yo busco la respuesta en tu <b className="text-ink">Entrenamiento</b> y contesto con tus datos reales.
           Si no lo sé, lo digo y ofrezco pasar con una persona — <b className="text-ink">nunca invento</b>.
         </LanaSays>
+
+        {/* ── COMPARTIR LA PERSONALIDAD ENTRE CANALES ───────────────────────
+            EL ÚNICO SITIO DONDE APARECE LA PALABRA «AGENTE», y solo cuando la
+            cuenta ya tiene más de uno — es decir, cuando de verdad sirve de
+            algo.
+
+            Quien tiene un chatbot no ve nada de esto: edita su personalidad
+            aquí y ya. Obligar a un dueño de panadería a crear primero un
+            agente, luego un chatbot y luego enlazarlos es pedirle que entienda
+            nuestra arquitectura para poder vender pan.
+
+            Quien tiene WhatsApp, Instagram y web lo agradece: escribe su forma
+            de hablar una vez en lugar de tres, y cuando cambia su horario lo
+            cambia en un sitio en lugar de en tres — donde el que se queda
+            viejo es siempre el que nadie mira. */}
+        {agentes.length > 1 && (
+          <div className="mb-6 rounded-2xl border border-linea bg-tarjeta p-4">
+            <h3 className="text-sm font-semibold text-ink">Personalidad de este chatbot</h3>
+            <p className="mt-1 text-xs text-ink-3">
+              Ahora usa <b className="text-ink-2">{elAgente.nombre ?? "la suya"}</b>. Si eliges otra, los dos
+              chatbots hablarán igual y se editarán juntos: lo que cambies aquí le cambia también al otro.
+            </p>
+            <form action={usarOtroAgente} className="mt-3 flex flex-wrap items-center gap-2">
+              <input type="hidden" name="bot_id" value={bot.id} />
+              <select name="agente_id" defaultValue={elAgente.agenteId ?? ""} className="input max-w-xs">
+                {agentes.map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.nombre}</option>
+                ))}
+              </select>
+              <button className="rounded-xl border border-linea px-3 py-2 text-xs font-semibold text-ink-2 transition hover:bg-suave-2">
+                Usar esta personalidad
+              </button>
+            </form>
+          </div>
+        )}
 
         {/* Estado */}
         <div className="mb-6 grid gap-3 sm:grid-cols-2">
@@ -238,14 +292,18 @@ export default async function BotAiPage({
                   </p>
 
                   <div className="grid gap-2 sm:grid-cols-2">
-                    {[
-                      ["ver_horarios", "Consultar tu agenda", "Mira los huecos libres en tu Google Calendar."],
-                      ["agendar_cita", "Agendar citas", "Reserva en tu calendario. Requiere lo anterior."],
-                      ["etiquetar", "Etiquetar al cliente", "Solo con TUS etiquetas. Si inventa una, se rechaza."],
-                      ["guardar_dato", "Guardar datos en la ficha", "Solo en los campos que hayas creado."],
-                      ["pasar_a_humano", "Pasar con una persona", "Cuando se lo pidan o no pueda resolver."],
-                      ["consultar_sistema", "Consultar tu sistema", "Le pregunta a la dirección que pongas abajo."],
-                    ].map(([clave, titulo, pie]) => (
+                    {/* ── LAS NUEVE, SALIDAS DEL CATÁLOGO ──────────────────
+                        Esta lista estaba escrita a mano y se había quedado con
+                        SEIS. Las tres de la tienda —ver el catálogo, el estado
+                        de un pedido, mandar el enlace— funcionaban perfectamente
+                        y no tenían casilla en ninguna pantalla: solo se
+                        activaban si el cliente adivinaba que había que escribir
+                        `/ver_catalogo` en el prompt.
+
+                        Tres funciones construidas, probadas y desplegadas que
+                        nadie iba a encontrar. Leyéndolas del catálogo, una
+                        herramienta nueva aparece sola. */}
+                    {ACCIONES.map(({ clave, nombre, desc }) => (
                       <label
                         key={clave}
                         className="flex cursor-pointer items-start gap-2 rounded-lg border border-linea-2 bg-tarjeta p-2.5"
@@ -257,12 +315,45 @@ export default async function BotAiPage({
                           className="mt-0.5 h-4 w-4 flex-none accent-violet"
                         />
                         <span>
-                          <b className="text-[13px] text-ink">{titulo}</b>
-                          <span className="mt-0.5 block text-[11px] leading-snug text-ink-3">{pie}</span>
+                          <b className="text-[13px] text-ink">{nombre}</b>
+                          <span className="mt-0.5 block text-[11px] leading-snug text-ink-3">{desc}</span>
                         </span>
                       </label>
                     ))}
                   </div>
+
+                  {/* ── CON QUÉ TIENDA TRABAJA ────────────────────────────
+                      Solo con VARIAS tiendas: con una no hay nada que elegir.
+
+                      Antes no se podía elegir y se cogía la primera por orden
+                      alfabético — un negocio con «Boutique» y «Zapatería»
+                      servía siempre el catálogo de Boutique, y el síntoma (el
+                      bot enseña productos que no son) no se parece nada a la
+                      causa. */}
+                  {tiendas.length > 1 && (
+                    <div className="mt-3 rounded-xl border border-linea-2 bg-tarjeta p-3">
+                      <label className="mb-1 block text-xs font-semibold text-ink-2">
+                        ¿Con qué tienda trabaja este chatbot?
+                      </label>
+                      <p className="mb-2 text-[11px] leading-snug text-ink-3">
+                        Es la tienda cuyo catálogo enseña y cuyos pedidos consulta. Tienes {tiendas.length}.
+                      </p>
+                      <form action={elegirTiendaDelAgente} className="flex flex-wrap items-center gap-2">
+                        <input type="hidden" name="bot_id" value={bot.id} />
+                        <select name="tienda_id" defaultValue={elAgente.tiendaId ?? ""} className="input max-w-xs">
+                          <option value="">La que esté enlazada al chatbot</option>
+                          {tiendas.map((t: any) => (
+                            <option key={t.id} value={t.id}>
+                              {t.nombre}{t.activa === false ? " (apagada)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="rounded-xl border border-linea px-3 py-2 text-xs font-semibold text-ink-2 transition hover:bg-suave-2">
+                          Guardar tienda
+                        </button>
+                      </form>
+                    </div>
+                  )}
 
                   <EstadoDeAgenda
                     estado={agenda}

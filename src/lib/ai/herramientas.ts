@@ -46,6 +46,14 @@ export type ContextoAgente = {
    * cara que puede poner un bot.
    */
   pasoAHumano: boolean;
+  /**
+   * La tienda que eligió el agente, si eligió alguna.
+   *
+   * Nulo = como se decidía antes (la enlazada al bot, y con empate la primera
+   * por nombre). Con varias tiendas en el mismo bot, el alfabeto servía
+   * siempre el catálogo de la misma y el negocio no tenía forma de cambiarlo.
+   */
+  tiendaElegida?: string | null;
 };
 
 /** Ajustes del agente que vienen de `bots.ai`. */
@@ -635,7 +643,7 @@ async function laTiendaDelBot(ctx: ContextoAgente): Promise<TiendaDelBot | null>
       .eq("bot_id", ctx.botId)
       .eq("activa", true)
       .order("nombre");
-    return tiendaDelBot((data ?? []) as TiendaDelBot[]);
+    return tiendaDelBot((data ?? []) as TiendaDelBot[], true, ctx.tiendaElegida);
   } catch {
     return null;
   }

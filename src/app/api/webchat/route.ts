@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { runWebFlow, chooseWebFlow } from "@/lib/flow/webRuntime";
 import { cerrarRecorrido } from "@/lib/flow/flowRuns";
 import type { Flow } from "@/lib/flow/types";
+import { agenteDelBot } from "@/lib/ai/agentes";
 
 export const dynamic = "force-dynamic";
 
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
 
     const { data: bot, error: botErr } = await admin
       .from("bots")
-      .select("id, org_id, name, channel, widget, ai, shortcuts")
+      .select("id, org_id, name, channel, widget, ai, shortcuts, agente_id")
       .eq("id", botId)
       .maybeSingle();
 
@@ -327,6 +328,8 @@ export async function POST(req: Request) {
     }
 
     const flowState = mismoFlujo ? state : { vars: state.vars ?? {} };
+    const elAgente = await agenteDelBot(admin, bot as any);
+
     const result = await runWebFlow({
       flow,
       orgId: bot.org_id,
@@ -336,7 +339,13 @@ export async function POST(req: Request) {
       text,
       isStart,
       botId: bot.id,
-      aiSettings: (bot as any).ai ?? null,
+      // ── LA PERSONALIDAD SALE DEL AGENTE, CON `bots.ai` DE RESPALDO ────
+      // Un agente puede servir a varios chatbots: el negocio escribe su forma
+      // de hablar una vez y la usan WhatsApp, Instagram y la web. Si el bot no
+      // tiene agente, se usa su configuración de siempre — esa caída es lo que
+      // permite publicar esto sin jugarse los bots que están vendiendo hoy.
+      aiSettings: elAgente.ajustes,
+      tiendaElegida: elAgente.tiendaId,
       atajos: (bot as any).shortcuts ?? null,
       flowName: (chosen as any).name ?? null,
       // Encendida salvo que el cliente la apague a propósito. Manda el

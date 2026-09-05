@@ -11,6 +11,9 @@ import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import {
+  comoAjustes, ajustesQueMandan, tiendaQueManda,
+} from "../../src/lib/ai/agenteAjustes.ts";
+import {
   agendaQueManda, hayQueElegir, leerPreferida, tipoDeEventoDeCalendly,
   agendaDelBloque, leerEleccionDelBloque,
 } from "../../src/lib/agendaElegida.ts";
@@ -4004,6 +4007,128 @@ describe("Qué agenda usa el chatbot", () => {
     esperar(leerPreferida(42)).igual(null);
     esperar(leerPreferida({})).igual(null);
     esperar(leerPreferida(undefined)).igual(null);
+  });
+});
+
+describe("Agentes de IA", () => {
+  // Los valores por defecto viven en el código, igual que en el motor.
+  const PORDEFECTO = { enabled: true, persona: "Soy Lana", style: "Cercano", fallback: "No sé", maxWords: 80 };
+
+  test("LO QUE NO SE PUSO NO SE MANDA, o el bot contesta VACÍO", () => {
+    // ─────────────────────────────────────────────────────────────────────
+    // El fallo que esto impide es de los que no lanzan y no avisan.
+    //
+    // Todo el motor hace `{ ...AI_DEFAULTS, ...ajustes }`, y en JavaScript una
+    // clave PRESENTE con valor `undefined` PISA IGUAL que una con valor:
+    //
+    //     { ...{ a: 1 }, ...{ a: undefined } }   →   { a: undefined }
+    //
+    // Copiar el agente entero —con sus nulos— borraría los valores por
+    // defecto: el bot se quedaría sin personalidad, sin tono y sin mensaje de
+    // respaldo, y contestaría con cadenas vacías a clientes de verdad.
+    // ─────────────────────────────────────────────────────────────────────
+    const vacio = comoAjustes({ id: "a1", nombre: "Lana", prompt: null, tono: null, respaldo: null });
+
+    esperar(Object.keys(vacio).length).igual(0, "un agente sin nada puesto no manda ni una clave");
+    esperar("persona" in vacio).falso("la clave NI SIQUIERA PUEDE EXISTIR: presente con undefined pisa igual");
+    esperar("fallback" in vacio).falso();
+
+    // Y la prueba de verdad: mezclado con los valores por defecto, los conserva.
+    const final = { ...PORDEFECTO, ...vacio };
+    esperar(final.persona).igual("Soy Lana", "un agente vacío no puede borrar la personalidad por defecto");
+    esperar(final.fallback).igual("No sé");
+    esperar(final.enabled).igual(true);
+  });
+
+  test("lo que SÍ se puso viaja, con los nombres que entiende el motor", () => {
+    const a = comoAjustes({
+      ia_encendida: false, prompt: "Eres Ana", tono: "Formal", respaldo: "Ahora no",
+      max_palabras: 40, herramientas: ["agendar_cita"], criterios: "etiqueta si pregunta precio",
+      sistema_url: "https://x.test", sistema_descripcion: "mi ERP", ia_de_respaldo: false,
+    });
+    esperar(a).igual({
+      enabled: false, fallback_flujo: false, persona: "Eres Ana", style: "Formal",
+      fallback: "Ahora no", criterios: "etiqueta si pregunta precio",
+      sistemaUrl: "https://x.test", sistemaDescripcion: "mi ERP",
+      maxWords: 40, herramientas: ["agendar_cita"],
+    });
+  });
+
+  test("un `false` no es «no lo puso»", () => {
+    // Apagar la IA es una decisión, y `if (a.ia_encendida)` la habría tirado a
+    // la basura: el bot seguiría contestando con IA después de apagarla.
+    esperar(comoAjustes({ ia_encendida: false }).enabled).igual(false);
+    esperar(comoAjustes({ ia_de_respaldo: false }).fallback_flujo).igual(false);
+    // Y un texto vacío tampoco: el negocio puede querer un respaldo en blanco.
+    esperar("fallback" in comoAjustes({ respaldo: "" })).verdadero();
+    esperar(comoAjustes({ respaldo: "" }).fallback).igual("");
+  });
+
+  test("un tope de palabras que no es número dejaría al bot mudo", () => {
+    // `maxWords` recorta la respuesta. Un cero o un texto la recortan a NADA, y
+    // el cliente ve llegar un mensaje en blanco.
+    esperar("maxWords" in comoAjustes({ max_palabras: 0 })).falso();
+    esperar("maxWords" in comoAjustes({ max_palabras: -5 })).falso();
+    esperar("maxWords" in comoAjustes({ max_palabras: "hola" })).falso();
+    esperar(comoAjustes({ max_palabras: "40" }).maxWords).igual(40, "la base puede devolverlo como texto");
+    esperar(comoAjustes({ max_palabras: 40 }).maxWords).igual(40);
+  });
+
+  test("sin agente se usa la configuración de siempre: NUNCA se queda mudo", () => {
+    // Esta caída es lo que permite publicar todo esto sin jugarse los chatbots
+    // que están vendiendo hoy. Si el agente falta —se borró, el arrastre no lo
+    // alcanzó, alguien tocó la base— el bot sigue igual que ayer.
+    const deSiempre = { persona: "La de toda la vida", herramientas: ["etiquetar"] };
+    esperar(ajustesQueMandan(null, deSiempre)).igual(deSiempre);
+    esperar(ajustesQueMandan(undefined, deSiempre)).igual(deSiempre);
+    esperar(ajustesQueMandan(null, null)).igual({});
+    esperar(ajustesQueMandan(null, "basura")).igual({});
+
+    // Y con agente, MANDA EL AGENTE — si no, cambiar la personalidad no serviría.
+    esperar(ajustesQueMandan({ prompt: "La nueva" }, deSiempre)).igual({ persona: "La nueva" });
+  });
+
+  test("la tienda elegida se lee, y la basura no", () => {
+    esperar(tiendaQueManda({ tienda_id: "t-1" })).igual("t-1");
+    esperar(tiendaQueManda({ tienda_id: null })).igual(null);
+    esperar(tiendaQueManda({ tienda_id: "   " })).igual(null);
+    esperar(tiendaQueManda(null)).igual(null);
+    esperar(tiendaQueManda({})).igual(null);
+  });
+});
+
+describe("Con qué tienda trabaja el bot", () => {
+  const t = (id, nombre, activa = true) => ({ id, slug: id, nombre, activa });
+  const dos = [t("t-z", "Zapatería"), t("t-b", "Boutique")];
+
+  test("sin elegir, la primera por nombre — como siempre", () => {
+    esperar(tiendaDelBot(dos)?.id).igual("t-b", "Boutique va antes que Zapatería");
+    esperar(tiendaDelBot([])).igual(null);
+    esperar(tiendaDelBot(null)).igual(null);
+  });
+
+  test("LA ELEGIDA MANDA sobre el alfabeto", () => {
+    // El fallo que arregla: un negocio con «Boutique» y «Zapatería» servía
+    // SIEMPRE el catálogo de Boutique, y el síntoma —el bot enseña productos
+    // que no son— no se parece en nada a la causa.
+    esperar(tiendaDelBot(dos, true, "t-z")?.id).igual("t-z");
+    esperar(tiendaDelBot(dos, true, "t-b")?.id).igual("t-b");
+  });
+
+  test("una elección que ya no vale NO deja al bot sin tienda", () => {
+    // Eligió una tienda y luego la apagó, o la borró. Quedarse sin tienda por
+    // una elección vieja es peor que servir la otra — y en la pantalla se ve
+    // cuál está apagada.
+    esperar(tiendaDelBot(dos, true, "t-que-no-existe")?.id).igual("t-b");
+    esperar(tiendaDelBot([t("t-z", "Zapatería"), t("t-b", "Boutique", false)], true, "t-b")?.id)
+      .igual("t-z", "eligió la apagada: se sirve la que sí está viva");
+    esperar(tiendaDelBot(dos, true, "")?.id).igual("t-b");
+    esperar(tiendaDelBot(dos, true, null)?.id).igual("t-b");
+  });
+
+  test("una tienda apagada no se anuncia aunque sea la única", () => {
+    esperar(tiendaDelBot([t("t-b", "Boutique", false)])).igual(null);
+    esperar(tiendaDelBot([t("t-b", "Boutique", false)], false)?.id).igual("t-b", "salvo que se pidan todas");
   });
 });
 

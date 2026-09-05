@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { agenteDelBot } from "@/lib/ai/agentes";
 import { runWebFlow, chooseWebFlow } from "@/lib/flow/webRuntime";
 import { cerrarRecorrido } from "@/lib/flow/flowRuns";
 import {
@@ -153,7 +154,7 @@ async function atender(e: EventoInstagram): Promise<void> {
 
   const { data: bot } = await admin
     .from("bots")
-    .select("id, org_id, name, channel, ai, shortcuts")
+    .select("id, org_id, name, channel, ai, shortcuts, agente_id")
     .eq("id", canal.bot_id)
     .maybeSingle();
   if (!bot) return;
@@ -507,6 +508,8 @@ async function correrElFlujo(
   const mismoFlujo = estado.flow_id === elegido.id;
   if (!mismoFlujo && estado.run_id) await cerrarRecorrido(admin, estado.run_id, "cambio");
 
+  const elAgente = await agenteDelBot(admin, bot as any);
+
   const resultado = await runWebFlow({
     flow,
     orgId,
@@ -515,7 +518,10 @@ async function correrElFlujo(
     flowState: mismoFlujo ? estado : { vars: estado.vars ?? {} },
     text: texto,
     botId: bot.id,
-    aiSettings: (bot as any).ai ?? null,
+    // Mismo agente que en el widget y en WhatsApp: el negocio escribe su forma
+    // de hablar una vez. Con `bots.ai` de respaldo si el bot no tiene agente.
+    aiSettings: elAgente.ajustes,
+    tiendaElegida: elAgente.tiendaId,
     atajos: (bot as any).shortcuts ?? null,
     flowName: (elegido as any).name ?? null,
     // LAS GUARDA ESTA RUTA, NO EL MOTOR. Aquí se manda por la API de Meta y se

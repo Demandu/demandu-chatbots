@@ -2355,6 +2355,71 @@ function precioDelBot(centavos: number, moneda = "$"): string {
  * enlace de una tienda apagada es peor que no mandar nada: el cliente hace el
  * viaje y se encuentra una pantalla muerta.
  */
+/**
+ * El agente de este bot, con `bots.ai` de respaldo.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * COPIA DELIBERADA de `src/lib/ai/agenteAjustes.ts`. Este motor corre en Deno y
+ * no puede importar del proyecto de Next; la parte pura está probada allí y una
+ * regla estática compara las dos listas de claves para que no se separen.
+ *
+ * ── LO QUE NO SE PUSO NO SE MANDA ─────────────────────────────────────────
+ *
+ * Arriba se hace `{ ...AI_DEFAULTS, ...ctx.aiSettings }`, y en JavaScript una
+ * clave PRESENTE con valor `undefined` PISA IGUAL que una con valor. Copiar el
+ * agente entero —con sus nulos— borraría todos los valores por defecto: el bot
+ * se quedaría sin personalidad, sin tono y sin mensaje de respaldo, y
+ * contestaría con cadenas vacías. No lanza, no avisa: contesta vacío.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function agenteDeEsteBot(
+  db: any,
+  bot: any,
+): Promise<{ ajustes: any; tiendaId: string | null }> {
+  const deSiempre = () => ({
+    ajustes: (bot?.ai && typeof bot.ai === "object" ? bot.ai : {}),
+    tiendaId: null,
+  });
+
+  const id = String(bot?.agente_id ?? "").trim();
+  if (!id) return deSiempre();
+
+  try {
+    const { data } = await db
+      .from("agentes")
+      .select("id, nombre, ia_encendida, prompt, tono, respaldo, max_palabras, herramientas, " +
+              "criterios, sistema_url, sistema_descripcion, ia_de_respaldo, tienda_id")
+      .eq("id", id)
+      .maybeSingle();
+
+    // EL BOT APUNTA A UN AGENTE QUE YA NO ESTÁ: no puede quedarse mudo.
+    if (!data) return deSiempre();
+
+    const a: any = data;
+    const o: any = {};
+    if (a.ia_encendida !== null && a.ia_encendida !== undefined) o.enabled = a.ia_encendida;
+    if (a.ia_de_respaldo !== null && a.ia_de_respaldo !== undefined) o.fallback_flujo = a.ia_de_respaldo;
+    if (a.prompt !== null && a.prompt !== undefined) o.persona = a.prompt;
+    if (a.tono !== null && a.tono !== undefined) o.style = a.tono;
+    if (a.respaldo !== null && a.respaldo !== undefined) o.fallback = a.respaldo;
+    if (a.criterios !== null && a.criterios !== undefined) o.criterios = a.criterios;
+    if (a.sistema_url !== null && a.sistema_url !== undefined) o.sistemaUrl = a.sistema_url;
+    if (a.sistema_descripcion !== null && a.sistema_descripcion !== undefined) o.sistemaDescripcion = a.sistema_descripcion;
+    if (a.max_palabras !== null && a.max_palabras !== undefined) {
+      const n = Number(a.max_palabras);
+      if (Number.isFinite(n) && n > 0) o.maxWords = n;
+    }
+    if (Array.isArray(a.herramientas)) o.herramientas = a.herramientas;
+
+    const t = a.tienda_id;
+    return { ajustes: o, tiendaId: typeof t === "string" && t.trim() ? t : null };
+  } catch (e) {
+    // Que la base tenga un mal minuto no puede dejar sin IA a un cliente.
+    console.error("[agentes] no pude leer el agente, sigo con bots.ai:", (e as Error)?.message);
+    return deSiempre();
+  }
+}
+
 async function tiendaDeEsteBot(ctx: any): Promise<any | null> {
   if (!ctx.botId) return null;
   try {
@@ -2365,8 +2430,25 @@ async function tiendaDeEsteBot(ctx: any): Promise<any | null> {
       .eq("bot_id", ctx.botId)
       .eq("activa", true)
       .order("nombre");
-    const t = (data ?? [])[0];
-    return t && t.slug ? t : null;
+
+    const buenas = (data ?? []).filter((t: any) => t && t.slug);
+    if (!buenas.length) return null;
+
+    // ── LA ELEGIDA POR EL AGENTE MANDA ────────────────────────────────────
+    // Con dos tiendas apuntando al mismo bot, el alfabeto servía SIEMPRE el
+    // catálogo de la primera y el negocio no tenía forma de cambiarlo: el
+    // síntoma —el bot enseña productos que no son— no se parece a la causa.
+    //
+    // Solo gana si sigue activa. Si eligió una tienda y luego la apagó, esto
+    // NO devuelve null: se cae al criterio de siempre, porque quedarse sin
+    // tienda por una elección vieja es peor que servir la otra.
+    const elegida = String(ctx.tiendaElegida ?? "").trim();
+    if (elegida) {
+      const suya = buenas.find((t: any) => String(t.id ?? "") === elegida);
+      if (suya) return suya;
+    }
+
+    return buenas[0];
   } catch (e) {
     console.error("[tienda] no pude leer la tienda del bot:", (e as Error)?.message);
     return null;
@@ -3200,6 +3282,10 @@ async function handleIncoming(opts: any) {
     flow: opts.flow, pnid: opts.pnid, token: opts.token, to: opts.to,
     orgId: opts.orgId, convId: opts.convId, db: opts.db, vars,
     botId: opts.botId, aiSettings: opts.aiSettings ?? null, lastUserText: opts.visible ?? opts.text ?? "",
+    // La tienda con la que trabaja el agente. Vale para los bloques de tienda
+    // Y para las herramientas de la IA: si solo valiera para uno, el mismo bot
+    // enseñaría dos catálogos distintos según por dónde pasara la charla.
+    tiendaElegida: opts.tiendaElegida ?? null,
     atajos: opts.atajos ?? leerAtajos(null),
     numeroPropio: opts.numeroPropio ?? null,
     // Analítica: bloques recorridos en este turno y cómo terminó el recorrido.
@@ -4021,8 +4107,10 @@ async function retomarEspera(db: any, esperaId: string, testigo: string) {
   if (!g?.nodes?.length) { await cerrar("fallida", "el flujo ya no existe"); return json({ ok: true }); }
 
   const { data: botRow } = conv.bot_id
-    ? await db.from("bots").select("ai, shortcuts").eq("id", conv.bot_id).maybeSingle()
+    ? await db.from("bots").select("ai, shortcuts, agente_id").eq("id", conv.bot_id).maybeSingle()
     : { data: null };
+
+  const elAgente = await agenteDeEsteBot(db, botRow);
 
   // Se marca HECHA antes de mandar nada: si el envío falla a medias, es mejor
   // no volver a intentarlo y repetirle los mensajes al cliente.
@@ -4035,7 +4123,7 @@ async function retomarEspera(db: any, esperaId: string, testigo: string) {
     flowState: { vars: e.vars ?? {}, hintEnviado: (conv.flow_state as any)?.hintEnviado ?? true },
     // Sin texto del cliente: no hay mensaje nuevo, es el reloj quien despierta.
     text: "", visible: "",
-    botId: conv.bot_id, aiSettings: (botRow as any)?.ai ?? null,
+    botId: conv.bot_id, aiSettings: elAgente.ajustes, tiendaElegida: elAgente.tiendaId,
     baseVars: e.vars ?? {}, atajos: leerAtajos((botRow as any)?.shortcuts),
     flowId: e.flow_id, numeroPropio: cfg.display_number ?? null,
     catalogId: cfg.catalog_id ?? null,
@@ -4392,8 +4480,10 @@ Deno.serve(async (req: Request) => {
       await db.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
       // Ajustes del chatbot: personalidad de la IA y atajos (0 / 1, etc.)
       const { data: botRow } = cfg.bot_id
-        ? await db.from("bots").select("ai, shortcuts").eq("id", cfg.bot_id).maybeSingle()
+        ? await db.from("bots").select("ai, shortcuts, agente_id").eq("id", cfg.bot_id).maybeSingle()
         : { data: null };
+
+      const elAgente = await agenteDeEsteBot(db, botRow);
       const atajos = leerAtajos((botRow as any)?.shortcuts);
 
       // Si la conversación ya la lleva una persona, el bot se calla —
@@ -4507,7 +4597,8 @@ Deno.serve(async (req: Request) => {
               respuestaFormulario: respuestaDeFormulario,
               permisoLlamada,
               catalogId: cfg.catalog_id ?? null,
-              botId: cfg.bot_id, aiSettings: (botRow as any)?.ai ?? null, baseVars, atajos,
+              botId: cfg.bot_id, aiSettings: elAgente.ajustes, tiendaElegida: elAgente.tiendaId,
+              baseVars, atajos,
               flowId: chosen.id, flowName: chosen.name ?? null,
               numeroPropio: cfg.display_number ?? null,
             });

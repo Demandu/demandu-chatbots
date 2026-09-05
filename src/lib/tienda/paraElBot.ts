@@ -47,23 +47,45 @@ export type TiendaDelBot = {
 /**
  * La tienda que puede anunciar este flujo, o `null`.
  *
+ * ─────────────────────────────────────────────────────────────────────────────
  * NO HACE FALTA CONFIGURAR EL BLOQUE, y esa es la gracia. `tiendas.bot_id` ya
  * vincula cada tienda con su chatbot desde que existe la tienda: pedirle al
  * negocio que vuelva a elegirla en cada bloque sería preguntarle algo que la
- * plataforma ya sabe, y es justo así como se acaba con un flujo apuntando a la
- * tienda equivocada.
+ * plataforma ya sabe.
  *
- * CON VARIAS, LA PRIMERA POR NOMBRE. No debería pasar —una tienda por bot— pero
- * si pasa tiene que ser estable: un flujo que manda una tienda distinta según
- * el día es peor que uno que siempre manda la misma.
+ * ── PERO CON VARIAS TIENDAS, EL ALFABETO NO ES UNA RESPUESTA ──────────────
+ *
+ * Antes, con dos tiendas apuntando al mismo bot, se cogía la primera por
+ * nombre. El comentario decía «no debería pasar, pero si pasa tiene que ser
+ * estable». Estable sí era; correcta no: un negocio con «Boutique» y
+ * «Zapatería» servía SIEMPRE el catálogo de Boutique, y el síntoma —el bot
+ * enseña productos que no son— no se parece en nada a la causa.
+ *
+ * Ahora el agente puede decir con cuál trabaja, y esa elección manda. El
+ * alfabeto se queda como último recurso: sigue siendo mejor una tienda
+ * estable que una distinta cada día.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function tiendaDelBot(
   tiendas: TiendaDelBot[] | null | undefined,
   soloActivas = true,
+  /** La tienda que eligió el agente. Nulo = como se decidía antes. */
+  elegida?: string | null,
 ): TiendaDelBot | null {
   const todas = (Array.isArray(tiendas) ? tiendas : []).filter((t) => t && t.slug);
   const buenas = soloActivas ? todas.filter((t) => t.activa) : todas;
   if (!buenas.length) return null;
+
+  // LA ELEGIDA SOLO GANA SI ESTÁ ENTRE LAS BUENAS. Si el negocio eligió una
+  // tienda y luego la apagó, esto NO devuelve null: se cae al criterio de
+  // siempre. Quedarse sin tienda por una elección vieja es peor que servir la
+  // otra — y en la pantalla se ve cuál está apagada.
+  const id = String(elegida ?? "").trim();
+  if (id) {
+    const suya = buenas.find((t) => t.id === id);
+    if (suya) return suya;
+  }
+
   return [...buenas].sort((a, b) => String(a.nombre ?? "").localeCompare(String(b.nombre ?? "")))[0];
 }
 

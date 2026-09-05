@@ -1245,6 +1245,72 @@ describe("Puerta de agenda del motor", () => {
   });
 });
 
+// ─── EL AGENTE SE LEE IGUAL EN LOS DOS MOTORES ──────────────────────────────
+describe("El agente de IA, en los dos motores", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // La traducción de «fila de agente» a «ajustes del motor» está escrita DOS
+  // VECES: en `agenteAjustes.ts` (Node, puro y probado) y a mano dentro de la
+  // función de Deno, que no puede importar del proyecto.
+  //
+  // El día que se separen, el MISMO agente hablará distinto según por dónde le
+  // escriban — y eso no se ve en ninguna pantalla: se ve en la cara del cliente
+  // que recibe otra respuesta en WhatsApp que en la web.
+  // ─────────────────────────────────────────────────────────────────────────
+  const puro = fs.readFileSync(path.join(SRC, "lib/ai/agenteAjustes.ts"), "utf8");
+  const deno = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  // `columna → clave` tal como se escriben las asignaciones en los dos sitios.
+  const pares = (t) =>
+    [...t.matchAll(/o\.(\w+)\s*=\s*a\.(\w+)/g)].map((m) => `${m[2]}→${m[1]}`).sort();
+
+  const soloElAgente = deno.slice(deno.indexOf("async function agenteDeEsteBot"));
+
+  test("las dos listas se leyeron de verdad", () => {
+    esperar(pares(puro).length >= 6).verdadero("no pude leer el mapeo puro");
+    esperar(pares(soloElAgente).length >= 6).verdadero("no pude leer el mapeo del motor de Deno");
+  });
+
+  test("traducen las MISMAS columnas a las MISMAS claves", () => {
+    esperar(pares(soloElAgente).join("\n      ")).igual(
+      pares(puro).join("\n      "),
+      "el mapeo del agente se separó entre los dos motores: el mismo agente hablaría distinto según el canal",
+    );
+  });
+
+  test("los dos comprueban el nulo, no la verdad", () => {
+    // `if (a.ia_encendida)` tira a la basura un `false`: apagar la IA no
+    // serviría de nada y el bot seguiría contestando. Tiene que compararse
+    // contra null/undefined en los dos sitios.
+    for (const [nombre, texto] of [["el puro", puro], ["el motor de Deno", soloElAgente]]) {
+      const flojas = [...texto.matchAll(/if \(a\.(\w+)\)\s*o\./g)].map((m) => m[1]);
+      esperar(flojas.join(", ")).igual(
+        "",
+        `en ${nombre} hay campos del agente comprobados con una condición floja: un \`false\` o un texto vacío se perderían`,
+      );
+    }
+  });
+
+  test("los dos caen a `bots.ai` si no hay agente", () => {
+    // Es la red que permite publicar esto sin jugarse los bots que ya venden.
+    // Sin ella, un agente borrado deja al chatbot mudo.
+    esperar(/aiDelBot/.test(puro)).verdadero("el puro perdió la caída a bots.ai");
+    esperar(/bot\?\.ai|bot\.ai/.test(soloElAgente)).verdadero("el motor de Deno perdió la caída a bots.ai");
+  });
+
+  test("la tienda elegida manda en los dos, y no deja al bot sin tienda", () => {
+    const paraElBot = fs.readFileSync(path.join(SRC, "lib/tienda/paraElBot.ts"), "utf8");
+    esperar(/elegida/.test(paraElBot)).verdadero("el lado Node dejó de mirar la tienda elegida");
+    esperar(/tiendaElegida/.test(deno)).verdadero("el motor de WhatsApp dejó de mirar la tienda elegida");
+
+    // Y en los dos, si la elegida ya no vale se sigue con el criterio de
+    // siempre en vez de devolver «no hay tienda».
+    const tramo = deno.slice(deno.indexOf("const elegida = String(ctx.tiendaElegida"), deno.indexOf("const elegida = String(ctx.tiendaElegida") + 400);
+    esperar(/if \(suya\) return suya/.test(tramo)).verdadero(
+      "el motor de WhatsApp devuelve null cuando la tienda elegida ya no vale: tiene que caer al criterio de siempre",
+    );
+  });
+});
+
 // ─── LO QUE LA PALETA PROMETE, EL MOTOR LO CUMPLE ───────────────────────────
 describe("Ningún bloque se ofrece en un canal donde no hace nada", () => {
   // ─────────────────────────────────────────────────────────────────────────

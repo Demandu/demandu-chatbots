@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { aiAnswer, aiConfigured, AI_DEFAULTS } from "@/lib/ai/answer";
+import { agenteDelBot } from "@/lib/ai/agentes";
 
 export const dynamic = "force-dynamic";
 
@@ -28,22 +29,28 @@ export async function POST(req: Request) {
     // RLS decide: si el bot no es de su organización, no aparece.
     const { data: bot } = await supabase
       .from("bots")
-      .select("id, org_id, ai")
+      .select("id, org_id, ai, agente_id")
       .eq("id", botId)
       .maybeSingle();
     if (!bot) return NextResponse.json({ error: "Chatbot no encontrado." }, { status: 404 });
 
+    // LA PRUEBA TIENE QUE USAR EL MISMO AGENTE QUE USA EL BOT DE VERDAD. Con
+    // `bots.ai` a secas, el dueño probaría una personalidad y sus clientes
+    // recibirían otra — y no habría forma de que se enterara.
+    const admin = createAdminClient();
+    const elAgente = await agenteDelBot(admin, bot as any);
+
     if (!aiConfigured()) {
-      const ai = { ...AI_DEFAULTS, ...(((bot as any).ai as any) ?? {}) };
+      const ai = { ...AI_DEFAULTS, ...elAgente.ajustes };
       return NextResponse.json({ respuesta: ai.fallback, disponible: false });
     }
 
     const respuesta = await aiAnswer({
-      admin: createAdminClient(),
+      admin,
       botId: bot.id as string,
       orgId: bot.org_id as string,
       question: q,
-      settings: ((bot as any).ai as any) ?? null,
+      settings: elAgente.ajustes,
       logUsage: false, // una prueba desde el panel no se le cobra al cliente
       // Quien prueba aquí es el dueño del negocio: si algo está roto tiene que
       // verlo, no recibir el "esa no me la sé" que ve un cliente.
