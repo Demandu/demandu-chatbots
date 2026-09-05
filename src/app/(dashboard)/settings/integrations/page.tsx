@@ -296,14 +296,15 @@ export default async function IntegrationsPage({
           <p className="mt-3 text-xs text-ink-3">
             {preferida === null ? (
               <>
-                No has elegido, así que el bot usa <b className="text-ink-2">Calendly</b>: cuando está
-                conectado, tu disponibilidad de verdad vive ahí —tu antelación mínima, tu tope de citas
-                por día— y ofrecer horas calculadas sobre Google sería ofrecer horas que tu propio
-                Calendly rechazaría.
+                No has elegido, así que el bot sigue usando{" "}
+                <b className="text-ink-2">Google Calendar</b> — el que ya estabas usando. Conectar
+                Calendly no cambia por sí solo dónde agenda tu chatbot: eso lo decides tú con los
+                botones de arriba.
               </>
             ) : (
               <>
-                Ahora mismo el bot agenda en <b className="text-ink-2">{manda === "calendly" ? "Calendly" : "Google Calendar"}</b>.
+                Ahora mismo el bot agenda en{" "}
+                <b className="text-ink-2">{manda === "calendly" ? "Calendly" : "Google Calendar"}</b>.
               </>
             )}
           </p>

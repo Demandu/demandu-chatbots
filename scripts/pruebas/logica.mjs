@@ -10,7 +10,7 @@ import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
-import { agendaQueManda, hayQueElegir, leerPreferida } from "../../src/lib/agendaElegida.ts";
+import { agendaQueManda, hayQueElegir, leerPreferida, tipoDeEventoDeCalendly } from "../../src/lib/agendaElegida.ts";
 import {
   nuevoVerificador, retoDe, urlDeAutorizacion, ventanaDeBusqueda, MAX_DIAS,
   necesitaPlanDePago, firmaValida as firmaDeCalendlyValida, TOLERANCIA_SEG,
@@ -3892,14 +3892,47 @@ describe("Qué agenda usa el chatbot", () => {
     esperar(hayQueElegir(con(true, true))).verdadero();
   });
 
-  test("sin elegir nada, gana Calendly", () => {
-    // No es un desempate al azar: si alguien conectó Calendly, ahí viven sus
-    // reglas de disponibilidad reales, y ofrecer huecos calculados sobre su
-    // Google sería ofrecer horas que su propio Calendly rechazaría.
-    esperar(agendaQueManda(null, con(true, true))).igual("calendly");
+  test("SIN ELEGIR, NADIE CAMBIA DE AGENDA SOLO", () => {
+    // ── ESTA REGLA ERA AL REVÉS Y ROMPIÓ UNA CUENTA DE VERDAD ───────────
+    // Un negocio con Google conectado y su bloque «Agendar cita» apuntando a
+    // su calendario conectó Calendly para probarlo. En ese instante el bloque
+    // cambió de agenda solo, dejó de encontrar horarios y empezó a pasar a la
+    // gente con un humano. Ningún error a la vista.
+    //
+    // Google solo puede estar conectado en una cuenta que YA lo usaba —era la
+    // única agenda que existía—, así que «con las dos y sin elegir, manda
+    // Google» significa exactamente «nadie cambia sin pedirlo».
+    esperar(agendaQueManda(null, con(true, true))).igual("google", "conectar Calendly NO puede mover la agenda del bot");
     esperar(agendaQueManda(null, con(true, false))).igual("google");
-    esperar(agendaQueManda(null, con(false, true))).igual("calendly");
+    esperar(agendaQueManda(null, con(false, true))).igual("calendly", "si es la única, es la que hay");
     esperar(agendaQueManda(null, con(false, false))).igual("ninguna");
+  });
+
+  test("un identificador de Google NUNCA viaja a Calendly como tipo de evento", () => {
+    // ── EL FALLO EXACTO QUE ROMPIÓ LA CUENTA ────────────────────────────
+    // El bloque guarda UN campo para las dos agendas. Con Calendly ganando,
+    // ese campo —«contacto@demandu.tech»— se le mandó a Calendly como tipo de
+    // evento. Calendly no da un error entendible: da CERO HORARIOS, que se lee
+    // igual que «no hay huecos esta semana». Por eso el bot pasaba a un humano.
+    esperar(tipoDeEventoDeCalendly("contacto@demandu.tech")).igual(null);
+    esperar(tipoDeEventoDeCalendly("c_7da4ee3f@group.calendar.google.com")).igual(null);
+    esperar(tipoDeEventoDeCalendly("primary")).igual(null);
+    esperar(tipoDeEventoDeCalendly("")).igual(null);
+    esperar(tipoDeEventoDeCalendly(null)).igual(null);
+    esperar(tipoDeEventoDeCalendly(undefined)).igual(null);
+
+    // Y el bueno sí pasa.
+    const bueno = "https://api.calendly.com/event_types/AAAA-BBBB-1234";
+    esperar(tipoDeEventoDeCalendly(bueno)).igual(bueno);
+    esperar(tipoDeEventoDeCalendly("  " + bueno + "  ")).igual(bueno, "los espacios no pueden invalidarlo");
+
+    // Nada que se le PAREZCA cuela: es lo que separa una comprobación de un
+    // adorno.
+    esperar(tipoDeEventoDeCalendly("https://calendly.com/demandu-reuniones")).igual(null, "esa es la página pública, no un tipo de evento");
+    esperar(tipoDeEventoDeCalendly("http://api.calendly.com/event_types/x")).igual(null, "sin https no");
+    esperar(tipoDeEventoDeCalendly("https://api.calendly.com/users/abc")).igual(null);
+    esperar(tipoDeEventoDeCalendly("https://api.calendly.com/event_types/")).igual(null);
+    esperar(tipoDeEventoDeCalendly("https://evil.test/api.calendly.com/event_types/x")).igual(null);
   });
 
   test("lo que eligió el negocio MANDA sobre el automático", () => {

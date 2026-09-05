@@ -1134,11 +1134,34 @@ describe("Puerta de agenda del motor", () => {
   test("tras un fallo de calendario NUNCA se sigue por la salida de éxito", () => {
     // El peor error del proyecto: el bot decía «te paso con una persona» y un
     // segundo después «tu cita ha sido agendada», con los datos en blanco.
+    //
+    // ── EL BLOQUE SE RECORTA POR EL SIGUIENTE `case`, NO POR 1200 LETRAS ──
+    // Con la ventana fija esta prueba falló el día que el bloque creció tres
+    // líneas: el traspaso seguía ahí, solo que fuera del recorte. Una prueba
+    // que se rompe por escribir un comentario enseña a ignorarla, y esta
+    // guarda el peor fallo que ha tenido el proyecto.
     const i = wa.indexOf('case "calendar"');
     esperar(i > 0).verdadero("no encuentro el bloque de calendario en el motor");
-    const bloque = wa.slice(i, i + 1200);
+    const sig = wa.indexOf('case "', i + 20);
+    const bloque = wa.slice(i, sig > i ? sig : i + 2000);
+
     esperar(/handoff_reason/.test(bloque)).verdadero(
       "sin horarios, el calendario tiene que pasar la conversación a una persona",
+    );
+
+    // ── LA ÚNICA SALIDA QUE SE SALTA EL TRASPASO ES EL ENLACE ────────────
+    // Mandar el enlace de la agenda NO es un fallo: la cita se puede hacer y
+    // entra sola a la Bandeja por el aviso de Calendly. Gastar un humano ahí
+    // sería tirar una persona del equipo a algo que el cliente resuelve solo.
+    //
+    // Pero tampoco puede seguir por la salida normal del bloque, que es la que
+    // dice «tu cita ha sido agendada» — nadie ha agendado nada todavía. Tiene
+    // que DETENERSE. Si alguien cambia ese `return null` por un `break`,
+    // vuelve el fallo de las dos mentiras seguidas, esta vez con enlace.
+    const enlace = bloque.match(/===\s*"enlace"[\s\S]{0,120}/);
+    esperar(!!enlace).verdadero("el camino del enlace de agenda desapareció del motor");
+    esperar(/return null/.test(enlace[0])).verdadero(
+      "tras mandar el enlace el flujo tiene que detenerse, no seguir a «tu cita ha sido agendada»",
     );
   });
 });

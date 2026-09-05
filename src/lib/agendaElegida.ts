@@ -59,13 +59,59 @@ export function agendaQueManda(
   if (preferida === "calendly" && calendly) return "calendly";
   if (preferida === "google" && google) return "google";
 
-  // Sin elección utilizable, CALENDLY GANA. No es un desempate al azar: si
-  // alguien conectó Calendly, su disponibilidad real vive ahí —antelación
-  // mínima, tope de citas por día, horarios por tipo de cita— y ofrecer huecos
-  // calculados sobre su Google sería ofrecer horas que su propio Calendly
-  // rechazaría. Agendaríamos por encima de sus reglas.
-  if (calendly) return "calendly";
-  return "google";
+  // ── SIN ELECCIÓN, GANA LO QUE YA ESTABA FUNCIONANDO ──────────────────────
+  //
+  // ESTA REGLA ERA AL REVÉS Y ROMPIÓ UNA CUENTA DE VERDAD. El razonamiento
+  // original sonaba bien: quien conecta Calendly es porque su disponibilidad
+  // real vive ahí, así que Calendly ganaba siempre que estuviera conectado.
+  //
+  // Lo que pasó de verdad: un negocio con Google conectado y su bloque
+  // «Agendar cita» apuntando a su calendario de Google conectó Calendly para
+  // probarlo. En ese instante el bloque cambió de agenda solo. Su bloque
+  // seguía diciendo «Revisa los horarios disponibles en Google Calendar»,
+  // pero el motor ya preguntaba a Calendly — y como el valor guardado era un
+  // ID de Google, Calendly no devolvía nada. El bot dejó de agendar y empezó
+  // a pasar a las personas con un humano.
+  //
+  // Ningún error a la vista. Un clic en una pantalla de ajustes rompió la
+  // función principal del bot en otra.
+  //
+  // LA REGLA BUENA, Y POR QUÉ ES ESTA:
+  //
+  // Google solo puede estar conectado en una cuenta que YA lo estaba usando —
+  // era la única agenda que existía antes de que hubiera Calendly. Así que
+  // «con las dos y sin elegir, manda Google» significa exactamente «nadie
+  // cambia de agenda sin pedirlo». Y quien conecta Calendly solo tiene que
+  // pulsar un botón que la pantalla le está enseñando.
+  //
+  // El daño de equivocarse no es simétrico: cambiar solo rompe citas de
+  // clientes reales y no avisa; no cambiar cuesta un clic bien señalizado.
+  if (google) return "google";
+  return "calendly";
+}
+
+/**
+ * ¿Este valor es de verdad un tipo de evento de Calendly?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL BLOQUE «AGENDAR CITA» GUARDA UN SOLO CAMPO para las dos agendas, y esa
+ * decisión —tomada para que nadie tuviera que reconfigurar sus flujos al
+ * cambiar de proveedor— es la que rompió una cuenta en producción.
+ *
+ * En Google ese campo es un correo o un id largo acabado en
+ * `@group.calendar.google.com`. En Calendly es una URL de su API. Pasarle a
+ * Calendly el valor de Google no da un error entendible: da CERO HORARIOS, que
+ * se parece muchísimo a «no hay huecos esta semana».
+ *
+ * Así que se comprueba antes de usarlo. Lo que no tiene forma de tipo de
+ * evento de Calendly SE IGNORA, y se cae al primer tipo activo de la cuenta —
+ * que es lo mismo que pasa cuando el campo está vacío. Peor que agendar en el
+ * tipo de cita equivocado solo hay una cosa: no agendar y no decir por qué.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function tipoDeEventoDeCalendly(valor: unknown): string | null {
+  const v = String(valor ?? "").trim();
+  return /^https:\/\/api\.calendly\.com\/event_types\/[A-Za-z0-9-]+$/.test(v) ? v : null;
 }
 
 /**

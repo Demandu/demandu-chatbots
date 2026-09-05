@@ -1704,10 +1704,32 @@ async function sayCalendario(ctx: any, node: any) {
 
   const slots = r?.slots ?? [];
 
-  // Sin horarios NO se deja al lead colgado con un «no hay nada»: se pasa a una
-  // persona. Puede que Google no esté conectado, que la agenda esté llena o que
-  // el horario laboral esté sin configurar — para quien escribe da igual la
-  // causa, lo que necesita es que alguien lo atienda.
+  // ── SI HAY ENLACE DE AGENDA, LA CITA SE PUEDE HACER IGUAL ────────────────
+  //
+  // Pasa con los Calendly del plan gratis, que dejan LEER los huecos pero no
+  // reservar por API. La plataforma lo detecta y devuelve el enlace de la
+  // agenda del negocio. Mandarlo es una cita que se agenda; pasar a una
+  // persona por esto es gastar un humano en algo que el cliente resuelve solo
+  // en diez segundos.
+  //
+  // Y no se sigue por la salida normal del bloque: esa salida suele ser «tu
+  // cita ha sido agendada», y nadie ha agendado nada todavía. La cita entrará
+  // sola a la Bandeja cuando la persona reserve — de eso se encarga el aviso
+  // de Calendly.
+  if (!slots.length && r?.enlace) {
+    await say(
+      ctx,
+      interp(d.textoConEnlace || "Agenda tu cita aquí y elige la hora que mejor te venga 👇", ctx.vars) +
+        "\n" + r.enlace,
+    );
+    ctx.finMotivo = "enlace_de_agenda";
+    return "enlace";
+  }
+
+  // Sin horarios NI enlace NO se deja al lead colgado con un «no hay nada»: se
+  // pasa a una persona. Puede que Google no esté conectado, que la agenda esté
+  // llena o que el horario laboral esté sin configurar — para quien escribe da
+  // igual la causa, lo que necesita es que alguien lo atienda.
   if (!slots.length) {
     const porque = r?.__fallo
       ? `la plataforma no respondió bien (${r.__fallo})`
@@ -3039,6 +3061,13 @@ async function runFrom(startId: string | undefined, ctx: any) {
         return null;
       case "calendar": {
         const espera = await sayCalendario(ctx, node);
+
+        // SE MANDÓ EL ENLACE DE LA AGENDA: la cita se puede hacer y no hay
+        // nada roto, así que no se molesta a nadie del equipo. El flujo se
+        // detiene aquí porque la salida normal confirma una cita que todavía
+        // no existe; entrará sola a la Bandeja cuando la persona reserve.
+        if (espera === "enlace") return null;
+
         if (espera) return espera;
 
         // ── NO SE PUDO OFRECER NINGUNA HORA ────────────────────────────

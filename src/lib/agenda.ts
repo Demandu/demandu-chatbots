@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getValidAccessTokenForOrg, freeBusy, createCalendarEvent } from "@/lib/integrations/google";
 import { computeSlots, type Slot } from "@/lib/integrations/availability";
 import * as calendly from "@/lib/integrations/calendly";
-import { agendaQueManda, leerPreferida } from "@/lib/agendaElegida";
+import { agendaQueManda, leerPreferida, tipoDeEventoDeCalendly } from "@/lib/agendaElegida";
 
 /**
  * Agendar citas. UNA sola implementación, tres puertas de entrada.
@@ -206,10 +206,12 @@ export async function horariosLibres(
   // mínima, tope de citas por día, horarios por tipo— así que calcular por
   // nuestra cuenta sería ofrecer horas que él va a rechazar.
   if (conexion.cual === "calendly") {
-    // El bloque guarda aquí el tipo de evento de Calendly. Se reutiliza el
-    // mismo campo que el calendario de Google para no obligar al negocio a
-    // reconfigurar sus flujos al cambiar de agenda.
-    const tipo = String(opts.calendarId || "").trim();
+    // SOLO SI ES DE VERDAD UN TIPO DE EVENTO DE CALENDLY. El bloque guarda un
+    // único campo para las dos agendas, así que aquí puede llegar un correo o
+    // un id de Google de una configuración anterior — y mandárselo a Calendly
+    // no da un error entendible, da CERO HORARIOS, que se lee como «no hay
+    // huecos». Pasó en producción. Ver `tipoDeEventoDeCalendly`.
+    const tipo = tipoDeEventoDeCalendly(opts.calendarId);
     const { timeZone: zona } = await ajustesDeOrg(orgId);
 
     try {
@@ -333,7 +335,9 @@ export async function agendar(
       return conElEnlace("Esta agenda no permite reservar por API. Manda el enlace.");
     }
 
-    const elTipo = String(d.calendarId || "").trim() || (await primerTipoDeEvento(conexion));
+    // Mismo cuidado que en `horariosLibres`: un id de Google guardado en el
+    // bloque no puede viajar a Calendly como tipo de evento.
+    const elTipo = tipoDeEventoDeCalendly(d.calendarId) || (await primerTipoDeEvento(conexion));
     if (!elTipo) {
       return { ok: false, motivo: "sin_datos", error: "Este Calendly no tiene ningún tipo de cita activo." };
     }
