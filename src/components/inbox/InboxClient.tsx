@@ -931,7 +931,19 @@ export function InboxClient({
               <div className="flex flex-none items-start gap-2 border-b border-danger/40 bg-danger/10 px-4 py-2.5 text-xs text-ink-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-danger" />
                 <span>
-                  <b className="text-danger">WhatsApp no está entregando tus mensajes.</b> {fallo.motivo}
+                  {/* ── EL CANAL SALE DE LA CONVERSACIÓN, NO ESCRITO A MANO ──
+                      Decía «WhatsApp» siempre, también en una conversación de
+                      Instagram — y encima justo encima de una explicación que
+                      hablaba de Instagram. El dueño lee dos canales distintos
+                      en el mismo aviso y no sabe cuál tiene roto: se pone a
+                      revisar su WhatsApp, que está perfectamente.
+
+                      El dato estaba a mano: la línea del nombre, tres bloques
+                      más arriba, ya pinta el canal correcto. */}
+                  <b className="text-danger">
+                    {(CH[sel.channel] ?? CH.webchat).label} no está entregando tus mensajes.
+                  </b>{" "}
+                  {fallo.motivo}
                 </span>
               </div>
             );

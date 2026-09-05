@@ -1245,6 +1245,37 @@ describe("Puerta de agenda del motor", () => {
   });
 });
 
+// ─── EL CANAL NO SE ESCRIBE A MANO ──────────────────────────────────────────
+describe("La Bandeja no confunde de canal", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // El aviso de entrega decía «WhatsApp no está entregando tus mensajes»
+  // SIEMPRE — también en una conversación de Instagram, y encima justo encima
+  // de una explicación que hablaba de Instagram. El dueño leía dos canales
+  // distintos en el mismo aviso y se ponía a revisar su WhatsApp, que estaba
+  // perfectamente.
+  //
+  // El dato estaba a mano: la conversación sabe su canal y la línea del nombre
+  // ya lo pintaba bien tres bloques más arriba.
+  // ─────────────────────────────────────────────────────────────────────────
+  const inbox = fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8");
+
+  test("ningún mensaje al usuario nombra un canal a mano", () => {
+    const t = sinComentarios(inbox);
+    const malos = [];
+    for (const canal of ["WhatsApp", "Instagram", "Messenger"]) {
+      // Dentro de un texto que se le enseña a la persona: entre `>` y `<`, o
+      // dentro de una cadena que acaba en punto. Se permite en atributos y en
+      // nombres de campo (`whatsapp_channels`, `channel === "whatsapp"`).
+      const re = new RegExp(`>\\s*${canal}\\s+no\\s|"[^"]*${canal}\\s+no\\s[^"]*"`, "g");
+      if (re.test(t)) malos.push(canal);
+    }
+    esperar(malos.join(", ")).igual(
+      "",
+      "hay un aviso de la Bandeja con el nombre del canal escrito a mano: en una conversación de otro canal dirá el canal equivocado",
+    );
+  });
+});
+
 // ─── EL CATÁLOGO DE EVENTOS ES UN CONTRATO ──────────────────────────────────
 describe("Los eventos que la plataforma cuenta", () => {
   const cat = fs.readFileSync(path.join(SRC, "lib/salidas-eventos.ts"), "utf8");
