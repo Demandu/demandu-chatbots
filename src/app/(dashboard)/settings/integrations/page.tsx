@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
-import { disconnectIntegration, disconnectWhatsapp } from "../actions";
+import { disconnectIntegration, disconnectWhatsapp, elegirAgenda } from "../actions";
+import { agendaQueManda, hayQueElegir, leerPreferida } from "@/lib/agendaElegida";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { WhatsAppConnect } from "@/components/integrations/WhatsAppConnect";
 import { GoogleCalendarLogo, CalendlyLogo } from "@/components/integrations/Logos";
@@ -18,7 +19,7 @@ export default async function IntegrationsPage({
 }) {
   const orgId = await getCurrentOrgId();
   const sb = createClient();
-  const [{ data }, { data: cal }, { data: wa }, { data: bots }, { data: intereses }, { data: llaves }, { data: sheets }, { data: salidas }] = await Promise.all([
+  const [{ data }, { data: cal }, { data: wa }, { data: orgAgenda }, { data: bots }, { data: intereses }, { data: llaves }, { data: sheets }, { data: salidas }] = await Promise.all([
     sb.from("integrations").select("provider, account_email, data, created_at").eq("org_id", orgId ?? "").eq("provider", "google_calendar").maybeSingle(),
     // NI `access_token` NI `refresh_token`: esta pantalla no los usa para nada
     // y pedirlos con la sesión del usuario los pondría al alcance de una
@@ -35,6 +36,7 @@ export default async function IntegrationsPage({
       .select("id, org_id, bot_id, phone_number_id, waba_id, display_number, catalog_id, llamadas, created_at")
       .eq("org_id", orgId ?? "")
       .maybeSingle(),
+    sb.from("organizations").select("agenda_preferida").eq("id", orgId ?? "").maybeSingle(),
     sb.from("bots").select("id,name,channel").order("created_at", { ascending: false }),
     sb.from("interes_integraciones").select("proveedor").eq("org_id", orgId ?? ""),
     sb.from("api_keys").select("id, nombre, prefijo, created_at, ultimo_uso, revocada_at")
@@ -72,6 +74,14 @@ export default async function IntegrationsPage({
   const google = data as any | null;
   const calendars = (google?.data?.calendars as any[]) ?? [];
   const calendly = cal as any | null;
+
+  // La regla de quién manda vive en `agendaElegida.ts`, que es puro y lo usa
+  // también el motor. Repetirla aquí es como acaban la pantalla y el bot
+  // diciendo cosas distintas.
+  const conectadas = { google: !!google, calendly: !!calendly };
+  const preferida = leerPreferida((orgAgenda as any)?.agenda_preferida);
+  const manda = agendaQueManda(preferida, conectadas);
+
   const err = searchParams?.error;
   const connected = searchParams?.connected === "1";
   const calOk = searchParams?.ok === "calendly";
@@ -239,6 +249,66 @@ export default async function IntegrationsPage({
           </div>
         </div>
       </div>
+
+      {/* ── ¿CUÁL DE LAS DOS USA EL CHATBOT? ─────────────────────────────────
+          SOLO APARECE CON LAS DOS CONECTADAS. Con una sola no hay decisión que
+          tomar, y sacar el selector igual sería inventarle al cliente una
+          pregunta que no tiene.
+
+          Existe porque antes ganaba Calendly en silencio: al negocio que usa
+          Google para lo interno y conecta Calendly para probarlo le cambiábamos
+          la agenda del bot sin avisar, con un clic dado en otra pantalla. */}
+      {hayQueElegir(conectadas) && (
+        <div className="mt-4 rounded-2xl border border-linea bg-tarjeta p-5">
+          <h3 className="font-display text-base font-semibold text-ink">
+            ¿Qué agenda usa tu chatbot?
+          </h3>
+          <p className="mt-1 text-xs text-ink-3">
+            Tienes las dos conectadas. Elige en cuál quieres que el bloque{" "}
+            <b className="text-ink-2">Agendar cita</b> ofrezca horarios y reserve.
+            Las dos siguen conectadas: esto solo decide dónde acaban las citas del chat.
+          </p>
+
+          <form action={elegirAgenda} className="mt-4 flex flex-wrap items-center gap-2">
+            {[
+              { valor: "calendly", texto: "Calendly" },
+              { valor: "google", texto: "Google Calendar" },
+            ].map((o) => (
+              <button
+                key={o.valor}
+                name="agenda"
+                value={o.valor}
+                aria-pressed={manda === o.valor}
+                className={
+                  manda === o.valor
+                    ? "rounded-xl bg-demandu-gradient px-4 py-2 text-sm font-semibold text-white"
+                    : "rounded-xl border border-linea px-4 py-2 text-sm font-semibold text-ink-2 transition hover:bg-suave-2"
+                }
+              >
+                {o.texto}
+              </button>
+            ))}
+          </form>
+
+          {/* Se dice cuál manda AHORA MISMO, con o sin elección hecha. Quien no
+              ha elegido nada tiene que poder saber qué está pasando sin
+              adivinarlo, y quien eligió tiene que ver que se guardó. */}
+          <p className="mt-3 text-xs text-ink-3">
+            {preferida === null ? (
+              <>
+                No has elegido, así que el bot usa <b className="text-ink-2">Calendly</b>: cuando está
+                conectado, tu disponibilidad de verdad vive ahí —tu antelación mínima, tu tope de citas
+                por día— y ofrecer horas calculadas sobre Google sería ofrecer horas que tu propio
+                Calendly rechazaría.
+              </>
+            ) : (
+              <>
+                Ahora mismo el bot agenda en <b className="text-ink-2">{manda === "calendly" ? "Calendly" : "Google Calendar"}</b>.
+              </>
+            )}
+          </p>
+        </div>
+      )}
 
       <div className="mt-4">
         <SheetsConfig config={(sheets as ConfigSheets) ?? null} googleConectado={!!google} />

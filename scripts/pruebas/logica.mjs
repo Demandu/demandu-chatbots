@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
+import { agendaQueManda, hayQueElegir, leerPreferida } from "../../src/lib/agendaElegida.ts";
 import {
   nuevoVerificador, retoDe, urlDeAutorizacion, ventanaDeBusqueda, MAX_DIAS,
   necesitaPlanDePago, firmaValida as firmaDeCalendlyValida, TOLERANCIA_SEG,
@@ -3876,6 +3877,59 @@ describe("Calendly", () => {
     const a = nuevaClaveDeFirma();
     esperar(a.length >= 64).verdadero("32 bytes en hexadecimal");
     esperar(a === nuevaClaveDeFirma()).falso("una clave por cliente, no una para todos");
+  });
+});
+
+describe("Qué agenda usa el chatbot", () => {
+  const con = (google, calendly) => ({ google, calendly });
+
+  test("con una sola agenda no se pregunta nada", () => {
+    // Sacar el selector con una sola conectada es inventarle al cliente una
+    // decisión que no tiene.
+    esperar(hayQueElegir(con(true, false))).falso();
+    esperar(hayQueElegir(con(false, true))).falso();
+    esperar(hayQueElegir(con(false, false))).falso();
+    esperar(hayQueElegir(con(true, true))).verdadero();
+  });
+
+  test("sin elegir nada, gana Calendly", () => {
+    // No es un desempate al azar: si alguien conectó Calendly, ahí viven sus
+    // reglas de disponibilidad reales, y ofrecer huecos calculados sobre su
+    // Google sería ofrecer horas que su propio Calendly rechazaría.
+    esperar(agendaQueManda(null, con(true, true))).igual("calendly");
+    esperar(agendaQueManda(null, con(true, false))).igual("google");
+    esperar(agendaQueManda(null, con(false, true))).igual("calendly");
+    esperar(agendaQueManda(null, con(false, false))).igual("ninguna");
+  });
+
+  test("lo que eligió el negocio MANDA sobre el automático", () => {
+    // Es la razón de existir de todo esto: quien usa Google para lo interno y
+    // conecta Calendly para probarlo no puede quedarse sin poder volver.
+    esperar(agendaQueManda("google", con(true, true))).igual("google");
+    esperar(agendaQueManda("calendly", con(true, true))).igual("calendly");
+  });
+
+  test("una preferencia huérfana NO deja al bot sin agendar", () => {
+    // Al desconectar se borra la preferencia, así que esto no debería pasar
+    // nunca. Pero si pasa —una fila vieja, un arreglo a mano en la base— un
+    // bot que deja de agendar del todo es peor para la persona que está
+    // escribiendo que un bot que agenda en la única agenda que queda.
+    esperar(agendaQueManda("calendly", con(true, false))).igual("google");
+    esperar(agendaQueManda("google", con(false, true))).igual("calendly");
+    esperar(agendaQueManda("calendly", con(false, false))).igual("ninguna");
+    esperar(agendaQueManda("google", con(false, false))).igual("ninguna");
+  });
+
+  test("cualquier basura guardada se lee como «que decida la plataforma»", () => {
+    esperar(leerPreferida("google")).igual("google");
+    esperar(leerPreferida("calendly")).igual("calendly");
+    esperar(leerPreferida(null)).igual(null);
+    esperar(leerPreferida("")).igual(null);
+    esperar(leerPreferida("outlook")).igual(null);
+    esperar(leerPreferida("GOOGLE")).igual(null, "sin normalizar: la base solo guarda minúsculas");
+    esperar(leerPreferida(42)).igual(null);
+    esperar(leerPreferida({})).igual(null);
+    esperar(leerPreferida(undefined)).igual(null);
   });
 });
 

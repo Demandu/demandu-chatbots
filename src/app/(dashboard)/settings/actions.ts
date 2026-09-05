@@ -412,6 +412,44 @@ export async function deleteAttribute(formData: FormData) {
 }
 
 // ── Integraciones ────────────────────────────────────────────────────────────
+
+/**
+ * Con qué agenda trabaja el chatbot de este negocio.
+ *
+ * SOLO SE GUARDA SI ESA AGENDA ESTÁ CONECTADA. Sin esto, un formulario
+ * fabricado a mano —o una pantalla que se quedó abierta mientras alguien
+ * desconectaba Calendly en otra pestaña— dejaría la preferencia apuntando a
+ * una agenda que no existe. La regla es que ese estado NO LLEGA A EXISTIR.
+ *
+ * Y pide el permiso de conexiones: elegir dónde acaban las citas de la empresa
+ * no es tarea de quien solo atiende chats.
+ */
+export async function elegirAgenda(formData: FormData) {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return;
+
+  const { misPermisos } = await import("@/lib/permisos-server");
+  const { permisos } = await misPermisos();
+  if (!permisos.has("conexiones")) return;
+
+  const pedida = s(formData.get("agenda"));
+  const admin = createAdminClient();
+
+  let valor: string | null = null;
+  if (pedida === "google" || pedida === "calendly") {
+    const proveedor = pedida === "google" ? "google_calendar" : "calendly";
+    const { data } = await admin
+      .from("integrations").select("id")
+      .eq("org_id", orgId).eq("provider", proveedor).maybeSingle();
+    // Si no está conectada, se guarda NULO —«que decida la plataforma»— en vez
+    // de guardar un puntero roto o de fallar en silencio.
+    valor = data ? pedida : null;
+  }
+
+  await createClient().from("organizations").update({ agenda_preferida: valor }).eq("id", orgId);
+  revalidatePath("/settings/integrations");
+}
+
 export async function disconnectIntegration(formData: FormData) {
   const provider = s(formData.get("provider"));
   if (!provider) return;
@@ -478,6 +516,25 @@ export async function disconnectIntegration(formData: FormData) {
   }
 
   await supabase.from("integrations").delete().eq("org_id", orgId).eq("provider", provider);
+
+  // ── LA PREFERENCIA NO PUEDE SOBREVIVIR A SU AGENDA ──────────────────────
+  //
+  // Es la trampa obvia de guardar una elección: el negocio elige Calendly,
+  // meses después lo desconecta, y queda un puntero a algo que ya no existe.
+  // Borrarlo AQUÍ hace que el estado malo no llegue a existir, en vez de
+  // dejar que cada sitio que lo lea se acuerde de comprobarlo.
+  //
+  // `agendaQueManda` lo ignora igualmente si llegara —una fila vieja, un
+  // arreglo a mano en la base—, pero eso es la red, no el plan.
+  const cual = provider === "google_calendar" ? "google" : provider === "calendly" ? "calendly" : null;
+  if (cual) {
+    await supabase
+      .from("organizations")
+      .update({ agenda_preferida: null })
+      .eq("id", orgId)
+      .eq("agenda_preferida", cual);
+  }
+
   revalidatePath("/settings/integrations");
 }
 

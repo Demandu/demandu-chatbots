@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getValidAccessTokenForOrg, freeBusy, createCalendarEvent } from "@/lib/integrations/google";
 import { computeSlots, type Slot } from "@/lib/integrations/availability";
 import * as calendly from "@/lib/integrations/calendly";
+import { agendaQueManda, leerPreferida } from "@/lib/agendaElegida";
 
 /**
  * Agendar citas. UNA sola implementación, tres puertas de entrada.
@@ -81,16 +82,22 @@ async function ajustesDeOrg(orgId: string) {
  * ¿Con qué agenda trabaja este cliente?
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * CALENDLY GANA SI ESTÁ CONECTADO, y no es arbitrario: quien se toma el trabajo
- * de conectar Calendly es porque su disponibilidad vive ahí — sus reglas de
- * antelación, sus topes por día, sus horarios por tipo de cita. Ofrecer los
- * huecos que calculamos nosotros sobre su Google sería ofrecer horas que su
- * Calendly no acepta, y agendar encima de sus propias reglas.
+ * LO ELIGE EL NEGOCIO, y solo se le pregunta si tiene las DOS conectadas. Con
+ * una sola no hay decisión que tomar y el selector ni aparece.
  *
- * NO SE PREGUNTA EN EL BLOQUE. El negocio conecta una agenda en Ajustes y ya;
- * pedirle además que elija cuál en cada bloque es preguntarle algo que la
- * plataforma ya sabe — y es así como un flujo acaba apuntando a la agenda que
- * el cliente dejó de usar.
+ * Si no eligió, gana Calendly — y no es un desempate al azar: quien se toma el
+ * trabajo de conectar Calendly es porque su disponibilidad de verdad vive ahí
+ * (antelación mínima, tope de citas por día, horarios por tipo de cita).
+ * Ofrecer los huecos que calculamos sobre su Google sería ofrecer horas que su
+ * propio Calendly rechazaría.
+ *
+ * La regla entera está en `agendaElegida.ts`, que es puro y se prueba solo.
+ * Aquí queda lo que necesita la base: quién está conectado de verdad.
+ *
+ * NO SE PREGUNTA EN EL BLOQUE. La agenda es una propiedad del negocio, no de
+ * una conversación; ponerlo en cada bloque abre la puerta a que un flujo de
+ * hace seis meses siga agendando donde ya nadie mira. Lo que SÍ es por bloque
+ * —y ya funcionaba— es QUÉ TIPO DE CITA se agenda.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 type Conexion =
@@ -99,28 +106,45 @@ type Conexion =
   | { cual: "ninguna" };
 
 async function conexionDeAgenda(orgId: string): Promise<Conexion> {
-  const { data } = await createAdminClient()
-    .from("integrations")
-    .select("data")
-    .eq("org_id", orgId)
-    .eq("provider", "calendly")
-    .maybeSingle();
+  const sb = createAdminClient();
+  const [{ data: fila }, { data: org }] = await Promise.all([
+    sb.from("integrations").select("data").eq("org_id", orgId).eq("provider", "calendly").maybeSingle(),
+    sb.from("organizations").select("agenda_preferida").eq("id", orgId).maybeSingle(),
+  ]);
 
-  if (data) {
+  // ── «CONECTADO» ES QUE EL TOKEN SIRVA, NO QUE HAYA FILA ─────────────────
+  // Una conexión con el token roto no puede ganar la elección: haría que el
+  // bloque fallara siempre teniendo un Google sano al lado.
+  let cal: { token: string; d: Record<string, unknown> } | null = null;
+  if (fila) {
     const token = await calendly.tokenValido(orgId);
-    // SIN TOKEN NO SE CAE A GOOGLE. Si el cliente conectó Calendly y su token
-    // se rompió, lo que hay que hacer es decírselo — no agendar calladamente
-    // en otra agenda que quizá lleva meses sin mirar.
-    if (token) {
-      const d = (data.data ?? {}) as Record<string, unknown>;
-      return {
-        cual: "calendly",
-        token,
-        usuario: String(d.usuario_uri ?? ""),
-        agendaUrl: String(d.agenda_url ?? ""),
-        planGratis: d.plan_gratis === true,
-      };
-    }
+    if (token) cal = { token, d: (fila.data ?? {}) as Record<string, unknown> };
+  }
+
+  const manda = agendaQueManda(leerPreferida(org?.agenda_preferida), {
+    // Google no se comprueba aquí: `horariosLibres` y `agendarCita` ya saben
+    // decir «no hay agenda conectada» cuando su token no sirve, y pedirlo
+    // ahora costaría un viaje a Google en CADA mensaje que toque agenda.
+    google: true,
+    calendly: !!cal,
+  });
+
+  if (manda === "calendly" && cal) {
+    return {
+      cual: "calendly",
+      token: cal.token,
+      usuario: String(cal.d.usuario_uri ?? ""),
+      agendaUrl: String(cal.d.agenda_url ?? ""),
+      planGratis: cal.d.plan_gratis === true,
+    };
+  }
+
+  // SI CONECTÓ CALENDLY Y SU TOKEN SE ROMPIÓ, NO SE CAE A GOOGLE EN SILENCIO:
+  // lo que hay que hacer es decírselo, no agendar calladamente en otra agenda
+  // que quizá lleva meses sin mirar. Salvo que haya elegido Google a mano —
+  // entonces Google es lo que pidió y no hay nada que avisar.
+  if (fila && !cal && leerPreferida(org?.agenda_preferida) !== "google") {
+    return { cual: "ninguna" };
   }
 
   return { cual: "google" };
@@ -169,6 +193,12 @@ export async function horariosLibres(
   const calendarId = String(opts.calendarId || "").trim() || "primary";
 
   const conexion = await conexionDeAgenda(orgId);
+
+  // CALENDLY CONECTADO PERO CON EL TOKEN ROTO. No se cae a Google sin más:
+  // sería agendar en una agenda que este negocio quizá lleva meses sin mirar.
+  // Se dice que no hay agenda, que es la verdad, y el bloque ya sabe pedir
+  // persona en vez de inventarse horarios.
+  if (conexion.cual === "ninguna") return { slots: [], calendarId, conectado: false };
 
   // ── CALENDLY: LOS HUECOS LOS DA ÉL, NO LOS CALCULAMOS ────────────────────
   // Con Google hay que restar lo ocupado del horario laboral porque Google solo
@@ -273,6 +303,17 @@ export async function agendar(
   const calendarId = String(d.calendarId || "").trim() || "primary";
 
   const conexion = await conexionDeAgenda(orgId);
+
+  // Mismo caso que arriba: Calendly conectado y con el token roto. Se dice con
+  // esas palabras, para que el negocio sepa QUÉ arreglar — «no hay agenda
+  // conectada» le mandaría a mirar Google, que no es donde está el problema.
+  if (conexion.cual === "ninguna") {
+    return {
+      ok: false,
+      motivo: "sin_conexion",
+      error: "La conexión con Calendly dejó de funcionar. Vuelve a conectarla en Ajustes → Integraciones.",
+    };
+  }
 
   if (conexion.cual === "calendly") {
     const { timeZone: zona } = await ajustesDeOrg(orgId);
