@@ -5887,4 +5887,136 @@ describe("Cuando la IA no puede responder, se sabe por qué", () => {
   });
 });
 
+
+// ─── EL FORMULARIO NATIVO DE WHATSAPP, COMO AGENDA ───────────────────────────
+//
+// `agenda.ts` lleva tiempo prometiendo tres puertas para agendar, y la segunda
+// —«Flujo de WhatsApp + agenda»— no estaba terminada: `sayFlujo` mandaba el
+// nombre de la pantalla y nada más, así que dentro del formulario no se podía
+// enseñar ni una hora libre.
+//
+// Ahora el motor consulta la agenda ANTES de mandarlo y le mete los huecos en
+// `flow_action_payload.data`. Estas reglas son lo que impide que ese camino se
+// vuelva a quedar a medias sin que nadie se entere.
+describe("Agendar desde el formulario nativo de WhatsApp", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const PURO = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agendaHorarios.ts"), "utf8"));
+
+  // ── CÓMO SE COMPARAN DOS COPIAS ────────────────────────────────────────
+  //
+  // Se recorta desde `function NOMBRE(` hasta la primera llave de cierre a
+  // principio de línea, que en este proyecto es siempre el final de una
+  // función de primer nivel.
+  //
+  // La primera versión contaba llaves desde la primera que encontraba, y esa
+  // no era la del cuerpo: era la del TIPO. Con
+  // `opcionesDeHorario(slots: { startISO?… })` comparaba las dos firmas y
+  // fallaba diciendo que las copias se habían separado, con las copias
+  // idénticas. Una regla que acusa en falso se acaba borrando.
+  const declaracion = (texto, nombre) => {
+    const m = new RegExp(`function ${nombre}\\([\\s\\S]*?\\n\\}`).exec(texto);
+    return m ? m[0].replace(/\s+/g, " ").trim() : null;
+  };
+
+  test("las cuatro reglas del formulario están en los dos sitios y dicen lo mismo", () => {
+    for (const f of ["opcionesDeHorario", "valoresDelFormulario", "horaDelFormulario", "correoDelFormulario", "nombreDelFormulario"]) {
+      const a = declaracion(PURO, f);
+      const b = declaracion(WA, f);
+      esperar(a && b).verdadero(`falta ${f} en uno de los dos motores`);
+      esperar(b).igual(a);
+    }
+  });
+
+  test("el motor consulta la agenda ANTES de mandar el formulario", () => {
+    // Sin esto el formulario sale con el desplegable vacío: una pantalla en la
+    // que la persona no puede hacer nada ni entender por qué.
+    const i = WA.indexOf("async function sayFlujo");
+    esperar(i > 0).verdadero("cambió la forma del motor, revisa esta prueba");
+    const trozo = WA.slice(i, WA.indexOf("\nasync function", i + 10));
+    esperar(/waFlowAgenda/.test(trozo)).verdadero("`sayFlujo` ya no sabe que un formulario puede ser de agenda");
+    esperar(/accion: "horarios"/.test(trozo)).verdadero("`sayFlujo` no pide los horarios a la plataforma");
+    esperar(/opcionesDeHorario\(/.test(trozo)).verdadero("`sayFlujo` no convierte los huecos en opciones");
+  });
+
+  test("los datos viajan DENTRO del payload, junto a la pantalla", () => {
+    // Meta exige que se manden todas las propiedades que la pantalla declare
+    // en su `data`. Mandar la pantalla sin ellas hace que rechace el mensaje
+    // entero — no solo el dato.
+    esperar(/flow_action_payload = datosDeAgenda \? \{ screen, data: datosDeAgenda \} : \{ screen \}/.test(WA))
+      .verdadero("los horarios ya no llegan al formulario");
+  });
+
+  test("SIN HORARIOS NO SE MANDA EL FORMULARIO", () => {
+    // Un desplegable vacío es peor que no mandar nada: la persona abre, no
+    // puede elegir, y se queda pensando que la culpa es suya.
+    const i = WA.indexOf("async function sayFlujo");
+    const trozo = WA.slice(i, WA.indexOf("\nasync function", i + 10));
+    esperar(/if \(!opciones\.length\)/.test(trozo)).verdadero(
+      "el formulario se manda aunque no haya ni un horario que ofrecer",
+    );
+    // Y si la agenda tiene enlace —los Calendly del plan gratis— se manda ese,
+    // que es una cita que sí se puede hacer.
+    esperar(/r\?\.enlace/.test(trozo)).verdadero(
+      "se pierde el enlace de agenda cuando no se puede reservar por API",
+    );
+  });
+
+  test("al volver el formulario se agenda, y solo se sigue si la cita existe", () => {
+    // Misma trampa que el bloque «Agendar cita»: la salida de este bloque suele
+    // ser «tu cita quedó agendada». Seguir por ahí sin cita es confirmarle a
+    // alguien algo que no existe.
+    esperar(/agendarDesdeFormulario\(/.test(WA)).verdadero("el formulario vuelve y no agenda nada");
+    const i = WA.indexOf('awaiting.type === "wa_flow"');
+    esperar(i > 0).verdadero("cambió la forma del motor, revisa esta prueba");
+    const trozo = WA.slice(i, i + 3000);
+    esperar(/waFlowAgenda/.test(trozo)).verdadero("la respuesta del formulario ya no se agenda");
+    esperar(/if \(!r\)/.test(trozo)).verdadero("no se distingue una cita creada de una que falló");
+  });
+
+  test("agendar desde el formulario NO reimplementa agendar", () => {
+    // Dos formas de crear una cita es garantizar que una de las dos se quede
+    // sin el aviso al CRM, sin `cita_invitacion` o sin el título que toca.
+    const c = declaracion(WA, "agendarDesdeFormulario");
+    esperar(!!c).verdadero("desapareció `agendarDesdeFormulario`");
+    esperar(/agendarElegido\(/.test(c)).verdadero(
+      "`agendarDesdeFormulario` se hizo su propia forma de crear la cita",
+    );
+    esperar(/pedirAgenda\(/.test(c)).falso(
+      "`agendarDesdeFormulario` llama a la agenda por su cuenta en vez de reusar el camino de siempre",
+    );
+  });
+
+  test("el formulario se reintenta UNA vez, no en bucle", () => {
+    // El caso normal es que el hueco se ocupara entre que se mandó y que lo
+    // contestó. Reintentar sin tope es hacerle rellenar sus datos una y otra
+    // vez, que cansa más que hablar con una persona.
+    const i = WA.indexOf('awaiting.type === "wa_flow"');
+    const trozo = WA.slice(i, i + 3000);
+    esperar(/cita_form_reintento !== "si"/.test(trozo)).verdadero(
+      "el formulario de agenda se puede reintentar sin tope",
+    );
+    esperar(/cita_form_reintento = "si"/.test(trozo)).verdadero(
+      "el reintento no se apunta, así que no cuenta como tal",
+    );
+  });
+
+  test("un formulario sin hora reconocible NO se le echa en cara al cliente", () => {
+    // Significa que su desplegable devuelve el texto de la opción en vez del
+    // id: un fallo de configuración que la persona no provocó ni puede
+    // arreglar. Se le pasa con alguien y el motivo queda en el registro.
+    esperar(/=== "sin_hora"/.test(WA)).verdadero("ya no se distingue un formulario mal armado");
+    const i = WA.indexOf('=== "sin_hora"');
+    esperar(/handoff_reason/.test(WA.slice(i, i + 800))).verdadero(
+      "un formulario mal armado deja la conversación colgada en vez de pasar con una persona",
+    );
+  });
+
+  test("el constructor deja encender y configurar todo esto", () => {
+    const insp = fs.readFileSync(path.join(SRC, "components/builder/Inspector.tsx"), "utf8");
+    for (const campo of ["waFlowAgenda", "waFlowCampoHorarios", "waFlowCampoNombre", "waFlowCampoHora", "waFlowCampoCorreo"]) {
+      esperar(new RegExp(`\\b${campo}\\b`).test(insp)).verdadero(`el constructor no deja tocar «${campo}»`);
+    }
+  });
+});
+
 process.exit(await correrPruebas());

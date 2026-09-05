@@ -207,6 +207,29 @@ export interface DemanduNodeData {
   textoPideCorreo?: string;
   /** Qué se dice cuando escribe en vez de elegir una de las horas. */
   textoNoEntendi?: string;
+  /**
+   * ── EL FORMULARIO NATIVO DE WHATSAPP, COMO AGENDA ───────────────────────
+   *
+   * Con `waFlowAgenda`, el motor consulta la agenda ANTES de mandar el
+   * formulario y mete los huecos libres en `flow_action_payload.data`. El
+   * cliente ve una sola pantalla: elige su hora, escribe sus datos y envía.
+   *
+   * `waFlowCampoHorarios` tiene que coincidir con lo que el Flow JSON declara
+   * en el `data` de su primera pantalla: si no coincide, Meta rechaza el
+   * mensaje ENTERO, no solo el dato.
+   *
+   * Los otros tres son opcionales porque la hora y el correo se encuentran por
+   * su FORMA. Es a propósito: el editor visual de Meta nombra los campos solo
+   * (`screen_0_Dropdown_0`) y no se lo enseña a nadie, así que pedir el nombre
+   * exacto sería una llamada de soporte por cliente. El nombre solo hace falta
+   * cuando el formulario trae dos fechas o dos correos.
+   */
+  waFlowAgenda?: boolean;
+  waFlowCampoHorarios?: string;
+  /** Este SÍ hace falta: un nombre no tiene forma y no se adivina. */
+  waFlowCampoNombre?: string;
+  waFlowCampoHora?: string;
+  waFlowCampoCorreo?: string;
   /** solo para type = "human" */
   team?: string;
   notifyTeam?: boolean;

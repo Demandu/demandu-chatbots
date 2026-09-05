@@ -184,3 +184,141 @@ export function mensajeParaElCliente(
   const e = String(fallo?.error ?? "").trim();
   return fallo?.paraElCliente && e ? e : porDefecto;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * EL FORMULARIO NATIVO DE WHATSAPP, CON HORARIOS DE VERDAD
+ *
+ * ── QUÉ CAMBIA ────────────────────────────────────────────────────────────
+ *
+ * Hasta ahora el bloque «Flujo de WhatsApp» solo sabía ABRIR un formulario:
+ * mandaba el nombre de la primera pantalla y nada más. Servía para pedir datos,
+ * no para agendar — dentro no había forma de enseñar una sola hora libre.
+ *
+ * Meta sí deja mandar datos al abrirlo (`flow_action_payload.data`), y ahí cabe
+ * la lista de huecos. Así el cliente ve UNA pantalla nativa: elige su hora,
+ * escribe su nombre y su correo, y envía. Una sola vez.
+ *
+ * Los horarios son una FOTO DEL MOMENTO EN QUE SE MANDA. Si la persona tarda
+ * una hora en abrirlo, el hueco puede haberse ocupado — y no pasa nada, porque
+ * `agendar` vuelve a mirar el calendario antes de crear la cita y contesta «ese
+ * horario acaba de ocuparse». Ese caso ya estaba resuelto y por eso esta
+ * versión no necesita servidor de intercambio de datos ni cifrado.
+ *
+ * ── POR QUÉ SE BUSCA POR FORMA Y NO POR NOMBRE ────────────────────────────
+ *
+ * Los campos que devuelve un formulario se llaman como diga su Flow JSON. Quien
+ * lo arma en el editor visual de Meta acaba con nombres como
+ * `screen_0_Dropdown_0`, y NO lo sabe: el editor no se los enseña.
+ *
+ * Montar esto sobre «pon aquí el nombre exacto del campo» es garantizar una
+ * llamada de soporte por cada cliente. Una hora tiene forma de hora y un correo
+ * tiene forma de correo: se buscan por eso. El nombre del campo, si se
+ * configura, solo sirve para mandar sobre la búsqueda.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** Meta corta el título de una opción en 30 caracteres. */
+export const TITULO_MAX = 30;
+
+/**
+ * Los huecos, como las opciones que espera Meta.
+ *
+ * Un `RadioButtonsGroup` o un `Dropdown` atados a `${data.horarios}` necesitan
+ * exactamente `{ id, title }`. El `id` es la hora en ISO —lo mismo que en los
+ * botones del bloque «Agendar cita»— para que la respuesta se pueda agendar sin
+ * guardar la lista en ninguna parte.
+ */
+export function opcionesDeHorario(
+  slots: { startISO?: string; label?: string }[] | null | undefined,
+  cuantas = 10,
+): { id: string; title: string }[] {
+  return (slots ?? [])
+    .map((s) => ({
+      id: String(s?.startISO ?? ""),
+      title: String(s?.label ?? "").slice(0, TITULO_MAX),
+    }))
+    // UNA OPCIÓN SIN ID NO SE PUEDE AGENDAR y una sin título sale en blanco en
+    // el móvil. Meta acepta las dos cosas y el fallo se ve al final, cuando la
+    // persona ya eligió: mejor no ofrecerla.
+    .filter((o) => o.id && o.title)
+    .slice(0, Math.max(0, cuantas));
+}
+
+/** Todos los valores de texto que trajo el formulario, en orden. */
+function valoresDelFormulario(respuesta: Record<string, unknown> | null | undefined): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(respuesta ?? {})) {
+    // `flow_token` es nuestro, no del cliente: lleva dentro la conversación y
+    // el bloque. Buscar en él sería mirar nuestros propios datos.
+    if (k === "flow_token") continue;
+    if (typeof v === "string" || typeof v === "number") out.push(String(v));
+  }
+  return out;
+}
+
+/**
+ * La hora que eligió, venga en el campo que venga.
+ *
+ * Primero el campo configurado, si lo hay; después, el primer valor con forma
+ * de hora. Ninguna otra respuesta de un formulario tiene esa forma, así que no
+ * hay con qué confundirla.
+ */
+export function horaDelFormulario(
+  respuesta: Record<string, unknown> | null | undefined,
+  campo?: string | null,
+): string | null {
+  const nombre = String(campo ?? "").trim();
+  if (nombre && respuesta && nombre in respuesta) {
+    const elegido = esHorarioElegido(String((respuesta as any)[nombre] ?? ""));
+    if (elegido) return elegido;
+  }
+  for (const v of valoresDelFormulario(respuesta)) {
+    const elegido = esHorarioElegido(v);
+    if (elegido) return elegido;
+  }
+  return null;
+}
+
+/**
+ * El correo, venga en el campo que venga.
+ *
+ * Mismo orden: el campo configurado manda, y si no cuadra se busca por forma.
+ * Que el campo configurado exista pero traiga basura NO detiene la búsqueda —
+ * un formulario con el nombre del campo mal escrito debe seguir agendando con
+ * invitación, no quedarse sin ella en silencio.
+ */
+export function correoDelFormulario(
+  respuesta: Record<string, unknown> | null | undefined,
+  campo?: string | null,
+): string | null {
+  const nombre = String(campo ?? "").trim();
+  if (nombre && respuesta && nombre in respuesta) {
+    const c = correoValido(String((respuesta as any)[nombre] ?? ""));
+    if (c) return c;
+  }
+  for (const v of valoresDelFormulario(respuesta)) {
+    const c = correoValido(v);
+    if (c) return c;
+  }
+  return null;
+}
+
+/**
+ * El nombre de la persona.
+ *
+ * ESTE SÍ NECESITA QUE LE DIGAN CUÁL ES. Un nombre no tiene forma: «Alejandro»,
+ * «Restaurante El Puerto» y «me urge para hoy» son todos texto suelto, y
+ * adivinar aquí sería mandarle a Google una cita a nombre de un comentario.
+ *
+ * Sin campo configurado se devuelve vacío, y quien llama usa el nombre que ya
+ * tenía de WhatsApp — que casi siempre es el bueno.
+ */
+export function nombreDelFormulario(
+  respuesta: Record<string, unknown> | null | undefined,
+  campo?: string | null,
+): string {
+  const nombre = String(campo ?? "").trim();
+  if (!nombre || !respuesta || !(nombre in respuesta)) return "";
+  const v = (respuesta as any)[nombre];
+  if (typeof v !== "string" && typeof v !== "number") return "";
+  return String(v).trim().slice(0, 80);
+}

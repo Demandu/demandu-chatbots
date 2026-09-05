@@ -962,6 +962,80 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
           <Field label="Texto del botón (CTA)">
             <input className="input" value={d.waFlowCta ?? ""} placeholder="Abrir formulario" onChange={(e) => onChange({ waFlowCta: e.target.value })} />
           </Field>
+
+          {/* ── EL FORMULARIO COMO AGENDA ────────────────────────────────
+              Encendido, la plataforma consulta la agenda ANTES de mandar el
+              formulario y le mete dentro las horas que de verdad están libres.
+              El cliente elige, escribe sus datos y envía: una sola pantalla. */}
+          <SectionTitle>Agendar desde este formulario</SectionTitle>
+          <label className="mb-2 flex items-start gap-2 text-xs text-muted">
+            <input
+              type="checkbox" className="mt-0.5"
+              checked={!!d.waFlowAgenda}
+              onChange={(e) => onChange({ waFlowAgenda: e.target.checked })}
+            />
+            <span>Meter los horarios libres dentro del formulario y agendar al recibirlo</span>
+          </label>
+
+          {d.waFlowAgenda && (
+            <>
+              <div className="mb-3 rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-[11px] text-ink-2">
+                Tu Flow JSON tiene que declarar los horarios en la primera pantalla y pintarlos en un
+                desplegable. Los tres campos de abajo casi nunca hacen falta: la plataforma
+                <b className="text-muted"> encuentra la hora y el correo por su forma</b>, no por cómo
+                se llame el campo — que es importante, porque el editor visual de Meta los nombra solo
+                (<code>screen_0_Dropdown_0</code>) y no te lo enseña.
+                <span className="mt-1 block text-ink-3">
+                  El paso a paso completo está en el procedimiento «Agendar con el formulario nativo».
+                </span>
+              </div>
+
+              <Field label="Cómo se llaman los horarios dentro del Flow JSON">
+                <input
+                  className="input" value={d.waFlowCampoHorarios ?? ""}
+                  placeholder="horarios"
+                  onChange={(e) => onChange({ waFlowCampoHorarios: e.target.value })}
+                />
+                <p className="mt-1 text-[11px] text-muted-2">
+                  Lo que pusiste en <code>data</code> de la primera pantalla y usas como{" "}
+                  <code>{"${data.horarios}"}</code>. Si el nombre no coincide, Meta rechaza el mensaje entero.
+                </p>
+              </Field>
+
+              <Field label="Campo del nombre (este sí hace falta)">
+                <input
+                  className="input" value={d.waFlowCampoNombre ?? ""}
+                  placeholder="nombre"
+                  onChange={(e) => onChange({ waFlowCampoNombre: e.target.value })}
+                />
+                <p className="mt-1 text-[11px] text-muted-2">
+                  Un nombre no tiene forma reconocible, así que no se adivina. Si lo dejas vacío se usa
+                  el del perfil de WhatsApp, que casi siempre es el bueno.
+                </p>
+              </Field>
+
+              <div className="flex gap-2">
+                <Field label="Campo de la hora (opcional)">
+                  <input
+                    className="input" value={d.waFlowCampoHora ?? ""}
+                    placeholder="se busca sola"
+                    onChange={(e) => onChange({ waFlowCampoHora: e.target.value })}
+                  />
+                </Field>
+                <Field label="Campo del correo (opcional)">
+                  <input
+                    className="input" value={d.waFlowCampoCorreo ?? ""}
+                    placeholder="se busca solo"
+                    onChange={(e) => onChange({ waFlowCampoCorreo: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <p className="mb-3 text-[11px] text-muted-2">
+                Solo hacen falta si tu formulario trae <b className="text-muted">dos</b> fechas o dos correos
+                y hay que decidir cuál es cuál.
+              </p>
+            </>
+          )}
         </>
       )}
 

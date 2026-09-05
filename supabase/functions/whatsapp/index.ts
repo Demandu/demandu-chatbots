@@ -1797,6 +1797,79 @@ function mensajeParaElCliente(
   return fallo?.paraElCliente && e ? e : porDefecto;
 }
 
+/** Meta corta el título de una opción en 30 caracteres. */
+const TITULO_MAX = 30;
+
+/** Los huecos, como las opciones `{ id, title }` que espera Meta. */
+function opcionesDeHorario(
+  slots: { startISO?: string; label?: string }[] | null | undefined,
+  cuantas = 10,
+): { id: string; title: string }[] {
+  return (slots ?? [])
+    .map((s) => ({
+      id: String(s?.startISO ?? ""),
+      title: String(s?.label ?? "").slice(0, TITULO_MAX),
+    }))
+    .filter((o) => o.id && o.title)
+    .slice(0, Math.max(0, cuantas));
+}
+
+/** Los valores de texto del formulario. `flow_token` es nuestro y no se mira. */
+function valoresDelFormulario(respuesta: Record<string, unknown> | null | undefined): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(respuesta ?? {})) {
+    if (k === "flow_token") continue;
+    if (typeof v === "string" || typeof v === "number") out.push(String(v));
+  }
+  return out;
+}
+
+/** La hora elegida: el campo configurado manda, y si no, se busca por forma. */
+function horaDelFormulario(
+  respuesta: Record<string, unknown> | null | undefined,
+  campo?: string | null,
+): string | null {
+  const nombre = String(campo ?? "").trim();
+  if (nombre && respuesta && nombre in respuesta) {
+    const elegido = esHorarioElegido(String((respuesta as any)[nombre] ?? ""));
+    if (elegido) return elegido;
+  }
+  for (const v of valoresDelFormulario(respuesta)) {
+    const elegido = esHorarioElegido(v);
+    if (elegido) return elegido;
+  }
+  return null;
+}
+
+/** El correo: igual. Un campo mal escrito no deja la cita sin invitación. */
+function correoDelFormulario(
+  respuesta: Record<string, unknown> | null | undefined,
+  campo?: string | null,
+): string | null {
+  const nombre = String(campo ?? "").trim();
+  if (nombre && respuesta && nombre in respuesta) {
+    const c = correoValido(String((respuesta as any)[nombre] ?? ""));
+    if (c) return c;
+  }
+  for (const v of valoresDelFormulario(respuesta)) {
+    const c = correoValido(v);
+    if (c) return c;
+  }
+  return null;
+}
+
+/** El nombre. ESTE SÍ necesita que le digan cuál es: no tiene forma. */
+function nombreDelFormulario(
+  respuesta: Record<string, unknown> | null | undefined,
+  campo?: string | null,
+): string {
+  const nombre = String(campo ?? "").trim();
+  if (!nombre || !respuesta || !(nombre in respuesta)) return "";
+  const v = (respuesta as any)[nombre];
+  if (typeof v !== "string" && typeof v !== "number") return "";
+  return String(v).trim().slice(0, 80);
+}
+
 /**
  * ¿Qué le falta al bloque para poder agendar, y se lo pregunta él mismo?
  *
@@ -2142,6 +2215,63 @@ async function pasoDeCita(
 
   if (await agendarElegido(ctx, node, iso)) return { agendada: true };
   return await volverAOfrecer();
+}
+
+/**
+ * EL FORMULARIO VOLVIÓ CONTESTADO: se agenda.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * No se repite ni una línea de `agendarElegido`: se le pasa el MISMO bloque con
+ * dos campos cambiados, apuntando a las variables donde acaban de caer el
+ * nombre y el correo del formulario. Así la cita de un formulario y la de la
+ * lista de horarios se crean exactamente igual —mismo título, mismas variables,
+ * mismo aviso al CRM— y el día que cambie una, cambian las dos.
+ *
+ * Devuelve `true` si la cita existe, `false` si falló algo reintentable, y
+ * `"sin_hora"` si el formulario ni siquiera trajo una hora reconocible —que no
+ * es un fallo del cliente sino del Flow JSON, y se trata distinto.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function agendarDesdeFormulario(
+  ctx: any, node: any, respuesta: any,
+): Promise<boolean | "sin_hora"> {
+  const d = node.data ?? {};
+
+  const iso = horaDelFormulario(respuesta, d.waFlowCampoHora);
+  if (!iso) {
+    // El formulario se contestó pero no trajo ninguna hora: casi siempre es que
+    // su desplegable no guarda el `id` de la opción, sino su texto. Es un fallo
+    // de configuración, y quien lo tiene que ver es el negocio en su registro
+    // — no la persona, que hizo todo bien.
+    console.error(
+      `[wa flow] el formulario volvió sin una hora reconocible (org ${ctx.orgId}). ` +
+      `Campos: ${Object.keys(respuesta ?? {}).join(", ")}. ` +
+      "Revisa que el desplegable de horarios devuelva el id de la opción.",
+    );
+    return "sin_hora";
+  }
+
+  const correo = correoDelFormulario(respuesta, d.waFlowCampoCorreo);
+  // El del formulario primero; si no vino, el del perfil de WhatsApp, que casi
+  // siempre es el bueno. Lo que no se hace nunca es adivinarlo entre los demás
+  // campos: ver `nombreDelFormulario`.
+  const nombre = nombreDelFormulario(respuesta, d.waFlowCampoNombre) || String(ctx.vars.nombre ?? "");
+
+  if (correo) ctx.vars.cita_correo = correo;
+  if (nombre) ctx.vars.cita_nombre = nombre;
+
+  const comoBloque = {
+    ...node,
+    data: {
+      ...d,
+      nameAttr: nombre ? "cita_nombre" : "",
+      // Vacío cuando no hubo correo: `agendarElegido` no invita a nadie y la
+      // cita se crea igual, marcada con `cita_invitacion = "no"`.
+      attendeeAttr: correo ? "cita_correo" : "",
+    },
+  };
+
+  return await agendarElegido(ctx, comoBloque, iso);
 }
 
 /**
@@ -2585,6 +2715,67 @@ async function sayFlujo(ctx: any, node: any): Promise<boolean> {
 
   const screen = await primeraPantalla(ctx.db, flowId, ctx.token);
 
+  /* ── LOS HORARIOS DE VERDAD, DENTRO DEL FORMULARIO ────────────────────────
+   *
+   * Hasta ahora este bloque solo sabía ABRIR un formulario: mandaba el nombre
+   * de la primera pantalla y nada más. Servía para pedir datos, no para
+   * agendar — dentro no había forma de enseñar una sola hora libre, y el
+   * camino «Flujo de WhatsApp + agenda» que la plataforma prometía no estaba
+   * terminado por aquí.
+   *
+   * Meta sí deja mandar datos al abrirlo. Van a `flow_action_payload.data` y
+   * el Flow JSON los recoge con `${data.horarios}` en un desplegable. Así el
+   * cliente ve UNA sola pantalla: elige su hora, escribe su nombre y su
+   * correo, y envía.
+   *
+   * SON UNA FOTO DEL MOMENTO DE ENVIAR. Si tarda una hora en abrirlo, el hueco
+   * puede haberse ocupado — y no pasa nada: `agendar` vuelve a mirar el
+   * calendario antes de crear la cita. Por eso esto no necesita servidor de
+   * intercambio de datos ni cifrado.
+   * ──────────────────────────────────────────────────────────────────────── */
+  let datosDeAgenda: Record<string, unknown> | null = null;
+
+  if (d.waFlowAgenda) {
+    const r = await pedirAgenda({
+      accion: "horarios",
+      org_id: ctx.orgId,
+      agenda: d.agendaProveedor || undefined,
+      calendario: d.calendarId || undefined,
+      calendly_tipo: d.calendlyTipo || undefined,
+      duracion: Number(d.durationMin) || 30,
+      cuantos: Number(d.cuantosHorarios) || 10,
+    });
+
+    const opciones = opcionesDeHorario(r?.slots ?? [], Number(d.cuantosHorarios) || 10);
+
+    // ── SIN HORARIOS NO SE MANDA EL FORMULARIO ──────────────────────────
+    //
+    // Un desplegable vacío es una pantalla en la que la persona no puede
+    // hacer nada: ni elegir, ni entender por qué. Y si la agenda tiene enlace
+    // —los Calendly del plan gratis— la cita se puede hacer igual abriéndolo,
+    // que es infinitamente mejor que un formulario muerto.
+    if (!opciones.length) {
+      if (r?.enlace) {
+        await say(
+          ctx,
+          interp(d.textoConEnlace || "Agenda tu cita aquí y elige la hora que mejor te venga 👇", ctx.vars) +
+            "\n" + r.enlace,
+        );
+        ctx.finMotivo = "completado";
+        return true; // el formulario no salió, pero el bloque hizo su trabajo
+      }
+      const porque = r?.__fallo
+        ? `la plataforma no respondió bien (${r.__fallo})`
+        : r?.conectado === false
+        ? "no hay agenda conectada"
+        : "no hay horarios libres";
+      console.error(`[wa flow] sin horarios que meter en el formulario (${porque}) org=${ctx.orgId}`);
+      return false; // quien llama pasa con una persona
+    }
+
+    datosDeAgenda = { [String(d.waFlowCampoHorarios || "horarios")]: opciones };
+  }
+
   const parametros: any = {
     flow_message_version: "3",
     // Identifica esta apertura concreta: lleva dentro la conversación y el
@@ -2601,8 +2792,21 @@ async function sayFlujo(ctx: any, node: any): Promise<boolean> {
   // texto suelto y aparentar que funcionó.
   if (screen) {
     parametros.flow_action = "navigate";
-    parametros.flow_action_payload = { screen };
+    // Los datos van DENTRO del payload, junto a la pantalla. Meta exige que se
+    // manden todas las propiedades que la pantalla declare en su `data`: si el
+    // Flow JSON declara `horarios` y no van, rechaza el mensaje entero.
+    parametros.flow_action_payload = datosDeAgenda ? { screen, data: datosDeAgenda } : { screen };
   } else {
+    // SIN NOMBRE DE PANTALLA NO SE PUEDEN MANDAR DATOS. `data_exchange` es
+    // para los formularios con servidor propio, y ahí los horarios los pediría
+    // ese servidor. Se avisa, porque un formulario de agenda por este camino
+    // se abriría con el desplegable vacío.
+    if (datosDeAgenda) {
+      console.error(
+        `[wa flow] el formulario ${flowId} es de agenda pero no se pudo leer su primera pantalla: ` +
+        "los horarios no van a entrar. Revisa que el flujo esté sincronizado.",
+      );
+    }
     parametros.flow_action = "data_exchange";
   }
 
@@ -2632,7 +2836,13 @@ async function sayFlujo(ctx: any, node: any): Promise<boolean> {
   if (d.waHeader) interactive.header = { type: "text", text: String(d.waHeader).slice(0, 60) };
 
   const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
-  await registrar(ctx, `📋 ${d.waFlowCta || "Formulario"}`, envio, { flow_id: flowId, screen, modo: parametros.mode ?? "publicado" });
+  await registrar(ctx, `📋 ${d.waFlowCta || "Formulario"}`, envio, {
+    flow_id: flowId, screen, modo: parametros.mode ?? "publicado",
+    // Los horarios que se ofrecieron quedan apuntados. Es lo único que después
+    // permite entender un «elegí una hora y me dijo que estaba ocupada»: sin
+    // esto, la lista que vio la persona no existe en ninguna parte.
+    ...(datosDeAgenda ? { horarios: Object.values(datosDeAgenda)[0] } : {}),
+  });
   if (!envio?.ok) console.error("[wa flow] Meta rechazó el envío:", JSON.stringify(envio));
   return !!envio?.ok;
 }
@@ -3795,10 +4005,63 @@ async function handleIncoming(opts: any) {
       // Cada campo del formulario se guarda como variable del flujo, así se
       // puede usar después en un mensaje, una condición o el CRM. Sin esto,
       // el cliente rellena el formulario y lo que escribió se pierde.
-      for (const [k, v] of Object.entries(opts.respuestaFormulario ?? {})) {
+      const respuesta = opts.respuestaFormulario ?? {};
+      for (const [k, v] of Object.entries(respuesta)) {
         if (k === "flow_token") continue;
         vars[k] = typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
       }
+
+      // ── SI ERA UN FORMULARIO DE AGENDA, AQUÍ SE CREA LA CITA ───────────
+      //
+      // Y solo se sigue adelante si existe de verdad. La salida de este bloque
+      // suele ser «tu cita quedó agendada»: es la misma trampa del bloque
+      // «Agendar cita», donde el bot llegó a confirmar una cita que no existía
+      // con todos los campos en blanco.
+      if (node && node.data?.waFlowAgenda) {
+        const r = await agendarDesdeFormulario(ctx, node, respuesta);
+
+        if (r === "sin_hora") {
+          // El formulario está mal armado. A la persona no se le cuenta eso
+          // —no lo puede arreglar y no hizo nada mal—: se le pasa con alguien.
+          await say(ctx, "Recibí tus datos 🙌 Te paso con una persona del equipo para cerrar la hora.");
+          await ctx.db.from("conversations").update({
+            status: "assigned",
+            handoff_requested_at: new Date().toISOString(),
+            handoff_reason: "El formulario de agenda no devolvió una hora reconocible",
+          }).eq("id", ctx.convId);
+          ctx.finMotivo = "agente";
+          return { vars, awaiting: null, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+        }
+
+        if (!r) {
+          // Casi siempre: el hueco se ocupó entre que se mandó el formulario y
+          // que lo contestó. `agendarElegido` ya se lo dijo con sus palabras.
+          //
+          // SE VUELVE A MANDAR EL FORMULARIO UNA SOLA VEZ, con horarios
+          // frescos. Dos veces sería un bucle en el que la persona rellena sus
+          // datos una y otra vez, y eso cansa más que hablar con alguien.
+          if (vars.cita_form_reintento !== "si" && (await sayFlujo(ctx, node))) {
+            vars.cita_form_reintento = "si";
+            await avanzarRecorrido(opts.db, runId, 1, node.id);
+            return {
+              vars, awaiting: { nodeId: node.id, type: "wa_flow" },
+              hintEnviado: (opts.flowState?.hintEnviado ?? false) || !!ctx.hintYaSalio,
+              run_id: runId, ofreciAgente: ctx.ofreciAgente, flow_id: ctx.flowIdNuevo,
+            };
+          }
+          await ctx.db.from("conversations").update({
+            status: "assigned",
+            handoff_requested_at: new Date().toISOString(),
+            handoff_reason: "No se pudo agendar desde el formulario de WhatsApp",
+          }).eq("id", ctx.convId);
+          ctx.finMotivo = "agente";
+          return { vars, awaiting: null, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+        }
+
+        // Salió. Que un reintento viejo no marque la siguiente cita.
+        vars.cita_form_reintento = "";
+      }
+
       startId = node ? defaultNext(opts.flow, node) : undefined;
     } else if (awaiting.type === "permiso_llamada") {
       const r = opts.permisoLlamada;

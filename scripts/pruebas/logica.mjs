@@ -26,6 +26,8 @@ import { accionesDelPrompt, CLAVES_DE_ACCION, sinMarcadores } from "../../src/li
 import {
   repartirHorarios, esHorarioElegido, correoValido, quiereOmitir,
   mensajeParaElCliente, CORTE_DE_TURNO,
+  opcionesDeHorario, horaDelFormulario, correoDelFormulario, nombreDelFormulario,
+  TITULO_MAX,
 } from "../../src/lib/agendaHorarios.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
@@ -4367,6 +4369,117 @@ describe("Qué error se le enseña a la persona y cuál no", () => {
     esperar(mensajeParaElCliente({ error: "quota exceeded 429", motivo: "inventado" }).includes("429")).igual(false);
     esperar(mensajeParaElCliente(null).length > 0).igual(true);
     esperar(mensajeParaElCliente({ paraElCliente: true, error: "" }).length > 0).igual(true);
+  });
+});
+
+
+describe("El formulario nativo de WhatsApp, con horarios de verdad", () => {
+  const slots = [
+    { startISO: "2026-09-07T15:00:00.000Z", label: "lun 07 de sep, 09:00" },
+    { startISO: "2026-09-07T20:00:00.000Z", label: "lun 07 de sep, 14:00" },
+    { startISO: "2026-09-08T15:00:00.000Z", label: "mar 08 de sep, 09:00" },
+  ];
+
+  test("los huecos salen como las opciones que Meta espera", () => {
+    const o = opcionesDeHorario(slots);
+    esperar(o.length).igual(3);
+    esperar(o[0].id).igual("2026-09-07T15:00:00.000Z");
+    esperar(o[0].title).igual("lun 07 de sep, 09:00");
+  });
+
+  test("una opción a medias NO se ofrece", () => {
+    // Meta acepta una opción sin título y sale en blanco en el móvil; una sin
+    // id se puede elegir y después no se puede agendar. Las dos fallan al
+    // final, cuando la persona ya eligió.
+    const o = opcionesDeHorario([
+      { startISO: "", label: "lun 07 de sep, 09:00" },
+      { startISO: "2026-09-07T15:00:00.000Z", label: "" },
+      ...slots,
+    ]);
+    esperar(o.length).igual(3);
+  });
+
+  test("el título se corta donde Meta lo corta", () => {
+    esperar(TITULO_MAX).igual(30);
+    const largo = opcionesDeHorario([{ startISO: "2026-09-07T15:00:00.000Z", label: "x".repeat(90) }]);
+    esperar(largo[0].title.length).igual(30);
+  });
+
+  test("no se mandan más de las que caben", () => {
+    const muchos = [];
+    for (let i = 0; i < 40; i++) {
+      muchos.push({ startISO: `2026-09-07T1${i % 10}:00:00.000Z`, label: `opción ${i}` });
+    }
+    esperar(opcionesDeHorario(muchos).length).igual(10);
+    esperar(opcionesDeHorario(muchos, 3).length).igual(3);
+    esperar(opcionesDeHorario(null).length).igual(0);
+  });
+
+  test("LA HORA SE ENCUENTRA POR SU FORMA, no por el nombre del campo", () => {
+    // Quien arma el formulario en el editor visual de Meta acaba con nombres
+    // como `screen_0_Dropdown_0` y NO lo sabe: el editor no se los enseña.
+    // Montar esto sobre «escribe el nombre exacto del campo» es una llamada de
+    // soporte por cliente.
+    const deMeta = {
+      flow_token: "conv:nodo",
+      screen_0_TextInput_0: "Alejandro",
+      screen_0_TextInput_1: "alex@demandu.tech",
+      screen_0_Dropdown_2: "2026-09-07T20:00:00.000Z",
+    };
+    esperar(horaDelFormulario(deMeta)).igual("2026-09-07T20:00:00.000Z");
+    esperar(correoDelFormulario(deMeta)).igual("alex@demandu.tech");
+  });
+
+  test("el campo configurado MANDA sobre la búsqueda", () => {
+    // EL CAMPO CONFIGURADO VA EL SEGUNDO A PROPÓSITO. Si fuera el primero, la
+    // búsqueda por forma daría el mismo resultado y esta prueba no distinguiría
+    // entre hacer caso al campo y no mirarlo siquiera.
+    const dos = {
+      fecha_de_nacimiento: "2026-09-07T15:00:00.000Z",
+      horario: "2026-09-08T15:00:00.000Z",
+    };
+    esperar(horaDelFormulario(dos, "horario")).igual("2026-09-08T15:00:00.000Z");
+    // Y sin decirle cuál, gana el primero que encuentra. Por eso existe el
+    // campo: para el formulario que trae dos fechas.
+    esperar(horaDelFormulario(dos)).igual("2026-09-07T15:00:00.000Z");
+  });
+
+  test("un campo mal escrito NO deja la cita sin invitación", () => {
+    // Se sigue buscando por forma. Que alguien se equivoque al teclear el
+    // nombre del campo no puede costar el correo de invitación en silencio.
+    const r = { correo_del_cliente: "alex@demandu.tech", nombre: "Alejandro" };
+    esperar(correoDelFormulario(r, "email")).igual("alex@demandu.tech");
+    esperar(correoDelFormulario(r, "nombre")).igual("alex@demandu.tech");
+  });
+
+  test("nuestro propio flow_token no se mira", () => {
+    // Lleva dentro la conversación y el bloque. Buscar ahí sería encontrar
+    // nuestros datos y agendar con ellos.
+    esperar(horaDelFormulario({ flow_token: "2026-09-07T15:00:00.000Z:nodo" })).igual(null);
+    esperar(correoDelFormulario({ flow_token: "a@b.co:nodo" })).igual(null);
+  });
+
+  test("sin nada que encontrar, se dice que no hay", () => {
+    esperar(horaDelFormulario({ nombre: "Alejandro" })).igual(null);
+    esperar(correoDelFormulario({ nombre: "Alejandro" })).igual(null);
+    esperar(horaDelFormulario(null)).igual(null);
+    esperar(correoDelFormulario(undefined)).igual(null);
+  });
+
+  test("EL NOMBRE SÍ NECESITA QUE LE DIGAN CUÁL ES", () => {
+    // Un nombre no tiene forma: «Alejandro», «Restaurante El Puerto» y «me urge
+    // para hoy» son todos texto suelto. Adivinar sería mandarle a Google una
+    // cita a nombre de un comentario.
+    esperar(nombreDelFormulario({ quien: "Alejandro", nota: "me urge" }, "quien")).igual("Alejandro");
+    esperar(nombreDelFormulario({ quien: "Alejandro", nota: "me urge" })).igual("");
+    esperar(nombreDelFormulario({ quien: "Alejandro" }, "no_existe")).igual("");
+    // Vacío significa «usa el del perfil de WhatsApp», que casi siempre es el
+    // bueno. Nunca significa «invéntate uno».
+    esperar(nombreDelFormulario({ quien: "   " }, "quien")).igual("");
+  });
+
+  test("un nombre kilométrico no rompe el evento de Google", () => {
+    esperar(nombreDelFormulario({ q: "a".repeat(500) }, "q").length).igual(80);
   });
 });
 
