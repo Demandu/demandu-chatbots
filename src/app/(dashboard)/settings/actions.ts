@@ -439,6 +439,44 @@ export async function disconnectIntegration(formData: FormData) {
       }
     }
   }
+  // ── CALENDLY: DESCONECTAR ES TAMBIÉN DEJAR DE RECIBIR ────────────────────
+  //
+  // Borrar la fila nos deja sin poder comprobar la firma, así que los avisos
+  // se rechazarían — pero seguirían llegando. «No sé leerlo» no es lo mismo
+  // que «no me lo mandes»: quien desconecta espera lo segundo.
+  //
+  // Y hay algo peor si la suscripción sobrevive: al reconectar se crea una
+  // clave de firma nueva y la suscripción vieja sigue firmando con la
+  // anterior, así que las citas dejan de entrar SIN UN SOLO ERROR A LA VISTA.
+  //
+  // Las dos llamadas son best-effort. La fila se borra pase lo que pase: que
+  // Calendly no conteste no puede dejar a nadie sin poder desconectar.
+  if (provider === "calendly") {
+    const { data } = await createAdminClient()
+      .from("integrations")
+      .select("access_token, data")
+      .eq("org_id", orgId)
+      .eq("provider", provider)
+      .maybeSingle();
+    const token = (data?.access_token as string) || "";
+    const org = ((data?.data as any)?.organizacion_uri as string) || "";
+    if (token) {
+      const { limpiarSuscripciones, revocar } = await import("@/lib/integrations/calendly");
+      const base = process.env.NEXT_PUBLIC_SITE_URL || "";
+      if (org && base) {
+        await limpiarSuscripciones(token, {
+          organizacion: org,
+          url: `${base}/api/webhooks/calendly/${orgId}`,
+        });
+      }
+      await revocar(
+        process.env.CALENDLY_CLIENT_ID ?? "",
+        process.env.CALENDLY_CLIENT_SECRET ?? "",
+        token,
+      );
+    }
+  }
+
   await supabase.from("integrations").delete().eq("org_id", orgId).eq("provider", provider);
   revalidatePath("/settings/integrations");
 }

@@ -3,6 +3,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 // El catálogo vive aparte porque lo necesita también la pantalla de
 // configuración, que corre en el navegador. Ver `salidas-eventos.ts`.
+//
+// SE IMPORTA ADEMÁS DE REEXPORTARSE. Un `export { ... } from` reenvía el tipo
+// hacia fuera pero NO lo mete en el ámbito de este archivo, así que `emitir`
+// se escribía con un `ClaveDeEvento` que aquí no existía. Lo cazó `tsc`.
+import type { ClaveDeEvento } from "@/lib/salidas-eventos";
 export { EVENTOS, type ClaveDeEvento } from "@/lib/salidas-eventos";
 
 /**

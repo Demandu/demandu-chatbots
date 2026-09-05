@@ -10,6 +10,11 @@ import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
+import {
+  nuevoVerificador, retoDe, urlDeAutorizacion, ventanaDeBusqueda, MAX_DIAS,
+  necesitaPlanDePago, firmaValida as firmaDeCalendlyValida, TOLERANCIA_SEG,
+  EVENTOS, nuevaClaveDeFirma,
+} from "../../src/lib/integrations/calendly.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
@@ -3746,6 +3751,131 @@ describe("Pedir por el chat — entender lo que contesta", () => {
     c = meterAlCarrito(c, 3);
     esperar(cuantasCosas(c)).igual(3);
     esperar(cuantasCosas(carritoVacio("t1"))).igual(0);
+  });
+});
+
+/* ── CALENDLY ────────────────────────────────────────────────────────────── */
+
+describe("Calendly", () => {
+  test("PKCE: el reto es el sha256 del verificador, en base64url y SIN RELLENO", () => {
+    // Calendly rechaza el intercambio si el reto trae `+`, `/` o `=`, y el
+    // error que devuelve no dice qué pasó. Es de esos fallos que cuestan una
+    // tarde entera, así que se fija aquí.
+    const v = nuevoVerificador();
+    const r = retoDe(v);
+    esperar(/^[A-Za-z0-9_-]+$/.test(r)).verdadero("base64url sin relleno o Calendly lo rechaza");
+    esperar(r.includes("=")).falso();
+    esperar(retoDe("abc")).igual(
+      crypto.createHash("sha256").update("abc").digest("base64url"),
+      "tiene que ser sha256, no el verificador tal cual",
+    );
+    esperar(retoDe(v)).igual(retoDe(v), "el mismo verificador da el mismo reto");
+    esperar(retoDe(v) === retoDe(nuevoVerificador())).falso("dos verificadores no pueden colisionar");
+  });
+
+  test("el enlace de autorización lleva S256, y no manda el secreto al navegador", () => {
+    const u = new URL(urlDeAutorizacion({
+      clientId: "abc", redirect: "https://x.test/cb", state: "s1", reto: "R",
+    }));
+    esperar(u.searchParams.get("code_challenge_method")).igual("S256", "Calendly exige PKCE a TODAS las apps");
+    esperar(u.searchParams.get("code_challenge")).igual("R");
+    esperar(u.searchParams.get("response_type")).igual("code");
+    esperar(u.searchParams.get("state")).igual("s1", "sin state, cualquiera engancha SU cuenta a TU organización");
+    esperar(u.toString().includes("client_secret")).falso("el secreto NUNCA viaja al navegador");
+  });
+
+  test("la ventana de búsqueda no pasa de 31 días", () => {
+    // Calendly no recorta: rechaza la consulta entera. Pedir 60 días tiene que
+    // devolver 31 de huecos, no cero.
+    const dias = (v) => Math.round(
+      (Date.parse(v.fin) - Date.parse(v.inicio)) / 86400000,
+    );
+    esperar(dias(ventanaDeBusqueda(new Date(), 60))).igual(MAX_DIAS);
+    esperar(dias(ventanaDeBusqueda(new Date(), 31))).igual(31);
+    esperar(dias(ventanaDeBusqueda(new Date(), 7))).igual(7);
+    esperar(dias(ventanaDeBusqueda(new Date(), 0))).igual(1, "cero días no puede pedir cero huecos");
+    esperar(dias(ventanaDeBusqueda(new Date(), -5))).igual(1);
+    // SIN DATO USABLE, UNA SEMANA — y eso es distinto de «me dijeron cero».
+    // Escribirlo con `|| 7` mezclaba los dos casos y daba 7 para el cero y 1
+    // para el -5: dos caminos para el mismo disparate, con final distinto.
+    esperar(dias(ventanaDeBusqueda(new Date(), undefined))).igual(7);
+    esperar(dias(ventanaDeBusqueda(new Date(), NaN))).igual(7);
+    esperar(dias(ventanaDeBusqueda(new Date(), "hola"))).igual(7);
+    esperar(MAX_DIAS).igual(31, "es el tope de Calendly, no una preferencia nuestra");
+  });
+
+  test("la ventana nunca empieza en el pasado", () => {
+    // Calendly rechaza un `start_time` pasado. Un flujo que pregunta «¿para
+    // cuándo?» puede traer una fecha de ayer perfectamente.
+    const v = ventanaDeBusqueda(new Date("2020-01-01T00:00:00Z"), 7);
+    esperar(Date.parse(v.inicio) > Date.now()).verdadero("pedir desde el pasado rompe la consulta entera");
+  });
+
+  test("se distingue «tu plan no llega» de cualquier otro 403", () => {
+    // Importa de verdad: con el plan gratis el bloque manda el enlace y la
+    // cita se hace igual; con otro 403 hay algo roto que hay que arreglar.
+    esperar(necesitaPlanDePago("This feature requires a paid plan")).verdadero();
+    esperar(necesitaPlanDePago("Please upgrade your subscription")).verdadero();
+    esperar(necesitaPlanDePago("UPGRADE REQUIRED")).verdadero("el texto llega como llegue");
+    esperar(necesitaPlanDePago("Invalid event type uri")).falso();
+    esperar(necesitaPlanDePago("Forbidden")).falso("un 403 pelado no es un problema de plan");
+    esperar(necesitaPlanDePago("")).falso();
+  });
+
+  test("la firma de un aviso: solo pasa la de verdad", () => {
+    const clave = "s3cr3to";
+    const cuerpo = JSON.stringify({ event: "invitee.created" });
+    const firmar = (t, c = cuerpo, k = clave) =>
+      `t=${t},v1=${crypto.createHmac("sha256", k).update(`${t}.${c}`).digest("hex")}`;
+    const ahora = Math.floor(Date.now() / 1000);
+
+    esperar(firmaDeCalendlyValida(cuerpo, firmar(ahora), clave)).verdadero();
+    esperar(firmaDeCalendlyValida(cuerpo, firmar(ahora - 60), clave)).verdadero("un minuto de retraso es normal");
+
+    // ── TODO LO DEMÁS SE RECHAZA ─────────────────────────────────────────
+    // Cada una de estas, si pasara, deja a cualquiera metiendo citas y
+    // contactos falsos en la cuenta de cualquier cliente.
+    esperar(firmaDeCalendlyValida(cuerpo, firmar(ahora), "otra")).falso("clave distinta");
+    esperar(firmaDeCalendlyValida("{}", firmar(ahora), clave)).falso("el cuerpo cambió por el camino");
+    esperar(firmaDeCalendlyValida(cuerpo, firmar(ahora - 400), clave)).falso("fuera de la tolerancia");
+    esperar(firmaDeCalendlyValida(cuerpo, firmar(ahora + 400), clave)).falso("y también hacia el futuro");
+    esperar(firmaDeCalendlyValida(cuerpo, firmar(ahora), "")).falso("SIN CLAVE SE RECHAZA, no se deja pasar");
+    esperar(firmaDeCalendlyValida(cuerpo, null, clave)).falso("sin cabecera se rechaza");
+    esperar(firmaDeCalendlyValida(cuerpo, `t=${ahora}`, clave)).falso("falta la firma");
+    esperar(firmaDeCalendlyValida(cuerpo, "v1=abc", clave)).falso("falta la marca de tiempo");
+    esperar(firmaDeCalendlyValida(cuerpo, `t=nodigits,v1=abc`, clave)).falso("marca de tiempo que no es número");
+    esperar(firmaDeCalendlyValida(cuerpo, `t=${ahora},v1=abc`, clave)).falso("firma corta: no puede LANZAR, tiene que devolver false");
+    esperar(firmaDeCalendlyValida(cuerpo, "", clave)).falso("cabecera vacía");
+  });
+
+  test("el aviso se firma con los BYTES QUE LLEGARON, no con el JSON reserializado", () => {
+    // Es el fallo clásico de todo webhook: parsear, volver a serializar y
+    // firmar eso. Un espacio de más y no cuadra nunca.
+    const clave = "k";
+    const crudo = '{"event":"invitee.created",  "payload":{}}';
+    const ahora = Math.floor(Date.now() / 1000);
+    const cab = `t=${ahora},v1=${crypto.createHmac("sha256", clave).update(`${ahora}.${crudo}`).digest("hex")}`;
+    esperar(firmaDeCalendlyValida(crudo, cab, clave)).verdadero();
+    esperar(firmaDeCalendlyValida(JSON.stringify(JSON.parse(crudo)), cab, clave)).falso(
+      "si esto pasara, el webhook estaría leyendo el cuerpo mal",
+    );
+  });
+
+  test("la tolerancia de reloj es la que pide Calendly", () => {
+    esperar(TOLERANCIA_SEG).igual(180);
+  });
+
+  test("nos suscribimos a las altas Y a las cancelaciones", () => {
+    // Solo con `invitee.created` la Bandeja se llena de citas que ya no
+    // existen, y el equipo se presenta a reuniones canceladas.
+    esperar(EVENTOS.includes("invitee.created")).verdadero();
+    esperar(EVENTOS.includes("invitee.canceled")).verdadero();
+  });
+
+  test("cada clave de firma es distinta y bastante larga", () => {
+    const a = nuevaClaveDeFirma();
+    esperar(a.length >= 64).verdadero("32 bytes en hexadecimal");
+    esperar(a === nuevaClaveDeFirma()).falso("una clave por cliente, no una para todos");
   });
 });
 

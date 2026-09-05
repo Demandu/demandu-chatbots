@@ -944,7 +944,13 @@ describe("Puerta de agenda del motor", () => {
     // se quedaría diciendo «no conectado» a todo el mundo.
     // ─────────────────────────────────────────────────────────────────────────
     const TABLAS = ["whatsapp_channels", "instagram_channels", "integrations", "salidas", "tienda_cobros"];
-    const SECRETAS = ["access_token", "refresh_token", "secreto"];
+    // `firma` ES DE LA MISMA FAMILIA aunque no lo parezca: es la clave con la
+    // que se comprueban los avisos de Calendly, y quien la tenga puede mandar
+    // un `invitee.created` firmado que nos creeremos — o sea, meter contactos
+    // y mensajes en las conversaciones de ese cliente. La 0093 la sacó de
+    // `data` justo por esto; esta línea impide que vuelva a pedirse con la
+    // sesión del usuario.
+    const SECRETAS = ["access_token", "refresh_token", "secreto", "firma"];
     const malos = [];
 
     for (const { ruta, texto } of ARCHIVOS) {
@@ -989,7 +995,12 @@ describe("Puerta de agenda del motor", () => {
           if (!sel) continue; // `select(CONSTANTE)`: se revisa donde se define
           if (sel[1].trim() === "*") { malos.push(`${ruta} → ${tabla}: select("*")`); continue; }
           for (const col of SECRETAS) {
-            if (sel[1].includes(col)) malos.push(`${ruta} → ${tabla}.${col}`);
+            // COLUMNA ENTERA, no subcadena: `includes("firma")` acusaría a un
+            // `confirmado` cualquiera, y una prueba que acusa en falso es una
+            // prueba que se acaba desactivando.
+            if (new RegExp(`(^|[\\s,(])${col}([\\s,)]|$)`).test(sel[1])) {
+              malos.push(`${ruta} → ${tabla}.${col}`);
+            }
           }
         }
       }

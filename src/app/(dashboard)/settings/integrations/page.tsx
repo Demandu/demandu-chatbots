@@ -3,7 +3,7 @@ import { getCurrentOrgId } from "@/lib/org";
 import { disconnectIntegration, disconnectWhatsapp } from "../actions";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { WhatsAppConnect } from "@/components/integrations/WhatsAppConnect";
-import { GoogleCalendarLogo } from "@/components/integrations/Logos";
+import { GoogleCalendarLogo, CalendlyLogo } from "@/components/integrations/Logos";
 import { Catalogo } from "@/components/integrations/Catalogo";
 import { LlavesApi, type LlaveFila } from "@/components/integrations/LlavesApi";
 import { SheetsConfig, type ConfigSheets } from "@/components/integrations/SheetsConfig";
@@ -14,12 +14,20 @@ export const dynamic = "force-dynamic";
 export default async function IntegrationsPage({
   searchParams,
 }: {
-  searchParams: { connected?: string; error?: string };
+  searchParams: { connected?: string; ok?: string; error?: string };
 }) {
   const orgId = await getCurrentOrgId();
   const sb = createClient();
-  const [{ data }, { data: wa }, { data: bots }, { data: intereses }, { data: llaves }, { data: sheets }, { data: salidas }] = await Promise.all([
+  const [{ data }, { data: cal }, { data: wa }, { data: bots }, { data: intereses }, { data: llaves }, { data: sheets }, { data: salidas }] = await Promise.all([
     sb.from("integrations").select("provider, account_email, data, created_at").eq("org_id", orgId ?? "").eq("provider", "google_calendar").maybeSingle(),
+    // NI `access_token` NI `refresh_token`: esta pantalla no los usa para nada
+    // y pedirlos con la sesión del usuario los pondría al alcance de una
+    // consulta suelta desde la consola del navegador.
+    //
+    // `data` sí, y ahí vive `firma` —la clave con la que se comprueban los
+    // avisos—, así que abajo se pinta SOLO lo que hace falta y nunca el objeto
+    // entero.
+    sb.from("integrations").select("provider, account_email, data, created_at").eq("org_id", orgId ?? "").eq("provider", "calendly").maybeSingle(),
     // COLUMNAS EXPLÍCITAS, NO `*`. El token dejó de ser legible para una sesión
     // normal, y `*` lo pediría igual: la consulta entera fallaría y esta
     // pantalla se quedaría diciendo «WhatsApp no conectado» a todo el mundo.
@@ -63,8 +71,10 @@ export default async function IntegrationsPage({
 
   const google = data as any | null;
   const calendars = (google?.data?.calendars as any[]) ?? [];
+  const calendly = cal as any | null;
   const err = searchParams?.error;
   const connected = searchParams?.connected === "1";
+  const calOk = searchParams?.ok === "calendly";
 
   const waBots = ((bots as any[]) ?? []).filter((b) => b.channel === "whatsapp");
 
@@ -82,10 +92,27 @@ export default async function IntegrationsPage({
           ✅ Google Calendar se conectó correctamente.
         </div>
       )}
+      {calOk && (
+        <div className="mb-4 rounded-xl border border-success/40 bg-success/10 px-4 py-2.5 text-sm text-exito">
+          ✅ Calendly se conectó correctamente.
+        </div>
+      )}
       {err && (
         <div className="mb-4 rounded-xl border border-danger/40 bg-danger/10 px-4 py-2.5 text-sm text-danger">
+          {/* CADA MOTIVO DICE QUÉ HACER. «No se pudo completar la conexión» deja
+              al cliente sin saber si el problema es suyo, nuestro, o de esperar
+              demasiado en la pantalla de Calendly — y llama a soporte por las
+              tres cosas. */}
           {err === "missing_credentials"
             ? "La conexión con Google no está disponible en este momento. Escríbenos a soporte y lo habilitamos."
+            : err === "calendly_sin_credenciales"
+            ? "La conexión con Calendly no está disponible en este momento. Escríbenos a soporte y lo habilitamos."
+            : err === "calendly_state"
+            ? "La conexión tardó demasiado y se cerró por seguridad. Vuelve a pulsar «Conectar Calendly»."
+            : err === "sin_permiso"
+            ? "Tu usuario no tiene permiso para conectar servicios. Pídeselo a quien administra la cuenta."
+            : err === "calendly_fallo"
+            ? "Calendly no completó la conexión. Inténtalo de nuevo; si vuelve a pasar, escríbenos."
             : "No se pudo completar la conexión. Inténtalo de nuevo o contacta a soporte."}
         </div>
       )}
@@ -136,6 +163,77 @@ export default async function IntegrationsPage({
                 className="mt-3 inline-flex items-center gap-2 rounded-xl bg-demandu-gradient px-4 py-2 text-sm font-semibold text-white"
               >
                 Conectar Google Calendar
+              </a>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Tarjeta Calendly */}
+      <div className="mt-4 rounded-2xl border border-linea bg-tarjeta p-5">
+        <div className="flex items-start gap-4">
+          <span className="grid h-12 w-12 flex-none place-items-center rounded-xl border border-linea bg-tarjeta p-2">
+            <CalendlyLogo className="h-full w-full" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-display text-base font-semibold text-ink">Calendly</h3>
+              {calendly ? (
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-exito">Conectado</span>
+              ) : (
+                <span className="rounded-full bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Sin conectar</span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-ink-3">
+              El bloque <b className="text-ink-2">Agendar cita</b> ofrece tus horarios reales de Calendly y reserva sin que la persona salga del chat.
+            </p>
+
+            {calendly ? (
+              <div className="mt-3">
+                <p className="text-xs text-ink-2">
+                  Cuenta: <b className="text-ink">{calendly.account_email ?? calendly.data?.nombre ?? "—"}</b>
+                </p>
+
+                {/* ── SI LOS AVISOS NO QUEDARON SUSCRITOS, SE DICE ───────────
+                    La conexión se guarda igual —agendar desde el chat funciona
+                    sin avisos— pero entonces las citas que la persona agende
+                    desde el enlace de Instagram NO entran a la Bandeja. Eso no
+                    se puede quedar en un `console.error` que nadie mira: el
+                    cliente creería que la integración está entera. */}
+                {calendly.data?.avisos === false && (
+                  <p className="mt-2 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-ink-2">
+                    ⚠️ Las citas que se agenden <b>fuera del chat</b> no están entrando a tu Bandeja.
+                    Desconecta y vuelve a conectar para arreglarlo.
+                  </p>
+                )}
+
+                {/* ── EL PLAN GRATIS TAMBIÉN SE DICE, Y AQUÍ ────────────────
+                    Calendly solo deja reservar por su API a las cuentas de
+                    pago. El bloque ya resuelve solo —manda el enlace de la
+                    agenda en vez de los horarios— pero el cliente tiene que
+                    saber POR QUÉ ve un enlace donde esperaba horarios, y este
+                    es el sitio donde va a venir a mirar. */}
+                {calendly.data?.plan_gratis && (
+                  <p className="mt-2 rounded-xl border border-linea bg-suave px-3 py-2 text-xs text-ink-2">
+                    Tu plan de Calendly no permite reservar desde otra aplicación, así que el
+                    chatbot manda tu enlace de agenda en lugar de los horarios. Para que reserve
+                    dentro del chat necesitas un plan de pago de Calendly.
+                  </p>
+                )}
+
+                <form action={disconnectIntegration} className="mt-3">
+                  <input type="hidden" name="provider" value="calendly" />
+                  <button className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-2 text-xs font-semibold text-danger transition hover:bg-danger/20">
+                    Desconectar
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <a
+                href="/api/integrations/calendly/start"
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-demandu-gradient px-4 py-2 text-sm font-semibold text-white"
+              >
+                Conectar Calendly
               </a>
             )}
           </div>

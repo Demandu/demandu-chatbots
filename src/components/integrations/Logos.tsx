@@ -35,3 +35,26 @@ export function GoogleCalendarLogo({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/**
+ * Calendly. El círculo azul de la marca con la «C» abierta.
+ *
+ * Va dibujado a mano y no con la sigla en una placa de color —como en el
+ * catálogo— porque aquí la tarjeta es grande y comparte fila con el logo real
+ * de Google Calendar: una placa con una letra al lado de un logo de verdad
+ * parece lo que es, un hueco sin terminar.
+ */
+export function CalendlyLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} role="img" aria-label="Calendly">
+      <circle cx="12" cy="12" r="11" fill="#006BFF" />
+      <path
+        d="M16.1 9.1a4.9 4.9 0 0 0-4.1-2.1c-2.9 0-5 2.2-5 5s2.1 5 5 5a4.9 4.9 0 0 0 4.1-2.1"
+        fill="none"
+        stroke="#FFFFFF"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}

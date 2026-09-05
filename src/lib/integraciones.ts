@@ -54,7 +54,7 @@ export const INTEGRACIONES: Integracion[] = [
     sigla: "C",
     categoria: "Agenda",
     descripcion: "Que el chatbot ofrezca tus horarios de Calendly y agende sin salir del chat.",
-    estado: "proximamente",
+    estado: "disponible",
   },
 
   // ── CRM y datos ───────────────────────────────────────────────────────────
