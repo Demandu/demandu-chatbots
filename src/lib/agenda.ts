@@ -7,6 +7,7 @@ import {
   agendaDelBloque, leerPreferida, leerEleccionDelBloque, tipoDeEventoDeCalendly,
   type EleccionDelBloque,
 } from "@/lib/agendaElegida";
+import { repartirHorarios } from "@/lib/agendaHorarios";
 
 /**
  * Agendar citas. UNA sola implementación, tres puertas de entrada.
@@ -51,12 +52,39 @@ export type Cita = {
   dia: string;      // «jueves, 27 de agosto»
   hora: string;     // «10:00»
   etiqueta: string; // «jue 27 ago, 10:00» — el mismo formato de los botones
+  /**
+   * LA CITA EXISTE, PERO NADIE RECIBIÓ INVITACIÓN.
+   *
+   * Pasa cuando no había correo que invitar, o cuando Google rechazó al
+   * invitado —una cuenta de servicio sin permiso de delegación no puede
+   * invitar a nadie—. En los dos casos el evento SÍ está en la agenda, así
+   * que se confirma la cita; lo que cambia es que no se le puede prometer a
+   * la persona un correo que no va a llegar.
+   *
+   * Es exactamente lo que pasó el 5 de septiembre: cita creada, cero correos,
+   * y una confirmación que no mencionaba ninguna de las dos cosas.
+   */
+  sinInvitacion?: boolean;
 };
 
 export type Fallo = {
   ok: false;
   error: string;
   motivo: "sin_conexion" | "sin_datos" | "google" | "calendly" | "plan";
+  /**
+   * ¿ESTE TEXTO SE LE PUEDE ENSEÑAR A LA PERSONA QUE ESTÁ AGENDANDO?
+   *
+   * Por omisión NO. `error` está escrito para quien monta la plataforma —«no
+   * hay ningún tipo de cita activo», «vuelve a conectarla en Ajustes»— y a
+   * quien está al otro lado del chat no le dice nada, no lo provocó y no lo
+   * puede arreglar. Un cliente recibió literalmente «Falta la fecha y hora de
+   * la cita.» por escribir «necesito que sea en la tarde».
+   *
+   * Se marca solo lo que la persona puede resolver ella misma en el siguiente
+   * mensaje. El motivo no sirve para decidirlo: «acaba de ocuparse» y «falta
+   * la fecha» comparten `sin_datos` y son casos opuestos.
+   */
+  paraElCliente?: boolean;
   /**
    * El enlace para agendar a mano, cuando lo hay.
    *
@@ -243,15 +271,20 @@ export async function horariosLibres(
       if (!elTipo) return { slots: [], calendarId, conectado: true, enlace: conexion.agendaUrl };
 
       const horas = await calendly.horariosDisponibles(conexion.token, elTipo, new Date(), days);
-      const slots: Slot[] = horas.slice(0, maxSlots).map((iso) => ({
+      const etiqueta = new Intl.DateTimeFormat("es-MX", {
+        timeZone: zona, weekday: "short", day: "2-digit", month: "short",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      });
+      // SE CONVIERTEN TODOS Y DESPUÉS SE RECORTA, no al revés. Cortar primero
+      // dejaba las seis horas más próximas, que en una agenda vacía son seis
+      // huecos seguidos de la misma mañana.
+      const todos: Slot[] = horas.map((iso) => ({
         startISO: iso,
         endISO: new Date(Date.parse(iso) + durationMin * 60_000).toISOString(),
-        label: new Intl.DateTimeFormat("es-MX", {
-          timeZone: zona, weekday: "short", day: "2-digit", month: "short",
-          hour: "2-digit", minute: "2-digit", hour12: false,
-        }).format(new Date(iso)),
+        label: etiqueta.format(new Date(iso)),
+        ...partesEnZona(iso, zona),
       }));
-      return { slots, calendarId: elTipo, conectado: true, enlace: conexion.agendaUrl };
+      return { slots: repartirHorarios(todos, maxSlots), calendarId: elTipo, conectado: true, enlace: conexion.agendaUrl };
     } catch (e) {
       // Sin poder leer los huecos NO se ofrece nada, pero sí el enlace: el
       // cliente puede agendar igual y el negocio no pierde la cita.
@@ -276,11 +309,44 @@ export async function horariosLibres(
     return { slots: [], calendarId, conectado: true };
   }
 
-  return {
-    slots: computeSlots({ businessHours, timeZone, durationMin, busy: ocupado, now: ahora, days, maxSlots }),
-    calendarId,
-    conectado: true,
-  };
+  // ── SE CALCULAN TODOS LOS HUECOS Y LUEGO SE REPARTEN ────────────────────
+  //
+  // `computeSlots` recorre el horario laboral de arriba abajo y para en cuanto
+  // junta `maxSlots`. Pedirle seis daba exactamente esto: 09:00, 09:30 y 10:00
+  // del primer día laborable. Ni una tarde, ni un segundo día.
+  //
+  // Ahora se le pide una bolsa grande y el reparto elige diez cubriendo días y
+  // turnos. El coste es aritmética en memoria sobre un par de cientos de
+  // huecos —ninguna llamada de red extra—, y la diferencia para quien está al
+  // otro lado es entre poder elegir y no poder.
+  const bolsa = computeSlots({
+    businessHours, timeZone, durationMin, busy: ocupado, now: ahora, days,
+    maxSlots: Math.max(maxSlots, TOPE_DE_LA_BOLSA),
+  });
+
+  return { slots: repartirHorarios(bolsa, maxSlots), calendarId, conectado: true };
+}
+
+/**
+ * Cuántos huecos se calculan antes de repartir.
+ *
+ * Suficientes para cubrir dos semanas de agenda vacía a media hora el hueco, y
+ * con tope para que una configuración rara —citas de cinco minutos, horario de
+ * 24 h— no acabe generando miles de objetos para enseñar diez.
+ */
+const TOPE_DE_LA_BOLSA = 300;
+
+/** El día y la hora de un instante, en la zona del negocio. */
+function partesEnZona(iso: string, zona: string): { dia: string; minutos: number } {
+  const p = new Intl.DateTimeFormat("en-US", {
+    timeZone: zona, hour12: false,
+    year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(new Date(iso));
+  const m: Record<string, string> = {};
+  for (const x of p) m[x.type] = x.value;
+  // `hour12: false` puede devolver «24» a medianoche en algunos entornos; el
+  // resto por 24 lo deja en 0, que es lo que significa.
+  return { dia: `${+m.year}-${+m.month}-${+m.day}`, minutos: (+m.hour % 24) * 60 + +m.minute };
 }
 
 /**
@@ -387,6 +453,10 @@ export async function agendar(
     return {
       ok: true,
       eventoId: r.uri,
+      // Calendly manda SIEMPRE su propio correo de confirmación al invitado;
+      // por eso aquí no se marca nunca. Si un día deja de hacerlo, este es el
+      // sitio donde se nota.
+      sinInvitacion: false,
       // El enlace útil para el cliente es el de cambiar o cancelar, no el del
       // evento: es lo que va a necesitar si le cambia el día.
       enlace: r.enlaceCambiar || r.enlaceCancelar || conexion.agendaUrl,
@@ -424,6 +494,8 @@ export async function agendar(
       return {
         ok: false,
         motivo: "sin_datos",
+        // El único que sí sale tal cual: la persona elige otra hora y sigue.
+        paraElCliente: true,
         error: "Ese horario acaba de ocuparse. Elige otro, por favor.",
       };
     }
@@ -433,19 +505,23 @@ export async function agendar(
   }
 
   try {
+    const correoInvitado = String(d.correoInvitado || "").trim();
     const ev = await createCalendarEvent(token, calendarId, {
       summary: d.titulo || "Cita agendada · Demandu",
       description: d.descripcion || "Cita agendada desde el chatbot.",
       startISO: inicio,
       endISO: finISO,
       timeZone,
-      attendeeEmail: d.correoInvitado || undefined,
+      attendeeEmail: correoInvitado || undefined,
     });
     const cuando = new Date(Date.parse(inicio));
     return {
       ok: true,
       eventoId: ev.id,
       enlace: ev.htmlLink,
+      // SIN CORREO TAMPOCO HAY INVITACIÓN, y esa es la causa habitual — no que
+      // Google la rechace. `createCalendarEvent` solo puede contar lo suyo.
+      sinInvitacion: !correoInvitado || ev.sinInvitacion === true,
       inicioISO: inicio,
       finISO,
       dia: new Intl.DateTimeFormat("es-MX", {

@@ -23,6 +23,10 @@ import {
   EVENTOS, nuevaClaveDeFirma,
 } from "../../src/lib/integrations/calendly.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION, sinMarcadores } from "../../src/lib/ai/acciones.ts";
+import {
+  repartirHorarios, esHorarioElegido, correoValido, quiereOmitir,
+  mensajeParaElCliente, CORTE_DE_TURNO,
+} from "../../src/lib/agendaHorarios.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
   MEDIDAS, PROPORCION, proporcionDe, comoMedida, instruccionesDeImagenes,
@@ -4171,6 +4175,198 @@ describe("Un marcador de herramienta nunca llega al cliente", () => {
     for (const clave of CLAVES_DE_ACCION) {
       esperar(sinMarcadores(`Texto antes.\n/${clave} lo que sea`)).igual("Texto antes.");
     }
+  });
+});
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * EL BLOQUE «AGENDAR CITA»
+ *
+ * Cada prueba de aquí abajo sale de una conversación real de WhatsApp del 5 de
+ * septiembre. El cliente eligió agendar una demo y recibió esto:
+ *
+ *   bot     → «Revisa los horarios disponibles» [09:00] [09:30] [10:00]
+ *   cliente → «necesito que sea en la tarde»
+ *   bot     → «Falta la fecha y hora de la cita.»
+ *
+ * La cita acabó creándose sin invitado, porque el bloque tenía configurado de
+ * dónde sacar el correo y nadie lo preguntaba nunca.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** Atajo para escribir huecos: («lun», 9, 30) → un horario de las 9:30 del lunes. */
+const hueco = (dia, h, m = 0) => ({ dia, minutos: h * 60 + m, id: `${dia} ${h}:${String(m).padStart(2, "0")}` });
+
+describe("Los horarios que se ofrecen se reparten, no son los primeros", () => {
+  test("EL FALLO EXACTO: tres medias horas seguidas de la misma mañana", () => {
+    // Esto es lo que se ofreció de verdad. Con el reparto, tres huecos de una
+    // agenda vacía ya no pueden salir los tres antes de las once.
+    const agendaVacia = [];
+    for (const dia of ["lun", "mar", "mie"]) {
+      for (let h = 9; h < 18; h++) { agendaVacia.push(hueco(dia, h, 0)); agendaVacia.push(hueco(dia, h, 30)); }
+    }
+
+    const tres = repartirHorarios(agendaVacia, 3);
+    esperar(tres.length).igual(3);
+    esperar(tres.every((x) => x.dia === "lun" && x.minutos < CORTE_DE_TURNO)).igual(false);
+  });
+
+  test("con diez se cubren varios días Y las dos mitades del día", () => {
+    const agendaVacia = [];
+    for (const dia of ["lun", "mar", "mie", "jue", "vie"]) {
+      for (let h = 9; h < 18; h++) { agendaVacia.push(hueco(dia, h, 0)); agendaVacia.push(hueco(dia, h, 30)); }
+    }
+
+    const diez = repartirHorarios(agendaVacia, 10);
+    esperar(diez.length).igual(10);
+    esperar(new Set(diez.map((x) => x.dia)).size).igual(5);
+    esperar(diez.some((x) => x.minutos < CORTE_DE_TURNO)).igual(true);
+    esperar(diez.some((x) => x.minutos >= CORTE_DE_TURNO)).igual(true);
+  });
+
+  test("salen en orden cronológico, no en el del reparto", () => {
+    // La lista se lee de la hora más próxima a la más lejana. El reparto elige
+    // saltando entre mañana y tarde; si se enseñara en ESE orden, la tarde del
+    // lunes saldría antes que su mañana.
+    //
+    // Se piden MENOS de los que hay a propósito: con todos cabiendo, la
+    // función devuelve la lista entera y el orden no se llega a probar.
+    const agenda = [
+      hueco("lun", 9), hueco("lun", 10), hueco("lun", 15), hueco("lun", 16),
+      hueco("mar", 9), hueco("mar", 10), hueco("mar", 15), hueco("mar", 16),
+    ];
+    const r = repartirHorarios(agenda, 4);
+    esperar(r.map((x) => x.id).join(" · ")).igual("lun 9:00 · lun 15:00 · mar 9:00 · mar 15:00");
+  });
+
+  test("el orden del día es el de aparición, no el alfabético", () => {
+    // «2026-9-7» y «2026-10-1» ordenados como texto pondrían octubre primero,
+    // o sea el bot ofreciendo el mes que viene antes que pasado mañana.
+    // El cambio de mes es donde se ve. Se meten tres huecos por turno para que
+    // sobren y la función tenga que repartir de verdad.
+    const agenda = [];
+    for (const dia of ["2026-9-30", "2026-10-1"]) {
+      for (const minutos of [540, 600, 660, 900, 960, 1020]) agenda.push({ dia, minutos });
+    }
+    const r = repartirHorarios(agenda, 4);
+    esperar(r[0].dia).igual("2026-9-30");
+    esperar(r[r.length - 1].dia).igual("2026-10-1");
+    esperar(r.map((x) => `${x.dia} ${x.minutos}`).join(" · "))
+      .igual("2026-9-30 540 · 2026-9-30 900 · 2026-10-1 540 · 2026-10-1 900");
+  });
+
+  test("una agenda casi llena devuelve lo poco que haya, sin colgarse", () => {
+    esperar(repartirHorarios([hueco("lun", 9)], 10).length).igual(1);
+    esperar(repartirHorarios([], 10).length).igual(0);
+    esperar(repartirHorarios([hueco("lun", 9)], 0).length).igual(0);
+    // Un solo turno con menos huecos que los pedidos: el bucle tiene que
+    // terminar aunque ningún cubo pueda dar más.
+    const pocos = [hueco("lun", 9), hueco("lun", 10), hueco("lun", 11)];
+    esperar(repartirHorarios(pocos, 3).length).igual(3);
+  });
+
+  test("las 12:00 son tarde, no mañana", () => {
+    esperar(CORTE_DE_TURNO).igual(720);
+    const agenda = [hueco("lun", 11, 30), hueco("lun", 12, 0), hueco("lun", 11, 0)];
+    const dos = repartirHorarios(agenda, 2);
+    esperar(dos.some((x) => x.minutos === 720)).igual(true);
+  });
+});
+
+describe("Lo que escribe la persona cuando se le piden horas", () => {
+  test("EL FALLO EXACTO: «necesito que sea en la tarde» no es una fecha", () => {
+    esperar(esHorarioElegido("necesito que sea en la tarde")).igual(null);
+    esperar(esHorarioElegido("lun 07 de sep, 10:00")).igual(null); // la etiqueta tampoco
+    esperar(esHorarioElegido("mañana")).igual(null);
+    esperar(esHorarioElegido("")).igual(null);
+    esperar(esHorarioElegido(null)).igual(null);
+  });
+
+  test("el identificador de la opción sí lo es", () => {
+    esperar(esHorarioElegido("2026-09-07T16:00:00.000Z")).igual("2026-09-07T16:00:00.000Z");
+    esperar(esHorarioElegido("  2026-09-07T16:00:00.000Z  ")).igual("2026-09-07T16:00:00.000Z");
+  });
+
+  test("UNA FECHA ESCRITA A MANO TAMPOCO VALE, aunque el calendario la entienda", () => {
+    // Es lo que hace mucha gente: en vez de tocar la opción, teclean la fecha.
+    // Sin comprobar la FORMA, «9/7/2026» se aceptaría como hora elegida y la
+    // cita se crearía a las doce de la noche. Y «10» a secas también entra:
+    // el calendario lo lee como el año 2001.
+    esperar(esHorarioElegido("9/7/2026")).igual(null);
+    esperar(esHorarioElegido("7 sep 2026")).igual(null);
+    esperar(esHorarioElegido("10")).igual(null);
+    esperar(esHorarioElegido("2026")).igual(null);
+  });
+
+  test("una fecha con la forma correcta pero imposible se rechaza", () => {
+    // Sin la comprobación del calendario, esto llegaría al calendario como
+    // «Invalid Date» y volvería convertido en un error interno.
+    esperar(esHorarioElegido("2026-13-45T99:99:00.000Z")).igual(null);
+  });
+});
+
+describe("El correo del invitado", () => {
+  test("lo que evidentemente no es un correo no entra en la cita", () => {
+    esperar(correoValido("Alex Molina")).igual(null);
+    esperar(correoValido("no tengo")).igual(null);
+    esperar(correoValido("alex@")).igual(null);
+    esperar(correoValido("@demandu.tech")).igual(null);
+    esperar(correoValido("alex@demandu")).igual(null);   // sin punto
+    esperar(correoValido("a b@c.com")).igual(null);      // con espacio
+    esperar(correoValido("")).igual(null);
+  });
+
+  test("los correos raros pero legítimos SÍ entran", () => {
+    // Rechazar uno de estos es perder una invitación por presumir de validador.
+    esperar(correoValido("Alex+Demo@Demandu.Tech")).igual("alex+demo@demandu.tech");
+    esperar(correoValido("a@b.co")).igual("a@b.co");
+    esperar(correoValido("nombre.apellido@sub.dominio.com.pa")).igual("nombre.apellido@sub.dominio.com.pa");
+  });
+
+  test("cuando dice que no, se respeta", () => {
+    for (const t of ["no", "No", "NO", "no gracias", "paso", "omitir", "no tengo", "mejor no", "despues", "después"]) {
+      esperar(quiereOmitir(t)).igual(true);
+    }
+  });
+
+  test("un correo NO es un «no», ni una frase larga", () => {
+    // Si esto se confundiera, se tiraría el correo que la persona acaba de dar.
+    esperar(quiereOmitir("alex@demandu.tech")).igual(false);
+    esperar(quiereOmitir("no, mejor te lo doy: alex@demandu.tech")).igual(false);
+    esperar(quiereOmitir("")).igual(false);
+    esperar(quiereOmitir(null)).igual(false);
+  });
+});
+
+describe("Qué error se le enseña a la persona y cuál no", () => {
+  test("EL FALLO EXACTO: «Falta la fecha y hora de la cita.» nunca sale", () => {
+    // Ese texto llegó al chat de un cliente. Describe un estado interno: ni lo
+    // provocó, ni lo puede arreglar, ni significa nada para él.
+    const interno = { error: "Falta la fecha y hora de la cita.", motivo: "sin_datos" };
+    esperar(mensajeParaElCliente(interno).includes("Falta la fecha")).igual(false);
+  });
+
+  test("lo accionable SÍ sale tal cual", () => {
+    const ocupado = {
+      error: "Ese horario acaba de ocuparse. Elige otro, por favor.",
+      motivo: "sin_datos", paraElCliente: true,
+    };
+    esperar(mensajeParaElCliente(ocupado)).igual("Ese horario acaba de ocuparse. Elige otro, por favor.");
+  });
+
+  test("SE DECIDE POR LA MARCA, NO POR EL MOTIVO", () => {
+    // Los dos casos de arriba comparten `motivo: "sin_datos"` y son opuestos.
+    // Si esto se decidiera por el motivo, uno de los dos saldría mal a la
+    // fuerza — y fue el primer intento de arreglarlo.
+    const a = { error: "Falta la fecha y hora de la cita.", motivo: "sin_datos" };
+    const b = { error: "Ese horario acaba de ocuparse.", motivo: "sin_datos", paraElCliente: true };
+    esperar(mensajeParaElCliente(a) === mensajeParaElCliente(b)).igual(false);
+  });
+
+  test("un fallo nuevo empieza siendo interno", () => {
+    // El lado seguro. Quien añada un motivo tiene que marcarlo a propósito.
+    esperar(mensajeParaElCliente({ error: "quota exceeded 429", motivo: "inventado" }).includes("429")).igual(false);
+    esperar(mensajeParaElCliente(null).length > 0).igual(true);
+    esperar(mensajeParaElCliente({ paraElCliente: true, error: "" }).length > 0).igual(true);
   });
 });
 

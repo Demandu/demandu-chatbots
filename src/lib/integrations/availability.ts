@@ -32,7 +32,23 @@ function ymdInTz(instant: Date, tz: string): { y: number; mo1: number; d: number
   return { y: +m.year, mo1: +m.month, d: +m.day };
 }
 
-export interface Slot { startISO: string; endISO: string; label: string }
+export interface Slot {
+  startISO: string;
+  endISO: string;
+  label: string;
+  /**
+   * El día y la hora EN LA ZONA DEL NEGOCIO, para poder agrupar sin volver a
+   * hacer cuentas de husos.
+   *
+   * Se calculan aquí porque aquí es el único sitio donde la zona horaria está
+   * a mano y ya resuelta. Quien recibe los huecos —el reparto por día y turno,
+   * el motor de WhatsApp— no la conoce, y hacerle deducir «esto es de tarde»
+   * a partir de la etiqueta o del ISO en UTC es pedirle que un día se
+   * equivoque en cinco husos y ofrezca las tardes de otro país.
+   */
+  dia: string;     // «2026-9-7» en la zona del negocio
+  minutos: number; // minutos desde medianoche, en la zona del negocio
+}
 
 interface BusinessDay { enabled?: boolean; open?: string; close?: string }
 
@@ -76,6 +92,11 @@ export function computeSlots(opts: {
     let mins = oh * 60 + om;
     const closeMins = ch * 60 + cm;
     while (mins + durationMin <= closeMins && slots.length < maxSlots) {
+      // LA HORA DE ESTE HUECO SE GUARDA ANTES DE AVANZAR EL RELOJ. `mins` se
+      // incrementa dos líneas más abajo para la siguiente vuelta, así que
+      // usarlo después apuntaría al hueco siguiente y todo saldría corrido
+      // media hora.
+      const minutosDelHueco = mins;
       const startUtc = zonedWallTimeToUtc(y, mo1, d, Math.floor(mins / 60), mins % 60, timeZone).getTime();
       const endUtc = startUtc + durationMin * 60_000;
       mins += step;
@@ -86,6 +107,8 @@ export function computeSlots(opts: {
         startISO: new Date(startUtc).toISOString(),
         endISO: new Date(endUtc).toISOString(),
         label: labelFmt.format(new Date(startUtc)),
+        dia: `${y}-${mo1}-${d}`,
+        minutos: minutosDelHueco,
       });
     }
   }

@@ -76,6 +76,16 @@ type Message = {
     /** Si WhatsApp rechazó el envío, aquí viene el motivo en humano. */
     no_entregado?: { motivo: string; code: number | null };
     /**
+     * Por qué la IA tuvo que mandar el mensaje de respaldo.
+     *
+     * «Esa no me la sé todavía 🙈» se devuelve por ocho motivos y solo uno es
+     * de verdad «no lo sé»: los otros siete son averías —la llave que falta,
+     * el plan, la API, una herramienta que falla en bucle—. Sin esto, una
+     * agenda rota y una pregunta fuera de temario se ven exactamente iguales
+     * desde la Bandeja, que es donde el negocio mira.
+     */
+    fallo_ia?: string;
+    /**
      * Lo que el agente escribió de verdad, cuando el mensaje salió traducido.
      * Se guarda SIEMPRE: al lead le llega la traducción, pero el equipo tiene
      * que poder ver después qué se quiso decir. Sin esto, una conversación
@@ -925,6 +935,29 @@ export function InboxClient({
              * falló lo ÚLTIMO que se intentó mandar.
              */
             const ultimoSaliente = [...messages].reverse().find((m) => m.direction === "outbound");
+
+            /* ── LA IA FALLÓ Y DIJO «esa no me la sé» ─────────────────────
+               Ese mensaje se devuelve por siete motivos distintos y solo uno
+               es de verdad «no lo sé». Los otros seis son averías: el plan sin
+               IA, la llave que falta, la API caída, las vueltas agotadas
+               porque una HERRAMIENTA está fallando…
+
+               Sin esto, un negocio con la agenda rota ve un bot que «no sabe»
+               y no tiene forma de enterarse. Costó un día de depuración a
+               ciegas y una demo perdida. */
+            const falloIA = ultimoSaliente?.payload?.fallo_ia;
+            if (falloIA) {
+              return (
+                <div className="flex flex-none items-start gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2.5 text-xs text-ink-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-aviso" />
+                  <span>
+                    <b className="text-ink">La IA no pudo responder</b> y mandó tu mensaje de
+                    respaldo. Motivo: {String(falloIA)}.
+                  </span>
+                </div>
+              );
+            }
+
             const fallo = ultimoSaliente?.payload?.no_entregado;
             if (!fallo) return null;
             return (

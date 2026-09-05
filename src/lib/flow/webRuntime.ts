@@ -2,6 +2,7 @@ import { getNode, getStartNode, defaultNext, buttonTarget } from "./engine";
 import type { Flow, DemanduNode, ConditionRule, FlowButton } from "./types";
 import { aiAnswer, type AiSettings } from "@/lib/ai/answer";
 import { detectarAtajo, leerAtajos, type Atajos } from "./shortcuts";
+import { esHorarioElegido, correoValido, quiereOmitir, mensajeParaElCliente } from "@/lib/agendaHorarios";
 import { abrirRecorrido, avanzarRecorrido, cerrarRecorrido, type MotivoFin } from "./flowRuns";
 import { decidirDesvio, puenteDeVuelta, esAfirmacion, type MotivoDesvio } from "./desvio";
 import {
@@ -37,6 +38,10 @@ type Awaiting =
   // en el motor de WhatsApp: así no hay que guardar la lista de horarios en
   // ninguna parte ni preocuparse de que caduque entre un mensaje y el otro.
   | { nodeId: string; type: "cita" }
+  // Agendar dejó de ser un ida y vuelta: si al bloque le falta el nombre o el
+  // correo, los pregunta él antes de crear la cita. Ver `pasoDeCitaWeb`.
+  | { nodeId: string; type: "cita_nombre" }
+  | { nodeId: string; type: "cita_correo" }
   | null;
 
 interface Ctx {
@@ -126,6 +131,25 @@ async function tiendaDelBotEnLaBase(ctx: Ctx) {
 function salidaDe(ctx: Ctx, node: any, prefijo: string): string | undefined {
   const b = (node.data?.buttons ?? []).find((x: any) => String(x.id ?? "").startsWith(prefijo));
   return b ? buttonTarget(ctx.flow, node.id, b) : undefined;
+}
+
+/**
+ * Lo que la IA no pudo hacer, apuntado en el mensaje.
+ *
+ * Se guarda en el `payload` del mensaje saliente para que la Bandeja lo pueda
+ * enseñar al equipo. Es la diferencia entre «el bot no sabe de esto» y «tu
+ * agenda lleva rota desde ayer».
+ */
+// EL PARÁMETRO SE ESCRIBE COMO «lo que sea, que quizá traiga el motivo». Con
+// `{ motivoDelRespaldo?: string | null }` a secas, TypeScript rechaza el
+// contexto de agente que se le pasa —no comparte ninguna propiedad con ese
+// tipo, porque el motivo lo AÑADE `aiAnswer` durante la llamada— y el error
+// aparecía en los dos sitios que lo usan.
+function apuntarFallo(ctx: Ctx, agente: Record<string, unknown> | null | undefined) {
+  const motivo = String((agente as any)?.motivoDelRespaldo ?? "").trim();
+  if (!motivo) return;
+  const ultimo = ctx.out[ctx.out.length - 1];
+  if (ultimo) (ultimo as any).falloIA = motivo;
 }
 
 function push(ctx: Ctx, text: string, buttons?: FlowButton[]) {
@@ -556,7 +580,7 @@ async function ofrecerHorariosWeb(ctx: Ctx, node: any): Promise<"espera" | "enla
       calendarId: d.calendarId,
       calendlyTipo: d.calendlyTipo,
       durationMin: Number(d.durationMin) || 30,
-      maxSlots: 6,
+      maxSlots: Number(d.cuantosHorarios) || 10,
     });
   } catch (e: any) {
     console.error("[agenda] no pude leer horarios:", e?.message ?? e);
@@ -584,10 +608,15 @@ async function ofrecerHorariosWeb(ctx: Ctx, node: any): Promise<"espera" | "enla
   // etiqueta ya viene escrita en español desde la plataforma («mié 27 ago,
   // 10:00»): formatear fechas aquí sería reimplementar lo que ya se hace bien
   // en un solo sitio, con la zona horaria del negocio.
+  // NO SE RECORTAN A TRES. Ese recorte —que aquí estaba por copiar el límite
+  // de los botones de WhatsApp— hacía que solo salieran las tres primeras
+  // medias horas libres, siempre de la misma mañana. La web y el chat de
+  // Instagram no tienen ese límite, y la plataforma ya devuelve estas diez
+  // repartidas entre días y entre mañana y tarde.
   push(
     ctx,
     d.text || "Estos son los horarios disponibles para tu cita:",
-    slots.slice(0, 3).map((s: any) => ({ id: s.startISO, label: s.label })),
+    slots.slice(0, 10).map((s: any) => ({ id: s.startISO, label: s.label })),
   );
   return "espera";
 }
@@ -629,15 +658,145 @@ async function agendarElegidoWeb(ctx: Ctx, node: any, inicioISO: string): Promis
     ctx.vars.cita_dia = r.dia ?? "";
     ctx.vars.cita_hora = r.hora ?? "";
     ctx.vars.cita_cuando = r.etiqueta ?? "";
+    // Lo mismo que en el motor de WhatsApp: el error de la vuelta anterior se
+    // borra —si no, queda una cita agendada con un error al lado— y se apunta
+    // si hubo invitación, para que el mensaje de confirmación no prometa un
+    // correo que no va a llegar.
+    ctx.vars.cita_error = "";
+    ctx.vars.cita_elegida = "";
+    ctx.vars.cita_invitacion = r.sinInvitacion ? "no" : "si";
     return true;
   }
 
   ctx.vars.cita_ok = "false";
   ctx.vars.cita_error = r?.error ?? "No se pudo agendar.";
-  // El motivo se le dice tal cual viene: «ese horario acaba de ocuparse» es
-  // accionable, «error 502» no lo es.
-  push(ctx, r?.error || "No pude agendar esa hora 😕 Intentemos con otra.");
+  // EL ERROR INTERNO SE APUNTA, NO SE ENSEÑA. Antes salía `r.error` tal cual y
+  // así fue como un cliente leyó «Falta la fecha y hora de la cita.» por
+  // escribir «necesito que sea en la tarde».
+  if (!r?.paraElCliente) {
+    console.error(`[agenda] no se pudo agendar org=${ctx.orgId}: ${r?.motivo ?? "?"} — ${r?.error ?? ""}`);
+  }
+  push(ctx, mensajeParaElCliente(r, "No pude agendar esa hora 😕 Elige otra, por favor."));
   return false;
+}
+
+/**
+ * ¿Qué le falta al bloque para poder agendar?
+ *
+ * Gemelo de `faltaDeLaCita` del motor de WhatsApp, y por el mismo motivo: el
+ * bloque tenía configurado de dónde sacar el correo y nadie lo preguntaba
+ * nunca, así que la cita se creaba sin invitado y sin que fallara nada. Un
+ * flujo al que le falta un bloque no se rompe: sale peor, en silencio.
+ */
+function faltaDeLaCitaWeb(node: any, vars: Record<string, string>): "nombre" | "correo" | null {
+  const d = node?.data ?? {};
+
+  const claveNombre = String(d.nameAttr ?? "").trim();
+  if (d.pedirNombre !== false && claveNombre && !String(vars[claveNombre] ?? "").trim()) return "nombre";
+
+  const claveCorreo = String(d.attendeeAttr ?? "").trim();
+  if (d.pedirCorreo !== false && claveCorreo) {
+    const yaHay = String(vars[claveCorreo] ?? "").trim();
+    // `cita_sin_correo` recuerda que ya dijo que no, para no insistirle.
+    if (!yaHay && vars.cita_sin_correo !== "si") return "correo";
+  }
+
+  return null;
+}
+
+/** Pregunta el siguiente dato que falte. null = ya no falta nada. */
+function pedirDatoDeCitaWeb(ctx: Ctx, node: any): "cita_nombre" | "cita_correo" | null {
+  const falta = faltaDeLaCitaWeb(node, ctx.vars);
+  if (!falta) return null;
+
+  const d = node?.data ?? {};
+  if (falta === "nombre") {
+    push(ctx, interp(d.textoPideNombre || "¿A nombre de quién agendo la cita?", ctx.vars));
+    return "cita_nombre";
+  }
+
+  push(ctx, interp(
+    d.textoPideCorreo || "¿A qué correo te mando la invitación? 📧 (si prefieres no darlo, escribe «no»)",
+    ctx.vars,
+  ));
+  return "cita_correo";
+}
+
+/**
+ * UN PASO DE LA CONVERSACIÓN DE AGENDAR, en web e Instagram.
+ *
+ * Gemelo de `pasoDeCita` del motor de WhatsApp: mismos estados, mismas
+ * decisiones, mismas variables. Están duplicados porque uno corre en Deno y el
+ * otro en Node y no pueden compartir archivo; una prueba estática compara los
+ * dos y falla si se separan.
+ */
+async function pasoDeCitaWeb(
+  ctx: Ctx, node: any, esperando: string, texto: string,
+): Promise<{ esperar?: "cita" | "cita_nombre" | "cita_correo"; agendada?: boolean }> {
+  const d = node.data ?? {};
+
+  const volverAOfrecer = async (): Promise<{ esperar?: "cita"; agendada?: boolean }> => {
+    const r = await ofrecerHorariosWeb(ctx, node);
+    // Ni con enlace ni sin horarios se sigue esperando una hora: nadie va a
+    // poder contestarla y la conversación se moriría de pie.
+    return r === "espera" ? { esperar: "cita" } : { agendada: false };
+  };
+
+  if (esperando === "cita") {
+    const iso = esHorarioElegido(texto);
+    if (!iso) {
+      push(ctx, interp(
+        d.textoNoEntendi ||
+          "Para agendar necesito que elijas una de las horas de la lista 👇 Si ninguna te sirve, dímelo y te paso con una persona.",
+        ctx.vars,
+      ));
+      return await volverAOfrecer();
+    }
+
+    ctx.vars.cita_elegida = iso;
+    const pedir = pedirDatoDeCitaWeb(ctx, node);
+    if (pedir) return { esperar: pedir };
+    if (await agendarElegidoWeb(ctx, node, iso)) return { agendada: true };
+    return await volverAOfrecer();
+  }
+
+  if (esperando === "cita_nombre") {
+    const clave = String(d.nameAttr ?? "").trim();
+    const limpio = String(texto ?? "").trim().slice(0, 80);
+    if (!limpio) return { esperar: "cita_nombre" };
+    if (clave) ctx.vars[clave] = limpio;
+  }
+
+  if (esperando === "cita_correo") {
+    const clave = String(d.attendeeAttr ?? "").trim();
+    if (quiereOmitir(texto)) {
+      ctx.vars.cita_sin_correo = "si";
+    } else {
+      const correo = correoValido(texto);
+      if (!correo) {
+        // Una sola insistencia: perder la cita por un campo opcional sería
+        // cambiar algo que vale por algo que no.
+        if (ctx.vars.cita_correo_reintento === "si") {
+          ctx.vars.cita_sin_correo = "si";
+        } else {
+          ctx.vars.cita_correo_reintento = "si";
+          push(ctx, "Ese correo no me cuadra 🤔 ¿Me lo escribes otra vez? O escribe «no» y lo dejamos así.");
+          return { esperar: "cita_correo" };
+        }
+      } else if (clave) {
+        ctx.vars[clave] = correo;
+      }
+    }
+  }
+
+  const pedir = pedirDatoDeCitaWeb(ctx, node);
+  if (pedir) return { esperar: pedir };
+
+  const iso = esHorarioElegido(ctx.vars.cita_elegida);
+  if (!iso) return await volverAOfrecer();
+
+  if (await agendarElegidoWeb(ctx, node, iso)) return { agendada: true };
+  return await volverAOfrecer();
 }
 
 async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting> {
@@ -886,6 +1045,7 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
           agente,
         });
         push(ctx, answer);
+        apuntarFallo(ctx, agente);
 
         // El agente pasó la conversación a una persona. El flujo se detiene:
         // seguir escuchando sería que el bot volviera a contestar después de
@@ -992,7 +1152,13 @@ async function guardarSalida(
       direction: "outbound",
       sender: "bot",
       body: m.text,
-      payload: m.buttons ? { buttons: m.buttons } : {},
+      // EL MOTIVO DEL RESPALDO VIAJA CON EL MENSAJE. Es lo que permite que la
+      // Bandeja distinga «el bot no sabía» de «tu agenda está rota» — que se
+      // ven idénticos desde fuera y son dos problemas completamente distintos.
+      payload: {
+        ...(m.buttons ? { buttons: m.buttons } : {}),
+        ...((m as any).falloIA ? { fallo_ia: (m as any).falloIA } : {}),
+      },
     })),
   );
   if (error) console.error("[webchat] no se guardaron los mensajes del bot:", error.message);
@@ -1182,6 +1348,7 @@ export async function runWebFlow(opts: {
     const respuesta = await responderDuda(ctx, agenteDelDesvio);
     if (respuesta) {
       push(ctx, respuesta);
+      apuntarFallo(ctx, agenteDelDesvio);
       const puente = puenteDeVuelta(desvio);
       if (puente) push(ctx, puente);
       // Se vuelve a mostrar lo que el flujo estaba pidiendo, para no dejar a
@@ -1236,33 +1403,42 @@ export async function runWebFlow(opts: {
         if (node?.data.variable) vars[node.data.variable] = opts.text;
         startId = node ? defaultNext(opts.flow, node) : undefined;
       }
-    } else if (awaiting.type === "cita") {
-      // ── ELIGIÓ UNA HORA ─────────────────────────────────────────────────
-      // El id del botón ES la hora en ISO, así que no hay que guardar la lista
-      // de horarios en ninguna parte ni preocuparse de que caduque. Si escribió
-      // en vez de tocar el botón, `opts.text` no es una fecha y `agendar` lo
-      // rechaza — que es lo correcto: no se inventa una hora.
-      const cuando = botonQueCoincide?.id ?? opts.text;
-      const ok = node ? await agendarElegidoWeb(ctx, node, cuando) : false;
+    } else if (
+      awaiting.type === "cita" || awaiting.type === "cita_nombre" || awaiting.type === "cita_correo"
+    ) {
+      // ── LA CONVERSACIÓN DE AGENDAR ───────────────────────────────────────
+      // Puede llevar varios turnos: elegir la hora y, si al bloque le faltan,
+      // el nombre y el correo. El id del botón ES la hora en ISO, así que no
+      // hay que guardar la lista de horarios en ninguna parte.
+      //
+      // Lo que llegue por texto suelto NO viaja al calendario: antes sí, y por
+      // eso «necesito que sea en la tarde» volvió convertido en «Falta la
+      // fecha y hora de la cita.» en el chat de un cliente.
+      const dicho = awaiting.type === "cita" ? (botonQueCoincide?.id ?? opts.text) : opts.text;
+      // Sin bloque no hay nada que agendar ni nada que preguntar. Se escribe
+      // con el tipo entero para que el compilador siga viendo `esperar` aquí
+      // abajo; un objeto suelto lo estrecharía y `seguir.esperar` dejaría de
+      // existir para TypeScript.
+      const seguir: { esperar?: "cita" | "cita_nombre" | "cita_correo"; agendada?: boolean } = node
+        ? await pasoDeCitaWeb(ctx, node, awaiting.type, dicho)
+        : { agendada: false };
 
-      // SOLO SE SIGUE AL MENSAJE DE «cita agendada» SI LA CITA SE CREÓ DE
-      // VERDAD. Ver el comentario del bloque `calendar`.
-      if (!ok) {
-        // Se vuelven a ofrecer horarios en vez de seguir adelante como si la
-        // cita existiera.
-        if (node) await ofrecerHorariosWeb(ctx, node);
+      if (node && seguir.esperar) {
         await guardarSalida(ctx, opts);
-        await avanzarRecorrido(opts.admin, runId, 1, node?.id ?? null);
+        await avanzarRecorrido(opts.admin, runId, 1, node.id);
         return {
           vars,
-          awaiting: node ? { nodeId: node.id, type: "cita" as const } : null,
+          awaiting: { nodeId: node.id, type: seguir.esperar },
           out: ctx.out,
           hintEnviado: !!opts.flowState?.hintEnviado,
           runId,
           flowIdNuevo: ctx.flowIdNuevo,
         };
       }
-      startId = node ? defaultNext(opts.flow, node) : undefined;
+
+      // SOLO SE SIGUE AL MENSAJE DE «cita agendada» SI LA CITA SE CREÓ DE
+      // VERDAD. Ver el comentario del bloque `calendar`.
+      startId = seguir.agendada && node ? defaultNext(opts.flow, node) : undefined;
     } else if (awaiting.type === "tienda_pedir") {
       // ── OTRA VUELTA DEL PEDIDO ─────────────────────────────────────────
       // El carrito viene DENTRO de `awaiting` y se devuelve tal cual: este

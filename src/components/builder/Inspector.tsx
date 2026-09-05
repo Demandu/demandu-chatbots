@@ -536,10 +536,25 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
             <textarea className="input min-h-[70px]" value={d.text ?? ""} placeholder="Estos son los horarios disponibles para tu cita:" onChange={(e) => onChange({ text: e.target.value })} />
           </Field>
 
+          <Field label="Cuántos horarios se ofrecen">
+            <div className="flex items-center gap-2">
+              <input
+                type="number" min={1} max={10} className="input w-28"
+                value={d.cuantosHorarios ?? 10}
+                onChange={(e) => onChange({ cuantosHorarios: Math.min(10, Math.max(1, Number(e.target.value) || 10)) })}
+              />
+              <span className="text-sm text-muted-2">máximo 10</span>
+            </div>
+            <p className="mt-1 text-[11px] text-muted-2">
+              No son las primeras horas libres seguidas: se reparten entre varios días y entre mañana y tarde,
+              para que quien no pueda por la mañana también tenga qué elegir.
+            </p>
+          </Field>
+
           <SectionTitle>Datos del cliente en el evento</SectionTitle>
           {(catalogs?.attributes ?? []).length === 0 ? (
             <p className="mb-3 text-[11px] text-muted-2">
-              Crea atributos (correo, nombre, empresa) en <a href="/settings/attributes" target="_blank" className="text-pink hover:underline">Configuración → Atributos</a> y captúralos con un nodo Pregunta antes de esta cita.
+              Crea atributos (correo, nombre, empresa) en <a href="/settings/attributes" target="_blank" className="text-pink hover:underline">Configuración → Atributos</a>. Este bloque los pedirá él mismo si le faltan.
             </p>
           ) : (
             <>
@@ -565,11 +580,67 @@ export function Inspector({ node, onChange, onDelete, onSetStart, catalogs, orgI
                   </select>
                 </Field>
               </div>
+              <p className="mb-3 text-[11px] text-muted-2">
+                El título del evento será <b className="text-muted">“Cita — Nombre · Empresa”</b>.
+                <b className="text-muted"> Sin correo no hay invitación</b>: el evento se crea igual, pero a tu cliente no le llega nada.
+              </p>
+
+              <SectionTitle>Si falta algún dato</SectionTitle>
               <p className="mb-2 text-[11px] text-muted-2">
-                El título del evento será <b className="text-muted">“Cita — Nombre · Empresa”</b> y se enviará invitación al correo.
+                Después de que elija la hora, el bloque pregunta lo que le falte. Si el dato ya está —el nombre
+                casi siempre viene del perfil de WhatsApp— no vuelve a preguntarlo, y si prefieres capturarlo
+                antes con nodos Pregunta, los encuentra llenos y tampoco pregunta.
+              </p>
+
+              <label className="mb-2 flex items-start gap-2 text-xs text-muted">
+                <input
+                  type="checkbox" className="mt-0.5"
+                  checked={d.pedirNombre !== false}
+                  onChange={(e) => onChange({ pedirNombre: e.target.checked })}
+                />
+                <span>Preguntar el nombre si falta</span>
+              </label>
+              <Field label="Cómo lo pregunta">
+                <input
+                  className="input" value={d.textoPideNombre ?? ""}
+                  placeholder="¿A nombre de quién agendo la cita?"
+                  onChange={(e) => onChange({ textoPideNombre: e.target.value })}
+                />
+              </Field>
+
+              <label className="mb-2 flex items-start gap-2 text-xs text-muted">
+                <input
+                  type="checkbox" className="mt-0.5"
+                  checked={d.pedirCorreo !== false}
+                  onChange={(e) => onChange({ pedirCorreo: e.target.checked })}
+                />
+                <span>Preguntar el correo si falta</span>
+              </label>
+              <Field label="Cómo lo pregunta">
+                <input
+                  className="input" value={d.textoPideCorreo ?? ""}
+                  placeholder="¿A qué correo te mando la invitación? 📧 (si prefieres no darlo, escribe «no»)"
+                  onChange={(e) => onChange({ textoPideCorreo: e.target.value })}
+                />
+              </Field>
+              <p className="mb-3 text-[11px] text-muted-2">
+                Si contesta «no», se respeta y no se le insiste: la cita se crea igual, sin invitación.
+                Después puedes usar <b className="text-muted">{"{{cita_invitacion}}"}</b> en tu mensaje de
+                confirmación para saber si salió o no.
               </p>
             </>
           )}
+
+          <Field label="Si escribe en vez de elegir una hora">
+            <input
+              className="input" value={d.textoNoEntendi ?? ""}
+              placeholder="Para agendar necesito que toques una de las horas de la lista 👇"
+              onChange={(e) => onChange({ textoNoEntendi: e.target.value })}
+            />
+            <p className="mt-1 text-[11px] text-muted-2">
+              Pasa mucho («¿no tienes por la tarde?»). Se le dice esto y se le vuelven a ofrecer los horarios.
+            </p>
+          </Field>
 
           <p className="mb-4 text-[11px] text-muted-2">
             La disponibilidad respeta tu <b className="text-muted">Horario laboral</b> (Configuración → Horario laboral) y evita traslapes con eventos existentes.

@@ -1418,14 +1418,36 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
   const ai = { ...AI_DEFAULTS, ...(ctx.aiSettings ?? {}) };
   if (promptDelNodo) ai.persona = promptDelNodo;
 
+  /* ── OCHO CAMINOS LLEVAN AL MENSAJE DE RESPALDO, Y SIETE SON AVERÍAS ─────
+   *
+   * «Esa no me la sé todavía 🙈» es lo que se devuelve cuando la IA está
+   * apagada, cuando falta la llave, cuando el plan no la incluye, cuando la
+   * API contesta un error, cuando el modelo no escribe nada, cuando se agotan
+   * las vueltas porque una herramienta falla en bucle, y cuando se cae la red.
+   * Solo UNO de los ocho es de verdad «no lo sé».
+   *
+   * POR ESO NO SE PODÍA DEPURAR NADA: una agenda rota y una pregunta fuera de
+   * temario se ven exactamente iguales desde fuera. Pasó tal cual — la cita
+   * falló, salió «esa no me la sé» y no había forma de saber por qué.
+   *
+   * El cliente sigue leyendo el mismo mensaje amable; lo que cambia es que el
+   * motivo queda en el registro y pegado al mensaje, para que la Bandeja pueda
+   * decirle al negocio qué pasó de verdad.
+   * ────────────────────────────────────────────────────────────────────── */
+  const caida = (motivo: string) => {
+    console.error(`[ia] respaldo por: ${motivo} (org ${ctx.orgId})`);
+    ctx.motivoDelRespaldo = motivo;
+    return ai.fallback;
+  };
+
   // El interruptor «Responder con IA». Mismo comportamiento que el canal web:
   // apagada no se llama a la API, no se gasta y no se registra consumo.
-  if (ai.enabled === false) return ai.fallback;
+  if (ai.enabled === false) return caida("la IA está apagada en este chatbot");
 
   // El `.trim()` no sobra: una llave pegada con un salto de línea al final se
   // ve idéntica en el panel y falla con 401 sin que nadie entienda por qué.
   const key = (Deno.env.get("ANTHROPIC_API_KEY") ?? "").trim();
-  if (!key) return ai.fallback;
+  if (!key) return caida("falta ANTHROPIC_API_KEY en el motor");
 
   // Freno de mano. Normalmente NO hay tope y la IA va incluida — es lo que se
   // vende. Se pone un número solo cuando una cuenta concreta se desborda.
@@ -1433,7 +1455,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
   // AL LLEGAR AL TOPE EL BOT NO SE CALLA: sigue con sus flujos y sus botones y
   // solo deja de pensar respuestas nuevas. Degradar es mejor que cortar — el
   // cliente sigue atendiendo mientras se habla con él para subirlo de plan.
-  if (await pasoElTopeDeIA(ctx)) return ai.fallback;
+  if (await pasoElTopeDeIA(ctx)) return caida("esta cuenta llegó a su tope de mensajes de IA");
 
   /* ── ¿SU PLAN INCLUYE LA IA? ─────────────────────────────────────────────
    *
@@ -1444,7 +1466,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
    * ANTE LA DUDA, SÍ. Si la base no contesta, dejar mudo al cliente de un
    * negocio que SÍ paga la IA es mucho peor que unos centavos de más.
    */
-  if (!(await tieneIA(ctx))) return ai.fallback;
+  if (!(await tieneIA(ctx))) return caida("el plan no incluye IA");
 
   const kbRows = await buscarConocimiento(ctx.db, ctx.orgId, ctx.botId, pregunta);
   const kb = kbRows.length
@@ -1520,8 +1542,8 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
         body: JSON.stringify(cuerpo),
       });
       if (!res.ok) {
-        console.error("[ai]", res.status, (await res.text().catch(() => "")).slice(0, 200));
-        return ai.fallback;
+        const detalle = (await res.text().catch(() => "")).slice(0, 200);
+        return caida(`la API de IA respondió ${res.status}: ${detalle.slice(0, 120)}`);
       }
 
       const j = await res.json();
@@ -1541,7 +1563,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
 
       const pedidas = bloques.filter((c: any) => c?.type === "tool_use");
       if (j?.stop_reason !== "tool_use" || !pedidas.length) {
-        return await cumplirLoPrometido(ctx, texto, tools) || ai.fallback;
+        return await cumplirLoPrometido(ctx, texto, tools) || caida("el modelo terminó sin escribir nada");
       }
 
       // Se ejecuta lo que pidió y se le devuelve el resultado para que siga.
@@ -1562,12 +1584,13 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
       }
     }
 
-    // Se acabaron las vueltas y el modelo seguía pidiendo herramientas.
-    console.error("[agente] se agotaron las vueltas sin una respuesta final");
-    return ai.fallback;
-  } catch (e) {
-    console.error("[ai] red:", e);
-    return ai.fallback;
+    // Se acabaron las vueltas y el modelo seguía pidiendo herramientas. ES EL
+    // MOTIVO QUE MÁS IMPORTA: casi siempre significa que una herramienta está
+    // fallando y el modelo la reintenta hasta quedarse sin turnos. Desde fuera
+    // se veía igual que «no sé la respuesta».
+    return caida(`se agotaron los intentos (${MAX_VUELTAS}), probablemente una herramienta está fallando`);
+  } catch (e: any) {
+    return caida(`no se pudo conectar con la IA: ${e?.message ?? e}`);
   }
 }
 
@@ -1633,6 +1656,21 @@ async function registrar(ctx: any, body: string, envio: ResultadoEnvio, extra: a
   // depende la red de seguridad del final de `handleIncoming`.
   ctx.dijoAlgo = true;
   const payload: any = { ...extra };
+
+  // ── SI ESTE MENSAJE ES EL DE RESPALDO, POR QUÉ ──────────────────────────
+  //
+  // `responderConIA` deja aquí el motivo cuando ha tenido que caer al mensaje
+  // de respaldo. Va pegado al mensaje —y no solo al registro— porque quien
+  // necesita saberlo es el negocio, mirando su Bandeja, no nosotros mirando
+  // los logs de Netlify a las tres de la mañana. La misma clave que usa el
+  // motor web (`fallo_ia`), para que la Bandeja no tenga que mirar dos sitios.
+  //
+  // Y SE BORRA AL ESCRIBIRLO: si se quedara puesto, el siguiente mensaje del
+  // turno saldría marcado como fallo sin serlo.
+  if (ctx.motivoDelRespaldo) {
+    payload.fallo_ia = ctx.motivoDelRespaldo;
+    ctx.motivoDelRespaldo = null;
+  }
   if (!envio.ok) {
     let motivo = envio.error ?? "No se pudo enviar";
     // El 131037 sobre el número de pruebas no es "espera a que te aprueben":
@@ -1710,6 +1748,122 @@ async function pedirAgenda(cuerpo: Record<string, any>): Promise<any> {
   }
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * LAS REGLAS DEL BLOQUE «AGENDAR CITA», COPIADAS A PROPÓSITO
+ *
+ * El original está en `src/lib/agendaHorarios.ts`, con toda la explicación de
+ * por qué existe cada una. Aquí hay una copia porque este archivo corre en
+ * Deno y no puede importar nada de `src/`.
+ *
+ * La copia NO se deja al azar: hay una prueba estática que compara las dos y
+ * falla si se separan. Es la misma disciplina que ya llevan `sinMarcadores` y
+ * los atajos del chat.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** ¿Lo que contestó es una de las horas que se le ofrecieron, o texto suelto? */
+function esHorarioElegido(texto: string | null | undefined): string | null {
+  const t = String(texto ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)) return null;
+  const d = new Date(t);
+  return Number.isFinite(d.getTime()) ? t : null;
+}
+
+/** ¿Es un correo? Solo se atrapa lo que evidentemente no lo es. */
+function correoValido(texto: string | null | undefined): string | null {
+  const t = String(texto ?? "").trim().toLowerCase();
+  if (!t || t.length > 254 || /\s/.test(t)) return null;
+  return /^[^@]+@[^@.]+\.[^@]+$/.test(t) ? t : null;
+}
+
+/** La persona no quiere dar ese dato. Se respeta: sin correo hay cita igual. */
+function quiereOmitir(texto: string | null | undefined): boolean {
+  const t = String(texto ?? "")
+    .trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (!t) return false;
+  return [
+    "no", "no.", "nel", "nop", "nope", "paso", "omitir", "saltar", "skip",
+    "no tengo", "no gracias", "no quiero", "prefiero no", "sin correo",
+    "no tengo correo", "no tengo email", "despues", "luego", "mejor no",
+  ].includes(t);
+}
+
+/** Qué se le enseña a la persona cuando falla algo. Por omisión, NO el error. */
+function mensajeParaElCliente(
+  fallo: any,
+  porDefecto = "Esa hora ya no está disponible 😕 Elige otra, por favor.",
+): string {
+  const e = String(fallo?.error ?? "").trim();
+  return fallo?.paraElCliente && e ? e : porDefecto;
+}
+
+/**
+ * ¿Qué le falta al bloque para poder agendar, y se lo pregunta él mismo?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL BLOQUE PREGUNTA LO SUYO. No hace falta cablear un «Pregunta → nombre» y un
+ * «Pregunta → correo» antes de él.
+ *
+ * Se hizo así por lo que pasó el 5 de septiembre: el bloque tenía configurado
+ * `attendeeAttr: "email"` —«el correo sácalo de la variable email»— y nadie
+ * había puesto en el flujo ningún sitio donde preguntarlo. La variable estaba
+ * vacía, Google creó el evento sin invitado, no salió ninguna invitación, y
+ * NADIE SE ENTERÓ: el bot confirmó la cita con toda normalidad.
+ *
+ * Ese es el problema de fondo de repartir esto en bloques sueltos: cuando
+ * falta uno, no falla nada. Simplemente sale peor, en silencio, para siempre.
+ *
+ * ── SI EL DATO YA ESTÁ, NO SE PREGUNTA ────────────────────────────────────
+ *
+ * El nombre suele venir del perfil de WhatsApp, y volver a pedírselo a alguien
+ * que acabas de saludar por su nombre es de bot. Solo se pregunta el hueco.
+ *
+ * Y quien prefiera preguntarlo él con bloques de pregunta puede seguir
+ * haciéndolo: los encuentra llenos y no vuelve a preguntar.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function faltaDeLaCita(node: any, vars: Record<string, string>): "nombre" | "correo" | null {
+  const d = node?.data ?? {};
+
+  const claveNombre = String(d.nameAttr ?? "").trim();
+  if (d.pedirNombre !== false && claveNombre && !String(vars[claveNombre] ?? "").trim()) return "nombre";
+
+  const claveCorreo = String(d.attendeeAttr ?? "").trim();
+  if (d.pedirCorreo !== false && claveCorreo) {
+    const yaHay = String(vars[claveCorreo] ?? "").trim();
+    // `cita_sin_correo` es la memoria de que ya dijo que no. Sin ella, cada
+    // vuelta por el bloque le vuelve a preguntar lo que ya rechazó.
+    if (!yaHay && vars.cita_sin_correo !== "si") return "correo";
+  }
+
+  return null;
+}
+
+/**
+ * Pide el siguiente dato que falte, o devuelve null si ya no falta nada.
+ * Quien llama agenda cuando esto devuelve null.
+ */
+async function pedirDatoDeCita(ctx: any, node: any): Promise<any | null> {
+  const falta = faltaDeLaCita(node, ctx.vars);
+  if (!falta) return null;
+
+  const d = node?.data ?? {};
+  if (falta === "nombre") {
+    await say(ctx, interp(d.textoPideNombre || "¿A nombre de quién agendo la cita?", ctx.vars));
+    return { nodeId: node.id, type: "cita_nombre" };
+  }
+
+  await say(
+    ctx,
+    interp(
+      d.textoPideCorreo ||
+        "¿A qué correo te mando la invitación? 📧 (si prefieres no darlo, escribe «no»)",
+      ctx.vars,
+    ),
+  );
+  return { nodeId: node.id, type: "cita_correo" };
+}
+
 async function sayCalendario(ctx: any, node: any) {
   const d = node.data ?? {};
   const r = await pedirAgenda({
@@ -1722,7 +1876,11 @@ async function sayCalendario(ctx: any, node: any) {
     calendario: d.calendarId || undefined,
     calendly_tipo: d.calendlyTipo || undefined,
     duracion: Number(d.durationMin) || 30,
-    cuantos: 6,
+    // DIEZ, QUE ES EL TOPE DE UNA LISTA DE WHATSAPP. Se pedían seis y se
+    // enseñaban tres, y esos tres salían siempre seguidos de la misma mañana:
+    // 09:00, 09:30, 10:00. A quien no podía por la mañana no se le ofrecía
+    // nada. La web ya devuelve estos diez repartidos entre días y turnos.
+    cuantos: Number(d.cuantosHorarios) || 10,
   });
 
   const slots = r?.slots ?? [];
@@ -1767,10 +1925,14 @@ async function sayCalendario(ctx: any, node: any) {
     return null; // el bloque de abajo decide; ver el caso en el switch
   }
 
-  // Los horarios se ofrecen como botones, con la etiqueta ya en español que
-  // devuelve la plataforma («mié 27 ago, 10:00»). Formatear fechas dentro del
-  // motor sería reimplementar lo que la web ya hace bien.
-  const botones = slots.slice(0, 3).map((s: any) => ({ id: s.startISO, label: s.label }));
+  // Los horarios se ofrecen con la etiqueta ya en español que devuelve la
+  // plataforma («mié 27 ago, 10:00»). Formatear fechas dentro del motor sería
+  // reimplementar lo que la web ya hace bien.
+  //
+  // NO SE RECORTAN A TRES. `sendButtons` cambia solo a lista de WhatsApp en
+  // cuanto hay más de tres, y la lista admite diez. El `slice(0,3)` que había
+  // aquí era el motivo de que se ofrecieran tres medias horas seguidas.
+  const botones = slots.slice(0, 10).map((s: any) => ({ id: s.startISO, label: s.label }));
   const envio = await sendButtons(
     ctx.pnid, ctx.token, ctx.to,
     interp(d.text || "Estos son los horarios disponibles para tu cita:", ctx.vars),
@@ -1806,6 +1968,17 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
     ctx.vars.cita_inicio = r.inicioISO ?? inicioISO;
     ctx.vars.cita_enlace = r.enlace ?? "";
     ctx.vars.cita_ok = "true";
+    // ── LO QUE SOBRA DEL INTENTO ANTERIOR SE BORRA ─────────────────────────
+    // `cita_error` se quedaba con el fallo de la vuelta previa aunque la cita
+    // acabara saliendo bien. Quien monta el flujo lo usa en una condición o lo
+    // pega en un mensaje, y se encuentra una cita agendada con un error al
+    // lado. Una variable vieja miente peor que una vacía.
+    ctx.vars.cita_error = "";
+    ctx.vars.cita_elegida = "";
+    // Si hubo invitación o no. Va como variable porque el mensaje de
+    // confirmación lo escribe el negocio, no nosotros: quien quiera decir «te
+    // mandé la invitación» tiene con qué comprobarlo antes de prometerlo.
+    ctx.vars.cita_invitacion = r.sinInvitacion ? "no" : "si";
     // Lo que de verdad se pega en un mensaje. La fecha en ISO no la escribe
     // nadie en un WhatsApp; si solo dejamos eso, el mensaje de confirmación
     // sale con los datos en blanco —y una confirmación en blanco es peor que
@@ -1828,10 +2001,147 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
 
   ctx.vars.cita_ok = "false";
   ctx.vars.cita_error = r?.error ?? "No se pudo agendar.";
-  // El motivo se le dice al lead tal cual viene: «ese horario acaba de
-  // ocuparse» es accionable, «error 502» no lo es.
-  await say(ctx, r?.error || "No pude agendar esa hora 😕 Intentemos con otra.");
+
+  // ── EL ERROR INTERNO SE APUNTA, NO SE ENSEÑA ────────────────────────────
+  //
+  // Antes esta línea era `say(ctx, r?.error || ...)`, o sea: lo que devolviera
+  // la plataforma, directo al chat del cliente. Así fue como alguien recibió
+  // «Falta la fecha y hora de la cita.» por escribir «necesito que sea en la
+  // tarde». Ese texto describe un estado interno; a quien está agendando no le
+  // dice nada y le hace pensar que hizo algo mal.
+  //
+  // Ahora solo sale lo que la plataforma marca como legible para un cliente
+  // —hoy, únicamente «ese horario acaba de ocuparse»—. El resto queda en el
+  // registro, que es donde sirve.
+  if (!r?.paraElCliente) {
+    console.error(`[agenda] no se pudo agendar org=${ctx.orgId}: ${r?.motivo ?? "?"} — ${r?.error ?? ""}`);
+  }
+  await say(ctx, mensajeParaElCliente(r, "No pude agendar esa hora 😕 Elige otra, por favor."));
   return false;
+}
+
+/**
+ * UN PASO DE LA CONVERSACIÓN DE AGENDAR.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Agendar dejó de ser un ida y vuelta. Ahora son hasta cuatro turnos —elegir
+ * hora, decir el nombre si falta, dar el correo si falta, y la confirmación— y
+ * los tres primeros vuelven por aquí con la etiqueta de qué se estaba
+ * esperando.
+ *
+ * ESTÁ TODO EN UNA FUNCIÓN A PROPÓSITO. Repartirlo en tres significaría tres
+ * sitios que deciden «¿y ahora qué falta?», y basta que uno se quede atrás
+ * para que el bloque agende sin correo otra vez sin que nadie lo note.
+ *
+ * Devuelve qué hacer:
+ *   { esperar: "…" } → se le preguntó algo; el flujo se queda aquí.
+ *   { agendada: true } → la cita existe; se sigue por la salida del bloque.
+ *   { agendada: false } → no hay cita y no se espera nada; el flujo se detiene.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function pasoDeCita(
+  ctx: any, node: any, esperando: string, texto: string,
+): Promise<{ esperar?: string; agendada?: boolean }> {
+  const d = node.data ?? {};
+
+  // Vuelve a ofrecer horarios sin dar por hecho que quedan. `sayCalendario` ya
+  // sabe mandar el enlace o quedarse sin nada que ofrecer, y esas dos salidas
+  // NO son «sigue esperando una hora»: esperar una respuesta que nadie va a
+  // poder dar es como se muere una conversación de pie.
+  const volverAOfrecer = async (): Promise<{ esperar?: string; agendada?: boolean }> => {
+    const espera = await sayCalendario(ctx, node);
+    if (espera === "enlace") return { agendada: false };
+    if (!espera) {
+      await ctx.db.from("conversations").update({
+        status: "assigned",
+        handoff_requested_at: new Date().toISOString(),
+        handoff_reason: "No se pudieron ofrecer horarios de cita",
+      }).eq("id", ctx.convId);
+      ctx.finMotivo = "agente";
+      return { agendada: false };
+    }
+    return { esperar: "cita" };
+  };
+
+  if (esperando === "cita") {
+    const iso = esHorarioElegido(texto);
+
+    // ── ESCRIBIÓ CON SUS PALABRAS EN VEZ DE TOCAR UNA OPCIÓN ───────────────
+    //
+    // «necesito que sea en la tarde». Antes esto viajaba hasta el calendario
+    // como si fuera una fecha y volvía convertido en «Falta la fecha y hora de
+    // la cita.», que es lo que leyó el cliente.
+    //
+    // No se intenta adivinar qué quiso decir —eso es trabajo de la IA, no de
+    // una comparación de texto—. Se le dice que toque una de la lista y se le
+    // vuelve a enseñar, que ahora trae mañanas Y tardes de varios días.
+    if (!iso) {
+      await say(
+        ctx,
+        interp(
+          d.textoNoEntendi ||
+            "Para agendar necesito que toques una de las horas de la lista 👇 Si ninguna te sirve, escribe *1* y te paso con una persona.",
+          ctx.vars,
+        ),
+      );
+      return await volverAOfrecer();
+    }
+
+    ctx.vars.cita_elegida = iso;
+    const pedir = await pedirDatoDeCita(ctx, node);
+    if (pedir) return { esperar: pedir.type };
+    // Si falla al agendar se vuelven a ofrecer horarios, NUNCA se sigue por la
+    // salida del bloque: esa salida suele ser «tu cita quedó agendada».
+    if (await agendarElegido(ctx, node, iso)) return { agendada: true };
+    return await volverAOfrecer();
+  }
+
+  if (esperando === "cita_nombre") {
+    const clave = String(d.nameAttr ?? "").trim();
+    const limpio = String(texto ?? "").trim().slice(0, 80);
+    // Un nombre no se valida: la gente se llama como se llama. Lo único que se
+    // rechaza es el vacío, y ahí se vuelve a preguntar.
+    if (!limpio) return { esperar: "cita_nombre" };
+    if (clave) ctx.vars[clave] = limpio;
+  }
+
+  if (esperando === "cita_correo") {
+    const clave = String(d.attendeeAttr ?? "").trim();
+    if (quiereOmitir(texto)) {
+      // SE RESPETA Y SE RECUERDA. Sin lo segundo, la siguiente vuelta por el
+      // bloque le vuelve a pedir el correo que acaba de negar.
+      ctx.vars.cita_sin_correo = "si";
+    } else {
+      const correo = correoValido(texto);
+      if (!correo) {
+        // UNA SOLA INSISTENCIA. Pedir un correo tres veces a quien está
+        // escribiendo otra cosa es perder la cita por un campo opcional.
+        if (ctx.vars.cita_correo_reintento === "si") {
+          ctx.vars.cita_sin_correo = "si";
+        } else {
+          ctx.vars.cita_correo_reintento = "si";
+          await say(ctx, "Ese correo no me cuadra 🤔 ¿Me lo escribes otra vez? O escribe «no» y lo dejamos así.");
+          return { esperar: "cita_correo" };
+        }
+      } else if (clave) {
+        ctx.vars[clave] = correo;
+      }
+    }
+  }
+
+  // Ya se contestó lo que se preguntaba. ¿Falta algo más? Y si no, se agenda
+  // con la hora que se guardó al principio de todo esto.
+  const pedir = await pedirDatoDeCita(ctx, node);
+  if (pedir) return { esperar: pedir.type };
+
+  const iso = esHorarioElegido(ctx.vars.cita_elegida);
+  // Sin la hora guardada no hay nada que agendar. Pasa si la conversación se
+  // quedó a medias y el estado se limpió: se vuelve a empezar por los
+  // horarios, que es mejor que agendar a ciegas o quedarse callado.
+  if (!iso) return await volverAOfrecer();
+
+  if (await agendarElegido(ctx, node, iso)) return { agendada: true };
+  return await volverAOfrecer();
 }
 
 /**
@@ -3458,19 +3768,28 @@ async function handleIncoming(opts: any) {
     startId = opts.retomarEn;
   } else if (awaiting?.nodeId) {
     const node = getNode(opts.flow, awaiting.nodeId);
-    if (awaiting.type === "cita") {
-      // El id del botón ES la hora en ISO: así no hay que guardar la lista de
-      // horarios en ninguna parte ni preocuparse de que caduque.
-      const ok = node ? await agendarElegido(ctx, node, opts.text) : false;
-      // Solo se sigue adelante —al mensaje de «cita agendada»— si la cita se
-      // creó de verdad. Ver el comentario del bloque `calendar`.
-      startId = ok && node ? defaultNext(opts.flow, node) : undefined;
-      if (!ok) {
-        // Falló al agendar: se vuelven a ofrecer horarios en vez de seguir
-        // adelante como si la cita existiera.
-        if (node) await sayCalendario(ctx, node);
-        await avanzarRecorrido(opts.db, runId, 1, node?.id ?? null);
-        return { vars, awaiting: { nodeId: node?.id, type: "cita" }, run_id: runId, ofreciAgente: ctx.ofreciAgente };
+    if (awaiting.type === "cita" || awaiting.type === "cita_nombre" || awaiting.type === "cita_correo") {
+      if (!node) {
+        startId = undefined;
+      } else {
+        const seguir = await pasoDeCita(ctx, node, awaiting.type, opts.text);
+
+        if (seguir.esperar) {
+          await avanzarRecorrido(opts.db, runId, 1, node.id);
+          return {
+            vars, awaiting: { nodeId: node.id, type: seguir.esperar },
+            // `hintEnviado` viaja como en todas las demás esperas. Sin él, el
+            // recordatorio de los atajos («escribe 0 para volver al inicio»)
+            // vuelve a salir en el turno siguiente, y otra vez, y otra: la
+            // rama de la cita era la única que se lo comía.
+            hintEnviado: (opts.flowState?.hintEnviado ?? false) || !!ctx.hintYaSalio,
+            run_id: runId, ofreciAgente: ctx.ofreciAgente, flow_id: ctx.flowIdNuevo,
+          };
+        }
+
+        // Solo se sigue adelante —al mensaje de «cita agendada»— si la cita se
+        // creó de verdad. Ver el comentario del bloque `calendar`.
+        startId = seguir.agendada ? defaultNext(opts.flow, node) : undefined;
       }
     } else if (awaiting.type === "wa_flow") {
       // Cada campo del formulario se guarda como variable del flujo, así se

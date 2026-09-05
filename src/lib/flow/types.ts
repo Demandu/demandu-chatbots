@@ -187,10 +187,26 @@ export interface DemanduNodeData {
   /** Texto al mandar el enlace de agenda cuando no se puede reservar por API. */
   textoConEnlace?: string;
   durationMin?: number;
+  /** Cuántos horarios se ofrecen. Tope 10, que es lo que cabe en una lista de WhatsApp. */
+  cuantosHorarios?: number;
   /** claves de atributo que alimentan el evento (invitado, nombre, empresa) */
   attendeeAttr?: string;
   nameAttr?: string;
   companyAttr?: string;
+  /**
+   * ── EL BLOQUE PIDE LO QUE LE FALTE ──────────────────────────────────────
+   *
+   * Encendidos por omisión, y por eso se comprueban con `!== false`: los
+   * bloques que ya existen no tienen estos campos y tienen que empezar
+   * preguntando. Un bot en producción con `attendeeAttr` configurado y nadie
+   * que lo preguntara llevaba semanas creando citas sin invitación.
+   */
+  pedirNombre?: boolean;
+  pedirCorreo?: boolean;
+  textoPideNombre?: string;
+  textoPideCorreo?: string;
+  /** Qué se dice cuando escribe en vez de elegir una de las horas. */
+  textoNoEntendi?: string;
   /** solo para type = "human" */
   team?: string;
   notifyTeam?: boolean;

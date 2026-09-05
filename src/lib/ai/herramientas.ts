@@ -54,6 +54,15 @@ export type ContextoAgente = {
    * siempre el catálogo de la misma y el negocio no tenía forma de cambiarlo.
    */
   tiendaElegida?: string | null;
+  /**
+   * Por qué la IA acabó devolviendo su mensaje de respaldo, cuando no fue
+   * porque no supiera.
+   *
+   * Lo escribe `aiAnswer` y lo guarda el motor con el mensaje. Sin esto, las
+   * siete causas distintas del respaldo se ven todas igual —«esa no me la sé»—
+   * y una agenda rota es indistinguible de una pregunta que el bot no domina.
+   */
+  motivoDelRespaldo?: string | null;
 };
 
 /** Ajustes del agente que vienen de `bots.ai`. */

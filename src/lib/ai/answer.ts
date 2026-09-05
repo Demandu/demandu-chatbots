@@ -194,7 +194,27 @@ export async function aiAnswer(opts: {
   // Apagada NO se llama a la API: no se gasta ni se registra consumo. Ese es
   // el punto — antes el interruptor se guardaba pero nadie lo leía, y un
   // cliente que la apagaba seguía gastando IA sin saberlo.
+  // ── POR QUÉ SE CAYÓ AL RESPALDO, ANOTADO DONDE SE PUEDA VER ─────────────
+  //
+  // «Esa no me la sé todavía 🙈» se devuelve por SIETE motivos distintos y
+  // solo UNO es de verdad «no lo sé». Los otros seis son averías: el plan sin
+  // IA, la llave que falta, la API que falla, el modelo que no produjo texto,
+  // las vueltas agotadas porque una herramienta falla en bucle, y la red.
+  //
+  // Con todos diciendo lo mismo, el dueño del negocio ve un bot que no sabe
+  // nada y no tiene forma de saber que su agenda está rota. Costó un día
+  // entero de depuración a ciegas.
+  //
+  // Se apunta en el contexto del agente, que es lo que el motor guarda con el
+  // mensaje. Un `console.error` no sirve: nadie lee los registros de Netlify.
+  const caida = (motivo: string) => {
+    console.error(`[ia] respaldo por: ${motivo} (org ${opts.orgId})`);
+    if (opts.agente) (opts.agente as any).motivoDelRespaldo = motivo;
+    return ai.fallback;
+  };
+
   if (ai.enabled === false) {
+    if (!opts.diagnostico) return caida("la IA está apagada en este chatbot");
     return opts.diagnostico
       ? "⚠️ La IA está apagada para este chatbot. Enciéndela con el interruptor «Responder con IA»."
       : ai.fallback;
@@ -218,15 +238,14 @@ export async function aiAnswer(opts: {
    * solo deja de pensar respuestas nuevas. Degradar es mejor que cortar.
    */
   if (!(await orgConIA(opts.admin, opts.orgId))) {
-    return opts.diagnostico
-      ? "⚠️ Tu plan no incluye Lana IA. Puedes activarla desde Configuración → Mi plan."
-      : ai.fallback;
+    if (!opts.diagnostico) return caida("el plan no incluye IA");
+    return "⚠️ Tu plan no incluye Lana IA. Puedes activarla desde Configuración → Mi plan.";
   }
 
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
-    console.warn("[ai] ANTHROPIC_API_KEY no configurada — usando respuesta de respaldo");
-    return opts.diagnostico ? "⚠️ Falta configurar la llave de IA en el servidor." : ai.fallback;
+    if (!opts.diagnostico) return caida("falta ANTHROPIC_API_KEY en el servidor");
+    return "⚠️ Falta configurar la llave de IA en el servidor.";
   }
 
   // El conocimiento SIEMPRE se acota a la organización y al chatbot.
@@ -276,8 +295,8 @@ export async function aiAnswer(opts: {
 
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
-        console.error("[ai] error de la API:", res.status, detail.slice(0, 200));
-        return opts.diagnostico ? explicarFallo(res.status, detail) : ai.fallback;
+        if (!opts.diagnostico) return caida(`la API de IA respondió ${res.status}: ${detail.slice(0, 120)}`);
+        return explicarFallo(res.status, detail);
       }
 
       const j = await res.json();
@@ -313,7 +332,9 @@ export async function aiAnswer(opts: {
       if (j?.stop_reason !== "tool_use" || !pedidas.length || !opts.agente) {
         // Si prometió una persona y no la llamó, se cumple igual.
         if (opts.agente) await cumplirLoPrometido(opts.agente, text, tools);
-        return text || ai.fallback;
+        // SIN TEXTO NO ES «no lo sé»: el modelo terminó sin decir nada, que es
+        // una avería. Decirle al cliente «esa no me la sé» esconde el fallo.
+        return text || caida("el modelo terminó sin escribir nada");
       }
 
       // Se ejecuta lo que pidió y se le devuelve el resultado para que siga.
@@ -335,13 +356,15 @@ export async function aiAnswer(opts: {
       }
     }
 
-    console.error("[agente] se agotaron las vueltas sin una respuesta final");
-    return ai.fallback;
+    // ── EL MOTIVO MÁS CARO DE TODOS ────────────────────────────────────────
+    // Casi siempre significa que una HERRAMIENTA está fallando y el modelo la
+    // reintenta hasta agotar las vueltas. Le pasó a una demo: `agendar_cita`
+    // fallaba, el modelo insistía, y el cliente recibió «esa no me la sé»
+    // mientras la agenda estaba rota. Sin este apunte, indistinguible.
+    return caida(`se agotaron los intentos (${MAX_VUELTAS}), probablemente una herramienta está fallando`);
   } catch (e: any) {
-    console.error("[ai] fallo de red:", e?.message ?? e);
-    return opts.diagnostico
-      ? "⚠️ No se pudo conectar con el servicio de IA. Vuelve a intentar en un minuto."
-      : ai.fallback;
+    if (!opts.diagnostico) return caida(`no se pudo conectar con la IA: ${e?.message ?? e}`);
+    return "⚠️ No se pudo conectar con el servicio de IA. Vuelve a intentar en un minuto.";
   }
 }
 

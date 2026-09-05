@@ -5414,8 +5414,25 @@ describe("El candado de los planes", () => {
     const wa = sinComentarios(
       fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
     );
-    esperar(/if \(!\(await tieneIA\(ctx\)\)\) return ai\.fallback/.test(wa)).verdadero(
+    // SE MIDE POR POSICIÓN, no por el texto exacto del `return`. La primera
+    // versión de esta regla clavaba `return ai.fallback` y se rompió el día que
+    // todos los respaldos pasaron a anotar su motivo — con la comprobación del
+    // plan intacta. Una regla que falla cuando NO hay nada roto acaba siendo
+    // una regla que se desactiva.
+    const desdeIA = wa.indexOf("async function responderConIA");
+    esperar(desdeIA > 0).verdadero("cambió la forma del motor, revisa esta prueba");
+    const plan = wa.indexOf("await tieneIA(ctx)", desdeIA);
+    const modelo = wa.indexOf("api.anthropic.com", desdeIA);
+    esperar(plan > desdeIA && plan < modelo).verdadero(
       "en WhatsApp no se comprueba el plan antes de pensar la respuesta",
+    );
+    // Y QUE CORTE DE VERDAD. Solo con la posición, meterle un `false &&`
+    // delante pasaba en verde: la línea sigue donde debe y ya no frena a nadie.
+    // Se deja abierto QUÉ devuelve — clavar eso es lo que rompió la versión
+    // anterior de esta regla el día que los respaldos empezaron a anotar su
+    // motivo, sin que nada estuviera mal.
+    esperar(/if \(!\(await tieneIA\(ctx\)\)\) return /.test(wa)).verdadero(
+      "la comprobación del plan está pero ya no corta",
     );
   });
 
@@ -5560,6 +5577,313 @@ describe("Los tratos con un cliente", () => {
     // tienda gratis, y la respuesta no puede ser «ni idea».
     const cuantos = (REG.match(/anotarComoYo\(/g) ?? []).length;
     esperar(cuantos >= 5).verdadero(`solo ${cuantos} acciones dejan rastro; deberían ser todas`);
+  });
+});
+
+
+// ─── EL BLOQUE «AGENDAR CITA» ────────────────────────────────────────────────
+//
+// Todo lo de aquí abajo sale de una conversación real del 5 de septiembre en la
+// que un cliente quiso agendar una demo. Recibió tres medias horas seguidas de
+// la misma mañana, escribió «necesito que sea en la tarde», y el bot le
+// contestó «Falta la fecha y hora de la cita.» — el mensaje de error de una
+// función interna. La cita acabó creándose sin invitado, porque el bloque tenía
+// configurado de dónde sacar el correo y nadie lo preguntaba nunca.
+//
+// Las reglas puras viven en `src/lib/agendaHorarios.ts` y se prueban en
+// `logica.mjs`. Lo de aquí es que los DOS motores las usen: el de WhatsApp
+// corre en Deno y no puede importar de `src/`, así que lleva una copia, y estas
+// reglas son lo único que impide que las dos se separen sin que nadie se entere.
+describe("Agendar una cita, en los dos motores", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const WEB = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+  const PURO = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agendaHorarios.ts"), "utf8"));
+
+  test("el motor de WhatsApp lleva su copia de las cuatro reglas", () => {
+    for (const f of ["esHorarioElegido", "correoValido", "quiereOmitir", "mensajeParaElCliente"]) {
+      esperar(new RegExp(`function ${f}\\(`).test(WA)).verdadero(
+        `el motor de WhatsApp perdió su copia de ${f}`,
+      );
+      esperar(new RegExp(`export function ${f}\\(`).test(PURO)).verdadero(
+        `desapareció ${f} del archivo puro; la copia de Deno se quedó sola`,
+      );
+    }
+  });
+
+  test("y las copias dicen LO MISMO, carácter por carácter", () => {
+    // Dos versiones de «esto es un correo» es garantizar que un día una cuenta
+    // acepte por WhatsApp lo que rechaza por la web, y al revés.
+    const cuerpo = (texto, nombre) => {
+      const i = texto.indexOf(`function ${nombre}(`);
+      if (i < 0) return null;
+      const abre = texto.indexOf("{", i);
+      let n = 0;
+      for (let j = abre; j < texto.length; j++) {
+        if (texto[j] === "{") n++;
+        else if (texto[j] === "}" && --n === 0) return texto.slice(abre, j + 1).replace(/\s+/g, " ").trim();
+      }
+      return null;
+    };
+
+    for (const f of ["esHorarioElegido", "correoValido", "quiereOmitir"]) {
+      const a = cuerpo(PURO, f);
+      const b = cuerpo(WA, f);
+      esperar(a && b).verdadero(`no pude leer ${f} en los dos sitios`);
+      esperar(b).igual(a);
+    }
+  });
+
+  test("el motor web usa las reglas de verdad, no una copia suya", () => {
+    // Node SÍ puede importar el archivo puro, así que aquí copiar no tiene
+    // ninguna excusa.
+    esperar(/from "@\/lib\/agendaHorarios"/.test(WEB)).verdadero(
+      "el motor web ya no importa las reglas de agendar",
+    );
+    for (const f of ["esHorarioElegido", "correoValido", "quiereOmitir", "mensajeParaElCliente"]) {
+      esperar(new RegExp(`function ${f}\\(`).test(WEB)).falso(
+        `el motor web se hizo su propia copia de ${f}`,
+      );
+    }
+  });
+
+  test("EL FALLO EXACTO: el error interno ya no viaja al chat", () => {
+    // Así estaba escrito, en los dos motores: lo que devolviera la plataforma,
+    // directo al cliente. Por eso alguien leyó «Falta la fecha y hora de la
+    // cita.» por escribir «necesito que sea en la tarde».
+    esperar(/say\(ctx,\s*r\?\.error\s*\|\|/.test(WA)).falso(
+      "el motor de WhatsApp vuelve a enseñar el error interno al cliente",
+    );
+    esperar(/push\(ctx,\s*r\?\.error\s*\|\|/.test(WEB)).falso(
+      "el motor web vuelve a enseñar el error interno al cliente",
+    );
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", WEB]]) {
+      esperar(/mensajeParaElCliente\(r/.test(texto)).verdadero(
+        `el motor de ${nombre} no filtra el error antes de enseñarlo`,
+      );
+    }
+  });
+
+  test("nadie decide por el motivo lo que se le enseña a la persona", () => {
+    // Fue el primer intento de arreglarlo y estaba mal: «ese horario acaba de
+    // ocuparse» y «falta la fecha y hora» comparten `motivo: "sin_datos"` y son
+    // casos opuestos. Lo decide la marca `paraElCliente`, y solo ella.
+    esperar(/paraElCliente/.test(sinComentarios(fs.readFileSync(path.join(SRC, "lib/agenda.ts"), "utf8"))))
+      .verdadero("la plataforma dejó de marcar qué error puede leer un cliente");
+    esperar(/motivo\s*===\s*"sin_datos"/.test(WA + WEB)).falso(
+      "un motor volvió a decidir por el motivo qué error enseñar",
+    );
+  });
+
+  test("EL FALLO EXACTO: no se ofrecen tres horas y ya", () => {
+    // `slice(0, 3)` era el motivo de que solo salieran 09:00, 09:30 y 10:00.
+    // En WhatsApp una lista admite diez; en la web y en Instagram no hay tope.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", WEB]]) {
+      esperar(/slots\.slice\(0,\s*3\)/.test(texto)).falso(
+        `el motor de ${nombre} volvió a recortar los horarios a tres`,
+      );
+      esperar(/slots\.slice\(0,\s*10\)/.test(texto)).verdadero(
+        `el motor de ${nombre} ya no ofrece hasta diez horarios`,
+      );
+    }
+  });
+
+  test("y la plataforma los reparte antes de devolverlos", () => {
+    // Sin el reparto, pedir diez de una agenda vacía son las cinco primeras
+    // horas del primer día. Diez opciones de la misma mañana no son diez
+    // opciones.
+    const agenda = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agenda.ts"), "utf8"));
+    esperar(/repartirHorarios\(/.test(agenda)).verdadero(
+      "`agenda.ts` devuelve los primeros huecos otra vez, sin repartir",
+    );
+    // Las DOS agendas, no solo Google: un negocio con Calendly tiene el mismo
+    // problema y sería el que nadie prueba.
+    esperar((agenda.match(/repartirHorarios\(/g) ?? []).length >= 2).verdadero(
+      "una de las dos agendas se quedó sin repartir sus horarios",
+    );
+  });
+
+  test("EL FALLO EXACTO: el bloque pide el correo que tiene configurado", () => {
+    // El bloque decía «el correo sácalo de la variable email» y no había en el
+    // flujo ningún sitio donde preguntarlo. La cita se creaba sin invitado, sin
+    // invitación y SIN QUE FALLARA NADA. Ese es el problema de repartir esto en
+    // bloques sueltos: cuando falta uno, no se rompe — sale peor, en silencio.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", WEB]]) {
+      esperar(/attendeeAttr/.test(texto) && /pedirCorreo/.test(texto)).verdadero(
+        `el motor de ${nombre} vuelve a agendar sin preguntar el correo`,
+      );
+      esperar(/nameAttr/.test(texto) && /pedirNombre/.test(texto)).verdadero(
+        `el motor de ${nombre} vuelve a agendar sin preguntar el nombre`,
+      );
+      // Encendidos por omisión: los bloques que ya existen no tienen el campo.
+      esperar(/pedirCorreo\s*!==\s*false/.test(texto)).verdadero(
+        `en el motor de ${nombre} el correo dejó de pedirse en los bloques de siempre`,
+      );
+      esperar(/pedirNombre\s*!==\s*false/.test(texto)).verdadero(
+        `en el motor de ${nombre} el nombre dejó de pedirse en los bloques de siempre`,
+      );
+    }
+  });
+
+  test("los dos motores saben esperar el nombre y el correo", () => {
+    // Una espera que un motor PONE y no sabe ATENDER deja la conversación
+    // colgada: el cliente contesta y no pasa nada, escriba lo que escriba. Ya
+    // pasó con el formulario de WhatsApp y está contado en el propio motor.
+    //
+    // Se comprueban los dos extremos por separado y con el nombre exacto. No
+    // vale contar apariciones: `cita_correo_reintento` contiene la subcadena y
+    // dejaría pasar un motor que pone la espera y nunca la atiende.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", WEB]]) {
+      for (const espera of ["cita_nombre", "cita_correo"]) {
+        esperar(new RegExp(`(esperar|type):\\s*"${espera}"`).test(texto)).verdadero(
+          `el motor de ${nombre} no llega a pedir "${espera}"`,
+        );
+        esperar(new RegExp(`esperando === "${espera}"`).test(texto)).verdadero(
+          `el motor de ${nombre} pone la espera "${espera}" y no sabe atenderla`,
+        );
+        esperar(new RegExp(`awaiting\\.type === "${espera}"`).test(texto)).verdadero(
+          `el motor de ${nombre} nunca reparte el turno hacia "${espera}"`,
+        );
+      }
+    }
+  });
+
+  test("después de un fallo NUNCA se sale por la salida de éxito", () => {
+    // La salida normal del bloque suele ser «tu cita quedó agendada». Seguir
+    // por ahí sin cita es confirmarle a alguien algo que no existe, que ya pasó
+    // una vez y está contado en el propio motor.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", WEB]]) {
+      esperar(/agendada\s*(&&\s*node\s*)?\?\s*defaultNext/.test(texto)).verdadero(
+        `el motor de ${nombre} puede seguir a la confirmación sin haber agendado`,
+      );
+    }
+  });
+
+  test("si hubo invitación o no, queda dicho", () => {
+    // `sinInvitacion` nace en Google —que puede rechazar al invitado— y tiene
+    // que llegar hasta el flujo. Si se corta a medias, el mensaje de
+    // confirmación promete un correo que no va a llegar y nadie se entera.
+    esperar(/sinInvitacion/.test(sinComentarios(fs.readFileSync(path.join(SRC, "lib/integrations/google.ts"), "utf8"))))
+      .verdadero("Google dejó de contar si pudo invitar");
+    // Tiene que LEER lo que devolvió Google, no solo declarar el campo: con el
+    // campo declarado y sin leerlo, la cita se confirma como si la invitación
+    // hubiera salido siempre — que es justo el fallo.
+    esperar(/ev\.sinInvitacion/.test(sinComentarios(fs.readFileSync(path.join(SRC, "lib/agenda.ts"), "utf8"))))
+      .verdadero("la plataforma se come el aviso de que no hubo invitación");
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", WEB]]) {
+      esperar(/cita_invitacion/.test(texto)).verdadero(
+        `el motor de ${nombre} no deja dicho si salió la invitación`,
+      );
+    }
+  });
+
+  test("el error de la vuelta anterior no sobrevive a una cita buena", () => {
+    // Pasó: `cita_error` se quedó con «Falta la fecha y hora de la cita.»
+    // mientras `cita_ok` decía «true». Quien lo use en una condición o lo pegue
+    // en un mensaje ve una cita agendada con un error al lado.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", WEB]]) {
+      esperar(/cita_error\s*=\s*""/.test(texto)).verdadero(
+        `el motor de ${nombre} deja el error viejo pegado a una cita que sí salió`,
+      );
+    }
+  });
+
+  test("el constructor deja configurar lo que el motor lee", () => {
+    // Un campo que el motor usa y el constructor no enseña es un campo que solo
+    // existe para quien sepa editar la base a mano.
+    const insp = fs.readFileSync(path.join(SRC, "components/builder/Inspector.tsx"), "utf8");
+    for (const campo of ["pedirNombre", "pedirCorreo", "textoPideNombre", "textoPideCorreo", "textoNoEntendi", "cuantosHorarios"]) {
+      // Con `includes` bastaba renombrarlo a `pedirCorreoZZ` para que siguiera
+      // pasando: la subcadena está ahí y el campo ya no existe.
+      esperar(new RegExp(`\\b${campo}\\b`).test(insp)).verdadero(`el constructor no deja tocar «${campo}»`);
+    }
+    // Y lo que promete tiene que ser verdad: decía «se enviará invitación al
+    // correo» en un bloque que podía crear la cita sin invitar a nadie.
+    esperar(/se enviará invitación al correo/.test(insp)).falso(
+      "el constructor vuelve a prometer una invitación que puede no salir",
+    );
+  });
+});
+
+
+// ─── POR QUÉ SALIÓ EL MENSAJE DE RESPALDO ────────────────────────────────────
+//
+// «Esa no me la sé todavía 🙈» se devuelve por OCHO motivos distintos y solo uno
+// es de verdad «no lo sé». Los otros siete son averías: la IA apagada, la llave
+// que falta, el plan que no la incluye, la API que responde un error, el modelo
+// que no escribe nada, las vueltas agotadas porque una herramienta falla en
+// bucle, y la red caída.
+//
+// Mientras los ocho se vieran iguales desde fuera, NADA de esto era depurable:
+// una agenda rota y una pregunta fuera de temario producían el mismo mensaje.
+describe("Cuando la IA no puede responder, se sabe por qué", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const ANSWER = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8"));
+  const WEB = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+
+  test("ningún camino devuelve el respaldo a secas", () => {
+    // `return ai.fallback` sin pasar por `caida()` es un motivo que se pierde,
+    // y se pierde justo el día que alguien pregunta «¿por qué contestó eso?».
+    //
+    // SE CUENTA LA CADENA LITERAL, sin expresiones. El primer intento montaba
+    // la expresión escapando el punto, la escapaba de más, y no encontraba
+    // nada NUNCA: la regla pasaba en verde con los ocho respaldos sueltos
+    // delante. Una regla que no puede fallar no está probando nada.
+    // El ÚNICO `return ai.fallback;` que vale es el que está dentro de
+    // `caida()`. Se quita ese trozo del texto y después no puede quedar
+    // ninguno: cualquiera que sobreviva es un motivo que se pierde.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", ANSWER]]) {
+      const i = texto.indexOf("const caida = ");
+      esperar(i > 0).verdadero(`el motor de ${nombre} ya no tiene un sitio único para los respaldos`);
+      const sinCaida = texto.slice(0, i) + texto.slice(texto.indexOf("};", i) + 2);
+      const sueltos = sinCaida.split("return ai.fallback;").length - 1;
+      esperar(sueltos).igual(0);
+    }
+  });
+
+  test("los dos motores apuntan el motivo, con el mismo nombre", () => {
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", ANSWER]]) {
+      esperar(/motivoDelRespaldo/.test(texto)).verdadero(
+        `el motor de ${nombre} dejó de apuntar por qué cayó al respaldo`,
+      );
+      esperar(/const caida = /.test(texto)).verdadero(
+        `el motor de ${nombre} perdió el único sitio por el que pasan todos los respaldos`,
+      );
+    }
+  });
+
+  test("el motivo LLEGA AL MENSAJE, no solo al registro", () => {
+    // Quien necesita saberlo es el negocio mirando su Bandeja, no nosotros
+    // mirando los registros del servidor. La misma clave en los dos motores,
+    // para que la Bandeja no tenga que mirar en dos sitios.
+    esperar(/payload\.fallo_ia = /.test(WA)).verdadero(
+      "el motor de WhatsApp ya no pega el motivo al mensaje",
+    );
+    esperar(/fallo_ia/.test(WEB)).verdadero("el motor web ya no pega el motivo al mensaje");
+    // Con la PALABRA ENTERA: `fallo_ia_x` contiene `fallo_ia`, y sin el borde
+    // la regla dejaría pasar una Bandeja que lee una clave que nadie escribe.
+    esperar(/payload\?\.fallo_ia\b/.test(fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8")))
+      .verdadero("la Bandeja dejó de avisar de que la IA no pudo responder");
+  });
+
+  test("el motivo se borra al escribirlo", () => {
+    // Si se quedara puesto, el mensaje siguiente del mismo turno saldría
+    // marcado como fallo sin serlo — y un aviso que miente deja de mirarse.
+    const i = WA.indexOf("payload.fallo_ia = ");
+    esperar(i > 0).verdadero("cambió la forma de registrar, revisa esta prueba");
+    esperar(/motivoDelRespaldo = null/.test(WA.slice(i, i + 200))).verdadero(
+      "el motivo se queda pegado y marca de fallo lo que venga después",
+    );
+  });
+
+  test("el motivo de las vueltas agotadas dice qué mirar", () => {
+    // Es el que más importa: casi siempre significa que una herramienta está
+    // fallando y el modelo la reintenta hasta quedarse sin turnos. Un motivo
+    // que solo diga «se agotaron los intentos» no le sirve a nadie.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", ANSWER]]) {
+      esperar(/herramienta está fallando/.test(texto)).verdadero(
+        `el motor de ${nombre} no dice que el problema puede ser una herramienta`,
+      );
+    }
   });
 });
 

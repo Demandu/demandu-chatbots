@@ -196,23 +196,53 @@ export async function createCalendarEvent(
     timeZone: string;
     attendeeEmail?: string;
   }
-): Promise<{ id: string; htmlLink: string }> {
+): Promise<{ id: string; htmlLink: string; sinInvitacion?: boolean }> {
   const body: any = {
     summary: ev.summary,
     description: ev.description,
     start: { dateTime: ev.startISO, timeZone: ev.timeZone },
     end: { dateTime: ev.endISO, timeZone: ev.timeZone },
   };
-  if (ev.attendeeEmail) body.attendees = [{ email: ev.attendeeEmail }];
-  const res = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=all`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }
+  const crear = async (cuerpo: any, conInvitado: boolean) =>
+    fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events` +
+        (conInvitado ? "?sendUpdates=all" : ""),
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(cuerpo),
+      },
+    );
+
+  let res = await crear(
+    ev.attendeeEmail ? { ...body, attendees: [{ email: ev.attendeeEmail }] } : body,
+    !!ev.attendeeEmail,
   );
+
+  /* ── SI EL INVITADO ES EL PROBLEMA, LA CITA SE CREA IGUAL ────────────────
+   *
+   * Google rechaza invitar a un correo externo en varias situaciones que no
+   * dependen de nosotros: cuentas de Workspace con el compartir restringido,
+   * dominios que no permiten invitados, cuentas sin permiso para convidar.
+   *
+   * Antes, cualquiera de esas tiraba TODA la reserva: el cliente eligió su
+   * hora, dijo que sí, y no quedó nada — ni en el calendario ni en su correo.
+   * Y el bot le contestó «parece que hay un problema técnico con esa hora»,
+   * que además es mentira: la hora estaba libre.
+   *
+   * Una cita en el calendario sin invitación es infinitamente mejor que
+   * ninguna cita: el negocio la ve, la atiende, y puede escribirle a la
+   * persona por el mismo chat donde la agendó.
+   */
+  let sinInvitacion = false;
+  if (!res.ok && ev.attendeeEmail) {
+    const porQue = await res.text().catch(() => "");
+    console.error(`[google] no aceptó el invitado (${res.status}): ${porQue.slice(0, 300)}`);
+    res = await crear(body, false);
+    sinInvitacion = res.ok;
+  }
+
   if (!res.ok) throw new Error(`createEvent failed: ${res.status} ${await res.text()}`);
   const j = await res.json();
-  return { id: j.id, htmlLink: j.htmlLink };
+  return { id: j.id, htmlLink: j.htmlLink, sinInvitacion };
 }
