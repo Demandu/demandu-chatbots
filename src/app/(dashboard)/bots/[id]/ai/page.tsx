@@ -10,7 +10,10 @@ import { getCurrentOrgId } from "@/lib/org";
 import { AI_DEFAULTS, aiConfigured } from "@/lib/ai/answer";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { agenteDelBot } from "@/lib/ai/agentes";
-import { ACCIONES } from "@/lib/ai/acciones";
+import { ACCIONES, accionesDelPrompt } from "@/lib/ai/acciones";
+import {
+  herramientasAutomaticas, herramientasQueManda, deDondeSale, requisitoDe,
+} from "@/lib/ai/capacidades";
 import { saveAiSettings, elegirTiendaDelAgente, usarOtroAgente } from "./actions";
 import { Sparkles, BookOpen } from "lucide-react";
 import { EstadoDeAgenda } from "@/components/bots/EstadoDeAgenda";
@@ -70,14 +73,22 @@ export default async function BotAiPage({
       .maybeSingle(),
   ]);
 
-  const horas = ((org?.business_hours as Record<string, DiaLaboral>) ?? {}) as Record<string, DiaLaboral>;
-  const agenda = loQueFaltaParaAgendar({
-    herramientas: ((bot.ai as any)?.herramientas ?? []) as string[],
-    conectado: Boolean(integracion),
-    timezone: String(org?.timezone ?? ""),
-    horas,
-  });
+  /* ── CONECTAR ES ENCENDER ────────────────────────────────────────────────
+   *
+   * Lo que este negocio TIENE hoy decide qué sabe hacer su asistente. Se mira
+   * aquí para poder enseñar en pantalla por qué cada casilla está como está:
+   * sin esa explicación, el usuario ve casillas marcadas que él no marcó.
+   * ────────────────────────────────────────────────────────────────────── */
+  const [{ data: calendly }, { data: tiendasActivas }] = await Promise.all([
+    supabase.from("integrations").select("provider").eq("provider", "calendly").maybeSingle(),
+    supabase.from("tiendas").select("id").eq("activa", true).limit(1),
+  ]);
 
+  const loQueTiene = {
+    agenda: Boolean(integracion) || Boolean(calendly),
+    tienda: Boolean((tiendasActivas ?? []).length),
+  };
+  const horas = ((org?.business_hours as Record<string, DiaLaboral>) ?? {}) as Record<string, DiaLaboral>;
   const DIAS: Record<string, string> = {
     mon: "lun", tue: "mar", wed: "mié", thu: "jue", fri: "vie", sat: "sáb", sun: "dom",
   };
@@ -98,6 +109,32 @@ export default async function BotAiPage({
   // panel dijera una cosa y el chatbot hiciera otra.
   const elAgente = await agenteDelBot(createAdminClient(), bot as any);
   const ai = { ...AI_DEFAULTS, ...elAgente.ajustes };
+
+  /* ── DE DÓNDE SALE CADA HERRAMIENTA ──────────────────────────────────────
+   *
+   * Va DESPUÉS del agente porque necesita lo que él tiene guardado: las
+   * casillas marcadas, el prompt y las que apagó a propósito. Sumado a lo que
+   * está conectado, sale lo que el bot lleva de verdad — y, sobre todo, POR QUÉ,
+   * que es lo que la pantalla enseña debajo de cada casilla. Sin esa
+   * explicación el usuario ve casillas marcadas que él no marcó.
+   * ────────────────────────────────────────────────────────────────────── */
+  const fuentes = {
+    automaticas: herramientasAutomaticas(loQueTiene),
+    marcadas: ((ai as any).herramientas ?? []) as string[],
+    escritas: accionesDelPrompt(String((ai as any).persona ?? "")),
+    apagadas: ((ai as any).herramientas_apagadas ?? []) as string[],
+  };
+  const encendidas = herramientasQueManda(fuentes);
+
+  const agenda = loQueFaltaParaAgendar({
+    // LO QUE DE VERDAD LLEVA EL AGENTE, no solo lo marcado a mano. Con lo
+    // segundo, un negocio con la agenda encendida sola no veía ni uno de los
+    // avisos de «te falta el horario laboral» — justo el que más falta le hace.
+    herramientas: encendidas,
+    conectado: Boolean(integracion),
+    timezone: String(org?.timezone ?? ""),
+    horas,
+  });
 
   // ── LAS DOS ELECCIONES QUE SOLO SE ENSEÑAN SI SIRVEN ─────────────────────
   // Otros agentes de la cuenta (para que otro canal hable igual) y las tiendas
@@ -287,9 +324,48 @@ export default async function BotAiPage({
                 <div className="rounded-xl border border-violet/30 bg-violet/5 p-4">
                   <h4 className="text-sm font-bold text-ink">Qué puede hacer solo</h4>
                   <p className="mb-3 mt-0.5 text-xs text-ink-2">
-                    Marca lo que quieras que tu asistente pueda hacer por su cuenta, sin que armes un
-                    flujo. Si no marcas nada, solo conversa.
+                    Lo que conectas se enciende solo. Lo demás lo marcas tú.
                   </p>
+
+                  {/* ── CONECTAR LA AGENDA, AQUÍ MISMO ──────────────────────
+                      Antes había que irse a Ajustes → Integraciones, volver, y
+                      además marcar dos casillas. Tres pantallas para que una IA
+                      pudiera agendar, y si te saltabas cualquiera no fallaba
+                      nada visible: la cita salía sin invitación, o la IA decía
+                      que no podía. */}
+                  <div className="mb-4 rounded-xl border border-linea-2 bg-tarjeta p-3">
+                    {loQueTiene.agenda ? (
+                      <p className="text-xs leading-relaxed text-ink-2">
+                        <b className="text-ink">Tu agenda está conectada</b>
+                        {integracion?.account_email ? ` (${integracion.account_email})` : ""}. Tu
+                        asistente ya puede <b className="text-ink">ver horarios, agendar, mover y
+                        cancelar citas</b> sin que configures nada más.
+                        <span className="mt-1 block text-ink-3">
+                          Si no quieres que toque tus citas, desmarca abajo las que sobren.
+                        </span>
+                      </p>
+                    ) : (
+                      <>
+                        <p className="mb-2 text-xs leading-relaxed text-ink-2">
+                          <b className="text-ink">Conecta tu calendario</b> y tu asistente podrá agendar,
+                          mover y cancelar citas él solo. No hay nada más que configurar: los datos que
+                          necesita pedirle a la gente se crean con la conexión.
+                        </p>
+                        <a
+                          href={`/api/integrations/google/start?volver=${encodeURIComponent(`/bots/${bot.id}/ai`)}`}
+                          className="inline-flex items-center gap-2 rounded-lg bg-violet px-3 py-2 text-xs font-semibold text-white"
+                        >
+                          Conectar mi Google Calendar
+                        </a>
+                        <span className="ml-2 text-[11px] text-ink-3">
+                          ¿Usas Calendly?{" "}
+                          <Link href="/settings/integrations" className="text-pink hover:underline">
+                            conéctalo aquí
+                          </Link>
+                        </span>
+                      </>
+                    )}
+                  </div>
 
                   <div className="grid gap-2 sm:grid-cols-2">
                     {/* ── LAS NUEVE, SALIDAS DEL CATÁLOGO ──────────────────
@@ -303,23 +379,54 @@ export default async function BotAiPage({
                         Tres funciones construidas, probadas y desplegadas que
                         nadie iba a encontrar. Leyéndolas del catálogo, una
                         herramienta nueva aparece sola. */}
-                    {ACCIONES.map(({ clave, nombre, desc }) => (
-                      <label
-                        key={clave}
-                        className="flex cursor-pointer items-start gap-2 rounded-lg border border-linea-2 bg-tarjeta p-2.5"
-                      >
-                        <input
-                          type="checkbox"
-                          name={`h_${clave}`}
-                          defaultChecked={((ai as any).herramientas ?? []).includes(clave)}
-                          className="mt-0.5 h-4 w-4 flex-none accent-violet"
-                        />
-                        <span>
-                          <b className="text-[13px] text-ink">{nombre}</b>
-                          <span className="mt-0.5 block text-[11px] leading-snug text-ink-3">{desc}</span>
-                        </span>
-                      </label>
-                    ))}
+                    {ACCIONES.map(({ clave, nombre, desc }) => {
+                      /* DE DÓNDE SALE, dicho en pantalla. Sin esto el usuario ve
+                         casillas marcadas que él no marcó y no entiende nada — y
+                         una casilla que se marca sola sin explicación se lee como
+                         un fallo, no como una comodidad. */
+                      const origen = deDondeSale(clave, fuentes);
+                      const necesita = requisitoDe(clave);
+                      const sinLoQueNecesita = !!necesita && !(loQueTiene as any)[necesita];
+                      const porQue =
+                        origen === "automatica"
+                          ? necesita === "agenda"
+                            ? "Encendida porque conectaste tu agenda"
+                            : "Encendida porque tienes una tienda activa"
+                          : origen === "del_prompt"
+                            ? "La pediste en tu prompt con «/»"
+                            : sinLoQueNecesita
+                              ? necesita === "agenda"
+                                ? "Se enciende sola en cuanto conectes tu calendario"
+                                : "Se enciende sola en cuanto tengas una tienda activa"
+                              : "";
+
+                      return (
+                        <label
+                          key={clave}
+                          className="flex cursor-pointer items-start gap-2 rounded-lg border border-linea-2 bg-tarjeta p-2.5"
+                        >
+                          <input
+                            type="checkbox"
+                            name={`h_${clave}`}
+                            defaultChecked={encendidas.includes(clave)}
+                            className="mt-0.5 h-4 w-4 flex-none accent-violet"
+                          />
+                          <span>
+                            <b className="text-[13px] text-ink">{nombre}</b>
+                            <span className="mt-0.5 block text-[11px] leading-snug text-ink-3">{desc}</span>
+                            {porQue && (
+                              <span
+                                className={`mt-1 block text-[11px] font-semibold ${
+                                  sinLoQueNecesita ? "text-ink-3" : "text-violet"
+                                }`}
+                              >
+                                {porQue}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
 
                   {/* ── CON QUÉ TIENDA TRABAJA ────────────────────────────

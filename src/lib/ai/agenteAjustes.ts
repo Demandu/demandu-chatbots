@@ -39,6 +39,7 @@ export type FilaDeAgente = {
   respaldo?: string | null;
   max_palabras?: number | null;
   herramientas?: string[] | null;
+  herramientas_apagadas?: string[] | null;
   criterios?: string | null;
   sistema_url?: string | null;
   sistema_descripcion?: string | null;
@@ -54,6 +55,7 @@ export type AjustesDeIA = {
   fallback?: string;
   maxWords?: number;
   herramientas?: string[];
+  herramientas_apagadas?: string[];
   criterios?: string;
   sistemaUrl?: string;
   sistemaDescripcion?: string;
@@ -82,6 +84,9 @@ export function comoAjustes(a: FilaDeAgente | null | undefined): AjustesDeIA {
     if (Number.isFinite(n) && n > 0) o.maxWords = n;
   }
   if (Array.isArray(a.herramientas)) o.herramientas = a.herramientas;
+  // Las que apagó a propósito. Sin esta línea, un negocio que dijo «no quiero
+  // que el bot toque mis citas» se lo encontraría agendando otra vez.
+  if (Array.isArray(a.herramientas_apagadas)) o.herramientas_apagadas = a.herramientas_apagadas;
 
   return o;
 }

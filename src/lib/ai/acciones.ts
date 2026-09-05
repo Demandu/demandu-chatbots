@@ -61,6 +61,22 @@ export const ACCIONES: Accion[] = [
     pista: "Pídele que confirme la hora con la persona antes de reservar.",
   },
   {
+    clave: "reagendar_cita",
+    nombre: "Mover una cita",
+    desc: "Cambia de hora la cita que ya tiene esa persona",
+    pista:
+      "Se enciende sola con tu agenda. No hace falta que la persona diga cuál cita: la plataforma " +
+      "busca la suya.",
+  },
+  {
+    clave: "cancelar_cita",
+    nombre: "Cancelar una cita",
+    desc: "Borra de tu calendario la cita de esa persona",
+    pista:
+      "Se enciende sola con tu agenda. El asistente pregunta antes de cancelar, y si lo que quiere " +
+      "es cambiarla de hora usa «Mover una cita».",
+  },
+  {
     clave: "ver_catalogo",
     nombre: "Ver mi catálogo",
     desc: "Consulta los productos y precios de tu tienda",

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { accionesDelPrompt, CLAVES_DE_ACCION } from "@/lib/ai/acciones";
+import { herramientasAutomaticas, apagadasDespuesDeGuardar } from "@/lib/ai/capacidades";
 
 /**
  * Las herramientas que puede tener un agente.
@@ -52,6 +53,16 @@ export async function saveAiSettings(formData: FormData) {
       ...HERRAMIENTAS.filter((h) => formData.get(`h_${h}`) === "on"),
       ...accionesDelPrompt(String(formData.get("persona") ?? "")),
     ])],
+    // ── Y LAS QUE APAGÓ A PROPÓSITO ──────────────────────────────────────
+    //
+    // Desde que conectar la agenda o encender la tienda enciende solas sus
+    // herramientas, desmarcar una casilla tiene que guardar un «no» explícito:
+    // si solo se quitara de la lista de encendidas, la automática la volvería
+    // a encender en el siguiente mensaje y la pantalla parecería no guardar.
+    //
+    // El cálculo vive en `capacidades.ts`, probado, porque el caso que se
+    // escapa siempre es el de VOLVER a encender.
+    herramientas_apagadas: [] as string[],
     // Cuándo etiquetar, cuándo calificar, cuándo pasar con alguien. En español
     // y escrito por el cliente: es lo que hace que el mismo código sirva para
     // una clínica y para una inmobiliaria.
@@ -83,6 +94,26 @@ export async function saveAiSettings(formData: FormData) {
     .from("bots").select("id, org_id, name, agente_id").eq("id", botId).maybeSingle();
   if (!bot) return;
 
+  // Qué tiene conectado, para saber cuáles de las casillas estaban encendidas
+  // solas y cuáles el negocio acaba de apagar.
+  const [{ data: hayAgenda }, { data: hayTienda }, { data: agenteAntes }] = await Promise.all([
+    supabase.from("integrations").select("provider")
+      .in("provider", ["google_calendar", "calendly"]).limit(1),
+    supabase.from("tiendas").select("id").eq("activa", true).limit(1),
+    bot.agente_id
+      ? supabase.from("agentes").select("herramientas_apagadas").eq("id", bot.agente_id).maybeSingle()
+      : Promise.resolve({ data: null } as any),
+  ]);
+
+  ai.herramientas_apagadas = apagadasDespuesDeGuardar(
+    ((agenteAntes as any)?.herramientas_apagadas ?? []) as string[],
+    herramientasAutomaticas({
+      agenda: !!(hayAgenda ?? []).length,
+      tienda: !!(hayTienda ?? []).length,
+    }),
+    ai.herramientas,
+  );
+
   const enElAgente = {
     ia_encendida: ai.enabled,
     prompt: ai.persona,
@@ -90,6 +121,7 @@ export async function saveAiSettings(formData: FormData) {
     respaldo: ai.fallback,
     max_palabras: ai.maxWords,
     herramientas: ai.herramientas,
+    herramientas_apagadas: ai.herramientas_apagadas,
     criterios: ai.criterios,
     sistema_url: ai.sistemaUrl,
     sistema_descripcion: ai.sistemaDescripcion,

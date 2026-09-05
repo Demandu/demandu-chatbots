@@ -24,6 +24,10 @@ import {
 } from "../../src/lib/integrations/calendly.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION, sinMarcadores } from "../../src/lib/ai/acciones.ts";
 import {
+  POR_LA_AGENDA, POR_LA_TIENDA, requisitoDe, herramientasAutomaticas,
+  herramientasQueManda, deDondeSale, apagadasDespuesDeGuardar,
+} from "../../src/lib/ai/capacidades.ts";
+import {
   repartirHorarios, esHorarioElegido, correoValido, quiereOmitir,
   mensajeParaElCliente, CORTE_DE_TURNO,
   opcionesDeHorario, horaDelFormulario, correoDelFormulario, nombreDelFormulario,
@@ -4480,6 +4484,156 @@ describe("El formulario nativo de WhatsApp, con horarios de verdad", () => {
 
   test("un nombre kilométrico no rompe el evento de Google", () => {
     esperar(nombreDelFormulario({ q: "a".repeat(500) }, "q").length).igual(80);
+  });
+});
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * CONECTAR ES ENCENDER
+ *
+ * La persona para la que está hecha esta plataforma tiene una clínica, no una
+ * empresa de software. Conecta su Google Calendar porque se lo pide la pantalla
+ * de citas, y hasta hoy su asistente seguía sin poder agendar por una casilla
+ * en OTRA pantalla que nadie le dijo que existía.
+ *
+ * Desde su lado eso no es un fallo que reportar. Es «la IA no sirve para eso».
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("Las herramientas de la IA se encienden con lo que hay conectado", () => {
+  test("con agenda conectada, la IA ya sabe agendar", () => {
+    const a = herramientasAutomaticas({ agenda: true });
+    esperar(a.includes("ver_horarios")).igual(true);
+    esperar(a.includes("agendar_cita")).igual(true);
+    esperar(a.includes("reagendar_cita")).igual(true);
+    esperar(a.includes("cancelar_cita")).igual(true);
+    // Y NADA de la tienda: quien conecta su agenda no ha abierto una tienda.
+    esperar(a.includes("ver_catalogo")).igual(false);
+  });
+
+  test("con tienda encendida, la IA ya sabe vender", () => {
+    const a = herramientasAutomaticas({ tienda: true });
+    esperar(a.includes("ver_catalogo")).igual(true);
+    esperar(a.includes("enlace_de_tienda")).igual(true);
+    esperar(a.includes("estado_de_pedido")).igual(true);
+    esperar(a.includes("agendar_cita")).igual(false);
+  });
+
+  test("sin nada conectado, no se enciende nada", () => {
+    // Una IA con `agendar_cita` y sin agenda es una IA que promete citas que
+    // no puede crear. Peor que no tenerla.
+    esperar(herramientasAutomaticas({}).length).igual(0);
+    esperar(herramientasAutomaticas(null).length).igual(0);
+    esperar(herramientasAutomaticas({ agenda: false, tienda: false }).length).igual(0);
+  });
+
+  test("NUNCA se enciende agendar sin poder ver horarios antes", () => {
+    // Sin `ver_horarios` el modelo se inventa la disponibilidad. Es el orden de
+    // la lista y por eso la lista importa.
+    esperar(POR_LA_AGENDA[0]).igual("ver_horarios");
+    esperar(POR_LA_AGENDA.includes("agendar_cita")).igual(true);
+    for (const h of POR_LA_AGENDA) esperar(requisitoDe(h)).igual("agenda");
+    for (const h of POR_LA_TIENDA) esperar(requisitoDe(h)).igual("tienda");
+  });
+
+  test("lo que no depende de nada sigue siendo una casilla", () => {
+    // Etiquetar, pasar con una persona, guardar un dato: no hace falta conectar
+    // nada, así que no hay nada que encender solo.
+    esperar(requisitoDe("etiquetar")).igual(null);
+    esperar(requisitoDe("pasar_a_humano")).igual(null);
+    esperar(requisitoDe("guardar_dato")).igual(null);
+    esperar(requisitoDe("consultar_sistema")).igual(null);
+  });
+});
+
+describe("Apagar una herramienta que se encendió sola", () => {
+  test("se puede decir que no", () => {
+    // Hay negocios que conectan su agenda solo para lo interno.
+    const r = herramientasQueManda({
+      automaticas: [...POR_LA_AGENDA],
+      apagadas: ["agendar_cita", "cancelar_cita"],
+    });
+    esperar(r.includes("agendar_cita")).igual(false);
+    esperar(r.includes("cancelar_cita")).igual(false);
+    esperar(r.includes("ver_horarios")).igual(true);
+  });
+
+  test("UN «SÍ» EXPLÍCITO GANA A UN «NO» QUE SE PUSO SOLO", () => {
+    // Si apagar pudiera anular una casilla marcada, el negocio la marcaría, la
+    // vería marcada, y la herramienta no estaría — sin nada en pantalla que
+    // explique por qué.
+    esperar(herramientasQueManda({
+      automaticas: ["agendar_cita"], marcadas: ["agendar_cita"], apagadas: ["agendar_cita"],
+    })).igual(["agendar_cita"]);
+
+    // Lo mismo escribiéndola en el prompt.
+    esperar(herramientasQueManda({
+      automaticas: ["agendar_cita"], escritas: ["agendar_cita"], apagadas: ["agendar_cita"],
+    })).igual(["agendar_cita"]);
+  });
+
+  test("las tres fuentes se juntan y no se repiten", () => {
+    const r = herramientasQueManda({
+      automaticas: ["ver_horarios", "agendar_cita"],
+      marcadas: ["etiquetar", "ver_horarios"],
+      escritas: ["pasar_a_humano", "etiquetar"],
+    });
+    esperar(r.length).igual(4);
+    esperar(new Set(r).size).igual(4);
+  });
+
+  test("sin fuentes, lista vacía y sin reventar", () => {
+    esperar(herramientasQueManda(null).length).igual(0);
+    esperar(herramientasQueManda({}).length).igual(0);
+    esperar(herramientasQueManda({ marcadas: null, apagadas: undefined }).length).igual(0);
+  });
+});
+
+describe("La pantalla puede explicar POR QUÉ está encendida", () => {
+  test("cada casilla sabe de dónde sale", () => {
+    // Sin esto el usuario ve casillas marcadas que él no marcó y no entiende
+    // nada. «Encendida porque conectaste tu Google Calendar» es la mitad de que
+    // esto se sienta bien.
+    const f = {
+      automaticas: ["ver_horarios", "agendar_cita"],
+      marcadas: ["etiquetar"],
+      escritas: ["pasar_a_humano"],
+      apagadas: ["agendar_cita"],
+    };
+    esperar(deDondeSale("ver_horarios", f)).igual("automatica");
+    esperar(deDondeSale("agendar_cita", f)).igual("apagada");
+    esperar(deDondeSale("etiquetar", f)).igual("marcada");
+    esperar(deDondeSale("pasar_a_humano", f)).igual("del_prompt");
+    esperar(deDondeSale("consultar_sistema", f)).igual("no");
+  });
+});
+
+describe("Guardar la pantalla no puede dejar una casilla marcada y apagada", () => {
+  test("VOLVER A ENCENDER LA QUITA DE LAS APAGADAS", () => {
+    // El caso que importa. Si al marcarla no se quita de las apagadas, el
+    // negocio la marca, guarda, y sigue apagada. Lo vería como «esta pantalla
+    // no guarda», no como «hay dos listas».
+    const r = apagadasDespuesDeGuardar(["agendar_cita"], [...POR_LA_AGENDA], [...POR_LA_AGENDA]);
+    esperar(r.length).igual(0);
+  });
+
+  test("desmarcar una automática la apaga", () => {
+    const r = apagadasDespuesDeGuardar([], [...POR_LA_AGENDA], ["ver_horarios"]);
+    esperar(r.includes("agendar_cita")).igual(true);
+    esperar(r.includes("reagendar_cita")).igual(true);
+    esperar(r.includes("cancelar_cita")).igual(true);
+    esperar(r.includes("ver_horarios")).igual(false);
+  });
+
+  test("una decisión vieja sobrevive a desconectar y volver a conectar", () => {
+    // Apagó las de la tienda, cerró la tienda un mes, y la vuelve a abrir. Su
+    // «no» sigue ahí: no se le reactiva nada por haberse ido y vuelto.
+    const r = apagadasDespuesDeGuardar(["ver_catalogo"], [...POR_LA_AGENDA], [...POR_LA_AGENDA]);
+    esperar(r).igual(["ver_catalogo"]);
+  });
+
+  test("no se apunta dos veces la misma", () => {
+    const r = apagadasDespuesDeGuardar(["agendar_cita"], ["agendar_cita"], []);
+    esperar(r).igual(["agendar_cita"]);
   });
 });
 

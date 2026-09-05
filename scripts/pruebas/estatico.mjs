@@ -6019,4 +6019,242 @@ describe("Agendar desde el formulario nativo de WhatsApp", () => {
   });
 });
 
+
+// ─── CONECTAR ES ENCENDER ────────────────────────────────────────────────────
+//
+// La persona para la que está hecha esta plataforma tiene una clínica, no una
+// empresa de software. Conecta su Google Calendar porque se lo pide la pantalla
+// de citas, y hasta hoy su asistente seguía sin poder agendar por una casilla
+// en OTRA pantalla que nadie le dijo que existía.
+//
+// Desde su lado eso no es un fallo que reportar. Es «la IA no sirve para eso».
+describe("Lo que el negocio conecta enciende su IA", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const PURO = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/capacidades.ts"), "utf8"));
+  const HERR = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8"));
+
+  const declaracion = (texto, nombre) => {
+    const m = new RegExp(`function ${nombre}\\([\\s\\S]*?\\n\\}`).exec(texto);
+    return m ? m[0].replace(/\s+/g, " ").trim() : null;
+  };
+
+  test("las dos reglas están en los dos motores y dicen lo mismo", () => {
+    // Dos ideas distintas de «qué puede hacer la IA» significaría que el mismo
+    // negocio tiene una asistente por WhatsApp y otra por la web.
+    for (const f of ["herramientasAutomaticas", "herramientasQueManda"]) {
+      const a = declaracion(PURO, f);
+      const b = declaracion(WA, f);
+      esperar(a && b).verdadero(`falta ${f} en uno de los dos motores`);
+      esperar(b).igual(a);
+    }
+    // Y las listas, que son el contenido de la regla.
+    for (const lista of ["POR_LA_AGENDA", "POR_LA_TIENDA"]) {
+      const trozo = (t) => {
+        const i = t.indexOf(`${lista} = [`);
+        return t.slice(i, t.indexOf("]", i)).replace(/\s+/g, " ");
+      };
+      esperar(trozo(WA)).igual(trozo(PURO));
+    }
+  });
+
+  test("los dos motores miran lo que hay conectado antes de armar herramientas", () => {
+    // SE MIRA DENTRO DE `armarHerramientas`, no en el archivo entero: buscando
+    // en todo el archivo, las propias definiciones de estas funciones hacen
+    // pasar la regla aunque nadie las llame.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", HERR]]) {
+      const i = texto.indexOf("function armarHerramientas");
+      esperar(i > 0).verdadero(`cambió la forma del motor de ${nombre}, revisa esta prueba`);
+      const cuerpo = texto.slice(i, i + 2500);
+      esperar(/herramientasAutomaticas\(await loQueTieneEsteNegocio\(ctx\)\)/.test(cuerpo)).verdadero(
+        `el motor de ${nombre} no enciende nada con lo que el negocio tiene conectado`,
+      );
+      esperar(/herramientasQueManda\(/.test(cuerpo)).verdadero(
+        `el motor de ${nombre} volvió a juntar las herramientas a su manera`,
+      );
+      esperar(/apagadas: Array\.isArray\(ai\.herramientas_apagadas\)/.test(cuerpo)).verdadero(
+        `el motor de ${nombre} ignora lo que el negocio apagó a propósito`,
+      );
+    }
+  });
+
+  test("SE PREGUNTA CADA VEZ, no se guarda en ningún sitio", () => {
+    // El día que alguien desconecte su Google, su asistente tiene que dejar de
+    // prometer citas EN ESE MOMENTO, no cuando alguien se acuerde de ir a
+    // desmarcar una casilla. Una IA que ofrece horarios de una agenda que ya no
+    // existe es peor que una IA que no agenda.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", HERR]]) {
+      const c = declaracion(texto, "loQueTieneEsteNegocio");
+      esperar(!!c).verdadero(`falta la consulta en el motor de ${nombre}`);
+      esperar(/integrations/.test(c)).verdadero(`el motor de ${nombre} no comprueba la agenda`);
+      esperar(/tiendas/.test(c)).verdadero(`el motor de ${nombre} no comprueba la tienda`);
+      esperar(/activa/.test(c)).verdadero(
+        `el motor de ${nombre} enciende la tienda aunque esté apagada`,
+      );
+    }
+  });
+
+  test("ANTE LA DUDA, NADA AUTOMÁTICO", () => {
+    // Encender herramientas porque la base no contestó sería que el bot promete
+    // citas sin poder crearlas. Lo peor de los dos errores posibles.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", HERR]]) {
+      const c = declaracion(texto, "loQueTieneEsteNegocio");
+      esperar(/catch[\s\S]*agenda: false, tienda: false/.test(c)).verdadero(
+        `el motor de ${nombre} enciende herramientas cuando la base falla`,
+      );
+    }
+  });
+
+  test("las herramientas apagadas llegan hasta el motor", () => {
+    // Un negocio que dijo «no quiero que el bot toque mis citas» no puede
+    // encontrárselo agendando otra vez porque la columna no se leyó.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", HERR]]) {
+      esperar(/herramientas_apagadas/.test(texto)).verdadero(
+        `el motor de ${nombre} ignora lo que el negocio apagó a propósito`,
+      );
+    }
+    esperar(/herramientas_apagadas/.test(sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/agenteAjustes.ts"), "utf8"))))
+      .verdadero("el agente ya no trae las herramientas apagadas");
+  });
+
+  test("guardar la pantalla no puede dejar una casilla marcada y apagada", () => {
+    // El caso que se escapa siempre es VOLVER a encender: si al marcarla no se
+    // quita de las apagadas, el negocio la marca, guarda, y sigue apagada.
+    const acciones = fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/ai/actions.ts"), "utf8");
+    esperar(/apagadasDespuesDeGuardar\(/.test(acciones)).verdadero(
+      "la pantalla guarda las apagadas a su manera, sin la regla probada",
+    );
+    esperar(/herramientas_apagadas: ai\.herramientas_apagadas/.test(acciones)).verdadero(
+      "lo que el negocio apaga no llega a la base",
+    );
+  });
+
+  test("conectar una agenda crea los datos que hacen falta para agendar", () => {
+    // Sin `correo` la cita se crea sin invitación y NADIE se entera. Era el
+    // tercer paso de un recorrido de tres pantallas que nadie completaba.
+    for (const cual of ["google", "calendly"]) {
+      const cb = fs.readFileSync(path.join(SRC, `app/api/integrations/${cual}/callback/route.ts`), "utf8");
+      esperar(/asegurarAtributosDeAgenda\(/.test(cb)).verdadero(
+        `conectar ${cual} no deja creados los datos del lead`,
+      );
+    }
+    const at = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agendaAtributos.ts"), "utf8"));
+    esperar(/"correo"/.test(at)).verdadero("ya no se crea el correo, que es el que hace falta");
+    // Y NO se toca lo que el negocio ya tiene.
+    // La condición entera, no la palabra: renombrar la variable dejaba pasar la
+    // regla con el filtro quitado.
+    esperar(/ATRIBUTOS_DE_AGENDA\.filter\(\(a\) => !tiene\.has\(a\.key\)\)/.test(at)).verdadero(
+      "se insertan los atributos sin mirar cuáles ya existen: reordenaría la pantalla del negocio",
+    );
+  });
+
+  test("se puede conectar la agenda desde la pantalla de la IA", () => {
+    // Antes: Ajustes → Integraciones, volver, y marcar dos casillas. Tres
+    // pantallas, y saltarse cualquiera no fallaba nada visible.
+    const pag = fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/ai/page.tsx"), "utf8");
+    esperar(/integrations\/google\/start\?volver=/.test(pag)).verdadero(
+      "la pantalla de la IA ya no deja conectar el calendario",
+    );
+    esperar(/deDondeSale\(/.test(pag)).verdadero(
+      "las casillas ya no explican por qué están encendidas",
+    );
+  });
+
+  test("volver después de conectar solo va a rutas de esta plataforma", () => {
+    // Sin la comprobación, cualquiera podría mandar a alguien a
+    // `...start?volver=https://…` y usarnos de trampolín justo después de un
+    // login de Google.
+    for (const ruta of ["start", "callback"]) {
+      const r = sinComentarios(fs.readFileSync(path.join(SRC, `app/api/integrations/google/${ruta}/route.ts`), "utf8"));
+      esperar(/startsWith\("\/"\) && !\w*\.startsWith\("\/\/"\)/.test(r)).verdadero(
+        `la ruta ${ruta} acepta una vuelta a cualquier sitio`,
+      );
+    }
+  });
+});
+
+// ─── MOVER Y CANCELAR UNA CITA ───────────────────────────────────────────────
+describe("La IA puede mover y cancelar la cita de una persona", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const HERR = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8"));
+  const AG = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agenda.ts"), "utf8"));
+
+  test("EL MODELO NUNCA DICE QUÉ CITA, solo qué hacer", () => {
+    // No tiene forma de saber el id de un evento de Google, así que si se lo
+    // pidiéramos se lo inventaría — y un id inventado que casualmente exista
+    // borra la cita de OTRA persona. La cita la busca la plataforma por el
+    // contacto que está escribiendo.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", HERR]]) {
+      const i = texto.indexOf('name: "cancelar_cita"');
+      esperar(i > 0).verdadero(`el motor de ${nombre} no ofrece cancelar`);
+      const esquema = texto.slice(i, i + 700);
+      esperar(/cita_id|evento_id|event_id/.test(esquema)).falso(
+        `el motor de ${nombre} le pide al modelo que identifique la cita`,
+      );
+    }
+  });
+
+  test("cada cita queda apuntada, y desde un solo sitio", () => {
+    // Hay cuatro caminos que agendan. Si cada uno tuviera que acordarse de
+    // guardar la cita, el que se añada mañana no se acordaría y sus citas
+    // serían las únicas que no se pueden mover.
+    // DOS EXACTAS: una por agenda. Con «al menos una», borrar la de Calendly
+    // pasaba en verde y sus citas quedaban huérfanas — que es justo el tipo de
+    // fallo que no se ve hasta que un cliente pide moverla.
+    esperar((AG.match(/await apuntarCita\(/g) ?? []).length).igual(2);
+    const i = AG.indexOf("export async function agendar(");
+    const j = AG.indexOf("export async function apuntarCita");
+    esperar(i > 0 && j > i).verdadero("cambió la forma del archivo, revisa esta prueba");
+    esperar(/apuntarCita\(/.test(AG.slice(i, j))).verdadero(
+      "`agendar` dejó de apuntar la cita: quien llame tendrá que acordarse, y alguien no se acordará",
+    );
+  });
+
+  test("el aviso de cita agendada sale de UN solo sitio", () => {
+    // Ahora lo emite el disparador de la base al apuntar la cita. Si además se
+    // emitiera desde el código, cada cita contaría DOS veces: al CRM del
+    // cliente y al embudo.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", HERR]]) {
+      esperar(/"cita\.agendada"/.test(texto)).falso(
+        `el motor de ${nombre} vuelve a emitir el aviso a mano: cada cita contaría dos veces`,
+      );
+    }
+    const wh = sinComentarios(fs.readFileSync(path.join(SRC, "app/api/webhooks/calendly/[org]/route.ts"), "utf8"));
+    esperar(/"cita\.agendada"/.test(wh)).falso("el aviso de Calendly se emite dos veces");
+    esperar(/apuntarCita\(/.test(wh)).verdadero(
+      "una cita reservada desde el enlace de Calendly no se puede mover después por chat",
+    );
+  });
+
+  test("la propia cita no cuenta como hora ocupada al moverla", () => {
+    // Sin esto, mover una cita media hora hacia adelante chocaría CONSIGO
+    // MISMA —su hueco viejo sigue reservado— y se rechazaría siempre.
+    const c = new RegExp("function moverCita\\([\\s\\S]*?\\n\\}").exec(AG)?.[0] ?? "";
+    // El filtro entero. Con solo el nombre de la variable, quitar el filtro y
+    // usar `ocupado` directamente pasaba en verde.
+    esperar(/const ajenos = ocupado\.filter\(/.test(c)).verdadero(
+      "mover una cita choca con ella misma y no se puede mover nunca",
+    );
+    esperar(/if \(ajenos\.length\)/.test(c)).verdadero(
+      "se mira `ocupado` en vez de `ajenos`: la propia cita cuenta como hora ocupada",
+    );
+  });
+
+  test("cancelar marca la fila DESPUÉS de que Google lo confirme", () => {
+    // Al revés, el negocio se queda con el hueco bloqueado en su calendario y
+    // con la plataforma diciéndole que está libre.
+    const c = new RegExp("function cancelarCita\\([\\s\\S]*?\\n\\}").exec(AG)?.[0] ?? "";
+    const borra = c.indexOf("deleteCalendarEvent");
+    const marca = c.indexOf('estado: "cancelada"');
+    esperar(borra > 0 && marca > borra).verdadero(
+      "se marca la cita cancelada antes de que Google confirme el borrado",
+    );
+  });
+
+  test("una cita cancelada NO se borra de la plataforma", () => {
+    // La fila se queda: es lo que permite que el bot sepa después «esta persona
+    // canceló» en vez de «esta persona nunca agendó».
+    esperar(/\.delete\(\)/.test(AG)).falso("se está borrando una cita de la tabla en vez de marcarla");
+  });
+});
+
 process.exit(await correrPruebas());

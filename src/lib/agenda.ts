@@ -1,6 +1,9 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getValidAccessTokenForOrg, freeBusy, createCalendarEvent } from "@/lib/integrations/google";
+import {
+  getValidAccessTokenForOrg, freeBusy, createCalendarEvent,
+  updateCalendarEvent, deleteCalendarEvent,
+} from "@/lib/integrations/google";
 import { computeSlots, type Slot } from "@/lib/integrations/availability";
 import * as calendly from "@/lib/integrations/calendly";
 import {
@@ -386,6 +389,20 @@ export async function agendar(
     titulo?: string;
     descripcion?: string;
     correoInvitado?: string;
+    /* ── DE QUIÉN ES LA CITA ───────────────────────────────────────────
+     *
+     * Van aquí y no en quien llama porque APUNTARLA TIENE QUE SER
+     * IMPOSIBLE DE OLVIDAR. Hay cuatro caminos que agendan —el bloque, el
+     * formulario nativo, la IA y la pantalla de pruebas— y si cada uno
+     * tuviera que acordarse de guardar la cita, el que se añada mañana no
+     * se acordaría, y sus citas serían las únicas que no se pueden mover.
+     *
+     * Nulos cuando se agenda desde la API pública, que no tiene
+     * conversación. La cita se apunta igual: sirve para que el negocio la
+     * vea, aunque el bot no pueda atarla a nadie. */
+    contactoId?: string | null;
+    conversacionId?: string | null;
+    nombreInvitado?: string | null;
   },
 ): Promise<Cita | Fallo> {
   const inicio = String(d.inicioISO || "").trim();
@@ -449,6 +466,21 @@ export async function agendar(
       }
       return { ok: false, motivo: "calendly", error: r.error };
     }
+
+    await apuntarCita(orgId, {
+      proveedor: "calendly",
+      eventoId: r.uri,
+      calendario: elTipo,
+      enlace: r.enlaceCambiar || conexion.agendaUrl,
+      enlaceCancelar: r.enlaceCancelar || null,
+      inicioISO: inicio,
+      finISO: finCal,
+      titulo: d.titulo ?? null,
+      nombre: d.nombreInvitado ?? null,
+      correo: d.correoInvitado ?? null,
+      contactoId: d.contactoId ?? null,
+      conversacionId: d.conversacionId ?? null,
+    });
 
     return {
       ok: true,
@@ -514,6 +546,20 @@ export async function agendar(
       timeZone,
       attendeeEmail: correoInvitado || undefined,
     });
+
+    await apuntarCita(orgId, {
+      proveedor: "google",
+      eventoId: ev.id,
+      calendario: calendarId,
+      enlace: ev.htmlLink,
+      inicioISO: inicio,
+      finISO,
+      titulo: d.titulo ?? null,
+      nombre: d.nombreInvitado ?? null,
+      correo: correoInvitado || null,
+      contactoId: d.contactoId ?? null,
+      conversacionId: d.conversacionId ?? null,
+    });
     const cuando = new Date(Date.parse(inicio));
     return {
       ok: true,
@@ -538,4 +584,279 @@ export async function agendar(
   } catch (e: any) {
     return { ok: false, motivo: "google", error: e?.message ?? "Google no aceptó la cita." };
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * MOVER Y CANCELAR
+ *
+ * ── POR QUÉ NO EXISTÍAN ───────────────────────────────────────────────────
+ *
+ * Porque al agendar se guardaba el enlace del evento y la hora, y NO el
+ * identificador. Con eso se puede escribir «tu cita quedó el jueves a las 10»
+ * y nada más: la plataforma no sabía CUÁL cita tocar.
+ *
+ *   cliente → «oye, ¿podemos mover la del jueves?»
+ *   bot     → (ni idea de qué cita le hablan)
+ *
+ * Ahora cada cita queda apuntada en `citas`. Ver la 0100 para el porqué de la
+ * tabla y de que no sea una copia del calendario.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+export type CitaGuardada = {
+  id: string;
+  proveedor: "google" | "calendly";
+  evento_id: string;
+  calendario: string | null;
+  enlace: string | null;
+  enlace_cancelar: string | null;
+  inicio: string;
+  fin: string | null;
+  titulo: string | null;
+  nombre: string | null;
+  correo: string | null;
+  estado: string;
+};
+
+const CAMPOS_DE_CITA =
+  "id, proveedor, evento_id, calendario, enlace, enlace_cancelar, inicio, fin, titulo, nombre, correo, estado";
+
+/**
+ * Deja apuntada una cita recién creada.
+ *
+ * ── NUNCA TUMBA LA CITA ───────────────────────────────────────────────────
+ *
+ * La cita YA EXISTE en el calendario del negocio cuando esto corre. Si apuntarla
+ * fallara y se dejara reventar, el cliente vería «no pude agendar» con la cita
+ * hecha, y llamaría a un negocio que sí la tiene. Se apunta el fallo y se sigue:
+ * lo peor que pasa es que esa cita concreta no se pueda mover por chat.
+ */
+export async function apuntarCita(
+  orgId: string,
+  d: {
+    proveedor: "google" | "calendly";
+    eventoId: string;
+    calendario?: string | null;
+    enlace?: string | null;
+    enlaceCancelar?: string | null;
+    inicioISO: string;
+    finISO?: string | null;
+    titulo?: string | null;
+    nombre?: string | null;
+    correo?: string | null;
+    contactoId?: string | null;
+    conversacionId?: string | null;
+  },
+): Promise<void> {
+  try {
+    // `upsert` por (org, proveedor, evento): un reintento del motor o un aviso
+    // repetido de Calendly no puede dejar la misma cita apuntada dos veces —
+    // «tu próxima cita» sería ambigua y mover una dejaría la otra viva.
+    await createAdminClient()
+      .from("citas")
+      .upsert(
+        {
+          org_id: orgId,
+          proveedor: d.proveedor,
+          evento_id: d.eventoId,
+          calendario: d.calendario ?? null,
+          enlace: d.enlace ?? null,
+          enlace_cancelar: d.enlaceCancelar ?? null,
+          inicio: d.inicioISO,
+          fin: d.finISO ?? null,
+          titulo: d.titulo ?? null,
+          nombre: d.nombre ?? null,
+          correo: d.correo ?? null,
+          contact_id: d.contactoId ?? null,
+          conversation_id: d.conversacionId ?? null,
+          estado: "agendada",
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "org_id,proveedor,evento_id" },
+      );
+  } catch (e) {
+    console.error("[agenda] no pude apuntar la cita:", (e as Error)?.message ?? e);
+  }
+}
+
+/**
+ * La próxima cita de esta persona.
+ *
+ * ── POR CONTACTO, NO POR CONVERSACIÓN ─────────────────────────────────────
+ *
+ * Quien agendó por Instagram y escribe por WhatsApp es otra conversación, y
+ * sigue siendo la misma persona con la misma cita. Buscar por conversación
+ * haría que el bot le dijera «no veo ninguna cita a tu nombre» a alguien que
+ * la tiene el jueves.
+ *
+ * Y solo las que están POR VENIR: mover una cita de la semana pasada no
+ * significa nada, y ofrecerlo confunde.
+ */
+export async function proximaCita(
+  orgId: string,
+  contactoId: string | null | undefined,
+): Promise<CitaGuardada | null> {
+  if (!contactoId) return null;
+  try {
+    const { data } = await createAdminClient()
+      .from("citas")
+      .select(CAMPOS_DE_CITA)
+      .eq("org_id", orgId)
+      .eq("contact_id", contactoId)
+      .neq("estado", "cancelada")
+      .gte("inicio", new Date().toISOString())
+      .order("inicio", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return (data as CitaGuardada) ?? null;
+  } catch (e) {
+    console.error("[agenda] no pude leer la próxima cita:", (e as Error)?.message ?? e);
+    return null;
+  }
+}
+
+/**
+ * Mueve una cita a otra hora.
+ *
+ * ── SE COMPRUEBA QUE LA HORA NUEVA ESTÉ LIBRE ─────────────────────────────
+ *
+ * Igual que al agendar. Mover una cita encima de otra es peor que crear una
+ * doble desde cero: la que estaba antes ya se la habías confirmado a alguien.
+ *
+ * ── CALENDLY NO SE MUEVE POR API ──────────────────────────────────────────
+ *
+ * No hay endpoint para reagendar: Calendly lo hace con SU enlace, que es el que
+ * se guardó al reservar. Devolverlo no es rendirse — es lo que hace el propio
+ * Calendly, y la persona cambia su cita en diez segundos.
+ */
+export async function moverCita(
+  orgId: string,
+  cita: CitaGuardada,
+  nuevoInicioISO: string,
+  durationMin?: number,
+): Promise<Cita | Fallo> {
+  const inicio = String(nuevoInicioISO || "").trim();
+  if (!inicio || Number.isNaN(Date.parse(inicio))) {
+    return { ok: false, motivo: "sin_datos", error: "Falta la nueva fecha y hora." };
+  }
+
+  if (cita.proveedor === "calendly") {
+    return {
+      ok: false,
+      motivo: "plan",
+      error: "Esta agenda se cambia desde su propio enlace.",
+      enlace: cita.enlace || undefined,
+    };
+  }
+
+  const admin = createAdminClient();
+  const token = await getValidAccessTokenForOrg(admin, orgId);
+  if (!token) {
+    return { ok: false, motivo: "sin_conexion", error: "Este negocio no tiene ninguna agenda conectada." };
+  }
+
+  const { timeZone } = await ajustesDeOrg(orgId);
+  const calendarId = cita.calendario || "primary";
+  // La duración de la cita que ya existe, si se sabe. Mover una cita de una
+  // hora y dejarla en media es cambiarle al cliente algo que no pidió.
+  const dur = Number(durationMin)
+    || (cita.fin ? Math.round((Date.parse(cita.fin) - Date.parse(cita.inicio)) / 60000) : 0)
+    || 30;
+  const finISO = new Date(Date.parse(inicio) + dur * 60_000).toISOString();
+
+  try {
+    const ocupado = await freeBusy(token, calendarId, inicio, finISO);
+
+    // ── LA PROPIA CITA NO CUENTA COMO OCUPADO ──────────────────────────
+    //
+    // Sin esto, mover una cita media hora hacia adelante chocaría CONSIGO
+    // MISMA —su hueco viejo sigue reservado— y se rechazaría siempre. El
+    // único bloque que se ignora es el que ocupa exactamente su ventana; si
+    // se mueve lejos, no coincide ninguno y no se ignora nada.
+    const propioInicio = Date.parse(cita.inicio);
+    const propioFin = Date.parse(cita.fin || cita.inicio);
+    const ajenos = ocupado.filter(
+      (b) => !(Date.parse(b.start) === propioInicio && Date.parse(b.end) === propioFin),
+    );
+
+    if (ajenos.length) {
+      return {
+        ok: false, motivo: "sin_datos", paraElCliente: true,
+        error: "Ese horario ya está ocupado. Elige otro, por favor.",
+      };
+    }
+  } catch {
+    // Igual que al agendar: el riesgo de solapar es menor que el de no poder
+    // mover nada porque Google tuvo un mal minuto.
+  }
+
+  try {
+    const ev = await updateCalendarEvent(token, calendarId, cita.evento_id, {
+      startISO: inicio, endISO: finISO, timeZone,
+    });
+
+    await admin.from("citas").update({
+      inicio, fin: finISO, enlace: ev.htmlLink, updated_at: new Date().toISOString(),
+    }).eq("id", cita.id).eq("org_id", orgId);
+
+    const cuando = new Date(Date.parse(inicio));
+    return {
+      ok: true,
+      eventoId: ev.id,
+      enlace: ev.htmlLink,
+      inicioISO: inicio,
+      finISO,
+      // Al mover SÍ se avisa al invitado (`sendUpdates=all` en la llamada), así
+      // que no se marca como sin invitación.
+      sinInvitacion: false,
+      dia: new Intl.DateTimeFormat("es-MX", { timeZone, weekday: "long", day: "numeric", month: "long" }).format(cuando),
+      hora: new Intl.DateTimeFormat("es-MX", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(cuando),
+      etiqueta: new Intl.DateTimeFormat("es-MX", {
+        timeZone, weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+      }).format(cuando),
+    };
+  } catch (e: any) {
+    return { ok: false, motivo: "google", error: e?.message ?? "Google no aceptó el cambio." };
+  }
+}
+
+/**
+ * Cancela una cita.
+ *
+ * En Google se borra el evento y se avisa al invitado. En la tabla la fila se
+ * queda con `estado = 'cancelada'`: es lo que permite que después el bot sepa
+ * «esta persona canceló» y no «esta persona nunca agendó».
+ */
+export async function cancelarCita(
+  orgId: string,
+  cita: CitaGuardada,
+): Promise<{ ok: true } | Fallo> {
+  if (cita.proveedor === "calendly") {
+    return {
+      ok: false,
+      motivo: "plan",
+      error: "Esta agenda se cancela desde su propio enlace.",
+      enlace: cita.enlace_cancelar || cita.enlace || undefined,
+    };
+  }
+
+  const admin = createAdminClient();
+  const token = await getValidAccessTokenForOrg(admin, orgId);
+  if (!token) {
+    return { ok: false, motivo: "sin_conexion", error: "Este negocio no tiene ninguna agenda conectada." };
+  }
+
+  try {
+    await deleteCalendarEvent(token, cita.calendario || "primary", cita.evento_id);
+  } catch (e: any) {
+    return { ok: false, motivo: "google", error: e?.message ?? "Google no aceptó la cancelación." };
+  }
+
+  // SOLO DESPUÉS DE QUE GOOGLE LO CONFIRME. Marcarla cancelada antes dejaría al
+  // negocio con el hueco bloqueado en su calendario y con la plataforma
+  // diciéndole que está libre.
+  await admin.from("citas")
+    .update({ estado: "cancelada", updated_at: new Date().toISOString() })
+    .eq("id", cita.id).eq("org_id", orgId);
+
+  return { ok: true };
 }

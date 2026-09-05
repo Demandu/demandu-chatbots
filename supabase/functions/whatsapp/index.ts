@@ -803,7 +803,7 @@ async function pasoElTopeDeIA(ctx: any): Promise<boolean> {
  */
 const CLAVES_DE_ACCION = [
   "etiquetar", "pasar_a_humano", "guardar_dato",
-  "ver_horarios", "agendar_cita", "consultar_sistema",
+  "ver_horarios", "agendar_cita", "reagendar_cita", "cancelar_cita", "consultar_sistema",
   // Las de la tienda. ESTA LISTA TIENE QUE SER IDÉNTICA a la de
   // `src/lib/ai/acciones.ts`: si una acción existe en un motor y no en el otro,
   // el mismo prompt hace cosas distintas en WhatsApp y en la web, y el cliente
@@ -897,6 +897,98 @@ function accionesDelPrompt(prompt: string | null | undefined): string[] {
   return [...encontradas];
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * CONECTAR ES ENCENDER — copia deliberada de `src/lib/ai/capacidades.ts`.
+ *
+ * Deno no puede importar de `src/`. Una prueba estática compara las dos y falla
+ * si se separan: dos ideas distintas de «qué puede hacer la IA» significaría
+ * que el mismo negocio tiene una asistente por WhatsApp y otra por la web.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+const POR_LA_AGENDA = [
+  "ver_horarios",
+  "agendar_cita",
+  "reagendar_cita",
+  "cancelar_cita",
+] as const;
+
+const POR_LA_TIENDA = [
+  "ver_catalogo",
+  "enlace_de_tienda",
+  "estado_de_pedido",
+] as const;
+
+type LoQueTiene = {
+  /** Google Calendar o Calendly conectado y con el token vivo. */
+  agenda?: boolean;
+  /** Al menos una tienda encendida y vinculada a este chatbot. */
+  tienda?: boolean;
+};
+
+function herramientasAutomaticas(tiene: LoQueTiene | null | undefined): string[] {
+  const out: string[] = [];
+  if (tiene?.agenda) out.push(...POR_LA_AGENDA);
+  if (tiene?.tienda) out.push(...POR_LA_TIENDA);
+  return out;
+}
+
+const listaDeHerramientas = (x: string[] | null | undefined) => (Array.isArray(x) ? x.filter(Boolean) : []);
+
+type Fuentes = {
+  /** Lo que sale solo de lo conectado. */
+  automaticas?: string[] | null;
+  /** Las casillas que marcó el negocio. */
+  marcadas?: string[] | null;
+  /** Las que pidió escribiéndolas en el prompt (`/agendar_cita`). */
+  escritas?: string[] | null;
+  /** Las automáticas que apagó a propósito. */
+  apagadas?: string[] | null;
+};
+
+function herramientasQueManda(f: Fuentes | null | undefined): string[] {
+  const apagadas = new Set(listaDeHerramientas(f?.apagadas));
+  const automaticas = listaDeHerramientas(f?.automaticas).filter((h) => !apagadas.has(h));
+  return [...new Set([...automaticas, ...listaDeHerramientas(f?.marcadas), ...listaDeHerramientas(f?.escritas)])];
+}
+
+/**
+ * ¿Qué tiene conectado este negocio AHORA MISMO?
+ *
+ * Se pregunta cada vez y no se guarda: el día que alguien desconecte su Google,
+ * su asistente tiene que dejar de prometer citas EN ESE MOMENTO, no cuando
+ * alguien se acuerde de ir a desmarcar una casilla.
+ */
+async function loQueTieneEsteNegocio(ctx: any): Promise<{ agenda: boolean; tienda: boolean }> {
+  try {
+    const [agenda, tienda] = await Promise.all([
+      ctx.db.from("integrations").select("provider")
+        .eq("org_id", ctx.orgId).in("provider", ["google_calendar", "calendly"]).limit(1),
+      ctx.db.from("tiendas").select("id").eq("org_id", ctx.orgId).eq("activa", true).limit(1),
+    ]);
+    return { agenda: !!(agenda.data ?? []).length, tienda: !!(tienda.data ?? []).length };
+  } catch (e) {
+    // ANTE LA DUDA, NADA AUTOMÁTICO: encender herramientas porque la base no
+    // contestó sería que el bot prometa citas sin poder crearlas.
+    console.error("[ia] no pude ver qué tiene conectado este negocio:", e);
+    return { agenda: false, tienda: false };
+  }
+}
+
+/**
+ * La ficha de quien escribe, por su teléfono.
+ *
+ * Aquí el teléfono ES la identidad —al revés que en la web, donde un visitante
+ * no tiene ninguna— así que se busca por él y se filtra por `org_id`, que hace
+ * imposible tocar la ficha de otro cliente aunque llegara un dato equivocado.
+ */
+async function idDelContacto(ctx: any): Promise<string | null> {
+  try {
+    const { data } = await ctx.db.from("contacts").select("id")
+      .eq("org_id", ctx.orgId).eq("channel", "whatsapp").eq("external_id", ctx.to).maybeSingle();
+    return data?.id ?? null;
+  } catch { return null; }
+}
+
 async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; contexto: string }> {
   // LO QUE PIDE EL PROMPT CUENTA IGUAL QUE LO MARCADO EN LA PANTALLA.
   //
@@ -907,9 +999,19 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
   // `ai.persona` es el prompt que de verdad se está usando: si el bloque del
   // flujo trae el suyo, ya lo ha sustituido antes de llegar aquí. Así el «/»
   // funciona igual escrito en la pantalla de Lana IA o dentro del bloque.
+  //
+  // Y UNA TERCERA FUENTE, LA PRIMERA EN IMPORTANCIA: lo que el negocio TIENE
+  // CONECTADO. Quien conecta su Google Calendar ya puede agendar, sin marcar
+  // nada. Ver `capacidades.ts`, de donde sale esta copia.
   const marcadas: string[] = Array.isArray(ai.herramientas) ? ai.herramientas : [];
   const escritas = accionesDelPrompt(ai.persona);
-  const quiere: string[] = [...new Set([...marcadas, ...escritas])];
+  const automaticas = herramientasAutomaticas(await loQueTieneEsteNegocio(ctx));
+  const quiere = herramientasQueManda({
+    automaticas,
+    marcadas,
+    escritas,
+    apagadas: Array.isArray(ai.herramientas_apagadas) ? ai.herramientas_apagadas : [],
+  });
   if (!quiere.length) return { tools: [], contexto: "" };
 
   const tools: any[] = [];
@@ -946,6 +1048,33 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
         },
         required: ["inicio"],
       },
+    });
+  }
+
+  if (quiere.includes("reagendar_cita")) {
+    tools.push({
+      name: "reagendar_cita",
+      description:
+        "Mueve la cita que esta persona ya tiene a otra hora. Llámala sin `inicio` para saber cuándo " +
+        "la tiene; después usa ver_horarios y vuelve a llamarla con la hora nueva. " +
+        "NO necesitas identificar la cita: la plataforma sabe cuál es la suya.",
+      input_schema: {
+        type: "object",
+        properties: {
+          inicio: { type: "string", description: "La hora nueva, tal cual la devolvió ver_horarios." },
+        },
+      },
+    });
+  }
+
+  if (quiere.includes("cancelar_cita")) {
+    tools.push({
+      name: "cancelar_cita",
+      description:
+        "Cancela la cita que esta persona tiene. CONFÍRMALE ANTES que de verdad la quiere cancelar: " +
+        "se borra del calendario del negocio y no se deshace. Si lo que quiere es cambiarla de hora, " +
+        "usa reagendar_cita en vez de esta.",
+      input_schema: { type: "object", properties: {} },
     });
   }
 
@@ -1205,26 +1334,76 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
       case "agendar_cita": {
         const inicio = String(args?.inicio ?? "").trim();
         if (!inicio) return "Falta la hora. Llama primero a ver_horarios.";
+        const nombreDeLaCita = String(args?.nombre ?? ctx.vars?.nombre ?? "cliente");
         const r = await pedirAgenda({
           accion: "agendar",
           org_id: ctx.orgId,
           inicio,
           duracion: 30,
-          titulo: `Cita con ${args?.nombre ?? ctx.vars?.nombre ?? "cliente"}`,
+          titulo: `Cita con ${nombreDeLaCita}`,
           descripcion: "Cita agendada por el agente de IA.",
           correo: args?.correo || undefined,
+          // DE QUIÉN ES. Sin esto la cita se crea huérfana y después no se
+          // puede mover ni cancelar: es el agujero que dejaba a la IA sin
+          // saber «cuál cita». Lo apunta la web, que es quien tiene la tabla.
+          contacto_id: await idDelContacto(ctx),
+          conversacion_id: ctx.convId,
+          nombre_invitado: nombreDeLaCita,
         });
         if (!r?.ok) return `No se pudo agendar: ${r?.error ?? "error desconocido"}. Ofrece otra hora.`;
 
         ctx.vars.cita_inicio = r.inicioISO ?? inicio;
         ctx.vars.cita_dia = r.dia ?? "";
         ctx.vars.cita_hora = r.hora ?? "";
-        contarFuera(ctx.db, ctx.orgId, "cita.agendada", {
-          telefono: ctx.to, nombre: args?.nombre ?? null, correo: args?.correo ?? null,
-          inicio: r.inicioISO ?? inicio, dia: r.dia ?? null, hora: r.hora ?? null,
-          enlace: r.enlace ?? null, conversacion_id: ctx.convId, por: "agente_ia",
+
+        // EL AVISO YA NO SALE DE AQUÍ. Lo emite el disparador de la base al
+        // apuntar la cita (ver la 0100), igual que los de la tienda. Si se
+        // dejara esta línea, cada cita agendada por la IA contaría DOS veces:
+        // al CRM del cliente y al embudo.
+        return r.sinInvitacion
+          ? `Cita confirmada para el ${r.dia ?? ""} a las ${r.hora ?? ""}. NO le prometas un correo: no se pudo mandar la invitación.`
+          : `Cita confirmada para el ${r.dia ?? ""} a las ${r.hora ?? ""}. Confírmaselo con esas palabras.`;
+      }
+
+      /* ── MOVER Y CANCELAR ────────────────────────────────────────────────
+       * Sin identificadores en los argumentos, a propósito: el modelo no puede
+       * saber el id de un evento de Google, así que se lo inventaría — y un id
+       * inventado que casualmente exista borra la cita de otra persona. La cita
+       * la busca la plataforma por el contacto que está escribiendo. */
+      case "reagendar_cita": {
+        const r = await pedirAgenda({
+          accion: "mover",
+          org_id: ctx.orgId,
+          contacto_id: await idDelContacto(ctx),
+          inicio: String(args?.inicio ?? "").trim() || undefined,
         });
-        return `Cita confirmada para el ${r.dia ?? ""} a las ${r.hora ?? ""}. Confírmaselo con esas palabras.`;
+        if (r?.sin_cita) return "Esta persona no tiene ninguna cita por delante. Ofrécele agendar una.";
+        if (r?.cuando) {
+          return `Su cita es el ${r.cuando}. Llama a ver_horarios y pregúntale a qué hora la quiere mover.`;
+        }
+        if (!r?.ok) {
+          if (r?.enlace) return `No se puede mover desde aquí. Dale este enlace tal cual: ${r.enlace}`;
+          return `No se pudo mover: ${r?.error ?? "error desconocido"}. Ofrécele otra hora.`;
+        }
+        ctx.vars.cita_inicio = r.inicioISO ?? "";
+        ctx.vars.cita_dia = r.dia ?? "";
+        ctx.vars.cita_hora = r.hora ?? "";
+        return `Cita movida al ${r.dia ?? ""} a las ${r.hora ?? ""}. Confírmaselo con esas palabras.`;
+      }
+
+      case "cancelar_cita": {
+        const r = await pedirAgenda({
+          accion: "cancelar",
+          org_id: ctx.orgId,
+          contacto_id: await idDelContacto(ctx),
+        });
+        if (r?.sin_cita) return "Esta persona no tiene ninguna cita por delante. No hay nada que cancelar.";
+        if (!r?.ok) {
+          if (r?.enlace) return `No se puede cancelar desde aquí. Dale este enlace tal cual: ${r.enlace}`;
+          return `No se pudo cancelar: ${r?.error ?? "error desconocido"}. Dile que le pasarás con una persona.`;
+        }
+        ctx.vars.cita_ok = "false";
+        return "Cita cancelada. Díselo, y ofrécele agendar otra cuando le venga bien.";
       }
 
       case "etiquetar": {
@@ -2035,6 +2214,12 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
     titulo: d.tituloEvento || `Cita con ${nombre ?? "cliente"}`,
     descripcion: d.descripcionEvento || "Cita agendada desde WhatsApp.",
     correo: correo || undefined,
+    // DE QUIÉN ES, para que la web pueda apuntarla y después se pueda mover o
+    // cancelar por chat. Sin esto, las citas del bloque serían las únicas
+    // huérfanas — y son la mayoría.
+    contacto_id: await idDelContacto(ctx),
+    conversacion_id: ctx.convId,
+    nombre_invitado: nombre ?? null,
   });
 
   if (r?.ok) {
@@ -2059,16 +2244,11 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
     ctx.vars.cita_dia = r.dia ?? "";
     ctx.vars.cita_hora = r.hora ?? "";
     ctx.vars.cita_cuando = r.etiqueta ?? "";
-    contarFuera(ctx.db, ctx.orgId, "cita.agendada", {
-      telefono: ctx.to,
-      nombre: nombre ?? null,
-      correo: correo ?? null,
-      inicio: r.inicioISO ?? inicioISO,
-      dia: r.dia ?? null,
-      hora: r.hora ?? null,
-      enlace: r.enlace ?? null,
-      conversacion_id: ctx.convId,
-    });
+
+    // EL AVISO NO SALE DE AQUÍ. Lo emite el disparador de la base al apuntar la
+    // cita (ver la 0100), igual que los de la tienda: hay cuatro caminos que
+    // agendan y emitir desde cada uno es garantizar que el quinto se olvide —
+    // y que estos cuatro lo manden DOS veces desde el día que existe la tabla.
     return true;
   }
 
@@ -2926,7 +3106,7 @@ async function agenteDeEsteBot(
     const { data } = await db
       .from("agentes")
       .select("id, nombre, ia_encendida, prompt, tono, respaldo, max_palabras, herramientas, " +
-              "criterios, sistema_url, sistema_descripcion, ia_de_respaldo, tienda_id")
+              "herramientas_apagadas, criterios, sistema_url, sistema_descripcion, ia_de_respaldo, tienda_id")
       .eq("id", id)
       .maybeSingle();
 
@@ -2948,6 +3128,9 @@ async function agenteDeEsteBot(
       if (Number.isFinite(n) && n > 0) o.maxWords = n;
     }
     if (Array.isArray(a.herramientas)) o.herramientas = a.herramientas;
+    // Las que apagó a propósito. Sin esta línea, un negocio que dijo «no quiero
+    // que el bot toque mis citas» se lo encontraría agendando otra vez.
+    if (Array.isArray(a.herramientas_apagadas)) o.herramientas_apagadas = a.herramientas_apagadas;
 
     const t = a.tienda_id;
     return { ajustes: o, tiendaId: typeof t === "string" && t.trim() ? t : null };

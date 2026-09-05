@@ -629,6 +629,16 @@ async function ofrecerHorariosWeb(ctx: Ctx, node: any): Promise<"espera" | "enla
  * tiene que decir lo mismo; si aquí se llamaran distinto, el mensaje de
  * confirmación saldría con los huecos en blanco.
  */
+/** La ficha de quien escribe. Aquí la identidad es la conversación, no el teléfono. */
+async function contactoDeLaConversacion(ctx: Ctx): Promise<string | null> {
+  try {
+    const { data } = await ctx.admin
+      .from("conversations").select("contact_id")
+      .eq("id", ctx.conversationId).eq("org_id", ctx.orgId).maybeSingle();
+    return (data as any)?.contact_id ?? null;
+  } catch { return null; }
+}
+
 async function agendarElegidoWeb(ctx: Ctx, node: any, inicioISO: string): Promise<boolean> {
   const d = node.data ?? {};
   const correo = d.attendeeAttr ? ctx.vars[d.attendeeAttr] : undefined;
@@ -646,6 +656,12 @@ async function agendarElegidoWeb(ctx: Ctx, node: any, inicioISO: string): Promis
       titulo: d.tituloEvento || `Cita con ${nombre ?? "cliente"}`,
       descripcion: d.descripcionEvento || "Cita agendada desde el chat.",
       correoInvitado: correo || undefined,
+      // DE QUIÉN ES, para que después se pueda mover o cancelar por chat. En
+      // web e Instagram el contacto sale de la conversación: el visitante de
+      // una web no tiene ninguna otra identidad.
+      contactoId: await contactoDeLaConversacion(ctx),
+      conversacionId: ctx.conversationId,
+      nombreInvitado: nombre ?? null,
     });
   } catch (e: any) {
     console.error("[agenda] no pude agendar:", e?.message ?? e);

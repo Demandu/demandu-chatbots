@@ -246,3 +246,70 @@ export async function createCalendarEvent(
   const j = await res.json();
   return { id: j.id, htmlLink: j.htmlLink, sinInvitacion };
 }
+
+/**
+ * Mueve una cita que ya existe.
+ *
+ * ── PATCH, NO BORRAR Y CREAR ──────────────────────────────────────────────
+ *
+ * Es la diferencia entre que al invitado le llegue «se cambió la hora de tu
+ * cita» —con su misma entrada de calendario actualizada— o que le llegue una
+ * cancelación y una invitación nueva, y se quede con dos huecos en su agenda si
+ * no acepta la segunda.
+ *
+ * Además, borrar y crear cambia el identificador del evento, y entonces lo que
+ * la plataforma tiene apuntado deja de existir: mover la cita dos veces
+ * fallaría la segunda.
+ *
+ * `sendUpdates=all` para que el invitado se entere. Una cita movida en secreto
+ * es una cita a la que no va nadie.
+ */
+export async function updateCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+  ev: { startISO: string; endISO: string; timeZone: string },
+): Promise<{ id: string; htmlLink: string }> {
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}` +
+      `/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start: { dateTime: ev.startISO, timeZone: ev.timeZone },
+        end: { dateTime: ev.endISO, timeZone: ev.timeZone },
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`updateEvent failed: ${res.status} ${await res.text()}`);
+  const j = await res.json();
+  return { id: j.id, htmlLink: j.htmlLink };
+}
+
+/**
+ * Cancela una cita.
+ *
+ * ── UN 404 O UN 410 SON UN ÉXITO ──────────────────────────────────────────
+ *
+ * Significan que el evento ya no está: o el dueño lo borró desde su calendario,
+ * o esta misma cancelación se reintentó. En los dos casos el resultado que la
+ * persona pidió —que no haya cita— YA SE CUMPLIÓ, y contestarle «no pude
+ * cancelar» la dejaría creyendo que sigue teniendo una cita que no existe.
+ *
+ * Es el único error que se traga, y a propósito: un 403 o un 500 sí se cuentan,
+ * porque ahí la cita sigue viva.
+ */
+export async function deleteCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+): Promise<void> {
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}` +
+      `/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (res.ok || res.status === 404 || res.status === 410) return;
+  throw new Error(`deleteEvent failed: ${res.status} ${await res.text()}`);
+}

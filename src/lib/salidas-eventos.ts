@@ -38,6 +38,15 @@ export const EVENTOS = [
   { clave: "pedido.pago_vencido", nombre: "Pago vencido", desc: "El enlace de pago caducó sin que pagaran." },
 
   { clave: "cita.cancelada", nombre: "Cita cancelada", desc: "La persona canceló su cita." },
+
+  /* Igual que los de la tienda: sale de un DISPARADOR sobre `citas`, no del
+     código que agenda. Hay cuatro caminos que crean o mueven una cita —el
+     bloque del constructor, el formulario nativo, la IA y el aviso de
+     Calendly— y emitir desde cada uno es garantizar que el quinto se olvide.
+
+     Faltaba por completo: un negocio cuyo cliente movía la cita tres veces y
+     luego la cancelaba veía su tarjeta parada en «Cita agendada» para siempre. */
+  { clave: "cita.movida", nombre: "Cita movida", desc: "La cita cambió de día u hora." },
 ] as const;
 
 export type ClaveDeEvento = (typeof EVENTOS)[number]["clave"];

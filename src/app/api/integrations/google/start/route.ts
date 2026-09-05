@@ -25,5 +25,23 @@ export async function GET(req: Request) {
     path: "/",
   });
 
+  /* ── A DÓNDE VOLVER DESPUÉS ────────────────────────────────────────────
+   *
+   * Se guarda en una cookie y no en el `state` porque el `state` es el nonce
+   * anti-CSRF: meterle datos de navegación lo convierte en algo que hay que
+   * parsear antes de compararlo, y un nonce que se parsea es un nonce que
+   * alguien puede confundir.
+   *
+   * Solo rutas de esta plataforma: sin la comprobación, cualquiera podría
+   * mandar a alguien a `/api/integrations/google/start?volver=https://…` y
+   * usarnos de trampolín a su propio sitio justo después de un login de
+   * Google. */
+  const volver = new URL(req.url).searchParams.get("volver") ?? "";
+  if (volver.startsWith("/") && !volver.startsWith("//")) {
+    cookies().set("g_oauth_volver", volver, {
+      httpOnly: true, secure: true, sameSite: "lax", maxAge: 600, path: "/",
+    });
+  }
+
   return NextResponse.redirect(buildAuthUrl(req, state));
 }

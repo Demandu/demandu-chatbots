@@ -1,4 +1,5 @@
-import { horariosLibres, agendar } from "@/lib/agenda";
+import { horariosLibres, agendar, proximaCita, moverCita, cancelarCita } from "@/lib/agenda";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { esDelMotor } from "@/lib/motor/autorizado";
 
 export const dynamic = "force-dynamic";
@@ -50,9 +51,53 @@ export async function POST(req: Request) {
       titulo: b.titulo,
       descripcion: b.descripcion,
       correoInvitado: b.correo,
+      // DE QUIÉN ES. El motor de WhatsApp no puede apuntar la cita —la tabla
+      // vive de este lado— así que manda a quién pertenece y `agendar` la
+      // apunta. Sin esto sus citas serían las únicas que no se pueden mover.
+      contactoId: b.contacto_id ?? null,
+      conversacionId: b.conversacion_id ?? null,
+      nombreInvitado: b.nombre_invitado ?? null,
     });
-    return Response.json(r, { status: r.ok ? 200 : 200 });
+    return Response.json(r);
+  }
+
+  /* ── MOVER Y CANCELAR ──────────────────────────────────────────────────
+   *
+   * El motor manda A QUIÉN, no QUÉ CITA. Es deliberado: la cita la elige esta
+   * capa, con la misma consulta para los dos motores. Si el identificador
+   * viajara por aquí, cualquiera que llegara a esta ruta con la llave de
+   * servicio podría mover la cita de otra persona pasando otro id.
+   *
+   * `sin_cita` no es un error: es la respuesta correcta a «muévela» cuando no
+   * hay ninguna, y el motor la convierte en algo que decirle a la persona. */
+  if (b.accion === "mover" || b.accion === "cancelar") {
+    const cita = await proximaCita(orgId, String(b.contacto_id ?? "") || null);
+    if (!cita) return Response.json({ ok: false, sin_cita: true });
+
+    if (b.accion === "cancelar") {
+      return Response.json(await cancelarCita(orgId, cita));
+    }
+
+    // Sin hora nueva, la pregunta es «¿cuándo la tiene?». Se contesta ya
+    // escrito para una persona: el motor corre en Deno y no conoce la zona
+    // horaria del negocio, así que formatear allí sería equivocarse de huso.
+    const inicio = String(b.inicio ?? "").trim();
+    if (!inicio) {
+      return Response.json({ ok: false, cuando: await comoSeLee(orgId, cita.inicio) });
+    }
+
+    return Response.json(await moverCita(orgId, cita, inicio));
   }
 
   return Response.json({ error: "acción desconocida" }, { status: 400 });
+}
+
+/** Una fecha, escrita como la lee una persona, en la zona del negocio. */
+async function comoSeLee(orgId: string, iso: string): Promise<string> {
+  const { data } = await createAdminClient()
+    .from("organizations").select("timezone").eq("id", orgId).maybeSingle();
+  return new Intl.DateTimeFormat("es-MX", {
+    timeZone: (data?.timezone as string) || "America/Mexico_City",
+    weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(iso));
 }

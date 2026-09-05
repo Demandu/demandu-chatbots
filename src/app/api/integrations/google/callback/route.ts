@@ -1,3 +1,4 @@
+import { asegurarAtributosDeAgenda } from "@/lib/agendaAtributos";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
@@ -66,6 +67,20 @@ export async function GET(req: Request) {
       },
       { onConflict: "org_id,provider" }
     );
+
+    // CONECTAR ES ENCENDER. Los dos datos que hace falta pedirle a la persona
+    // para que la cita salga completa quedan creados aquí: sin ellos la cita
+    // se crea sin invitación y nadie se entera. Ver `agendaAtributos.ts`.
+    await asegurarAtributosDeAgenda(orgId);
+
+    // Y se vuelve a donde estaba. Quien conectó su calendario desde la pantalla
+    // de su asistente quiere seguir configurando su asistente, no aterrizar en
+    // Ajustes preguntándose qué pasó.
+    const volver = cookies().get("g_oauth_volver")?.value ?? "";
+    cookies().delete("g_oauth_volver");
+    if (volver.startsWith("/") && !volver.startsWith("//")) {
+      return NextResponse.redirect(`${publicOrigin(req)}${volver}?agenda=1`);
+    }
 
     return NextResponse.redirect(`${settings}?connected=1`);
   } catch (e: any) {

@@ -1,3 +1,4 @@
+import { asegurarAtributosDeAgenda } from "@/lib/agendaAtributos";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -121,6 +122,11 @@ export async function GET(req: Request) {
       },
       { onConflict: "org_id,provider" },
     );
+
+    // Igual que con Google: los dos datos que hace falta pedirle a la persona
+    // para que la cita salga completa quedan creados. Sin correo no hay
+    // invitación, y Calendly ADEMÁS la rechaza sin él.
+    await asegurarAtributosDeAgenda(orgId);
 
     return NextResponse.redirect(`${ajustes}?ok=calendly`);
   } catch (e: any) {

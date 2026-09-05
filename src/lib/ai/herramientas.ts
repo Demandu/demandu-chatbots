@@ -1,6 +1,7 @@
 import "server-only";
-import { horariosLibres, agendar } from "@/lib/agenda";
+import { horariosLibres, agendar, proximaCita, moverCita, cancelarCita } from "@/lib/agenda";
 import { accionesDelPrompt } from "@/lib/ai/acciones";
+import { herramientasAutomaticas, herramientasQueManda } from "@/lib/ai/capacidades";
 import { emitir } from "@/lib/salidas";
 import { prometioUnaPersona } from "@/lib/ai/promesas";
 import {
@@ -68,6 +69,16 @@ export type ContextoAgente = {
 /** Ajustes del agente que vienen de `bots.ai`. */
 export type AjustesAgente = {
   herramientas?: string[];
+  /**
+   * Las automáticas que este negocio apagó a propósito.
+   *
+   * Es una lista de APAGADAS y no de encendidas, a propósito: con una lista de
+   * encendidas, cada herramienta nueva nace apagada para todo el mundo y hay
+   * que ir cuenta por cuenta a activarla. Es exactamente cómo se llegó a tener
+   * tres herramientas de la tienda construidas y desplegadas que no tenía
+   * nadie. Ver `capacidades.ts`.
+   */
+  herramientas_apagadas?: string[];
   /** El prompt que se está usando de verdad. De aquí salen las acciones «/». */
   persona?: string;
   criterios?: string;
@@ -122,15 +133,74 @@ async function fichaDeLaConversacion(ctx: ContextoAgente) {
   return c ?? null;
 }
 
+/**
+ * ¿Qué tiene conectado este negocio, AHORA MISMO?
+ *
+ * ── SE PREGUNTA CADA VEZ, Y NO SE GUARDA EN NINGÚN SITIO ──────────────────
+ *
+ * Porque el día que alguien desconecte su Google, su asistente tiene que dejar
+ * de prometer citas EN ESE MOMENTO, no cuando alguien se acuerde de ir a
+ * desmarcar una casilla. Una IA que ofrece horarios de una agenda que ya no
+ * existe es peor que una IA que no agenda.
+ *
+ * Son dos consultas por respuesta, las dos por índice. El coste es invisible al
+ * lado de la llamada al modelo que viene después.
+ *
+ * ── «CONECTADO» ES QUE HAYA FILA, NO QUE EL TOKEN SIRVA ──────────────────
+ *
+ * Comprobar el token de verdad costaría un viaje a Google en CADA mensaje. Si
+ * está roto, `horariosLibres` y `agendar` ya saben decir «no hay agenda
+ * conectada» — y esa es la respuesta correcta para quien escribe, que es lo
+ * único que importa aquí.
+ */
+async function loQueTieneEsteNegocio(ctx: ContextoAgente): Promise<{ agenda: boolean; tienda: boolean }> {
+  try {
+    const [agenda, tienda] = await Promise.all([
+      ctx.admin.from("integrations").select("provider")
+        .eq("org_id", ctx.orgId).in("provider", ["google_calendar", "calendly"]).limit(1),
+      ctx.admin.from("tiendas").select("id")
+        .eq("org_id", ctx.orgId).eq("activa", true).limit(1),
+    ]);
+    return {
+      agenda: !!(agenda.data ?? []).length,
+      tienda: !!(tienda.data ?? []).length,
+    };
+  } catch (e) {
+    // ANTE LA DUDA, NADA AUTOMÁTICO. Encender herramientas porque la base no
+    // contestó sería que el bot prometa citas sin poder crearlas. Lo que el
+    // negocio marcó a mano sigue funcionando igual.
+    console.error("[ia] no pude ver qué tiene conectado este negocio:", (e as Error)?.message ?? e);
+    return { agenda: false, tienda: false };
+  }
+}
+
 export async function armarHerramientas(
   ctx: ContextoAgente,
   ai: AjustesAgente,
 ): Promise<{ tools: any[]; contexto: string }> {
-  // LO QUE PIDE EL PROMPT CUENTA IGUAL QUE LO MARCADO EN LA PANTALLA. Ver
-  // `acciones.ts` para el porqué. Se unen: nadie pierde lo que ya tenía.
+  /* ── CONECTAR ES ENCENDER ────────────────────────────────────────────────
+   *
+   * Tres fuentes, y la primera es nueva: lo que el negocio TIENE CONECTADO.
+   *
+   * Antes esto empezaba y acababa en las casillas. Y la persona para la que
+   * está hecha esta plataforma tiene una clínica, no una empresa de software:
+   * conecta su Google Calendar porque se lo pide la pantalla de citas, y su
+   * asistente sigue sin poder agendar por una casilla en OTRA pantalla que
+   * nadie le dijo que existía. Desde su lado eso no es un fallo que reportar,
+   * es «la IA no sirve para eso».
+   *
+   * Las reglas están en `capacidades.ts`, puras y probadas. Aquí solo se mira
+   * qué hay de verdad conectado.
+   * ────────────────────────────────────────────────────────────────────── */
   const marcadas: string[] = Array.isArray(ai.herramientas) ? ai.herramientas : [];
   const escritas = accionesDelPrompt(ai.persona);
-  const quiere: string[] = [...new Set([...marcadas, ...escritas])];
+  const automaticas = herramientasAutomaticas(await loQueTieneEsteNegocio(ctx));
+  const quiere = herramientasQueManda({
+    automaticas,
+    marcadas,
+    escritas,
+    apagadas: Array.isArray(ai.herramientas_apagadas) ? ai.herramientas_apagadas : [],
+  });
   if (!quiere.length) return { tools: [], contexto: "" };
 
   const tools: any[] = [];
@@ -167,6 +237,33 @@ export async function armarHerramientas(
         },
         required: ["inicio"],
       },
+    });
+  }
+
+  if (quiere.includes("reagendar_cita")) {
+    tools.push({
+      name: "reagendar_cita",
+      description:
+        "Mueve la cita que esta persona ya tiene a otra hora. Llámala sin `inicio` para saber cuándo " +
+        "la tiene; después usa ver_horarios y vuelve a llamarla con la hora nueva. " +
+        "NO necesitas identificar la cita: la plataforma sabe cuál es la suya.",
+      input_schema: {
+        type: "object",
+        properties: {
+          inicio: { type: "string", description: "La hora nueva, tal cual la devolvió ver_horarios." },
+        },
+      },
+    });
+  }
+
+  if (quiere.includes("cancelar_cita")) {
+    tools.push({
+      name: "cancelar_cita",
+      description:
+        "Cancela la cita que esta persona tiene. CONFÍRMALE ANTES que de verdad la quiere cancelar: " +
+        "se borra del calendario del negocio y no se deshace. Si lo que quiere es cambiarla de hora, " +
+        "usa reagendar_cita en vez de esta.",
+      input_schema: { type: "object", properties: {} },
     });
   }
 
@@ -474,29 +571,84 @@ export async function ejecutarHerramienta(
         const inicio = String(args?.inicio ?? "").trim();
         if (!inicio) return "Falta la hora. Llama primero a ver_horarios.";
 
+        const quien = await fichaDeLaConversacion(ctx);
+        const nombreDeLaCita = String(args?.nombre ?? ctx.vars?.nombre ?? "cliente");
+
         const r = await agendar(ctx.orgId, {
           inicioISO: inicio,
           durationMin: 30,
-          titulo: `Cita con ${args?.nombre ?? ctx.vars?.nombre ?? "cliente"}`,
+          titulo: `Cita con ${nombreDeLaCita}`,
           descripcion: "Cita agendada por el agente de IA.",
           correoInvitado: args?.correo || undefined,
+          // DE QUIÉN ES. Sin esto la cita se crea pero queda huérfana, y
+          // después no se puede mover ni cancelar por chat: es exactamente el
+          // agujero que dejaba a la IA sin saber «cuál cita».
+          contactoId: quien?.id ?? null,
+          conversacionId: ctx.conversationId,
+          nombreInvitado: nombreDeLaCita,
         });
         if (!r.ok) return `No se pudo agendar: ${r.error}. Ofrece otra hora.`;
 
         ctx.vars.cita_inicio = r.inicioISO;
         ctx.vars.cita_dia = r.dia;
         ctx.vars.cita_hora = r.hora;
-        emitir(ctx.orgId, "cita.agendada", {
-          nombre: args?.nombre ?? null,
-          correo: args?.correo ?? null,
-          inicio: r.inicioISO,
-          dia: r.dia,
-          hora: r.hora,
-          enlace: r.enlace,
-          conversacion_id: ctx.conversationId,
-          por: "agente_ia",
-        });
-        return `Cita confirmada para el ${r.dia} a las ${r.hora}. Confírmaselo con esas palabras.`;
+
+        // EL AVISO YA NO SE MANDA DESDE AQUÍ. Lo emite el disparador de la base
+        // al apuntar la cita (ver la 0100), igual que los de la tienda: hay
+        // cuatro caminos que agendan y emitir desde cada uno es garantizar que
+        // el quinto se olvide — y que este mande el aviso DOS veces.
+        return r.sinInvitacion
+          ? `Cita confirmada para el ${r.dia} a las ${r.hora}. NO le prometas un correo: no se pudo mandar la invitación.`
+          : `Cita confirmada para el ${r.dia} a las ${r.hora}. Confírmaselo con esas palabras.`;
+      }
+
+      /* ── MOVER Y CANCELAR ────────────────────────────────────────────────
+       *
+       * NO LLEVAN NINGÚN IDENTIFICADOR EN SUS ARGUMENTOS, y es a propósito. El
+       * modelo no tiene forma de saber el id de un evento de Google, así que
+       * si se lo pidiéramos se lo inventaría — y un identificador inventado
+       * que casualmente exista borra la cita de otra persona.
+       *
+       * La cita la busca la plataforma por el contacto que está escribiendo.
+       * El modelo solo dice QUÉ hacer, nunca SOBRE QUÉ. */
+      case "reagendar_cita": {
+        const quien = await fichaDeLaConversacion(ctx);
+        const cita = await proximaCita(ctx.orgId, quien?.id);
+        if (!cita) return "Esta persona no tiene ninguna cita por delante. Ofrécele agendar una.";
+
+        const inicio = String(args?.inicio ?? "").trim();
+        if (!inicio) {
+          return `Su cita es el ${new Date(cita.inicio).toLocaleString("es-MX")}. ` +
+            "Llama a ver_horarios y pregúntale a qué hora la quiere mover.";
+        }
+
+        const r = await moverCita(ctx.orgId, cita, inicio);
+        if (!r.ok) {
+          // El plan gratis de Calendly no deja mover por API: se manda SU
+          // enlace, que es exactamente lo que hace el propio Calendly.
+          if (r.enlace) return `No se puede mover desde aquí. Dale este enlace tal cual: ${r.enlace}`;
+          return `No se pudo mover: ${r.error}. Ofrécele otra hora.`;
+        }
+
+        ctx.vars.cita_inicio = r.inicioISO;
+        ctx.vars.cita_dia = r.dia;
+        ctx.vars.cita_hora = r.hora;
+        return `Cita movida al ${r.dia} a las ${r.hora}. Confírmaselo con esas palabras.`;
+      }
+
+      case "cancelar_cita": {
+        const quien = await fichaDeLaConversacion(ctx);
+        const cita = await proximaCita(ctx.orgId, quien?.id);
+        if (!cita) return "Esta persona no tiene ninguna cita por delante. No hay nada que cancelar.";
+
+        const r = await cancelarCita(ctx.orgId, cita);
+        if (!r.ok) {
+          if (r.enlace) return `No se puede cancelar desde aquí. Dale este enlace tal cual: ${r.enlace}`;
+          return `No se pudo cancelar: ${r.error}. Dile que le pasarás con una persona.`;
+        }
+
+        ctx.vars.cita_ok = "false";
+        return "Cita cancelada. Díselo, y ofrécele agendar otra cuando le venga bien.";
       }
 
       case "etiquetar": {

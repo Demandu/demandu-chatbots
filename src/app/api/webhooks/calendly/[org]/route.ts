@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { firmaValida } from "@/lib/integrations/calendly";
-import { emitir } from "@/lib/salidas";
+import { apuntarCita } from "@/lib/agenda";
 
 export const dynamic = "force-dynamic";
 
@@ -170,20 +170,46 @@ async function atender(sb: any, orgId: string, cuerpo: any): Promise<void> {
   });
   if (error) console.error("[calendly webhook] no pude guardar el apunte:", error.message);
 
-  // ── SE CUENTA HACIA FUERA Y HACIA DENTRO ─────────────────────────────────
-  // El CRM del cliente lo recibe por webhook, y el embudo mueve la tarjeta si
-  // tiene una regla para este evento. Es el mismo catálogo para los dos: si
-  // esto se emitiera solo para el webhook, un negocio que agenda por Calendly
-  // tendría un embudo que no se entera de sus propias citas.
-  //
-  // `conversacion_id` va dentro porque es lo que permite encontrar la tarjeta.
-  emitir(orgId, tipo === "invitee.created" ? "cita.agendada" : "cita.cancelada", {
-    conversacion_id: conv.id,
-    contacto_id: contactoId,
-    correo: correo || null,
-    telefono: telefono || null,
-    inicio: cuando || null,
-    cita: String(evento?.name ?? ""),
-    por: "calendly",
-  });
+  /* ── LA CITA SE APUNTA, Y ESO ES LO QUE LA CUENTA ─────────────────────────
+   *
+   * Antes esto emitía el aviso a mano. Ahora la cita se guarda en `citas` y el
+   * disparador de la base emite `cita.agendada` o `cita.cancelada` — el mismo
+   * sitio del que salen las de Google, la IA y el formulario nativo.
+   *
+   * Emitir aquí ADEMÁS mandaría el aviso dos veces: al CRM del cliente y al
+   * embudo. Y apuntarla no es solo para el aviso: es lo que permite que la
+   * persona escriba después «muévela» y el bot sepa de qué cita habla, aunque
+   * la reservara desde el enlace de la biografía de Instagram.
+   * ────────────────────────────────────────────────────────────────────── */
+  const invitadoUri = String(p?.uri ?? "");
+  if (!invitadoUri || !cuando) return;
+
+  if (tipo === "invitee.created") {
+    await apuntarCita(orgId, {
+      proveedor: "calendly",
+      eventoId: invitadoUri,
+      calendario: String(evento?.event_type ?? "") || null,
+      enlace: String(p?.reschedule_url ?? "") || null,
+      enlaceCancelar: String(p?.cancel_url ?? "") || null,
+      inicioISO: cuando,
+      finISO: String(evento?.end_time ?? "") || null,
+      titulo: String(evento?.name ?? "") || null,
+      nombre: nombre || null,
+      correo: correo || null,
+      contactoId,
+      conversacionId: conv.id,
+    });
+    return;
+  }
+
+  // Canceló desde Calendly. La fila NO se borra: se marca, y así el bot sabe
+  // después «esta persona canceló» en vez de «nunca agendó», que no es lo
+  // mismo ni para el negocio ni para el embudo.
+  const { error: eCancelar } = await sb
+    .from("citas")
+    .update({ estado: "cancelada", updated_at: new Date().toISOString() })
+    .eq("org_id", orgId)
+    .eq("proveedor", "calendly")
+    .eq("evento_id", invitadoUri);
+  if (eCancelar) console.error("[calendly webhook] no pude marcar la cita cancelada:", eCancelar.message);
 }
