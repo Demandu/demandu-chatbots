@@ -115,3 +115,44 @@ export function accionesDelPrompt(prompt: string | null | undefined): string[] {
   }
   return [...encontradas];
 }
+
+/**
+ * Quita de una respuesta los marcadores de acción que el modelo haya escrito.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PASÓ EN PRODUCCIÓN Y LE LLEGÓ A UN CLIENTE. Un prospecto pidió una demo por
+ * Instagram y recibió esto tal cual:
+ *
+ *     «/guardar_dato nombre: Alex Molina
+ *      /guardar_dato correo: the_alexmolina@icloud.com»
+ *     «Perfecto, Alex. Voy a reservarte mañana a las 9 am.
+ *      /agendar_cita hora: 9:00 AM fecha: mañana correo: …»
+ *
+ * La causa de fondo era que a esa ruta no se le armaban las herramientas, y ya
+ * está arreglada. Pero la causa de fondo puede volver de otra forma —una
+ * herramienta desactivada, un tope de IA alcanzado, un modelo que se despista—
+ * y el resultado siempre es el mismo: el cliente ve las tripas del sistema.
+ *
+ * Así que esto es la segunda barrera, no la única. Se limpia SIEMPRE, incluso
+ * cuando las herramientas funcionan: un marcador en el texto nunca es algo que
+ * el cliente deba leer.
+ *
+ * NO SE TOCA NADA MÁS. Solo las líneas cuyo marcador está en el catálogo, y
+ * solo desde la barra hasta el final de esa línea. Una fecha como `12/09` o un
+ * enlace como `https://x/etiquetar` no llevan la barra al principio ni después
+ * de un espacio, así que no se rozan — la misma regla estricta que
+ * `accionesDelPrompt`.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function sinMarcadores(texto: string | null | undefined): string {
+  const t = String(texto ?? "");
+  if (!t) return "";
+
+  const limpio = t.replace(/(^|[\s(])\/([a-z_]+)([^\n]*)/gm, (todo, antes, clave) =>
+    CLAVES_DE_ACCION.includes(clave) ? String(antes).replace(/[^\n]/g, "") : todo,
+  );
+
+  // Puede quedar una línea vacía donde estaba el marcador, o tres saltos
+  // seguidos. Un mensaje que empieza con dos líneas en blanco se ve roto.
+  return limpio.replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+}

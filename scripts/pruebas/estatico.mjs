@@ -1245,6 +1245,79 @@ describe("Puerta de agenda del motor", () => {
   });
 });
 
+// ─── LA IA DE RESPALDO TAMBIÉN TIENE MANOS ──────────────────────────────────
+describe("La IA de respaldo puede HACER, no solo hablar", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // ESTO COSTÓ UNA DEMO DE VERDAD, y era una divergencia entre los dos motores
+  // que ninguna regla vigilaba.
+  //
+  // El «desvío» es lo que atiende una conversación cuando el flujo ya terminó
+  // — o sea, casi todas las conversaciones abiertas. En el motor de WhatsApp,
+  // la MISMA función sirve al bloque de IA y al desvío, así que las
+  // herramientas iban en los dos casos. En el motor web —que atiende el widget
+  // Y a Instagram— el desvío llamaba a `aiAnswer` SIN `agente`, y sin `agente`
+  // no se arma ni una herramienta.
+  //
+  // Resultado: un prospecto pidió una demo por Instagram, la IA no tenía
+  // `agendar_cita`, y como su prompt le decía que la usara, la ESCRIBIÓ:
+  //
+  //     «/agendar_cita hora: 9:00 AM fecha: mañana correo: …»
+  //
+  // Le llegó al cliente tal cual, y en el mensaje siguiente la IA confirmó una
+  // cita que no existía.
+  // ─────────────────────────────────────────────────────────────────────────
+  const web = fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8");
+  const acciones = fs.readFileSync(path.join(SRC, "lib/ai/acciones.ts"), "utf8");
+  const answer = fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8");
+  const deno = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  test("el desvío del motor web arma el agente", () => {
+    // ── SE MIRA LA LLAMADA, NO LA FIRMA ──────────────────────────────────
+    // Escrita mirando el CUERPO de `responderDuda`, esta prueba no cazaba su
+    // propio mutante: quitar el argumento en quien la llama deja la función
+    // igual —sigue teniendo su parámetro `agente`— y las herramientas vuelven
+    // a desaparecer. Lo que importa es que alguien se lo PASE.
+    const t = sinComentarios(web);
+
+    const firma = /async function responderDuda\([^)]*agente[^)]*\)/.test(t);
+    esperar(firma).verdadero("la IA de respaldo ya no acepta un agente");
+
+    const llamada = /responderDuda\(\s*ctx\s*,\s*[A-Za-z_$][\w$]*\s*\)/.test(t);
+    esperar(llamada).verdadero(
+      "se llama a la IA de respaldo SIN agente: puede hablar pero no puede agendar, etiquetar ni pasar con una persona — y si su prompt le pide una herramienta, la escribirá como texto al cliente",
+    );
+  });
+
+  test("y quien lo llama le pasa un contexto de verdad", () => {
+    // `agente` presente pero siempre `undefined` sería la misma avería con
+    // mejor cara. Tiene que construirse un contexto con la conversación.
+    const i = web.indexOf("const agenteDelDesvio");
+    esperar(i > 0).verdadero("el desvío no construye contexto de agente");
+    const bloque = web.slice(i, i + 400);
+    for (const campo of ["orgId", "botId", "conversationId", "vars", "pasoAHumano"]) {
+      esperar(bloque.includes(campo)).verdadero(`al contexto del desvío le falta ${campo}`);
+    }
+  });
+
+  test("si la IA pasa con una persona en el desvío, el bot deja de esperar", () => {
+    // Seguir escuchando sería que el bot volviera a contestar después de haber
+    // dicho «ya te atiende alguien del equipo».
+    esperar(/pasoAHumano \? null : awaiting/.test(sinComentarios(web))).verdadero(
+      "tras un pase a humano desde el desvío, el flujo sigue esperando: el bot hablaría encima de la persona",
+    );
+  });
+
+  test("LOS DOS MOTORES limpian los marcadores antes de enviar", () => {
+    // Segunda barrera. La causa de fondo está arreglada, pero puede volver de
+    // otra forma —una herramienta apagada, un tope de IA— y el síntoma siempre
+    // es el mismo: el cliente ve las tripas.
+    esperar(/export function sinMarcadores/.test(acciones)).verdadero("desapareció el limpiador");
+    esperar(/sinMarcadores\(/.test(answer)).verdadero("el motor web no limpia la respuesta de la IA");
+    esperar(/function sinMarcadores/.test(deno)).verdadero("el motor de WhatsApp perdió su copia del limpiador");
+    esperar(/sinMarcadores\(bloques/.test(deno)).verdadero("el motor de WhatsApp no limpia la respuesta de la IA");
+  });
+});
+
 // ─── EL CANAL NO SE ESCRIBE A MANO ──────────────────────────────────────────
 describe("La Bandeja no confunde de canal", () => {
   // ─────────────────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ import {
   necesitaPlanDePago, firmaValida as firmaDeCalendlyValida, TOLERANCIA_SEG,
   EVENTOS, nuevaClaveDeFirma,
 } from "../../src/lib/integrations/calendly.ts";
-import { accionesDelPrompt, CLAVES_DE_ACCION } from "../../src/lib/ai/acciones.ts";
+import { accionesDelPrompt, CLAVES_DE_ACCION, sinMarcadores } from "../../src/lib/ai/acciones.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
   MEDIDAS, PROPORCION, proporcionDe, comoMedida, instruccionesDeImagenes,
@@ -4129,6 +4129,48 @@ describe("Con qué tienda trabaja el bot", () => {
   test("una tienda apagada no se anuncia aunque sea la única", () => {
     esperar(tiendaDelBot([t("t-b", "Boutique", false)])).igual(null);
     esperar(tiendaDelBot([t("t-b", "Boutique", false)], false)?.id).igual("t-b", "salvo que se pidan todas");
+  });
+});
+
+describe("Un marcador de herramienta nunca llega al cliente", () => {
+  test("se quita lo que el modelo escribió en vez de ejecutar", () => {
+    // ── PASÓ DE VERDAD, EN UNA DEMO ────────────────────────────────────────
+    // A esa ruta no se le armaban las herramientas, así que la IA escribió las
+    // llamadas como texto y se las mandó al prospecto.
+    esperar(sinMarcadores("/guardar_dato nombre: Alex Molina\n/guardar_dato correo: a@b.com\n\nPerfecto, Alex."))
+      .igual("Perfecto, Alex.");
+    esperar(sinMarcadores("Voy a reservarte mañana a las 9.\n/agendar_cita hora: 9:00 AM fecha: mañana"))
+      .igual("Voy a reservarte mañana a las 9.");
+    esperar(sinMarcadores("/pasar_a_humano")).igual("");
+  });
+
+  test("NO se toca nada que no sea un marcador de verdad", () => {
+    // La barra aparece en fechas, en enlaces y en horarios. Limpiar de más
+    // dejaría mensajes mutilados, que es peor que el problema original.
+    esperar(sinMarcadores("Te espero el 12/09 a las 9.")).igual("Te espero el 12/09 a las 9.");
+    esperar(sinMarcadores("Mira https://demandu.tech/etiquetar aquí"))
+      .igual("Mira https://demandu.tech/etiquetar aquí");
+    esperar(sinMarcadores("Abrimos 9/5 y cerramos 6/8.")).igual("Abrimos 9/5 y cerramos 6/8.");
+    // Una barra con una palabra que NO está en el catálogo tampoco se toca.
+    esperar(sinMarcadores("Escribe /ayuda para el menú")).igual("Escribe /ayuda para el menú");
+  });
+
+  test("lo que queda se puede leer", () => {
+    // Quitar la línea no puede dejar el mensaje empezando en blanco ni con un
+    // agujero de tres saltos: eso se ve roto en el chat.
+    esperar(sinMarcadores("\n\n/etiquetar lead-alto\n\n\nHola")).igual("Hola");
+    esperar(sinMarcadores("Hola\n/etiquetar x\nAdiós")).igual("Hola\n\nAdiós");
+    esperar(sinMarcadores("")).igual("");
+    esperar(sinMarcadores(null)).igual("");
+    esperar(sinMarcadores("   ")).igual("");
+  });
+
+  test("todas las acciones del catálogo se limpian, no una lista a mano", () => {
+    // Una herramienta nueva tiene que quedar cubierta sola. Con una lista
+    // escrita aparte, la próxima acción se le escaparía a esto en silencio.
+    for (const clave of CLAVES_DE_ACCION) {
+      esperar(sinMarcadores(`Texto antes.\n/${clave} lo que sea`)).igual("Texto antes.");
+    }
   });
 });
 

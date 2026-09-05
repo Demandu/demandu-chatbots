@@ -11,6 +11,7 @@
 
 import { embedQuery } from "./ingest";
 import { armarHerramientas, ejecutarHerramienta, cumplirLoPrometido, type ContextoAgente } from "./herramientas";
+import { sinMarcadores } from "./acciones";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -281,11 +282,17 @@ export async function aiAnswer(opts: {
 
       const j = await res.json();
       const bloques = (j?.content ?? []) as any[];
-      const text = bloques
-        .filter((c: any) => c?.type === "text")
-        .map((c: any) => c.text)
-        .join("\n")
-        .trim();
+      // SE LIMPIAN LOS MARCADORES ANTES DE QUE ESTO SALGA A NINGÚN SITIO.
+      // El modelo tiene las herramientas de verdad, así que no debería
+      // escribirlas — pero cuando por lo que sea no las tiene, las escribe, y
+      // el cliente recibe «/agendar_cita hora: 9:00 AM…». Pasó en una demo.
+      // Ver `sinMarcadores`.
+      const text = sinMarcadores(
+        bloques
+          .filter((c: any) => c?.type === "text")
+          .map((c: any) => c.text)
+          .join("\n"),
+      );
 
       // Registra el consumo de IA para el panel y la facturación.
       // SE COBRA POR VUELTA, no por respuesta: si no, un agente que llama tres

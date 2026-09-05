@@ -326,7 +326,7 @@ async function recentHistory(ctx: Ctx): Promise<{ role: "user" | "assistant"; co
  * caso el motor sigue con el comportamiento de siempre en vez de soltar dos
  * mensajes de "no sé" seguidos.
  */
-async function responderDuda(ctx: Ctx): Promise<string | null> {
+async function responderDuda(ctx: Ctx, agente?: any): Promise<string | null> {
   const settings: AiSettings = { ...(ctx.aiSettings ?? {}) };
   try {
     const respuesta = await aiAnswer({
@@ -336,6 +336,29 @@ async function responderDuda(ctx: Ctx): Promise<string | null> {
       question: ctx.lastUserText,
       settings,
       history: await recentHistory(ctx),
+      // ── LAS HERRAMIENTAS TAMBIÉN AQUÍ ─────────────────────────────────
+      //
+      // ESTA LÍNEA FALTABA Y COSTÓ UNA DEMO DE VERDAD.
+      //
+      // Este es el camino por el que pasa una conversación cuando el flujo
+      // terminó — o sea, CASI TODAS las conversaciones abiertas. Sin `agente`,
+      // `aiAnswer` no arma ni una herramienta: la IA puede hablar y no puede
+      // hacer nada.
+      //
+      // Lo que se vio en producción: un cliente pidió una demo por Instagram,
+      // la IA no tenía `agendar_cita`, y como su prompt le decía que la usara,
+      // hizo lo único que podía — la ESCRIBIÓ como texto:
+      //
+      //     «/agendar_cita hora: 9:00 AM fecha: mañana correo: …»
+      //
+      // Eso le llegó al cliente tal cual. Y en el mensaje siguiente la IA
+      // confirmó una cita que nunca existió.
+      //
+      // El motor de WhatsApp nunca tuvo este fallo: allí la misma función
+      // sirve al bloque de IA y al respaldo, así que las herramientas iban en
+      // los dos casos. Era una divergencia entre motores que ninguna regla
+      // vigilaba; ahora hay una.
+      agente,
     });
     const limpio = (respuesta ?? "").trim();
     if (!limpio) return null;
@@ -1144,7 +1167,19 @@ export async function runWebFlow(opts: {
         });
 
   if (desvio) {
-    const respuesta = await responderDuda(ctx);
+    // El mismo contexto de agente que usa el bloque de IA: si aquí se armara
+    // distinto, la misma pregunta se contestaría de dos formas según si el
+    // flujo seguía vivo o no — y eso es indistinguible desde fuera.
+    const agenteDelDesvio = {
+      admin: ctx.admin,
+      orgId: ctx.orgId,
+      botId: ctx.botId,
+      conversationId: ctx.conversationId,
+      vars: ctx.vars,
+      pasoAHumano: false,
+      tiendaElegida: ctx.tiendaElegida,
+    };
+    const respuesta = await responderDuda(ctx, agenteDelDesvio);
     if (respuesta) {
       push(ctx, respuesta);
       const puente = puenteDeVuelta(desvio);
@@ -1160,7 +1195,10 @@ export async function runWebFlow(opts: {
       await avanzarRecorrido(opts.admin, runId, 1, nodoEsperado?.id ?? null);
       return {
         vars,
-        awaiting,                       // el flujo NO se mueve
+        // LA IA PASÓ CON UNA PERSONA: el flujo deja de esperar. Seguir
+        // escuchando sería que el bot volviera a contestar después de haber
+        // dicho «ya te atiende alguien del equipo».
+        awaiting: agenteDelDesvio.pasoAHumano ? null : awaiting,
         out: ctx.out,
         hintEnviado: !!opts.flowState?.hintEnviado,
         runId,

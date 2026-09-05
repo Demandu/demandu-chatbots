@@ -1400,6 +1400,20 @@ async function cumplirLoPrometido(ctx: any, texto: string, tools: any[]): Promis
   return texto;
 }
 
+/**
+ * Quita de una respuesta los marcadores de acción que el modelo haya escrito.
+ * COPIA DELIBERADA de `sinMarcadores` en `src/lib/ai/acciones.ts` — Deno no
+ * puede importar del proyecto. Una regla estática compara las dos.
+ */
+function sinMarcadores(texto: string | null | undefined): string {
+  const t = String(texto ?? "");
+  if (!t) return "";
+  const limpio = t.replace(/(^|[\s(])\/([a-z_]+)([^\n]*)/gm, (todo, antes, clave) =>
+    CLAVES_DE_ACCION.includes(clave) ? String(antes).replace(/[^\n]/g, "") : todo,
+  );
+  return limpio.replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string) {
   const ai = { ...AI_DEFAULTS, ...(ctx.aiSettings ?? {}) };
   if (promptDelNodo) ai.persona = promptDelNodo;
@@ -1512,7 +1526,11 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
 
       const j = await res.json();
       const bloques = j?.content ?? [];
-      const texto = bloques.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n").trim();
+      // SE LIMPIAN LOS MARCADORES, igual que en el motor web. Cuando por lo que
+      // sea el modelo no tiene una herramienta, la escribe como texto — y el
+      // cliente recibe «/agendar_cita hora: 9:00 AM…». Ver `sinMarcadores` en
+      // `src/lib/ai/acciones.ts`; esta es su copia deliberada.
+      const texto = sinMarcadores(bloques.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n"));
 
       // Cada vuelta cuesta. Se cobra por vuelta, no por respuesta: si no, un
       // agente que llama tres herramientas costaría el triple y se facturaría
