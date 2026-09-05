@@ -102,14 +102,31 @@ describe("Reglas de Next.js", () => {
   });
 
   test("no se mezclan ?? y || sin paréntesis (error de compilación)", () => {
+    // ── DOS ARREGLOS, LOS DOS SALIDOS DE UN FALSO POSITIVO ─────────────────
+    //
+    // Esta regla acusó a una línea que compila perfectamente:
+    //
+    //     titulo: d.tituloEvento || `Cita con ${nombre ?? "cliente"}`
+    //
+    // El `??` vive dentro de un `${…}` de una plantilla, que es SU PROPIO
+    // contexto de expresión: ahí no hay nada que mezclar. Se quitan los
+    // interiores de las plantillas antes de mirar.
+    //
+    // Y el número de línea salía del texto SIN COMENTARIOS, así que no
+    // correspondía con el archivo de verdad — mandaba a mirar una línea que no
+    // tenía nada. Ahora se busca en el texto original. Una pista falsa cuesta
+    // más tiempo que no dar ninguna.
     const malos = [];
     for (const { ruta, texto } of ARCHIVOS) {
-      const t = sinComentarios(texto);
-      // ?? seguido de || (o al revés) en la misma expresión, sin paréntesis entre medias
-      if (/\?\?[^;()\n]*\|\||\|\|[^;()\n]*\?\?/.test(t)) {
-        const linea = t.split("\n").findIndex((l) => /\?\?.*\|\||\|\|.*\?\?/.test(l) && !/[()]/.test(l));
-        if (linea >= 0) malos.push(`${ruta}:${linea + 1}`);
-      }
+      const t = sinComentarios(texto).replace(/\$\{[^}]*\}/g, "\u0000");
+      const sospechosa = (l) => /\?\?.*\|\||\|\|.*\?\?/.test(l) && !/[()]/.test(l);
+      const lineas = t.split("\n");
+      const i = lineas.findIndex(sospechosa);
+      if (i < 0) continue;
+      // El número se busca en el ORIGINAL, no en el recortado.
+      const aguja = lineas[i].replace(/\u0000/g, "").trim();
+      const real = texto.split("\n").findIndex((l) => l.replace(/\$\{[^}]*\}/g, "").trim() === aguja);
+      malos.push(`${ruta}:${(real >= 0 ? real : i) + 1}`);
     }
     esperar(malos).igual([], "mezclar ?? con || sin paréntesis no compila");
   });
@@ -1226,6 +1243,110 @@ describe("Puerta de agenda del motor", () => {
       "tras mandar el enlace el flujo tiene que detenerse, no seguir a «tu cita ha sido agendada»",
     );
   });
+});
+
+// ─── LO QUE LA PALETA PROMETE, EL MOTOR LO CUMPLE ───────────────────────────
+describe("Ningún bloque se ofrece en un canal donde no hace nada", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // ESTA PRUEBA DEBERÍA HABER EXISTIDO DESDE EL PRINCIPIO.
+  //
+  // `channels.ts` se declara «fuente ÚNICA de verdad: qué componente aplica en
+  // cada canal», y la paleta del constructor la obedece. Pero los motores no
+  // la miraban: `webRuntime.ts` —el que atiende el widget Y a Instagram— no
+  // implementaba `calendar`, `action`, `api` ni `redirect`, y los cuatro están
+  // declarados para TODOS los canales.
+  //
+  // El cliente los arrastraba, los configuraba, y el motor los mandaba al caso
+  // por defecto: imprimir el texto y seguir. SIN UN SOLO ERROR. Un bloque
+  // «Agendar cita» en un bot de Instagram no agendaba nada y tampoco lo decía;
+  // un webhook nunca salía; un «Ir a otra conversación» se quedaba donde
+  // estaba.
+  //
+  // Prometer un bloque y no ejecutarlo es peor que no ofrecerlo: quien lo
+  // arrastra construye su negocio encima.
+  // ─────────────────────────────────────────────────────────────────────────
+  const canales = fs.readFileSync(path.join(SRC, "lib/channels.ts"), "utf8");
+  const web = fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8");
+  const deno = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  // Qué promete `COMPONENTS` para cada canal. Se lee del propio archivo para
+  // que añadir un bloque nuevo entre en esta prueba solo.
+  const promete = (canal) => {
+    const i = canales.indexOf("export const COMPONENTS");
+    const cuerpo = canales.slice(i);
+    return [...cuerpo.matchAll(/^  (\w+):\s*\{[\s\S]*?channels:\s*(ALL|\[[^\]]*\])/gm)]
+      .filter((m) => m[2] === "ALL" || m[2].includes(`"${canal}"`))
+      .map((m) => m[1]);
+  };
+
+  const casos = (t) => new Set([...t.matchAll(/^      case "([a-z_]+)"/gm)].map((m) => m[1]));
+
+  // `case "human": case "assign":` — dos en una línea. Sin esto la prueba
+  // acusaría en falso a `assign`, que sí está implementado.
+  const casosDeVerdad = (t) => {
+    const s = casos(t);
+    for (const m of t.matchAll(/case "([a-z_]+)":\s*case "([a-z_]+)":/g)) { s.add(m[1]); s.add(m[2]); }
+    return s;
+  };
+
+  // EL ÚNICO QUE PUEDE VIVIR EN EL CASO POR DEFECTO. Un «Mensaje» es
+  // exactamente lo que hace el caso por defecto —escribir su texto y seguir—
+  // así que darle un `case` propio sería repetirlo por gusto. Cualquier otro
+  // que caiga ahí es un bloque que no hace lo que promete.
+  const PUEDE_IR_POR_DEFECTO = new Set(["message"]);
+
+  // ── LOS QUE NUNCA SE CONSTRUYERON, Y ESTÁN EN LA PALETA ──────────────────
+  //
+  // Cinco bloques tienen tarjeta en la paleta, panel de configuración en el
+  // Inspector y hasta tutorial de Lana — y NINGÚN motor los ejecuta. No es que
+  // se hayan roto: nunca se escribieron.
+  //
+  // Van en una lista CERRADA en vez de dejar la prueba en rojo para siempre,
+  // porque una prueba que siempre falla enseña a ignorar la suite entera. Pero
+  // la lista se comprueba EXACTA: si aparece un sexto, la prueba lo caza; y
+  // cuando se construya uno, hay que quitarlo de aquí a mano, que es
+  // exactamente el momento de acordarse.
+  const SIN_CONSTRUIR = ["ig_story", "ig_comment", "ig_dm", "fb_comment", "web_form"];
+
+  test("la lista de bloques sin construir no crece sola", () => {
+    const canales = ["webchat", "instagram", "messenger", "whatsapp"];
+    const motorDe = (c) => (c === "whatsapp" ? deno : web);
+    const huerfanos = new Set();
+    for (const c of canales) {
+      for (const k of promete(c)) {
+        if (!casosDeVerdad(motorDe(c)).has(k) && !PUEDE_IR_POR_DEFECTO.has(k)) huerfanos.add(k);
+      }
+    }
+    esperar([...huerfanos].sort().join(", ")).igual(
+      [...SIN_CONSTRUIR].sort().join(", "),
+      "cambió la lista de bloques que la paleta ofrece y ningún motor ejecuta: si construiste uno, quítalo de SIN_CONSTRUIR; si añadiste uno nuevo, constrúyelo antes de ofrecerlo",
+    );
+  });
+
+  test("las listas se leyeron de verdad", () => {
+    // Guarda contra el fallo silencioso: con un recorte roto, todo lo de abajo
+    // pasaría sin comparar nada.
+    esperar(promete("webchat").length > 10).verdadero("no pude leer COMPONENTS");
+    esperar(casosDeVerdad(web).size > 10).verdadero("no pude leer los casos del motor web");
+    esperar(casosDeVerdad(deno).size > 10).verdadero("no pude leer los casos del motor de WhatsApp");
+  });
+
+  for (const [canal, motor, nombre] of [
+    ["webchat", () => web, "el widget web"],
+    ["instagram", () => web, "Instagram"],
+    ["whatsapp", () => deno, "WhatsApp"],
+  ]) {
+    test(`todo lo que la paleta ofrece en ${nombre} lo ejecuta su motor`, () => {
+      const hechos = casosDeVerdad(motor());
+      const faltan = promete(canal).filter(
+        (k) => !hechos.has(k) && !PUEDE_IR_POR_DEFECTO.has(k) && !SIN_CONSTRUIR.includes(k),
+      );
+      esperar(faltan.join(", ")).igual(
+        "",
+        `en ${nombre} la paleta ofrece bloques que su motor no ejecuta: se arrastran, se configuran y no hacen nada`,
+      );
+    });
+  }
 });
 
 // ─── El catálogo de componentes ──────────────────────────────────────────────

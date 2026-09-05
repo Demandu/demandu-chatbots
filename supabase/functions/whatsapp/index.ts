@@ -1727,7 +1727,10 @@ async function sayCalendario(ctx: any, node: any) {
       interp(d.textoConEnlace || "Agenda tu cita aquí y elige la hora que mejor te venga 👇", ctx.vars) +
         "\n" + r.enlace,
     );
-    ctx.finMotivo = "enlace_de_agenda";
+    // «completado», no un motivo nuevo: el bloque hizo su trabajo. La lista
+    // de motivos es cerrada (ver MOTIVOS_FIN) y meter uno que no está solo
+    // ensucia los informes.
+    ctx.finMotivo = "completado";
     return "enlace";
   }
 

@@ -363,7 +363,12 @@ export async function POST(req: Request) {
         flow_state: {
           vars: result.vars,
           awaiting: result.awaiting,
-          flow_id: chosen.id,
+          // EL FLUJO PUEDE HABER CAMBIADO EN ESTE MISMO TURNO. El bloque «Ir
+          // a otra conversación» salta al flujo de otro bot; guardar aquí
+          // `chosen.id` dejaría el estado apuntando al flujo VIEJO, y el turno
+          // siguiente buscaría el nodo en el que se quedó dentro de un gráfico
+          // donde no existe. La conversación se quedaría muda.
+          flow_id: result.flowIdNuevo ?? chosen.id,
           hintEnviado: result.hintEnviado,
           run_id: result.runId ?? null,
           ofreciAgente,

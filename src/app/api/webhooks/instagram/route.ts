@@ -537,7 +537,10 @@ async function correrElFlujo(
       flow_state: {
         vars: resultado.vars,
         awaiting: resultado.awaiting,
-        flow_id: elegido.id,
+        // Igual que en el widget: si un bloque «Ir a otra conversación» saltó
+        // de flujo en este turno, hay que guardar el NUEVO. Con el viejo, el
+        // turno siguiente buscaría el nodo en un gráfico donde no existe.
+        flow_id: resultado.flowIdNuevo ?? elegido.id,
         hintEnviado: resultado.hintEnviado,
         run_id: resultado.runId ?? null,
         ofreciAgente,
