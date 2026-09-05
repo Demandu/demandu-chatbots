@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { firmaValida } from "@/lib/integrations/calendly";
+import { emitir } from "@/lib/salidas";
 
 export const dynamic = "force-dynamic";
 
@@ -168,4 +169,21 @@ async function atender(sb: any, orgId: string, cuerpo: any): Promise<void> {
     },
   });
   if (error) console.error("[calendly webhook] no pude guardar el apunte:", error.message);
+
+  // ── SE CUENTA HACIA FUERA Y HACIA DENTRO ─────────────────────────────────
+  // El CRM del cliente lo recibe por webhook, y el embudo mueve la tarjeta si
+  // tiene una regla para este evento. Es el mismo catálogo para los dos: si
+  // esto se emitiera solo para el webhook, un negocio que agenda por Calendly
+  // tendría un embudo que no se entera de sus propias citas.
+  //
+  // `conversacion_id` va dentro porque es lo que permite encontrar la tarjeta.
+  emitir(orgId, tipo === "invitee.created" ? "cita.agendada" : "cita.cancelada", {
+    conversacion_id: conv.id,
+    contacto_id: contactoId,
+    correo: correo || null,
+    telefono: telefono || null,
+    inicio: cuando || null,
+    cita: String(evento?.name ?? ""),
+    por: "calendly",
+  });
 }

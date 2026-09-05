@@ -1245,6 +1245,62 @@ describe("Puerta de agenda del motor", () => {
   });
 });
 
+// ─── EL CATÁLOGO DE EVENTOS ES UN CONTRATO ──────────────────────────────────
+describe("Los eventos que la plataforma cuenta", () => {
+  const cat = fs.readFileSync(path.join(SRC, "lib/salidas-eventos.ts"), "utf8");
+  const claves = [...cat.matchAll(/clave:\s*"([a-z_.]+)"/g)].map((m) => m[1]);
+
+  test("la lista se leyó de verdad", () => {
+    esperar(claves.length >= 5).verdadero("no pude leer el catálogo de eventos");
+  });
+
+  test("NINGÚN EVENTO DESAPARECE NI SE RENOMBRA", () => {
+    // ─────────────────────────────────────────────────────────────────────
+    // El propio archivo lo dice: «ESTA LISTA ES UN CONTRATO». Quien conecta su
+    // CRM escribe código contra estos nombres, y renombrar uno rompe una
+    // integración ajena sin avisar a nadie — el cliente se entera semanas
+    // después, cuando le faltan leads en su sistema.
+    //
+    // Y desde que el embudo escucha los mismos eventos, un renombrado rompe
+    // TAMBIÉN las reglas guardadas en `reglas_de_embudo`, que apuntan a estos
+    // nombres. Se añaden eventos; no se renombran.
+    // ─────────────────────────────────────────────────────────────────────
+    const YA_PUBLICADOS = [
+      "lead.nuevo", "lead.datos", "cita.agendada", "pase.a.humano", "conversacion.cerrada",
+      "pedido.creado", "pedido.pagado", "pedido.pago_vencido", "cita.cancelada",
+    ];
+    const faltan = YA_PUBLICADOS.filter((k) => !claves.includes(k));
+    esperar(faltan.join(", ")).igual(
+      "",
+      "desapareció un evento que ya salió al mundo: hay integraciones de clientes escritas contra ese nombre, y reglas de embudo apuntando a él",
+    );
+  });
+
+  test("lo que el catálogo promete, alguien lo emite", () => {
+    // Un evento en la lista que nadie emite es una casilla que el cliente marca
+    // y que no le llega nunca. Se busca en el código Y en las migraciones,
+    // porque los de la tienda salen de un disparador de la base.
+    // ── EL PROPIO CATÁLOGO NO CUENTA COMO FUENTE ────────────────────────
+    // Escrita sin esta exclusión, la regla se encontraba A SÍ MISMA: cada
+    // clave aparece en el catálogo, así que TODAS pasaban y la prueba no
+    // comprobaba nada. Lo cazó su mutante — un evento inventado que nadie
+    // emitía pasaba tan campante.
+    const fuentes = [
+      ...ARCHIVOS.filter((a) => !a.ruta.endsWith("lib/salidas-eventos.ts")).map((a) => a.texto),
+      fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+      ...fs.readdirSync(path.join(RAIZ, "supabase/migrations"))
+        .filter((f) => f.endsWith(".sql"))
+        .map((f) => fs.readFileSync(path.join(RAIZ, "supabase/migrations", f), "utf8")),
+    ].join("\n");
+
+    const huerfanos = claves.filter((k) => !fuentes.includes(`"${k}"`) && !fuentes.includes(`'${k}'`));
+    esperar(huerfanos.join(", ")).igual(
+      "",
+      "el catálogo promete eventos que nadie emite: el cliente marcaría la casilla y no le llegaría nada",
+    );
+  });
+});
+
 // ─── EL AGENTE SE LEE IGUAL EN LOS DOS MOTORES ──────────────────────────────
 describe("El agente de IA, en los dos motores", () => {
   // ─────────────────────────────────────────────────────────────────────────

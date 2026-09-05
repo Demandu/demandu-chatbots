@@ -24,6 +24,20 @@ export const EVENTOS = [
   { clave: "cita.agendada", nombre: "Cita agendada", desc: "Se reservó una cita en el calendario." },
   { clave: "pase.a.humano", nombre: "Pidió una persona", desc: "La conversación necesita a alguien del equipo." },
   { clave: "conversacion.cerrada", nombre: "Conversación cerrada", desc: "Terminó la conversación." },
+
+  /* ── LO QUE PASA EN LA TIENDA ────────────────────────────────────────────
+     Se emiten desde un DISPARADOR DE LA BASE, no desde el código: hay tres
+     caminos que crean pedidos —el escaparate, el pedido por chat y el cambio a
+     mano en el panel— y un cuarto que los paga (la conciliación de Yappy).
+     Emitir desde cada uno es garantizar que el que se añada mañana se olvide.
+
+     Y los escuchan DOS: el CRM del cliente por webhook, y el embudo por
+     dentro. Ese es todo el diseño: un catálogo, dos consumidores. */
+  { clave: "pedido.creado", nombre: "Pedido nuevo", desc: "Alguien hizo un pedido y falta cobrarlo." },
+  { clave: "pedido.pagado", nombre: "Pedido pagado", desc: "El pago se confirmó." },
+  { clave: "pedido.pago_vencido", nombre: "Pago vencido", desc: "El enlace de pago caducó sin que pagaran." },
+
+  { clave: "cita.cancelada", nombre: "Cita cancelada", desc: "La persona canceló su cita." },
 ] as const;
 
 export type ClaveDeEvento = (typeof EVENTOS)[number]["clave"];
