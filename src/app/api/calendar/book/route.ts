@@ -21,7 +21,15 @@ export async function POST(req: Request) {
     .select("timezone")
     .eq("id", orgId)
     .maybeSingle();
-  const timeZone = (org?.timezone as string) ?? "America/Mexico_City";
+  // SIN ZONA NO SE AGENDA. Crear el evento con el huso de otro país es citar a
+  // alguien a una hora que no es la suya — el fallo de la 0102, por otra puerta.
+  const timeZone = (org?.timezone as string) ?? "";
+  if (!timeZone) {
+    return Response.json(
+      { error: "Falta la zona horaria de este negocio. Ponla en Configuración → Horario laboral." },
+      { status: 409 },
+    );
+  }
 
   const token = await getValidAccessTokenForOrg(supabase, orgId);
   if (!token) return NextResponse.json({ error: "not_connected" }, { status: 200 });

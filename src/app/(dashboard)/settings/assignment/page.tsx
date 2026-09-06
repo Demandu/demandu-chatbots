@@ -198,9 +198,24 @@ export default async function RepartoPage() {
             <span>
               <b className="text-ink">Solo dentro del horario laboral</b>
               <span className="block text-sm text-ink-2">
-                Fuera de horario las conversaciones esperan en la cola y se reparten al abrir. Tu
-                horario y zona ({org?.timezone ?? "America/Mexico_City"}) se configuran en{" "}
-                <b className="text-ink-2">Horario laboral</b>.
+                {/* AQUÍ HABÍA `?? "America/Mexico_City"`, y era una etiqueta que
+                    MENTÍA: una cuenta sin zona guardada leía «zona
+                    (America/Mexico_City)» y se quedaba tranquila. Sin zona no
+                    hay filtro de horario —ver `org_en_horario` en la 0106— y
+                    eso es justo lo que hay que decir. */}
+                Fuera de horario las conversaciones esperan en la cola y se reparten al abrir.{" "}
+                {org?.timezone ? (
+                  <>
+                    Tu horario y zona ({org.timezone}) se configuran en{" "}
+                    <b className="text-ink-2">Horario laboral</b>.
+                  </>
+                ) : (
+                  <>
+                    <b className="text-ink-2">Todavía no has elegido tu zona horaria</b>, así que
+                    esta casilla no filtra nada: elígela en{" "}
+                    <b className="text-ink-2">Horario laboral</b> para que empiece a valer.
+                  </>
+                )}
               </span>
             </span>
           </label>

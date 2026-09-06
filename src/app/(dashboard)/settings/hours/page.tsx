@@ -52,7 +52,18 @@ export default async function HoursPage({
     .maybeSingle();
 
   const bh = (org?.business_hours as any) ?? {};
-  const tz = (org?.timezone as string) ?? "America/Mexico_City";
+  /* ── SIN ZONA, EL SELECTOR NO PRESELECCIONA NINGUNA ──────────────────────
+   *
+   * Aquí había `?? "America/Mexico_City"`, y era la trampa más fina de todas:
+   * el selector enseñaba México como si el negocio lo hubiera elegido, y al
+   * guardar el horario laboral —que es a lo que se viene a esta pantalla— se
+   * guardaba esa zona Y se marcaba como confirmada.
+   *
+   * O sea: un negocio de Panamá «confirmaba» México sin haber tocado el
+   * selector. Pasó de verdad, y con la cuenta de Demandu.
+   *
+   * Vacío obliga a elegir, que es lo correcto cuando no se sabe. */
+  const tz = (org?.timezone as string) ?? "";
 
   return (
     <form action={updateBusinessHours} className="max-w-xl">
@@ -63,9 +74,12 @@ export default async function HoursPage({
       )}
       <div className="mb-5 card-l p-4">
         <label className="mb-1.5 block text-xs font-semibold text-ink-2">Zona horaria</label>
-        <select name="timezone" defaultValue={tz} className="input-l">
+        <select name="timezone" defaultValue={tz} required className="input-l">
+          {/* La opción vacía solo existe mientras no haya zona: obliga a elegir
+              una en vez de dejar que se guarde la primera de la lista. */}
+          {!tz && <option value="">Elige tu zona horaria…</option>}
           {TIMEZONES.map((z) => (
-            <option key={z} value={z}>{z}</option>
+            <option key={z} value={z}>{comoSeLee(z) || z}</option>
           ))}
         </select>
       </div>

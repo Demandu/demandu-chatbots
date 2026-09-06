@@ -40,9 +40,21 @@ export async function POST(req: Request) {
     busy = [];
   }
 
+  // SIN ZONA NO SE OFRECEN HORAS. Calcularlas con el huso de otro país las
+  // ofrece corridas, que es peor que no ofrecer ninguna: la persona dice que sí
+  // a una hora que no existe en su agenda.
+  const zona = (org?.timezone as string) ?? "";
+  if (!zona) {
+    return NextResponse.json(
+      { slots: [], calendarId, sinZona: true,
+        error: "Falta la zona horaria de este negocio. Ponla en Configuración → Horario laboral." },
+      { status: 409 },
+    );
+  }
+
   const slots = computeSlots({
     businessHours: (org?.business_hours as any) ?? {},
-    timeZone: (org?.timezone as string) ?? "America/Mexico_City",
+    timeZone: zona,
     durationMin,
     busy,
     now,
