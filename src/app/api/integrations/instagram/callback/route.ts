@@ -77,8 +77,49 @@ export async function GET(req: Request) {
   try {
     const c = await conectarConCodigo(req, code);
 
+    /* ── QUIÉN ESCRIBE ESTA FILA, Y POR QUÉ NO PUEDE SER LA SESIÓN ─────────
+     *
+     * PASÓ TRES VECES HOY, CON TRES PERSONAS DISTINTAS. La conexión terminaba
+     * en «Esa cuenta ya está conectada a otra organización» con la tabla
+     * COMPLETAMENTE VACÍA. El motivo real estaba en el registro:
+     *
+     *     permission denied for table instagram_channels
+     *
+     * La 0093 quitó a `authenticated` el acceso a esta tabla —el token de Meta
+     * lo leía cualquier miembro desde la consola del navegador— y esta ruta se
+     * quedó escribiendo con la sesión. Nadie podía conectar Instagram. Y lo
+     * peor no es el fallo: es que le echábamos la culpa al cliente, diciéndole
+     * que su cuenta estaba en otra organización cuando no lo estaba.
+     *
+     * Escribe la llave de servicio, que es la única que puede. Y por eso mismo
+     * las dos comprobaciones que antes hacía RLS hay que hacerlas A MANO aquí
+     * abajo: sin ellas, la llave de servicio se salta justo lo que protegía.
+     * ────────────────────────────────────────────────────────────────────── */
     const sb = createClient();
-    const { error } = await sb.from("instagram_channels").upsert(
+
+    // 1) El chatbot tiene que ser de esta organización. Va con la SESIÓN, que
+    //    es la que sabe quién eres: si no es tuyo, la consulta vuelve vacía.
+    if (botId) {
+      const { data: suyo } = await sb.from("bots").select("id").eq("id", botId).maybeSingle();
+      if (!suyo) return NextResponse.redirect(`${destino}?error=estado_invalido`);
+    }
+
+    const admin = createAdminClient();
+
+    // 2) La cuenta no puede estar ya en OTRA organización. Antes lo impedía
+    //    RLS; con la llave de servicio hay que preguntarlo, o cualquiera
+    //    conectaría una cuenta ajena y se quedaría con sus mensajes.
+    const { data: yaEsta } = await admin
+      .from("instagram_channels")
+      .select("org_id")
+      .eq("ig_user_id", c.igUserId)
+      .maybeSingle();
+    if (yaEsta && String((yaEsta as any).org_id) !== String(orgId)) {
+      await anotarFallo(orgId, "guardar", `la cuenta ya es de la organización ${(yaEsta as any).org_id}`);
+      return NextResponse.redirect(`${destino}?error=cuenta_ya_conectada`);
+    }
+
+    const { error } = await admin.from("instagram_channels").upsert(
       {
         org_id: orgId,
         bot_id: botId || null,
@@ -98,11 +139,14 @@ export async function GET(req: Request) {
     );
 
     if (error) {
-      // El caso que importa: `ig_user_id` es único en toda la plataforma, así
-      // que si otra organización ya conectó esa cuenta, esto falla — y debe
-      // fallar. Dos negocios no pueden recibir los mensajes de la misma cuenta.
+      /* UN FALLO NUESTRO NO SE LE CUELGA AL CLIENTE. Cualquier error al
+       * guardar decía «tu cuenta ya está en otra organización» — una frase que
+       * suena a que el problema es suyo y que mandó a buscar por el sitio
+       * equivocado durante horas, mientras lo que fallaba era un permiso de
+       * nuestra base. El choque de verdad ya se comprobó arriba; aquí abajo
+       * solo quedan averías nuestras, y se dicen como tales. */
       await anotarFallo(orgId, "guardar", error.message);
-      return NextResponse.redirect(`${destino}?error=cuenta_ya_conectada`);
+      return NextResponse.redirect(`${destino}?error=no_pudimos_guardar`);
     }
 
     // ── Un chatbot, UNA cuenta de Instagram ──────────────────────────────────
@@ -118,10 +162,11 @@ export async function GET(req: Request) {
     // reconecta con OTRA cuenta de Instagram: la anterior tiene que irse, no
     // quedarse de fantasma.
     if (botId) {
-      await sb
+      await admin
         .from("instagram_channels")
         .delete()
         .eq("bot_id", botId)
+        .eq("org_id", orgId)
         .neq("ig_user_id", c.igUserId);
     }
 

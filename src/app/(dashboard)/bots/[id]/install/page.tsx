@@ -53,6 +53,11 @@ const ERROR_IG: Record<string, string> = {
     "No pudimos abrir la conexión con Instagram. Es un ajuste pendiente de nuestro lado, no de tu cuenta. Ya nos avisó el sistema; inténtalo de nuevo en un rato o escríbenos.",
   fallo_al_conectar: "Meta no completó la conexión. Vuelve a intentarlo en un momento.",
   sin_permiso: "No puedes conectar ni desconectar canales con tu perfil. Pídeselo a quien lleve la cuenta.",
+  // TAMBIÉN ES PROBLEMA NUESTRO. Antes este caso se disfrazaba de «tu cuenta ya
+  // está conectada a otra organización» y mandaba al cliente a buscar donde no
+  // había nada.
+  no_pudimos_guardar:
+    "No pudimos guardar la conexión. Es un fallo de nuestro lado, no de tu cuenta de Instagram. Ya nos avisó el sistema; inténtalo otra vez en un rato o escríbenos.",
 };
 
 export default async function BotInstallPage({

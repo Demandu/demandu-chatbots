@@ -7465,4 +7465,71 @@ describe("Un negocio puede desconectar su Instagram", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LA VUELTA DE INSTAGRAM: QUIÉN ESCRIBE Y QUÉ SE LE DICE AL CLIENTE
+ *
+ * Tres personas distintas se quedaron sin poder conectar con la tabla VACÍA,
+ * viendo «esa cuenta ya está conectada a otra organización». El motivo real
+ * estaba en el registro: `permission denied for table instagram_channels`.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Conectar Instagram guarda de verdad y no culpa al cliente", () => {
+  const CB = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/api/integrations/instagram/callback/route.ts"), "utf8"),
+  );
+  const PAG = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/install/page.tsx"), "utf8"),
+  );
+
+  test("la fila la escribe la llave de servicio, no la sesión", () => {
+    /* La 0093 quitó a `authenticated` el acceso a esta tabla para que el token
+     * de Meta no lo leyera cualquier miembro. Escribiendo con la sesión, NADIE
+     * puede conectar Instagram. */
+    esperar(/admin\s*\.?\s*\n?\s*\.from\("instagram_channels"\)\s*\n?\s*\.upsert/.test(CB)
+      || /await admin\.from\("instagram_channels"\)\.upsert/.test(CB)).verdadero(
+      "la cuenta se vuelve a guardar con la sesión: «permission denied» y nadie conecta",
+    );
+    esperar(/sb\s*\n?\s*\.from\("instagram_channels"\)/.test(CB)).falso(
+      "queda una escritura de instagram_channels con la sesión del usuario",
+    );
+  });
+
+  test("con la llave de servicio, las dos comprobaciones de RLS se hacen a mano", () => {
+    const iBot = CB.indexOf('sb.from("bots")');
+    const iOtra = CB.indexOf('.eq("ig_user_id", c.igUserId)');
+    const iEscribe = CB.indexOf('.upsert(');
+
+    esperar(iBot > 0).verdadero(
+      "ya no se comprueba que el chatbot sea de esta organización: con la llave de servicio, " +
+      "cualquiera podría colgar su Instagram del chatbot de otro",
+    );
+    esperar(iOtra > 0).verdadero(
+      "ya no se comprueba si la cuenta es de otra organización: la llave de servicio " +
+      "sobrescribiría la fila ajena y se quedaría con sus mensajes",
+    );
+    esperar(iBot < iEscribe && iOtra < iEscribe).verdadero(
+      "las comprobaciones quedaron DESPUÉS de escribir: no frenan nada",
+    );
+  });
+
+  test("un fallo nuestro no se le cuelga al cliente", () => {
+    /* «Esa cuenta ya está conectada a otra organización» con la tabla vacía
+     * mandó a buscar por el sitio equivocado durante horas. */
+    const iGuard = CB.indexOf("cuenta_ya_conectada");
+    const iOtra = CB.indexOf('.eq("ig_user_id", c.igUserId)');
+    esperar(iGuard > iOtra && iGuard > 0).verdadero(
+      "«cuenta_ya_conectada» ya no sale de la comprobación que de verdad lo sabe",
+    );
+    esperar((CB.match(/cuenta_ya_conectada/g) ?? []).length).igual(
+      1,
+      "«cuenta_ya_conectada» se devuelve en más de un sitio: alguno será un fallo nuestro disfrazado",
+    );
+    esperar(/error=no_pudimos_guardar/.test(CB)).verdadero(
+      "un fallo al guardar vuelve a disfrazarse de problema del cliente",
+    );
+    esperar(/no_pudimos_guardar:/.test(PAG)).verdadero(
+      "la pantalla no sabe explicar ese caso y enseñaría un error en blanco",
+    );
+  });
+});
+
 process.exit(await correrPruebas());
