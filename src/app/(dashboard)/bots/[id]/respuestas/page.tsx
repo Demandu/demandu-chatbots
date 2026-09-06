@@ -24,9 +24,31 @@ export const dynamic = "force-dynamic";
  * reconocen por su nombre; los flujos que el negocio haya hecho a mano no se
  * tocan ni se pisan.
  */
-export default async function RespuestasPage({ params }: { params: { id: string } }) {
+/**
+ * Lo que se dice al volver de guardar.
+ *
+ * UN GUARDADO SIN CONFIRMACIÓN ES INDISTINGUIBLE DE UNO QUE FALLÓ. Pasó el día
+ * del estreno: se pulsó «Guardar», la pantalla se quedó igual, y las cuatro
+ * reglas SÍ se habían creado — pero no había forma de saberlo. Es el mismo
+ * vicio de la consola de Meta que tanta rabia da.
+ */
+const AVISOS: Record<string, string> = {
+  guardado: "Guardado. Lo que quedó encendido ya está contestando.",
+  promo: "Promoción guardada. Ya funciona en cuanto alguien escriba esa palabra.",
+  borrada: "Promoción borrada.",
+};
+
+export default async function RespuestasPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
   const sb = createClient();
   const orgId = await getCurrentOrgId();
+  const bruto = searchParams?.ok;
+  const aviso = AVISOS[typeof bruto === "string" ? bruto : ""] ?? null;
 
   const { data: bot } = await sb
     .from("bots")
@@ -88,6 +110,12 @@ export default async function RespuestasPage({ params }: { params: { id: string 
           Enciende dónde quieres que conteste Lana y, si quieres, deja preparada una promoción:
           alguien escribe una palabra y le llega por privado lo que le prometiste.
         </p>
+
+        {aviso && (
+          <div className="mb-5 max-w-3xl rounded-2xl border border-success/40 bg-success/10 p-3.5 text-sm text-ink-2">
+            {aviso}
+          </div>
+        )}
 
         <RespuestasAutomaticas botId={bot.id} orgId={orgId} sitios={sitios} promos={promos} />
       </div>

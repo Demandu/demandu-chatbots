@@ -7379,6 +7379,23 @@ describe("La pantalla simple de respuestas automáticas", () => {
     );
   });
 
+  test("guardar CONFIRMA que guardó", () => {
+    /* Un guardado sin confirmacion es indistinguible de uno que fallo. Paso el
+     * dia del estreno: se pulso «Guardar», la pantalla se quedo igual, y las
+     * cuatro reglas SI se habian creado. Es el vicio de la consola de Meta. */
+    esperar(/function volverCon/.test(ACT)).verdadero("desapareció la vuelta con aviso");
+    const cuantas = (ACT.match(/volverCon\(botId, "/g) ?? []).length;
+    esperar(cuantas >= 3).verdadero(
+      `solo ${cuantas} de las tres acciones (guardar, promo, borrar) avisan de que hicieron algo`,
+    );
+    esperar(/AVISOS\[/.test(PAG) && /searchParams\?\.ok/.test(PAG)).verdadero(
+      "la pantalla ya no lee el aviso que le manda el guardado",
+    );
+    esperar(/\{aviso && \(/.test(PAG)).verdadero(
+      "la pantalla no pinta el aviso: el usuario volvería a quedarse sin saber si guardó",
+    );
+  });
+
   test("una promoción en un privado no promete comentario público", () => {
     esperar(/origen === "dm" \? "no" : publica/.test(ACT)).verdadero(
       "una promoción de mensajes directos se guarda como si fuera a contestar en un comentario, " +

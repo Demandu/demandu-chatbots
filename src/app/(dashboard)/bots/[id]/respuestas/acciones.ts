@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { channelOf } from "@/lib/channels";
@@ -8,6 +9,23 @@ import {
   superficiesDe, nombreDeLana, nombreDePromo, limpiarPalabra,
   grafoDeLana, grafoDePromo, origenesDePromo,
 } from "@/lib/canales/respuestasAutomaticas";
+
+/**
+ * A DÓNDE SE VUELVE DESPUÉS DE GUARDAR, CON EL AVISO PUESTO.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PASÓ EN ESTA MISMA PANTALLA, EL DÍA QUE SE ESTRENÓ. El dueño pulsó «Guardar»,
+ * la pantalla se quedó igual, y no hubo forma de saber si había pasado algo. Se
+ * había guardado —las cuatro reglas estaban en la base— pero él no lo sabía.
+ *
+ * Es exactamente el vicio que más rabia da de la consola de Meta: guardas, no
+ * sale nada, y tienes que recargar para ver si te hizo caso. Un guardado sin
+ * confirmación es indistinguible de uno que falló.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function volverCon(botId: string, aviso: string): never {
+  redirect(`/bots/${botId}/respuestas?ok=${aviso}`);
+}
 
 /**
  * Guardar la pantalla simple de respuestas automáticas.
@@ -81,6 +99,7 @@ export async function guardarDondeContesta(formData: FormData) {
 
   revalidatePath(`/bots/${botId}/respuestas`);
   revalidatePath(`/bots/${botId}`);
+  volverCon(botId, "guardado");
 }
 
 /**
@@ -134,6 +153,7 @@ export async function guardarPromo(formData: FormData) {
 
   revalidatePath(`/bots/${botId}/respuestas`);
   revalidatePath(`/bots/${botId}`);
+  volverCon(botId, "promo");
 }
 
 export async function borrarPromo(formData: FormData) {
@@ -145,6 +165,7 @@ export async function borrarPromo(formData: FormData) {
 
   revalidatePath(`/bots/${botId}/respuestas`);
   revalidatePath(`/bots/${botId}`);
+  volverCon(botId, "borrada");
 }
 
 /**
