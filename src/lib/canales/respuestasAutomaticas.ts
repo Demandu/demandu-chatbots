@@ -45,14 +45,46 @@ export function superficiesDe(canal: string) {
   return ORIGENES.filter((o) => o.canales.includes(canal));
 }
 
+/**
+ * Los dos prefijos que marcan «esto lo lleva la pantalla simple».
+ *
+ * SE USAN PARA CONSTRUIR Y PARA RECONOCER, en ese orden y desde aquí, para que
+ * no puedan separarse. Un día alguien cambia el nombre al crear y la lista de
+ * conversaciones se llena de reglas que el negocio nunca escribió.
+ */
+export const PREFIJO_LANA = "Lana · ";
+export const PREFIJO_PROMO = "Promo · ";
+
 /** El nombre con el que se guarda cada regla general. Sale del catálogo. */
 export function nombreDeLana(origen: string): string {
   const info = ORIGENES.find((o) => o.valor === origen);
-  return `Lana · ${info?.label ?? origen}`;
+  return `${PREFIJO_LANA}${info?.label ?? origen}`;
 }
 
 export function nombreDePromo(palabra: string): string {
-  return `Promo · ${limpiarPalabra(palabra)}`;
+  return `${PREFIJO_PROMO}${limpiarPalabra(palabra)}`;
+}
+
+/**
+ * ¿ESTA REGLA LA LLEVA LA PANTALLA SIMPLE?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ NO SE ENSEÑAN EN «CONVERSACIONES AUTOMÁTICAS».
+ *
+ * «No tengo que crear un flujo para cada respuesta automática: configuro la IA
+ * y listo». Tiene razón, y es como debe sentirse. Que por debajo sean `flows`
+ * es cosa nuestra —así el motor, la Bandeja y el editor siguen viendo lo de
+ * siempre— pero enseñárselos al negocio le devuelve justo el trabajo que la
+ * pantalla simple le quitó: media docena de flujos que él no escribió, con
+ * lienzos que no quiere tocar.
+ *
+ * Se esconden de la lista, no se esconde lo que hacen: la lista dice dónde se
+ * configuran y lleva ahí.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function laLlevaLaPantallaSimple(nombre: string | null | undefined): boolean {
+  const n = String(nombre ?? "");
+  return n.startsWith(PREFIJO_LANA) || n.startsWith(PREFIJO_PROMO);
 }
 
 /**

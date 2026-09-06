@@ -80,6 +80,7 @@ export default async function FlowBuilderPage({ params }: { params: { id: string
         </div>
         <DisparadorSocial
           canal={(bot.channel as any) ?? "webchat"}
+          botId={bot.id}
           origen={(flowRow.origen as string) ?? "dm"}
           publicacion={(flowRow.publicacion as string) ?? null}
           respuestaPublica={(flowRow.respuesta_publica as string) ?? null}

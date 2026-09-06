@@ -7278,7 +7278,7 @@ describe("La respuesta pública puede ser de la IA", () => {
 
   test("la pantalla ofrece elegirlo y la acción lo guarda", () => {
     esperar(/name="respuesta_publica_modo"/.test(BARRA)).verdadero(
-      "la barra del flujo no deja elegir quién contesta en público",
+      "el modo dejó de viajar en el formulario del flujo: guardar el disparador lo borraría",
     );
     esperar(/respuesta_publica_modo: enComentario/.test(ACC)).verdadero(
       "guardar el disparador no persiste el modo: se elegiría y no quedaría",
@@ -7528,6 +7528,61 @@ describe("Conectar Instagram guarda de verdad y no culpa al cliente", () => {
     );
     esperar(/no_pudimos_guardar:/.test(PAG)).verdadero(
       "la pantalla no sabe explicar ese caso y enseñaría un error en blanco",
+    );
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * UNA SOLA PANTALLA MANDA
+ *
+ * La barra gris del editor era el único sitio donde se configuraba dónde
+ * escucha un flujo. Eso vive ahora en «Respuestas automáticas», con
+ * interruptores. Dos pantallas para lo mismo es peor que una mala.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Dónde escucha un flujo se configura en UN solo sitio", () => {
+  const BARRA = sinComentarios(
+    fs.readFileSync(path.join(SRC, "components/builder/DisparadorSocial.tsx"), "utf8"),
+  );
+
+  test("la barra del editor ya no pide configurarlo", () => {
+    esperar(/<select[\s\S]*name="origen"/.test(BARRA)).falso(
+      "vuelve a haber un selector de «dónde escucha» en el editor: dos pantallas para lo mismo",
+    );
+    esperar(/name="respuesta_publica_modo"[^>]*\n?[^>]*<option/.test(BARRA)).falso(
+      "vuelve a poderse elegir la respuesta pública desde el editor",
+    );
+    esperar(/type="checkbox"/.test(BARRA)).falso(
+      "queda una casilla que se cambia aquí y no se ve en Respuestas automáticas",
+    );
+  });
+
+  test("pero los cuatro campos SIGUEN viajando en el formulario", () => {
+    /* `setFlowTrigger` guarda lo que encuentre. Si estos campos desaparecieran,
+     * pulsar «Guardar disparador» para cambiar el NOMBRE dejaría el flujo
+     * escuchando mensajes directos y sin respuesta pública: el negocio perdería
+     * su regla de comentarios sin tocarla y sin que nada se lo dijera. */
+    for (const campo of ["origen", "publicacion", "respuesta_publica", "respuesta_publica_modo", "una_por_persona"]) {
+      esperar(new RegExp(`name="${campo}"`).test(BARRA)).verdadero(
+        `«${campo}» dejó de viajar: guardar el disparador lo borraría en silencio`,
+      );
+    }
+  });
+
+  test("la lista de conversaciones no enseña las reglas de la pantalla simple", () => {
+    const LISTA = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/page.tsx"), "utf8"),
+    );
+    esperar(/laLlevaLaPantallaSimple\(f\.name\)/.test(LISTA)).verdadero(
+      "vuelven a salir media docena de flujos que el negocio no escribió",
+    );
+    esperar(/respuestas`/.test(LISTA)).verdadero(
+      "la lista no dice dónde se encienden las respuestas de Lana",
+    );
+  });
+
+  test("y se dice dónde se cambian de verdad", () => {
+    esperar(/\/respuestas`/.test(BARRA) || /\/respuestas"/.test(BARRA)).verdadero(
+      "el editor ya no lleva a la pantalla donde sí se configura",
     );
   });
 });

@@ -9,6 +9,8 @@ import { FlowToggle } from "@/components/builder/FlowToggle";
 import { LanaSays } from "@/components/Lana";
 import { Plus, Pencil, MessageSquareText } from "lucide-react";
 import { infoOrigen } from "@/lib/flow/origenes";
+import { laLlevaLaPantallaSimple } from "@/lib/canales/respuestasAutomaticas";
+import { channelOf, hasFeature } from "@/lib/channels";
 
 export const dynamic = "force-dynamic";
 
@@ -42,9 +44,21 @@ export default async function BotPage({ params }: { params: { id: string } }) {
     supabase.from("whatsapp_channels").select(WA_SELECT).eq("bot_id", params.id).maybeSingle(),
   ]);
 
-  const list = ((flows as any[]) ?? []).sort(
-    (a, b) => (TRIGGER_ORDER[a.trigger_type] ?? 9) - (TRIGGER_ORDER[b.trigger_type] ?? 9),
-  );
+  /* ── LAS REGLAS DE LA PANTALLA SIMPLE NO SE ENSEÑAN AQUÍ ─────────────────
+   *
+   * «No tengo que crear un flujo para cada respuesta automática: configuro la
+   * IA y listo». Exacto. Que por debajo sean `flows` es cosa nuestra; ponerle
+   * al negocio media docena de flujos que él no escribió, con lienzos que no
+   * quiere tocar, le devuelve el trabajo que la pantalla simple le quitó.
+   *
+   * No se esconde lo que hacen: debajo se dice dónde se configuran y se lleva
+   * ahí. */
+  const list = ((flows as any[]) ?? [])
+    .filter((f) => !laLlevaLaPantallaSimple(f.name))
+    .sort((a, b) => (TRIGGER_ORDER[a.trigger_type] ?? 9) - (TRIGGER_ORDER[b.trigger_type] ?? 9));
+
+  const canal = channelOf((bot as any).channel);
+  const haySimple = hasFeature(canal, "respuestas");
 
   return (
     <>
@@ -58,6 +72,19 @@ export default async function BotPage({ params }: { params: { id: string } }) {
           bienvenida atiende a quien escribe por primera vez, las palabras clave responden a temas puntuales, y la de
           leads que regresan saluda distinto a quien ya te conocía.
         </p>
+
+        {haySimple && (
+          <div className="mb-5 max-w-2xl rounded-2xl border border-linea bg-suave/40 p-4 text-sm leading-relaxed text-ink-2">
+            <b className="text-ink">Para que Lana conteste sola no hace falta crear nada aquí.</b>{" "}
+            Los mensajes directos, los comentarios y las historias se encienden con un interruptor
+            en{" "}
+            <Link href={`/bots/${bot.id}/respuestas`} className="font-semibold text-pink hover:underline">
+              Respuestas automáticas
+            </Link>
+            . Esta pantalla es para cuando quieras armar una conversación con botones, preguntas o
+            condiciones.
+          </div>
+        )}
 
         <LanaSays className="mb-6" title="Lana · Empieza aquí">
           Abre una conversación para escribir tus mensajes, o crea otra nueva desde el panel de la derecha. El

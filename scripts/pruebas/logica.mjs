@@ -38,6 +38,7 @@ import {
 import {
   superficiesDe, nombreDeLana, nombreDePromo, limpiarPalabra, esPromo,
   grafoDeLana, grafoDePromo, origenesDePromo, dondeDeLosOrigenes, DONDE_PROMO,
+  laLlevaLaPantallaSimple,
 } from "../../src/lib/canales/respuestasAutomaticas.ts";
 import {
   POR_LA_AGENDA, POR_LA_TIENDA, requisitoDe, herramientasAutomaticas,
@@ -5386,6 +5387,26 @@ describe("Respuestas automáticas sin abrir un flujo", () => {
       (o) => nombreDePromo(o.label).toLowerCase() === nombreDeLana(o.valor).toLowerCase(),
     );
     esperar(choque).falso("una promoción puede llamarse igual que la respuesta general de un sitio");
+  });
+
+  test("todo lo que crea la pantalla simple se reconoce como suyo", () => {
+    /* Si el nombre que se CREA y el que se RECONOCE se separan, la lista de
+     * conversaciones se llena de reglas que el negocio nunca escribió — que es
+     * justo el trabajo que esta pantalla le quitó. */
+    for (const s of superficiesDe("instagram")) {
+      esperar(laLlevaLaPantallaSimple(nombreDeLana(s.valor))).verdadero(
+        `«${nombreDeLana(s.valor)}» aparecería en la lista de conversaciones`,
+      );
+    }
+    esperar(laLlevaLaPantallaSimple(nombreDePromo("envío"))).verdadero();
+  });
+
+  test("y lo que escribió el negocio NO se esconde", () => {
+    for (const n of ["Bienvenida", "Ventas", "Lana", "Promoción de verano", "", null]) {
+      esperar(laLlevaLaPantallaSimple(n)).falso(
+        `«${n}» es del negocio y desaparecería de su lista`,
+      );
+    }
   });
 
   test("«en los dos sitios» escucha en comentarios Y en privado", () => {
