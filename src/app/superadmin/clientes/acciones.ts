@@ -195,9 +195,49 @@ export async function eliminarCliente(formData: FormData): Promise<void> {
     );
   }
 
+  /* ── QUIÉN SE QUEDA SIN NEGOCIO ────────────────────────────────────────
+   *
+   * Borrar la organización NO borra a las personas: sus usuarios sobreviven, y
+   * quien no pertenezca a ninguna otra cuenta se queda con cero membresías.
+   *
+   * Pasó el 6 de septiembre y no lo dijo nadie. El cliente volvió a entrar y
+   * aterrizó en un panel vacío —sin chatbots, sin conversaciones, sin poder
+   * crear nada— porque el marco del panel no contemplaba ese caso. Ahora sí lo
+   * contempla y le deja crear su negocio (ver `/bienvenida` y la 0107), pero
+   * quien borra tiene que SABER a cuánta gente está dejando así.
+   *
+   * Se cuenta ANTES de borrar: después, la cascada ya se llevó las membresías
+   * de esta organización y sería imposible distinguir a quien tenía otra. */
+  const { data: suyos } = await admin
+    .from("memberships")
+    .select("user_id")
+    .eq("org_id", org)
+    .is("soporte_hasta", null);
+
+  const personas = [...new Set((suyos ?? []).map((m: any) => m.user_id).filter(Boolean))];
+
+  let huerfanos = 0;
+  if (personas.length) {
+    const { data: otras } = await admin
+      .from("memberships")
+      .select("user_id, org_id")
+      .in("user_id", personas)
+      .neq("org_id", org);
+    const conOtroNegocio = new Set((otras ?? []).map((m: any) => m.user_id));
+    huerfanos = personas.filter((u) => !conOtroNegocio.has(u)).length;
+  }
+
   await anotarComoYo({
     accion: "eliminó una cuenta de cliente",
-    detalle: { org_id: org, negocio: cuenta.name, estado_cobro: cuenta.estado_cobro },
+    detalle: {
+      org_id: org,
+      negocio: cuenta.name,
+      estado_cobro: cuenta.estado_cobro,
+      // Queda apuntado en la bitácora, que es donde se mira cuando alguien
+      // pregunta «¿y qué pasó con la persona?».
+      personas: personas.length,
+      sin_negocio: huerfanos,
+    },
   });
 
   const { error } = await admin.from("organizations").delete().eq("id", org);
@@ -206,5 +246,9 @@ export async function eliminarCliente(formData: FormData): Promise<void> {
   }
 
   revalidatePath("/superadmin/clientes");
-  redirect("/superadmin/clientes?aviso=" + encodeURIComponent(`Se eliminó «${cuenta.name}».`));
+  const aviso =
+    huerfanos > 0
+      ? `Se eliminó «${cuenta.name}». ${huerfanos === 1 ? "Una persona se quedó" : `${huerfanos} personas se quedaron`} sin negocio: su cuenta sigue existiendo y al entrar podrá${huerfanos === 1 ? "" : "n"} crear uno nuevo.`
+      : `Se eliminó «${cuenta.name}».`;
+  redirect("/superadmin/clientes?aviso=" + encodeURIComponent(aviso));
 }

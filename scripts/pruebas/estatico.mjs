@@ -6712,58 +6712,101 @@ describe("El alta de una cuenta no vuelve a perder piezas", () => {
   const DIR_MIG = path.join(RAIZ, "supabase/migrations");
   const ARCHIVOS_MIG = fs.readdirSync(DIR_MIG).filter((f) => f.endsWith(".sql")).sort();
 
-  function ultimoHandleNewUser() {
-    let ultimo = "";
+  /** La ÚLTIMA definición de una función en todas las migraciones: la que manda. */
+  function ultimaDefinicion(nombre) {
+    let ultima = "";
+    const re = new RegExp(
+      `create\\s+or\\s+replace\\s+function\\s+(public\\.)?${nombre}\\b[\\s\\S]*?\\n(end \\$\\$;|\\$\\$;)`,
+      "g",
+    );
     for (const f of ARCHIVOS_MIG) {
       const texto = fs.readFileSync(path.join(DIR_MIG, f), "utf8");
-      const trozos = [...texto.matchAll(/create\s+or\s+replace\s+function\s+public\.handle_new_user[\s\S]*?end \$\$;/g)];
-      if (trozos.length) ultimo = trozos[trozos.length - 1][0];
+      const trozos = [...texto.matchAll(re)];
+      if (trozos.length) ultima = trozos[trozos.length - 1][0];
     }
-    return ultimo;
+    return sinComentarios(ultima);
   }
 
-  const H = sinComentarios(ultimoHandleNewUser());
+  /* ── EL ALTA VIVE EN UN SOLO SITIO ────────────────────────────────────────
+   *
+   * Desde la 0107, las ocho inserciones del alta están en `provisionar_negocio`
+   * y las llaman DOS puertas: el disparador de `auth.users` y la pantalla de
+   * bienvenida de quien se quedó sin negocio.
+   *
+   * Por eso hay dos reglas y no una: que la función tenga las piezas, Y que el
+   * disparador la llame. Comprobar solo lo primero dejaría pasar un alta que no
+   * provisiona nada; comprobar solo lo segundo, una llamada a una función
+   * vaciada. */
+  const P = ultimaDefinicion("provisionar_negocio");
+  const H = ultimaDefinicion("handle_new_user");
 
-  test("hay un disparador de alta que mirar", () => {
-    esperar(H.length > 500).verdadero("no se encontró la definición de handle_new_user en las migraciones");
+  test("hay un alta de negocio que mirar", () => {
+    esperar(P.length > 500).verdadero("no se encontró provisionar_negocio en las migraciones");
+    esperar(H.length > 300).verdadero("no se encontró handle_new_user en las migraciones");
+  });
+
+  test("EL DISPARADOR DE ALTA LA LLAMA", () => {
+    esperar(/provisionar_negocio\(/.test(H)).verdadero(
+      "handle_new_user dejó de llamar a provisionar_negocio: quien se registre nace sin nada",
+    );
+    // Y que NO se haya vuelto a copiar el alta dentro del disparador: dos
+    // copias es exactamente cómo se perdieron los atributos en la 0011.
+    esperar(/insert into custom_attributes/.test(H)).falso(
+      "el alta se volvió a copiar dentro de handle_new_user: vuelve a haber dos definiciones",
+    );
   });
 
   test("crea los cuatro atributos del lead", () => {
-    esperar(/insert into custom_attributes/.test(H)).verdadero(
+    esperar(/insert into custom_attributes/.test(P)).verdadero(
       "el alta volvió a quedarse sin crear los atributos: «Datos del lead» nace vacío y agendar no encuentra el correo",
     );
     for (const clave of ["'nombre'", "'correo'", "'telefono'", "'ciudad'"]) {
-      esperar(H.includes(clave)).verdadero(`falta el atributo ${clave} en el alta`);
+      esperar(P.includes(clave)).verdadero(`falta el atributo ${clave} en el alta`);
     }
   });
 
   test("la prueba nace con fecha", () => {
     // Un nulo aquí lo lee `org_puede_enviar` como «venció»: la cuenta nace muda.
-    esperar(/prueba_termina_at/.test(H) && /interval '14 days'/.test(H)).verdadero(
+    esperar(/prueba_termina_at/.test(P) && /interval '14 days'/.test(P)).verdadero(
       "la prueba vuelve a nacer sin fecha, que el código lee como vencida",
     );
   });
 
   test("el dueño existe como agente y hay ajustes de reparto", () => {
-    /* ── SE MIRA EL `values`, NO EL `insert` ────────────────────────────────
-     *
-     * Buscar solo «insert into team_members» era VACUO y el mutante lo
-     * demostró: dentro de esta misma función hay otro, el de la rama de
-     * invitaciones, que usa `values (inv.org_id, …)`. Con él, borrar entero el
-     * del dueño dejaba la regla en verde.
-     *
-     * El del dueño es el que mete `new_org`. Ese es el que hay que exigir. */
-    esperar(/insert into team_members[\s\S]{0,160}?values \(new_org/.test(H)).verdadero(
+    /* Se mira el `values`, no solo el `insert`: en el disparador había OTRO
+     * `insert into team_members` —el de la rama de invitaciones— y con él,
+     * borrar entero el del dueño dejaba la regla en verde. El mutante lo
+     * destapó. Aquí el del dueño es el que mete `new_org`. */
+    esperar(/insert into team_members[\s\S]{0,200}?values \(new_org/.test(P)).verdadero(
       "el dueño no queda como agente: `crm_elegir_agente` no tiene a quién asignar y el pase a humano no llega a nadie",
     );
-    esperar(/insert into assignment_settings/.test(H)).verdadero(
+    esperar(/insert into assignment_settings/.test(P)).verdadero(
       "sin fila de reparto, `crm_elegir_agente` sale con null y la pantalla no tiene nada que enseñar",
     );
   });
 
   test("hay etiquetas con las que calificar", () => {
-    esperar(/insert into tags/.test(H)).verdadero(
+    esperar(/insert into tags/.test(P)).verdadero(
       "sin etiquetas, la herramienta `etiquetar` de la IA no hace nada y no lo dice",
+    );
+  });
+
+  /* ── LA PUERTA DE QUIEN SE QUEDÓ SIN NEGOCIO ──────────────────────────────
+   *
+   * `crear_mi_negocio` es SECURITY DEFINER y escribe en ocho tablas. Lo único
+   * que impide que cualquiera con sesión se fabrique organizaciones a voluntad
+   * es que compruebe que NO tiene ninguna. Sin esa comprobación, la función
+   * pasa de arreglo a agujero. */
+  test("crear un negocio SOLO vale para quien no tiene ninguno", () => {
+    const C = ultimaDefinicion("crear_mi_negocio");
+    esperar(C.length > 200).verdadero("no se encontró crear_mi_negocio en las migraciones");
+    esperar(/security definer/i.test(C)).verdadero("crear_mi_negocio dejó de poder escribir");
+    esperar(/exists\s*\(\s*select 1 from memberships/i.test(C)).verdadero(
+      "crear_mi_negocio ya no comprueba si la persona tiene negocio: cualquiera puede fabricarse organizaciones",
+    );
+    esperar(/auth\.uid\(\)/.test(C)).verdadero("crear_mi_negocio ya no mira quién está pidiendo");
+    esperar(/equipo_demandu/.test(C)).verdadero(
+      "el equipo de Demandu puede acabar con negocio propio y ensuciar la lista de clientes",
     );
   });
 });
@@ -6993,6 +7036,167 @@ describe("Las citas de una persona no dependen del canal", () => {
         `${quien}: la descripción no le prohíbe adivinar, que es lo que hizo`,
       );
     }
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * NADIE SE QUEDA EN UNA PANTALLA QUE NO ES DE NADIE
+ *
+ * 6 de septiembre. Se eliminó la cuenta de un cliente desde superadmin —una
+ * decisión legítima— y su USUARIO sobrevivió con cero membresías. Al volver a
+ * entrar aterrizaba en un panel vacío: sin chatbots, sin conversaciones, sin
+ * poder crear nada y sin una frase que lo explicara.
+ *
+ * Es la MISMA pantalla que veía el equipo de Demandu antes de la 0060, y por el
+ * mismo motivo: se preguntaba «¿es de los nuestros?» y, si no, se le dejaba
+ * pasar a un sitio que no es de nadie.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Nadie se queda sin sitio a donde ir", () => {
+  const MARCO = sinComentarios(fs.readFileSync(path.join(SRC, "app/(dashboard)/layout.tsx"), "utf8"));
+  const BIENVENIDA = sinComentarios(fs.readFileSync(path.join(SRC, "app/bienvenida/page.tsx"), "utf8"));
+  const ACC = sinComentarios(fs.readFileSync(path.join(SRC, "app/bienvenida/actions.ts"), "utf8"));
+
+  test("sin organización, el panel te saca de ahí", () => {
+    const i = MARCO.indexOf("getCurrentOrgId())");
+    esperar(i > 0).verdadero("el marco del panel dejó de comprobar si hay organización");
+    /* ── EL TROZO TERMINA ANTES DE `faltaNombreDelNegocio` ──────────────────
+     *
+     * Y no es un detalle: unas líneas más abajo hay OTRO `redirect("/bienvenida")`
+     * —el de quien entró con Apple y no puso nombre— que no tiene nada que ver
+     * con este caso. Cogiendo 700 caracteres a bulto, la regla lo encontraba y
+     * pasaba en verde aunque el desvío de «sin organización» ya no existiera.
+     * El mutante lo destapó. */
+    const fin = MARCO.indexOf("faltaNombreDelNegocio()", i);
+    esperar(fin > i).verdadero("cambió el orden del marco: la regla ya no sabe dónde mirar");
+    const trozo = MARCO.slice(i, fin);
+    esperar(/redirect\("\/panel"\)/.test(trozo)).verdadero(
+      "el equipo de Demandu vuelve a caer en el panel de un cliente vacío",
+    );
+    esperar(/redirect\("\/bienvenida"\)/.test(trozo)).verdadero(
+      "quien no tiene ningún negocio vuelve a quedarse en un panel vacío sin explicación",
+    );
+  });
+
+  test("«bienvenida» NO devuelve al login a quien no tiene negocio", () => {
+    /* Era lo que hacía antes, y por eso el cliente rebotaba: iba al login,
+     * entraba bien, y volvía al mismo panel vacío. Ahora es la pantalla que le
+     * deja crear su negocio. */
+    esperar(/crearMiNegocio/.test(BIENVENIDA)).verdadero(
+      "la pantalla de bienvenida ya no ofrece crear un negocio a quien no tiene",
+    );
+    esperar(/equipo_demandu/.test(BIENVENIDA)).verdadero(
+      "el equipo de Demandu puede acabar creándose un negocio desde esta pantalla",
+    );
+  });
+
+  test("el alta NO se reescribe en TypeScript", () => {
+    /* La regla que sostiene todo lo demás. Las ocho inserciones viven en
+     * `provisionar_negocio` y esta pantalla la llama por RPC. Copiarlas aquí
+     * sería tener dos altas distintas — exactamente cómo se perdieron los
+     * cuatro atributos base en la 0011. */
+    esperar(/rpc\("crear_mi_negocio"/.test(ACC)).verdadero(
+      "la pantalla de bienvenida dejó de usar la función de la base para crear el negocio",
+    );
+    for (const tabla of ["organizations", "pipelines", "conversation_states", "custom_attributes"]) {
+      esperar(new RegExp(`from\\("${tabla}"\\)\\s*\\n?\\s*\\.insert`).test(ACC)).falso(
+        `el alta se está reescribiendo en TypeScript (${tabla}): vuelve a haber dos definiciones`,
+      );
+    }
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * NO SE DICE «LISTO» SI NO ESTÁ CONECTADO
+ *
+ * Un cliente nuevo creó su chatbot de Instagram, le dio a conectar, Meta no le
+ * dejó —los permisos de Instagram siguen sin revisar— y aun así el asistente
+ * terminó con «¡Y listo!». Salió convencido de que funcionaba. No iba a recibir
+ * un solo mensaje, y no había una sola pantalla que se lo dijera.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Un chatbot sin conectar lo dice", () => {
+  const WIZ = sinComentarios(fs.readFileSync(path.join(SRC, "components/bots/NewBotWizard.tsx"), "utf8"));
+  const ACC = sinComentarios(fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/actions.ts"), "utf8"));
+  const CONEXION = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/install/page.tsx"), "utf8"),
+  );
+
+  test("el asistente PREGUNTA si quedó conectado", () => {
+    /* No lo puede saber solo: conectar es salir a Meta y volver por otra ruta,
+     * así que el asistente no ve nada de lo que pasó por el camino. */
+    esperar(/canalConectado/.test(WIZ)).verdadero(
+      "el asistente volvió a dar por buena la conexión sin preguntar",
+    );
+    // CON EL PARÉNTESIS. Sin él, renombrarla a `canalConectadoZZ` dejaba la
+    // regla en verde: la vieja trampa de comprobar un trozo de palabra.
+    esperar(/export async function canalConectado\(/.test(ACC)).verdadero(
+      "desapareció la comprobación de si el canal está conectado",
+    );
+  });
+
+  test("ante la duda se asume que NO está conectado", () => {
+    /* El valor inicial es `null` y el fallo cae en `false`. Si el estado
+     * arrancara en `true`, el caso bueno sería el que se enseña mientras no se
+     * sabe — que es justo la mentira que se está quitando. */
+    esperar(/useState<boolean \| null>\(null\)/.test(WIZ)).verdadero(
+      "el asistente arranca dando por conectado lo que todavía no ha comprobado",
+    );
+    esperar(/catch \{\s*setConectado\(false\);/.test(WIZ)).verdadero(
+      "si la comprobación falla, el asistente vuelve a decir que está conectado",
+    );
+  });
+
+  test("el último paso avisa, y el botón lleva a conectar", () => {
+    esperar(/conectado === false/.test(WIZ)).verdadero(
+      "el asistente ya no distingue el caso «sin conectar»",
+    );
+    esperar(/todavía NO está conectado|no está conectado/.test(WIZ)).verdadero(
+      "el asistente volvió a terminar sin avisar de que el canal está sin conectar",
+    );
+    esperar(/\/install`/.test(WIZ)).verdadero(
+      "al terminar sin conectar ya no se lleva al cliente a la pantalla de Conexión",
+    );
+  });
+
+  test("la pantalla de Conexión no se calla", () => {
+    /* Un botón sin pulsar no es un aviso. */
+    esperar(/todavía no está conectado/.test(CONEXION)).verdadero(
+      "la pantalla de Conexión vuelve a enseñar solo un botón, sin decir que no está conectado",
+    );
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * BORRAR UNA CUENTA DICE A QUIÉN DEJA SIN NEGOCIO
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Borrar una cuenta no deja gente en el aire en silencio", () => {
+  const SA = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/clientes/acciones.ts"), "utf8"));
+
+  test("se cuenta a quién se deja sin negocio, ANTES de borrar", () => {
+    const i = SA.indexOf("export async function eliminarCliente");
+    esperar(i > 0).verdadero("desapareció eliminarCliente");
+    const f = SA.slice(i, SA.indexOf("\n}", SA.indexOf("redirect(\"/superadmin/clientes?aviso=", i)));
+
+    /* SE MIDE LA LECTURA DE `memberships`, no cualquier mención de la palabra.
+     * Buscar «huerfanos» a secas era vacuo: la bitácora la nombra unas líneas
+     * más arriba (`sin_negocio: huerfanos`), así que la primera aparición caía
+     * antes del borrado aunque el cálculo entero se hubiera movido detrás. El
+     * mutante lo destapó. */
+    const iLee = f.indexOf("const { data: suyos }");
+    const iBorra = f.indexOf('.delete().eq("id", org)');
+    esperar(iLee > 0).verdadero("ya no se leen las membresías para saber a quién se deja sin negocio");
+    esperar(iBorra > 0).verdadero("desapareció el borrado");
+    esperar(iLee < iBorra).verdadero(
+      "se cuenta DESPUÉS de borrar: la cascada ya se llevó las membresías y el número siempre saldría cero",
+    );
+  });
+
+  test("queda apuntado y se le dice a quien borra", () => {
+    esperar(/sin_negocio: huerfanos/.test(SA)).verdadero(
+      "la bitácora ya no apunta a cuánta gente dejó sin negocio",
+    );
+    esperar(/sin negocio/.test(SA)).verdadero(
+      "el aviso ya no le dice a quien borra que dejó gente sin negocio",
+    );
   });
 });
 

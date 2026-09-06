@@ -73,6 +73,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
       .eq("activo", true)
       .maybeSingle();
     if (miembro) redirect("/panel");
+
+    /* ── Y SI NO ES DEL EQUIPO, TAMPOCO SE QUEDA AQUÍ ────────────────────
+     *
+     * Faltaba esta mitad y se vio con un cliente de verdad: se eliminó su
+     * cuenta desde superadmin y su USUARIO sobrevivió con cero membresías.
+     * Al volver a entrar caía justo aquí — panel vacío, sin chatbots, sin
+     * conversaciones, sin poder crear nada y sin una frase que lo explicara.
+     * La misma pantalla que veía el equipo de Demandu antes de la 0060, y por
+     * el mismo motivo: preguntábamos «¿es de los nuestros?» y, si no, lo
+     * dejábamos pasar a un sitio que no es de nadie.
+     *
+     * `/bienvenida` sabe distinguir los dos casos y le deja crear su negocio.
+     * Vive fuera de `(dashboard)` justamente para que este desvío no sea un
+     * bucle. */
+    redirect("/bienvenida");
   }
 
   if (await faltaNombreDelNegocio()) redirect("/bienvenida");
