@@ -5,6 +5,7 @@ import { ConnectButton } from "@/components/builder/ConnectButton";
 import { EstadoMeta } from "@/components/integrations/EstadoMeta";
 import { consultarMeta, interpretarEstado } from "@/lib/integrations/metaEstado";
 import { createClient } from "@/lib/supabase/server";
+import { desconectarInstagram } from "./acciones";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,10 @@ const AVISO_IG: Record<string, { tono: "bien" | "mal" | "ojo"; texto: string }> 
     tono: "mal",
     texto: "La cuenta quedó guardada, pero Meta no aceptó activar los avisos, así que todavía NO van a llegar mensajes. Vuelve a intentarlo o escríbenos.",
   },
+  desconectado: {
+    tono: "ojo",
+    texto: "Instagram quedó desconectado. Este chatbot ya no va a recibir ni responder mensajes hasta que vuelvas a conectar una cuenta.",
+  },
 };
 const ERROR_IG: Record<string, string> = {
   cuenta_ya_conectada: "Esa cuenta de Instagram ya está conectada a otra organización de la plataforma.",
@@ -47,6 +52,7 @@ const ERROR_IG: Record<string, string> = {
   sin_configurar:
     "No pudimos abrir la conexión con Instagram. Es un ajuste pendiente de nuestro lado, no de tu cuenta. Ya nos avisó el sistema; inténtalo de nuevo en un rato o escríbenos.",
   fallo_al_conectar: "Meta no completó la conexión. Vuelve a intentarlo en un momento.",
+  sin_permiso: "No puedes conectar ni desconectar canales con tu perfil. Pídeselo a quien lleve la cuenta.",
 };
 
 export default async function BotInstallPage({
@@ -160,9 +166,23 @@ export default async function BotInstallPage({
           )}
 
           {channel === "instagram" && ig && (
-            <div className="rounded-2xl border border-success/40 bg-success/5 p-4 text-sm text-ink-2">
-              Conectado a{" "}
-              <b className="text-ink">{(ig as any).username ? `@${(ig as any).username}` : "tu cuenta"}</b>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-success/40 bg-success/5 p-4 text-sm text-ink-2">
+              <span>
+                Conectado a{" "}
+                <b className="text-ink">{(ig as any).username ? `@${(ig as any).username}` : "tu cuenta"}</b>
+              </span>
+
+              {/* ── DESCONECTAR SE PUEDE, Y SE VE ────────────────────────────
+                  La plataforma sabía conectar y no sabía desconectar: quien
+                  cambiaba de cuenta tenía que pedírnoslo. Además, la solicitud
+                  que Meta va a revisar dice que el negocio puede desconectarla
+                  cuando quiera — sin este botón, eso era falso. */}
+              <form action={desconectarInstagram}>
+                <input type="hidden" name="bot_id" value={bot.id} />
+                <button className="rounded-lg border border-linea px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:border-danger/50 hover:text-danger">
+                  Desconectar
+                </button>
+              </form>
             </div>
           )}
 

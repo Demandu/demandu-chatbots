@@ -7404,4 +7404,65 @@ describe("La pantalla simple de respuestas automáticas", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * DESCONECTAR INSTAGRAM
+ *
+ * La plataforma sabía conectar y no sabía desconectar. Y la solicitud que Meta
+ * va a leer dice que el negocio «puede desconectarla cuando quiera»: sin el
+ * botón, eso era una afirmación falsa en la solicitud.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Un negocio puede desconectar su Instagram", () => {
+  const ACC = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/install/acciones.ts"), "utf8"),
+  );
+  const PAG = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/install/page.tsx"), "utf8"),
+  );
+  const IG = sinComentarios(fs.readFileSync(path.join(SRC, "lib/integrations/instagram.ts"), "utf8"));
+
+  test("el botón está en la pantalla de Conexión", () => {
+    esperar(/action=\{desconectarInstagram\}/.test(PAG)).verdadero(
+      "desapareció el botón de desconectar: la solicitud de Meta promete algo que no existe",
+    );
+  });
+
+  test("el permiso se comprueba en el servidor, no escondiendo el botón", () => {
+    /* Esconder no es prohibir: una acción de servidor se puede llamar sin pasar
+     * por la pantalla. Sin esto, un agente que solo atiende chats podría dejar
+     * sin Instagram a toda la organización. */
+    const i = ACC.indexOf("export async function desconectarInstagram");
+    const f = ACC.slice(i);
+    const iPermiso = f.indexOf('permisos.has("conexiones")');
+    const iBorrar = f.indexOf("desconectarCanalIg(");
+    esperar(iPermiso > 0).verdadero("ya no se comprueba el permiso de conexiones");
+    esperar(iBorrar > 0).verdadero("desapareció la desconexión");
+    esperar(iPermiso < iBorrar).verdadero(
+      "se desconecta ANTES de comprobar el permiso: la comprobación no frena nada",
+    );
+  });
+
+  test("se avisa a Meta antes de borrar la fila", () => {
+    /* La suscripción vive en Meta. Sin darla de baja, Instagram seguiría
+     * mandando cada mensaje de esa cuenta a nuestro webhook después de que el
+     * negocio la haya desconectado. */
+    const i = IG.indexOf("export async function desconectarCanalIg");
+    const f = IG.slice(i, IG.indexOf("\nexport ", i + 10));
+    const iBaja = f.indexOf("desuscribirCuenta(");
+    const iDelete = f.indexOf(".delete()");
+    esperar(iBaja > 0 && iDelete > 0).verdadero("desapareció la baja en Meta o el borrado");
+    esperar(iBaja < iDelete).verdadero(
+      "se borra la fila antes de avisar a Meta: sin el token ya no se puede dar de baja",
+    );
+    esperar(/method: "DELETE"/.test(IG)).verdadero(
+      "la baja en Meta dejó de ser una baja",
+    );
+  });
+
+  test("la desconexión se dice con todas las letras", () => {
+    esperar(/desconectado:/.test(PAG)).verdadero(
+      "al volver de desconectar no se dice nada: se vería igual que si no hubiera pasado",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

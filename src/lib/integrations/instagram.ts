@@ -308,6 +308,70 @@ export async function suscribirCuenta(
 }
 
 /**
+ * Deja de recibir avisos de esta cuenta.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BORRAR LA FILA NO BASTA. La suscripción vive en Meta, no en nuestra base: sin
+ * este paso, Instagram seguiría mandando cada mensaje y cada comentario de esa
+ * cuenta a nuestro webhook después de que el negocio la haya desconectado. No
+ * los contestaríamos —no hay canal que los reclame— pero los estaríamos
+ * recibiendo, y eso es exactamente lo que alguien que desconecta NO quiere.
+ *
+ * NO ES CRÍTICA. Si Meta no contesta, la desconexión sigue adelante: lo que el
+ * negocio pidió es dejar de tenerla conectada, y un fallo de red al otro lado
+ * no puede impedírselo.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function desuscribirCuenta(token: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const p = new URLSearchParams({ access_token: token });
+    const r = await fetch(`${GRAPH}/v23.0/me/subscribed_apps?${p.toString()}`, { method: "DELETE" });
+    const j = await r.json().catch(() => ({}));
+    if (j?.success === true) return { ok: true };
+    return { ok: false, error: j?.error?.message ?? "Instagram no confirmó la baja" };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "No se pudo dar de baja la cuenta" };
+  }
+}
+
+/**
+ * Quitar la cuenta de Instagram de un chatbot, de verdad y por completo.
+ *
+ * RECIBE EL CLIENTE, NO LO CREA. Quien llama decide con qué credencial se hace
+ * esto, y aquí hace falta la de servicio: el token de la cuenta ya no se puede
+ * leer con la sesión de nadie (0093), que es justo lo que se quiere.
+ *
+ * Se avisa a Meta ANTES de borrar la fila; si Meta no contesta, se borra igual
+ * y queda el motivo en el registro. Al negocio no se le puede dejar atrapado
+ * con una cuenta que ya no quiere porque el otro lado esté caído.
+ */
+export async function desconectarCanalIg(
+  admin: any, orgId: string, botId: string,
+): Promise<{ ok: boolean; avisoAMeta: boolean }> {
+  const { data: canal } = await admin
+    .from("instagram_channels")
+    .select("access_token")
+    .eq("bot_id", botId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  let avisoAMeta = false;
+  if (canal?.access_token) {
+    const r = await desuscribirCuenta(String(canal.access_token));
+    avisoAMeta = r.ok;
+    if (!r.ok) console.error("[ig] no pude dar de baja la suscripción:", r.error);
+  }
+
+  const { error } = await admin
+    .from("instagram_channels")
+    .delete()
+    .eq("bot_id", botId)
+    .eq("org_id", orgId);
+
+  return { ok: !error, avisoAMeta };
+}
+
+/**
  * Renueva un token de 60 días por otros 60.
  *
  * PENDIENTE: no la llama nadie todavía. Hace falta una tarea programada que la
