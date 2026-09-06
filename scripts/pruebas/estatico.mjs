@@ -6550,4 +6550,58 @@ describe("La plataforma recuerda los horarios que ofreció", () => {
   });
 });
 
+
+// ─── UN FORMULARIO SIN SINCRONIZAR TAMBIÉN SE MANDA ──────────────────────────
+//
+// Meta rechaza un formulario en BORRADOR mandado como publicado, con
+// «(#131009) Parameter value is not valid» — un error que no dice nada. Y todo
+// formulario recién hecho está en borrador: nadie publica antes de probar.
+//
+// El motor lo esquivaba preguntándole a `whatsapp_forms`, que se llena al
+// SINCRONIZAR. Quien creó su formulario directo en Meta y solo pegó el id no
+// tiene fila ahí — y a su cliente le salía «No pude abrirte el formulario» al
+// final de cada demo agendada. Pasó con la encuesta el 6 de septiembre.
+describe("El estado de un formulario sale de Meta", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+
+  test("se le pregunta a Meta, no solo a la tabla de sincronizados", () => {
+    esperar(/fields=status/.test(WA)).verdadero(
+      "el motor volvió a fiarse solo de `whatsapp_forms`: un formulario sin sincronizar se manda como publicado",
+    );
+    // Y QUE EL ESTADO SE USE, no solo que se pida: pedirlo y no mirarlo deja el
+    // fallo exactamente igual, con una llamada de más.
+    esperar(/let enBorrador = String\(estado \?\? ""\)\.toUpperCase\(\) === "DRAFT";/.test(WA)).verdadero(
+      "se le pregunta el estado a Meta y después no se mira",
+    );
+    const i = WA.indexOf("function fichaDelFlujo");
+    esperar(i > 0).verdadero("desapareció la ficha del formulario");
+  });
+
+  test("una caché vieja SIN estado se vuelve a preguntar", () => {
+    // Las cachés de antes tienen la pantalla y no el estado. Darlas por buenas
+    // dejaría el fallo igual justo para los formularios que ya se usaban.
+    const c = new RegExp("function fichaDelFlujo\\([\\s\\S]*?\\n\\}").exec(WA)?.[0] ?? "";
+    esperar(/if \(cache\?\.screen && cache\?\.estado\)/.test(c)).verdadero(
+      "una caché a medias se da por buena y el estado nunca se llega a leer",
+    );
+  });
+
+  test("lo sincronizado manda sobre lo de Meta, si existe", () => {
+    // La pantalla de Formularios es la fuente que el negocio controla; lo de
+    // Meta es el respaldo para cuando no ha pasado por ahí.
+    esperar(/if \(sincronizado\) enBorrador = sincronizado === "DRAFT";/.test(WA)).verdadero(
+      "o manda uno o manda el otro, pero no hay orden definido",
+    );
+  });
+
+  test("el estado queda apuntado en el mensaje", () => {
+    // Para poder entender un «no pude abrirte el formulario» sin mirar unos
+    // registros de servidor que no lee nadie — que es por lo que este fallo
+    // duró semanas.
+    esperar(/estado_en_meta: estado/.test(WA)).verdadero(
+      "el mensaje no dice en qué estado estaba el formulario que Meta rechazó",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

@@ -2922,23 +2922,59 @@ async function flujoDeOtroBot(ctx: any, node: any): Promise<{ id: string; nodes:
   }
 }
 
-async function primeraPantalla(db: any, flowId: string, token: string): Promise<string | null> {
+/**
+ * La primera pantalla de un formulario Y SI ESTÁ PUBLICADO.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LAS DOS COSAS JUNTAS PORQUE LAS DOS VIENEN DE META Y LAS DOS HACEN FALTA PARA
+ * MANDARLO. Sin la pantalla no se puede navegar; sin el estado se manda un
+ * borrador como si estuviera publicado y Meta lo rechaza con «(#131009)
+ * Parameter value is not valid», que no dice nada.
+ *
+ * El estado salía de `whatsapp_forms`, que se llena al SINCRONIZAR desde la
+ * pantalla de Formularios. Y ahí estaba el agujero: quien creó su formulario
+ * directamente en Meta y solo pegó el id en el bloque no tiene fila ahí, así
+ * que el motor asumía «publicado» y a su cliente le salía «No pude abrirte el
+ * formulario». Pasó con la encuesta de satisfacción, al final de cada demo.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function fichaDelFlujo(
+  db: any, flowId: string, token: string,
+): Promise<{ screen: string | null; estado: string | null }> {
   try {
-    const { data: cache } = await db.from("wa_flow_cache").select("screen").eq("flow_id", flowId).maybeSingle();
-    if (cache?.screen) return cache.screen;
+    const { data: cache } = await db
+      .from("wa_flow_cache").select("screen, estado").eq("flow_id", flowId).maybeSingle();
+    // SE VUELVE A PREGUNTAR SI FALTA CUALQUIERA DE LAS DOS. Las cachés viejas
+    // tienen la pantalla y no el estado; darlas por buenas dejaría el fallo
+    // exactamente igual para los formularios que ya se habían usado.
+    if (cache?.screen && cache?.estado) return { screen: cache.screen, estado: cache.estado };
 
-    const r = await fetch(`${GRAPH}/${flowId}/assets`, { headers: { Authorization: `Bearer ${token}` } });
-    const j = await r.json();
-    const url = (j?.data ?? []).find((a: any) => a.asset_type === "FLOW_JSON")?.download_url;
-    if (!url) return null;
+    const [assets, ficha] = await Promise.all([
+      fetch(`${GRAPH}/${flowId}/assets`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json()).catch(() => null),
+      fetch(`${GRAPH}/${flowId}?fields=status`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json()).catch(() => null),
+    ]);
 
-    const def = await (await fetch(url)).json();
-    const screen = def?.screens?.[0]?.id ?? null;
-    if (screen) await db.from("wa_flow_cache").upsert({ flow_id: flowId, screen }, { onConflict: "flow_id" });
-    return screen;
+    const estado = String(ficha?.status ?? "").toUpperCase() || cache?.estado || null;
+
+    let screen: string | null = cache?.screen ?? null;
+    const url = (assets?.data ?? []).find((a: any) => a.asset_type === "FLOW_JSON")?.download_url;
+    if (!screen && url) {
+      const def = await (await fetch(url)).json();
+      screen = def?.screens?.[0]?.id ?? null;
+    }
+
+    if (screen || estado) {
+      await db.from("wa_flow_cache").upsert(
+        { flow_id: flowId, screen, estado, visto_at: new Date().toISOString() },
+        { onConflict: "flow_id" },
+      );
+    }
+    return { screen, estado };
   } catch (e) {
-    console.error("[wa flow] pantalla:", e);
-    return null;
+    console.error("[wa flow] no pude leer la ficha del formulario:", e);
+    return { screen: null, estado: null };
   }
 }
 
@@ -3040,7 +3076,7 @@ async function sayFlujo(ctx: any, node: any): Promise<boolean> {
     return false;
   }
 
-  const screen = await primeraPantalla(ctx.db, flowId, ctx.token);
+  const { screen, estado } = await fichaDelFlujo(ctx.db, flowId, ctx.token);
 
   /* ── LOS HORARIOS DE VERDAD, DENTRO DEL FORMULARIO ────────────────────────
    *
@@ -3148,11 +3184,18 @@ async function sayFlujo(ctx: any, node: any): Promise<boolean> {
   // Si lo tenemos sincronizado y sabemos que está en borrador, se manda en modo
   // borrador. Solo lo ve quien tiene el número dado de alta en la cuenta de
   // Meta, que es justo quien está probando.
+  // EL ESTADO SALE DE META, y `whatsapp_forms` solo manda si además está ahí.
+  // Antes esto miraba SOLO esa tabla, que se llena al sincronizar: un
+  // formulario creado directo en Meta no tenía fila, se mandaba como publicado
+  // y Meta lo rechazaba.
+  let enBorrador = String(estado ?? "").toUpperCase() === "DRAFT";
   try {
     const { data: ficha } = await ctx.db
       .from("whatsapp_forms").select("status").eq("meta_flow_id", flowId).maybeSingle();
-    if (String(ficha?.status ?? "").toUpperCase() === "DRAFT") parametros.mode = "draft";
-  } catch { /* si no lo sabemos, se manda normal */ }
+    const sincronizado = String(ficha?.status ?? "").toUpperCase();
+    if (sincronizado) enBorrador = sincronizado === "DRAFT";
+  } catch { /* con lo de Meta basta */ }
+  if (enBorrador) parametros.mode = "draft";
 
   const interactive: any = {
     type: "flow",
@@ -3164,13 +3207,21 @@ async function sayFlujo(ctx: any, node: any): Promise<boolean> {
 
   const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "interactive", interactive });
   await registrar(ctx, `📋 ${d.waFlowCta || "Formulario"}`, envio, {
-    flow_id: flowId, screen, modo: parametros.mode ?? "publicado",
+    flow_id: flowId, screen, modo: parametros.mode ?? "publicado", estado_en_meta: estado,
     // Los horarios que se ofrecieron quedan apuntados. Es lo único que después
     // permite entender un «elegí una hora y me dijo que estaba ocupada»: sin
     // esto, la lista que vio la persona no existe en ninguna parte.
     ...(datosDeAgenda ? { horarios: Object.values(datosDeAgenda)[0] } : {}),
   });
-  if (!envio?.ok) console.error("[wa flow] Meta rechazó el envío:", JSON.stringify(envio));
+  if (!envio?.ok) {
+    // El motivo de Meta, tal cual. `registrar` ya lo guarda en el mensaje
+    // (`no_entregado`), que es donde el negocio lo puede ver: los registros del
+    // servidor no los lee nadie, y por eso este fallo duró semanas.
+    console.error(
+      `[wa flow] Meta rechazó el formulario ${flowId} (estado ${estado ?? "?"}, ` +
+      `modo ${parametros.mode ?? "publicado"}):`, JSON.stringify(envio),
+    );
+  }
   return !!envio?.ok;
 }
 
