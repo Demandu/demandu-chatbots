@@ -6257,4 +6257,105 @@ describe("La IA puede mover y cancelar la cita de una persona", () => {
   });
 });
 
+
+// ─── INSTAGRAM: LOS CAMPOS DEL DISPARADOR SE USAN ────────────────────────────
+//
+// La 0033 añadió `origen`, `publicacion`, `respuesta_publica` y
+// `una_por_persona` a los flujos, y el constructor lleva semanas dejando
+// configurarlos. El webhook no leía NINGUNO de los cuatro: el negocio elegía
+// «comentario en un reel», lo veía guardado, y su flujo se activaba igual desde
+// un mensaje directo.
+//
+// Mismo patrón que las tres herramientas de la tienda que no tenía nadie: no
+// falla nada, simplemente no hace lo que dice. Estas reglas son lo que impide
+// que un campo vuelva a guardarse sin que nadie lo lea.
+describe("Instagram contesta según de dónde venga", () => {
+  const WH = sinComentarios(fs.readFileSync(path.join(SRC, "app/api/webhooks/instagram/route.ts"), "utf8"));
+  const REGLAS = sinComentarios(fs.readFileSync(path.join(SRC, "lib/canales/instagramReglas.ts"), "utf8"));
+
+  test("LOS CUATRO CAMPOS LLEGAN AL WEBHOOK", () => {
+    // La consulta no los pedía, así que el webhook no podía usarlos aunque
+    // hubiera querido.
+    const i = WH.indexOf("function flujosDelBot");
+    esperar(i > 0).verdadero("cambió la forma del webhook, revisa esta prueba");
+    const consulta = WH.slice(i, i + 700);
+    for (const campo of ["origen", "publicacion", "respuesta_publica", "una_por_persona"]) {
+      esperar(new RegExp(`\\b${campo}\\b`).test(consulta)).verdadero(
+        `la consulta de flujos no trae «${campo}»: se guarda y no se puede usar`,
+      );
+    }
+  });
+
+  test("y los cuatro se USAN de verdad", () => {
+    // Traerlos y no mirarlos sería el mismo fallo con un paso más.
+    esperar(/reglaQueAplica\(/.test(WH)).verdadero("el webhook elige el flujo a ciegas otra vez");
+    esperar(/responderComentario\(/.test(WH)).verdadero(
+      "`respuesta_publica` vuelve a guardarse sin mandarse nunca",
+    );
+    esperar(/puedeEscribirEnPrivado\(/.test(WH)).verdadero(
+      "`una_por_persona` vuelve a ignorarse: tres comentarios, tres privados",
+    );
+  });
+
+  test("MANDA LA REGLA, y lo de antes queda de respaldo", () => {
+    // Quitar el respaldo dejaría sin contestar a todos los flujos que ya
+    // existen, que tienen `origen = 'dm'` y nunca se pensaron como reglas.
+    esperar(/porRegla \?\? chooseWebFlow\(/.test(WH)).verdadero(
+      "o mandan las reglas y nada más, o manda la búsqueda a ciegas: falta el respaldo",
+    );
+  });
+
+  test("la respuesta pública va ANTES que la privada", () => {
+    // La privada tiene el límite de una por comentario y puede perderse.
+    // Quedarse sin la pública además sería quedarse sin nada — y la pública es
+    // la que ven los demás, la que hace que comenten los siguientes.
+    const publica = WH.indexOf("responderComentario(");
+    const privada = WH.indexOf("responderEnPrivado(");
+    esperar(publica > 0 && privada > publica).verdadero(
+      "la respuesta pública se manda después de la privada, o no se manda",
+    );
+  });
+
+  test("el saliente guarda de qué publicación salió", () => {
+    // Es lo ÚNICO que después permite saber «a esta persona ya le escribimos
+    // por esta publicación». Sin él, `una_por_persona` no tiene dónde mirar y
+    // la comprobación pasa a ser decorativa.
+    const i = WH.indexOf('tipo: "respuesta_privada"');
+    esperar(i > 0).verdadero("cambió la forma del webhook, revisa esta prueba");
+    esperar(/media_id/.test(WH.slice(i, i + 200))).verdadero(
+      "el privado no guarda la publicación: «una vez por persona» no puede funcionar",
+    );
+  });
+
+  test("el catálogo de superficies y la regla hablan el mismo idioma", () => {
+    // Si la regla devolviera «historia» y el catálogo guardara «story_reply»,
+    // ninguna regla encajaría NUNCA y no habría ningún síntoma: el bot
+    // simplemente no contestaría.
+    esperar(/from "@\/lib\/flow\/origenes"/.test(REGLAS)).verdadero(
+      "las reglas se inventaron su propia lista de superficies",
+    );
+    const cat = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/origenes.ts"), "utf8"));
+    const enCatalogo = [...cat.matchAll(/valor: "(\w+)"/g)].map((m) => m[1]).sort();
+    const enLaRegla = [...REGLAS.matchAll(/return "(\w+)";/g)].map((m) => m[1]);
+    for (const s of enLaRegla) {
+      esperar(enCatalogo.includes(s)).verdadero(
+        `la regla devuelve «${s}» y el catálogo no lo conoce: nunca encajaría nada`,
+      );
+    }
+  });
+
+  test("el constructor pide los campos según el catálogo, no a mano", () => {
+    // Escrito a mano como «post o reel», los directos —que también tienen
+    // comentarios públicos— no ofrecían dónde escribir la respuesta pública, y
+    // al guardar se borraba sin decir nada.
+    for (const f of ["components/builder/DisparadorSocial.tsx", "app/(dashboard)/bots/actions.ts"]) {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, f), "utf8"));
+      esperar(/origen === "post" \|\| origen === "reel"|valor === "post" \|\| valor === "reel"/.test(t)).falso(
+        `${f} vuelve a tener la lista de superficies escrita a mano`,
+      );
+      esperar(/admitePublica/.test(t)).verdadero(`${f} ya no sale del catálogo de orígenes`);
+    }
+  });
+});
+
 process.exit(await correrPruebas());

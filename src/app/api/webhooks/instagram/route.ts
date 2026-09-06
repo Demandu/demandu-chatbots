@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { agenteDelBot } from "@/lib/ai/agentes";
 import { runWebFlow, chooseWebFlow } from "@/lib/flow/webRuntime";
+import { reglaQueAplica, superficieDe, dondeContestar, puedeEscribirEnPrivado } from "@/lib/canales/instagramReglas";
 import { cerrarRecorrido } from "@/lib/flow/flowRuns";
 import {
   leerEventos, abreConversacion, textoParaElFlujo,
   type EventoInstagram,
 } from "@/lib/canales/instagramEntrante";
-import { enviarDm, responderEnPrivado, perfilDeInstagram } from "@/lib/canales/instagramEnviar";
+import { enviarDm, responderEnPrivado, responderComentario, perfilDeInstagram } from "@/lib/canales/instagramEnviar";
 import { firmaValida } from "@/lib/canales/instagramFirma";
 import type { Flow } from "@/lib/flow/types";
 
@@ -259,8 +260,43 @@ async function atenderComentario(
   admin: any, canal: any, bot: any, e: EventoInstagram, texto: string,
 ): Promise<void> {
   const flujos = await flujosDelBot(admin, bot.id);
-  const elegido = chooseWebFlow(flujos, texto, false, {});
+
+  /* ── MANDA LA REGLA; LO DE ANTES QUEDA DE RESPALDO ────────────────────────
+   *
+   * Antes esto era solo `chooseWebFlow(flujos, texto)`: cualquier comentario
+   * caía en «el flujo que coincida por palabra clave», viniera de un reel, de
+   * un post o de un directo. Un negocio no habla igual en los tres.
+   *
+   * Ahora primero se busca el flujo que DIJO escuchar aquí —esta superficie,
+   * esta publicación, estas palabras— y solo si ninguno encaja se cae a la
+   * búsqueda de siempre. Así nadie pierde lo que ya le funcionaba: los flujos
+   * de antes tienen `origen = 'dm'` y siguen atendiéndose por el respaldo.
+   * ────────────────────────────────────────────────────────────────────── */
+  const porRegla = reglaQueAplica(flujos, {
+    tipo: e.tipo, tipoDeMedia: e.tipoDeMedia, mediaId: e.mediaId, texto,
+  });
+  const elegido = porRegla ?? chooseWebFlow(flujos, texto, false, {});
   if (!elegido) return;
+
+  const superficie = superficieDe({ tipo: e.tipo, tipoDeMedia: e.tipoDeMedia });
+  const donde = dondeContestar(porRegla, superficie);
+
+  /* ── LA RESPUESTA PÚBLICA VA PRIMERO, Y VA PASE LO QUE PASE ───────────────
+   *
+   * `respuesta_publica` se guardaba desde la 0033 y no se mandaba NUNCA. Es la
+   * mitad visible de esto: quien comenta «PROMO» en un reel espera ver algo
+   * debajo de su comentario, y los demás que pasan por ahí también — es lo que
+   * hace que comenten los siguientes.
+   *
+   * Va antes que el privado y no depende de él: el privado tiene el límite de
+   * uno por comentario y puede perderse, y quedarse sin la pública además
+   * sería quedarse sin nada.
+   */
+  if (donde.publico && e.comentarioId) {
+    const publica = String(porRegla?.respuesta_publica ?? "").trim();
+    const r = await responderComentario(e.comentarioId, canal.access_token, publica);
+    if (!r.ok) console.error("[ig webhook] no pude contestar en público:", r.error);
+  }
 
   const graph = (elegido.graph as any) ?? { nodes: [], edges: [] };
   if (!(graph.nodes ?? []).length) return;
@@ -311,7 +347,20 @@ async function atenderComentario(
   // El primer mensaje del flujo se manda EN PRIVADO al comentario: es lo que
   // abre el DM y convierte un comentario público en una conversación.
   const primero = String(salidas[0]?.text ?? "").trim();
-  if (primero && e.comentarioId) {
+
+  /* ── UNA SOLA VEZ POR PERSONA ────────────────────────────────────────────
+   *
+   * `una_por_persona` también se guardaba y también se ignoraba: quien
+   * comentaba tres veces el mismo reel recibía tres mensajes privados. Eso no
+   * es insistir, es lo que hace que alguien te silencie.
+   *
+   * Se mira si ya le escribimos por ESTA publicación, no en general: la
+   * promoción del mes que viene tiene que poder llegarle igual.
+   */
+  const yaLeEscribimos = await yaLeEscribimosPor(admin, canal.org_id, contacto, e.mediaId ?? null);
+  const puedePrivado = puedeEscribirEnPrivado(porRegla, yaLeEscribimos);
+
+  if (primero && e.comentarioId && puedePrivado) {
     const { data: turno } = await admin.rpc("tomar_turno_respuesta_privada", {
       p_org_id: canal.org_id,
       p_ig_user_id: canal.ig_user_id,
@@ -332,7 +381,11 @@ async function atenderComentario(
         sender: "bot",
         body: primero,
         payload: {
-          ig: { tipo: "respuesta_privada", comentario_id: e.comentarioId },
+          // `media_id` VA TAMBIÉN EN EL SALIENTE, y no es decorativo: es lo
+          // único que después permite saber «a esta persona ya le escribimos
+          // por esta publicación». Sin él, `una_por_persona` no tendría dónde
+          // mirar y volvería a mandar un privado por cada comentario.
+          ig: { tipo: "respuesta_privada", comentario_id: e.comentarioId, media_id: e.mediaId ?? null },
           ...(r.ok ? {} : { no_entregado: { motivo: r.error, code: r.code ?? null } }),
         },
       });
@@ -435,9 +488,46 @@ async function noHayCanal(admin: any, idQueMandoMeta: string): Promise<void> {
 async function flujosDelBot(admin: any, botId: string): Promise<any[]> {
   const { data } = await admin
     .from("flows")
-    .select("id, name, graph, trigger_type, keywords, enabled, priority, updated_at")
+    // LOS CUATRO CAMPOS DEL DISPARADOR VIAJAN. Se guardaban desde la 0033 y
+    // esta consulta no los pedía, así que el webhook no podía usarlos aunque
+    // hubiera querido: el negocio elegía «comentario en un reel», lo veía
+    // guardado, y su flujo se activaba igual desde un mensaje directo.
+    .select(
+      "id, name, graph, trigger_type, keywords, enabled, priority, updated_at, " +
+      "origen, publicacion, respuesta_publica, una_por_persona",
+    )
     .eq("bot_id", botId);
   return ((data as any[]) ?? []).filter((f) => f.enabled !== false);
+}
+
+/**
+ * ¿Ya le mandamos un privado a esta persona por esta publicación?
+ *
+ * Se mira en los mensajes salientes que llevan apuntado el comentario y la
+ * publicación de la que salieron. NO hace falta tabla nueva: el rastro ya se
+ * guarda en `messages.payload.ig` desde que existe el canal.
+ *
+ * ANTE LA DUDA, SE ESCRIBE. Si la consulta falla, es mejor un privado repetido
+ * que un lead que comentó una promoción y no recibió nada.
+ */
+async function yaLeEscribimosPor(
+  admin: any, orgId: string, contactoId: string, mediaId: string | null,
+): Promise<boolean> {
+  if (!mediaId) return false;
+  try {
+    const { data } = await admin
+      .from("messages")
+      .select("id, conversations!inner(contact_id)")
+      .eq("org_id", orgId)
+      .eq("direction", "outbound")
+      .eq("conversations.contact_id", contactoId)
+      .eq("payload->ig->>media_id", mediaId)
+      .limit(1);
+    return !!((data as any[]) ?? []).length;
+  } catch (e) {
+    console.error("[ig webhook] no pude comprobar si ya le escribimos:", e);
+    return false;
+  }
 }
 
 /**

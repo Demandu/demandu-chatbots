@@ -10,7 +10,7 @@
  * ya existe, funciona y está probada desde hace meses.
  */
 
-export type Origen = "dm" | "post" | "reel" | "story_reply" | "story_mention";
+export type Origen = "dm" | "post" | "reel" | "live" | "story_reply" | "story_mention";
 
 export const ORIGENES: {
   valor: Origen;
@@ -43,6 +43,15 @@ export const ORIGENES: {
     desc: "Igual que el anterior, pero en reels. Es donde más funciona el «comenta X y te mando el enlace».",
     canales: ["instagram"],
     pidePublicacion: true,
+    admitePublica: true,
+  },
+  {
+    valor: "live",
+    label: "Comentario en un directo",
+    desc:
+      "Alguien comenta durante tu transmisión en vivo. Es el momento de más gente y de menos manos " +
+      "para atenderla: el bot contesta mientras tú sigues transmitiendo.",
+    canales: ["instagram"],
     admitePublica: true,
   },
   {

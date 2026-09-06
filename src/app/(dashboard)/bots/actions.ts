@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { sampleFlow } from "@/lib/flow/sample";
+import { infoOrigen } from "@/lib/flow/origenes";
 import { botpenguinToGraph } from "@/lib/flow/import";
 
 const CHANNELS = new Set(["whatsapp", "instagram", "messenger", "webchat"]);
@@ -190,10 +191,14 @@ function leerOrigen(formData: FormData) {
   const origen = ORIGENES_VALIDOS.has(bruto) ? bruto : "dm";
   // Fuera de los comentarios, publicación y respuesta pública no significan
   // nada: guardarlas dejaría datos sueltos que confunden al leer la fila.
-  const enComentario = origen === "post" || origen === "reel";
+  // DEL CATÁLOGO, no de una lista a mano. Escrito aquí como «post o reel», los
+  // directos guardaban su respuesta pública como nula aunque la pantalla la
+  // pidiera: el negocio la escribía, guardaba, y desaparecía sin decir nada.
+  const info = infoOrigen(origen);
+  const enComentario = !!info.admitePublica;
   return {
     origen,
-    publicacion: enComentario ? String(formData.get("publicacion") ?? "").trim() || null : null,
+    publicacion: info.pidePublicacion ? String(formData.get("publicacion") ?? "").trim() || null : null,
     respuesta_publica: enComentario ? String(formData.get("respuesta_publica") ?? "").trim() || null : null,
     // Una casilla SIN marcar no manda nada en el formulario. Comprobando que
     // valga "si" —en vez de que no valga "no"— desmarcarla funciona de verdad.

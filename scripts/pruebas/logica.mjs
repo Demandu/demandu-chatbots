@@ -24,6 +24,11 @@ import {
 } from "../../src/lib/integrations/calendly.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION, sinMarcadores } from "../../src/lib/ai/acciones.ts";
 import {
+  superficieDe, coincidenLasPalabras, reglaQueAplica, dondeContestar,
+  puedeEscribirEnPrivado, TIENE_COMENTARIO_PUBLICO,
+} from "../../src/lib/canales/instagramReglas.ts";
+import { ORIGENES, origenPara, infoOrigen } from "../../src/lib/flow/origenes.ts";
+import {
   POR_LA_AGENDA, POR_LA_TIENDA, requisitoDe, herramientasAutomaticas,
   herramientasQueManda, deDondeSale, apagadasDespuesDeGuardar,
 } from "../../src/lib/ai/capacidades.ts";
@@ -4634,6 +4639,198 @@ describe("Guardar la pantalla no puede dejar una casilla marcada y apagada", () 
   test("no se apunta dos veces la misma", () => {
     const r = apagadasDespuesDeGuardar(["agendar_cita"], ["agendar_cita"], []);
     esperar(r).igual(["agendar_cita"]);
+  });
+});
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * INSTAGRAM: QUÉ FLUJO CONTESTA A QUÉ
+ *
+ * La plataforma YA guardaba de dónde escucha cada flujo —`origen`,
+ * `publicacion`, `respuesta_publica`, `una_por_persona`, desde la 0033— y el
+ * webhook no leía ninguno de los cuatro. El negocio elegía «comentario en un
+ * reel», lo veía guardado, y su flujo se activaba igual desde un DM.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("De qué superficie de Instagram viene esto", () => {
+  test("las cinco superficies se reconocen", () => {
+    esperar(superficieDe({ tipo: "dm" })).igual("dm");
+    esperar(superficieDe({ tipo: "comentario", tipoDeMedia: "FEED" })).igual("post");
+    esperar(superficieDe({ tipo: "comentario", tipoDeMedia: "REELS" })).igual("reel");
+    esperar(superficieDe({ tipo: "comentario_vivo" })).igual("live");
+    esperar(superficieDe({ tipo: "respuesta_historia" })).igual("story_reply");
+    esperar(superficieDe({ tipo: "mencion_historia" })).igual("story_mention");
+  });
+
+  test("UN ANUNCIO ES UNA PUBLICACIÓN", () => {
+    // El negocio no piensa «esto es un AD», piensa «comentaron mi post».
+    // Tratarlo aparte le obligaría a configurar dos veces lo mismo para que su
+    // publicidad conteste igual que lo orgánico.
+    esperar(superficieDe({ tipo: "comentario", tipoDeMedia: "AD" })).igual("post");
+    esperar(superficieDe({ tipo: "comentario", tipoDeMedia: "" })).igual("post");
+    esperar(superficieDe({ tipo: "comentario" })).igual("post");
+  });
+
+  test("lo que no se reconoce no inventa una superficie", () => {
+    // Devolver «post» por defecto haría que un evento nuevo de Meta contestara
+    // con el flujo de las publicaciones, que es lo último que uno querría.
+    esperar(superficieDe({ tipo: "algo_nuevo_de_meta" })).igual(null);
+    esperar(superficieDe({})).igual(null);
+    esperar(superficieDe(null)).igual(null);
+  });
+
+  test("el catálogo y la regla hablan el MISMO idioma", () => {
+    // Si `superficieDe` devolviera «historia» y el catálogo guardara
+    // «story_reply», ninguna regla encajaría nunca y no habría nada que ver:
+    // el bot simplemente no contestaría.
+    const delCatalogo = new Set(ORIGENES.map((o) => o.valor));
+    for (const s of ["dm", "post", "reel", "live", "story_reply", "story_mention"]) {
+      esperar(delCatalogo.has(s)).igual(true);
+    }
+    // Y las que admiten respuesta pública son las que tienen comentarios.
+    for (const s of TIENE_COMENTARIO_PUBLICO) {
+      esperar(!!infoOrigen(s).admitePublica).igual(true);
+    }
+  });
+
+  test("Instagram ofrece las cinco; WhatsApp ninguna", () => {
+    esperar(origenPara("instagram").length).igual(6);
+    esperar(origenPara("whatsapp").length).igual(1);
+  });
+});
+
+describe("Qué flujo contesta el comentario", () => {
+  const general = { id: "general", origen: "reel", priority: 1 };
+  const conPalabras = { id: "promo", origen: "reel", keywords: ["promo"], priority: 2 };
+  const deEsePost = { id: "ese-reel", origen: "reel", publicacion: "REEL9", priority: 3 };
+  const lasDos = { id: "promo-de-ese-reel", origen: "reel", publicacion: "REEL9", keywords: ["promo"], priority: 4 };
+  const todos = [general, conPalabras, deEsePost, lasDos];
+
+  const enUnReel = (texto, media) => ({ tipo: "comentario", tipoDeMedia: "REELS", mediaId: media, texto });
+
+  test("GANA EL MÁS ESPECÍFICO, no el primero que se guardó", () => {
+    // Si ganara cualquiera, la promoción saldría o no según el orden en que se
+    // guardaron los flujos — y el dueño no tendría forma de saber por qué a
+    // veces sale y a veces no.
+    esperar(reglaQueAplica(todos, enUnReel("quiero la promo", "REEL9")).id).igual("promo-de-ese-reel");
+    esperar(reglaQueAplica(todos, enUnReel("hola", "REEL9")).id).igual("ese-reel");
+    esperar(reglaQueAplica(todos, enUnReel("quiero la promo", "OTRO")).id).igual("promo");
+    esperar(reglaQueAplica(todos, enUnReel("hola", "OTRO")).id).igual("general");
+  });
+
+  test("a igualdad, manda la prioridad que puso el negocio", () => {
+    const a = { id: "a", origen: "reel", priority: 5 };
+    const b = { id: "b", origen: "reel", priority: 2 };
+    esperar(reglaQueAplica([a, b], enUnReel("hola", "X")).id).igual("b");
+  });
+
+  test("UN FLUJO DE UN REEL CONCRETO NO CONTESTA EN LOS DEMÁS", () => {
+    // Sin esto, la promoción de un reel contestaría en todos los otros.
+    esperar(reglaQueAplica([deEsePost], enUnReel("hola", "OTRO"))).igual(null);
+  });
+
+  test("un flujo de otra superficie NO se activa aquí", () => {
+    // Es el fallo entero que esto arregla: el flujo de los DM contestando
+    // comentarios porque nadie miraba `origen`.
+    const soloDm = { id: "dm", origen: "dm" };
+    esperar(reglaQueAplica([soloDm], enUnReel("hola", "X"))).igual(null);
+    esperar(reglaQueAplica([soloDm], { tipo: "dm", texto: "hola" }).id).igual("dm");
+  });
+
+  test("UN FLUJO SIN ORIGEN ESCUCHA MENSAJES DIRECTOS", () => {
+    // Es el valor por defecto de la columna y el comportamiento de todos los
+    // flujos que ya existían: no pueden empezar a contestar comentarios por
+    // haberse añadido esta regla.
+    const viejo = { id: "de-siempre" };
+    esperar(reglaQueAplica([viejo], { tipo: "dm", texto: "hola" }).id).igual("de-siempre");
+    esperar(reglaQueAplica([viejo], enUnReel("hola", "X"))).igual(null);
+  });
+
+  test("un flujo apagado no contesta", () => {
+    esperar(reglaQueAplica([{ ...general, enabled: false }], enUnReel("hola", "X"))).igual(null);
+  });
+
+  test("sin nada que encaje, no se inventa un flujo", () => {
+    // Quien llama cae al comportamiento de siempre; devolver uno al azar sería
+    // contestar un comentario de un reel con el guion de otra cosa.
+    esperar(reglaQueAplica([], enUnReel("hola", "X"))).igual(null);
+    esperar(reglaQueAplica(null, enUnReel("hola", "X"))).igual(null);
+    esperar(reglaQueAplica(todos, { tipo: "algo_nuevo", texto: "hola" })).igual(null);
+  });
+});
+
+describe("Las palabras clave de una promoción", () => {
+  test("POR SUBCADENA: «PROMO!!!» y «yo quiero la promo» cuentan", () => {
+    // Pedir la palabra aislada dejaría fuera a la mayoría, y una promoción que
+    // no contesta a la mitad de la gente es peor que no tenerla.
+    for (const t of ["PROMO", "promo!!!", "¿promo?", "yo quiero la promo", "Promoción"]) {
+      esperar(coincidenLasPalabras(["promo"], t)).igual(true);
+    }
+  });
+
+  test("con tildes y mayúsculas da igual cómo lo escriban", () => {
+    esperar(coincidenLasPalabras(["promoción"], "PROMOCION")).igual(true);
+    esperar(coincidenLasPalabras(["informacion"], "necesito INFORMACIÓN")).igual(true);
+  });
+
+  test("sin palabras, cualquier comentario vale", () => {
+    esperar(coincidenLasPalabras([], "lo que sea")).igual(true);
+    esperar(coincidenLasPalabras(null, "lo que sea")).igual(true);
+  });
+
+  test("con palabras y sin texto, no cuela", () => {
+    esperar(coincidenLasPalabras(["promo"], "")).igual(false);
+    esperar(coincidenLasPalabras(["promo"], "hola")).igual(false);
+  });
+});
+
+describe("Dónde se contesta", () => {
+  test("en público SOLO donde hay público Y hay qué decir", () => {
+    const conTexto = { respuesta_publica: "¡Te lo mandé por privado! 💌" };
+    esperar(dondeContestar(conTexto, "reel").publico).igual(true);
+    esperar(dondeContestar(conTexto, "post").publico).igual(true);
+    esperar(dondeContestar(conTexto, "live").publico).igual(true);
+    // A un DM o a una respuesta de historia no se les puede contestar «en
+    // público» porque no hay público.
+    esperar(dondeContestar(conTexto, "dm").publico).igual(false);
+    esperar(dondeContestar(conTexto, "story_reply").publico).igual(false);
+    esperar(dondeContestar(conTexto, "story_mention").publico).igual(false);
+  });
+
+  test("SIN TEXTO NO SE PUBLICA NADA", () => {
+    // Mandar algo genérico en el comentario de alguien es peor que no
+    // contestar: lo ve todo el mundo.
+    esperar(dondeContestar({ respuesta_publica: "" }, "reel").publico).igual(false);
+    esperar(dondeContestar({ respuesta_publica: "   " }, "reel").publico).igual(false);
+    esperar(dondeContestar({}, "reel").publico).igual(false);
+    esperar(dondeContestar(null, "reel").publico).igual(false);
+  });
+
+  test("el privado sale siempre", () => {
+    // Es lo que abre la conversación. La pública es contenido; la privada es
+    // el lead.
+    for (const s of ["dm", "post", "reel", "live", "story_reply", "story_mention", null]) {
+      esperar(dondeContestar({}, s).privado).igual(true);
+    }
+  });
+});
+
+describe("Una sola vez por persona", () => {
+  test("quien ya recibió el privado por esa publicación no recibe otro", () => {
+    // Quien comentaba tres veces el mismo reel recibía tres mensajes privados.
+    // Eso no es insistir, es lo que hace que alguien te silencie.
+    esperar(puedeEscribirEnPrivado({ una_por_persona: true }, true)).igual(false);
+    esperar(puedeEscribirEnPrivado({ una_por_persona: true }, false)).igual(true);
+  });
+
+  test("ENCENDIDO POR OMISIÓN, porque los flujos de antes no tienen el campo", () => {
+    esperar(puedeEscribirEnPrivado({}, true)).igual(false);
+    esperar(puedeEscribirEnPrivado(null, true)).igual(false);
+    esperar(puedeEscribirEnPrivado(undefined, true)).igual(false);
+  });
+
+  test("quien lo apaga a propósito puede insistir", () => {
+    esperar(puedeEscribirEnPrivado({ una_por_persona: false }, true)).igual(true);
   });
 });
 

@@ -35,7 +35,11 @@ export function DisparadorSocial({
   if (opciones.length <= 1) return <input type="hidden" name="origen" value="dm" />;
 
   const info = infoOrigen(valor);
-  const enComentario = valor === "post" || valor === "reel";
+  // QUÉ CAMPOS PIDE, SALE DEL CATÁLOGO, no de una lista escrita aquí. La lista
+  // a mano decía «post o reel» y por eso los directos —que también tienen
+  // comentarios públicos— no ofrecían dónde escribir la respuesta pública.
+  const pidePublicacion = !!info.pidePublicacion;
+  const enComentario = !!info.admitePublica;
 
   return (
     <>
@@ -57,6 +61,7 @@ export function DisparadorSocial({
 
       {enComentario && (
         <>
+          {pidePublicacion && (
           <div className="min-w-[180px]">
             <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-muted-2">
               Publicación (vacío = todas)
@@ -68,6 +73,7 @@ export function DisparadorSocial({
               className="input h-8 py-1 text-sm"
             />
           </div>
+          )}
 
           <div className="min-w-[220px] flex-1">
             <label className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-muted-2">
