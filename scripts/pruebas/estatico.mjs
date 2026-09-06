@@ -6817,4 +6817,183 @@ describe("Nadie vuelve a adivinar la zona horaria", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LA HORA SE DICE EN EL RELOJ DE QUIEN LA ESCUCHA
+ *
+ * Demandu tiene número de Panamá y clientes en México. El bot hablaba SIEMPRE
+ * en la zona del negocio, así que a un cliente mexicano le decía una hora que
+ * en su teléfono era otra — y el cliente apuntaba la que oyó.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Cada quien oye la hora en su reloj", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const HERR = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8"));
+  const PURO = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agendaHorarios.ts"), "utf8"));
+  const ZONA = sinComentarios(fs.readFileSync(path.join(SRC, "lib/zonaHoraria.ts"), "utf8"));
+
+  // `[^(]*` deja pasar los genéricos: `enLaZonaDelCliente<T extends …>(…)`.
+  // Sin eso la regla no encontraba la función y se caía diciendo que faltaba —
+  // que es un fallo honesto, pero por el motivo equivocado.
+  const declaracion = (texto, nombre) => {
+    const m = new RegExp(`function ${nombre}\\b[^(]*\\([\\s\\S]*?\\n\\}`).exec(texto);
+    return m ? m[0].replace(/\s+/g, " ").trim() : null;
+  };
+
+  test("las reglas del reloj están en los dos motores y dicen lo mismo", () => {
+    for (const f of ["etiquetaEnZona", "comoSeLoDigo", "enLaZonaDelCliente", "zonaUsable"]) {
+      const aqui = declaracion(PURO, f);
+      const alla = declaracion(WA, f);
+      esperar(!!aqui).verdadero(`falta ${f} en agendaHorarios.ts`);
+      esperar(!!alla).verdadero(`falta ${f} en el motor de WhatsApp`);
+      esperar(alla).igual(aqui, `${f} dice cosas distintas en cada motor`);
+    }
+    // `zonaDelTelefono` vive en zonaHoraria.ts y el motor lleva su copia.
+    const aqui = declaracion(ZONA, "zonaDelTelefono");
+    const alla = declaracion(WA, "zonaDelTelefono");
+    esperar(!!aqui).verdadero("falta zonaDelTelefono en zonaHoraria.ts");
+    esperar(alla).igual(aqui, "zonaDelTelefono dice cosas distintas en cada motor");
+    // Y el mapa de prefijos, que es de donde sale todo.
+    const mapa = (t) => (/ZONA_POR_PREFIJO[^=]*=\s*\{[\s\S]*?\n\};/.exec(t)?.[0] ?? "").replace(/\s+/g, " ");
+    esperar(mapa(WA)).igual(mapa(ZONA), "los dos motores tienen prefijos distintos");
+    esperar(mapa(ZONA).length > 100).verdadero("el mapa de prefijos se quedó vacío");
+  });
+
+  test("los horarios se ofrecen traducidos, en los dos motores", () => {
+    for (const [quien, texto] of [["motor de WhatsApp", WA], ["motor web", HERR]]) {
+      esperar(/enLaZonaDelCliente\(/.test(texto)).verdadero(
+        `${quien}: los horarios vuelven a ofrecerse siempre en la hora del negocio`,
+      );
+    }
+  });
+
+  test("SE GUARDA LO QUE SE ENSEÑÓ, no lo que se calculó", () => {
+    /* La trampa fina de todo esto: si se traduce la lista para enseñarla pero
+     * se guardan las etiquetas del negocio, alguien que repita la hora que
+     * acaba de leer NO se reconoce — y vuelve el bucle de Instagram. Se
+     * comprueba que lo guardado sale de la lista ya traducida. */
+    const guardaLoTraducido = (texto, variable) =>
+      new RegExp(`horarios_ofrecidos = JSON.stringify\\(\\s*${variable}\\.`).test(texto);
+    esperar(guardaLoTraducido(HERR, "slots")).verdadero(
+      "el motor web guarda los horarios sin traducir: repetir la hora leída dejaría de reconocerse",
+    );
+    esperar(guardaLoTraducido(WA, "slots")).verdadero(
+      "el motor de WhatsApp guarda los horarios sin traducir",
+    );
+    // Y que `slots` sea DE VERDAD el traducido y no el crudo de la agenda.
+    esperar(/const slots = enLaZonaDelCliente\(/.test(WA)).verdadero(
+      "en el motor de WhatsApp `slots` volvió a ser la lista sin traducir",
+    );
+    esperar(/const slots = enLaZonaDelCliente\(/.test(HERR)).verdadero(
+      "en el motor web `slots` volvió a ser la lista sin traducir",
+    );
+  });
+
+  test("la confirmación se dice en el mismo reloj en que se ofreció", () => {
+    /* Ofrecer en la hora del cliente y confirmar en la del negocio es peor que
+     * no traducir nada: la persona ve dos horas distintas para la misma cita. */
+    for (const [quien, texto] of [["motor de WhatsApp", WA], ["motor web", HERR]]) {
+      esperar(/comoSeLoDigo\(/.test(texto)).verdadero(`${quien}: la confirmación no se traduce`);
+      esperar(/Cita confirmada para el \$\{r\.dia/.test(texto)).falso(
+        `${quien}: confirma con la hora del negocio después de ofrecer la del cliente`,
+      );
+      esperar(/Cita movida al \$\{r\.dia/.test(texto)).falso(
+        `${quien}: al mover confirma con la hora del negocio`,
+      );
+    }
+  });
+
+  test("nunca se formatea una hora en la zona del SERVIDOR", () => {
+    /* `toLocaleString("es-MX")` sin `timeZone` usa la zona de la máquina, que
+     * en producción es UTC: contaba una hora que no era ni del cliente ni del
+     * negocio. Estaba en `reagendar_cita`. */
+    for (const [quien, texto] of [["motor web", HERR], ["motor de WhatsApp", WA]]) {
+      esperar(/toLocaleString\(\s*["']es-MX["']\s*\)/.test(texto)).falso(
+        `${quien}: vuelve a escribir una hora en el huso del servidor`,
+      );
+    }
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LA MISMA PERSONA EN DOS CANALES TIENE UNA SOLA AGENDA
+ *
+ * 6 de septiembre. Agendó por Instagram y preguntó por WhatsApp si su cita
+ * había quedado bien. Lana le contestó con OTRA cita y, al insistir, se inventó
+ * una explicación entera: «no puedo ver las citas hechas por Instagram desde mi
+ * sistema». Nadie le enseñó eso — lo dedujo de no tener con qué mirar.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Las citas de una persona no dependen del canal", () => {
+  const AGENDA = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agenda.ts"), "utf8"));
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const HERR = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8"));
+  const RUTA = sinComentarios(fs.readFileSync(path.join(SRC, "app/api/motor/agenda/route.ts"), "utf8"));
+
+  const declaracion = (texto, nombre) => {
+    const m = new RegExp(`function ${nombre}\\([\\s\\S]*?\\n\\}`).exec(texto);
+    return m ? m[0] : null;
+  };
+
+  test("la próxima cita se busca en TODOS sus contactos", () => {
+    const d = declaracion(AGENDA, "proximaCita");
+    esperar(!!d).verdadero("desapareció proximaCita");
+    esperar(/citasDePersona\(/.test(d)).verdadero(
+      "proximaCita volvió a mirar un solo contacto: la cita del otro canal deja de existir para el bot",
+    );
+    esperar(/\.eq\("contact_id"/.test(d)).falso(
+      "proximaCita vuelve a filtrar por un contacto suelto",
+    );
+  });
+
+  test("se unen por lo que YA está guardado, nunca por lo que teclean", () => {
+    /* Si se buscara por un correo escrito en el chat, «revisa la cita de
+     * fulano@correo.com» sería una forma de ver —y cancelar— la cita de otra
+     * persona. El dato tiene que haber llegado por ese canal, de esa persona. */
+    const d = declaracion(AGENDA, "contactosDeLaMismaPersona");
+    esperar(!!d).verdadero("desapareció contactosDeLaMismaPersona");
+    const firma = /contactosDeLaMismaPersona\(([\s\S]*?)\)\s*:/.exec(d)?.[1] ?? "";
+    esperar(/correo|email|telefono|phone/i.test(firma)).falso(
+      "se le puede pasar un correo o un teléfono desde fuera: eso deja ver la cita de otra persona",
+    );
+    esperar(/from\("contacts"\)[\s\S]*?\.eq\("id", contactoId\)/.test(d)).verdadero(
+      "las señas ya no salen de la ficha del que escribe",
+    );
+  });
+
+  test("leer la agenda es una herramienta propia, en los dos motores", () => {
+    for (const [quien, texto] of [["motor de WhatsApp", WA], ["motor web", HERR]]) {
+      /* ── SE MIRA EL INTERRUPTOR ENTERO, NO QUE EL NOMBRE APAREZCA ────────
+       *
+       * Buscar solo `"ver_mis_citas"` era vacuo y el mutante lo demostró:
+       * `if (false && quiere.includes("ver_mis_citas"))` deja la herramienta
+       * MUERTA y el nombre sigue ahí, así que la regla pasaba en verde.
+       * Se exige la condición tal cual, y el `case` que la ejecuta. */
+      esperar(/if \(quiere\.includes\("ver_mis_citas"\)\) \{/.test(texto)).verdadero(
+        `${quien}: la herramienta ver_mis_citas no se arma — el modelo vuelve a contestar de memoria`,
+      );
+      esperar(/name: "ver_mis_citas"/.test(texto)).verdadero(`${quien}: falta el esquema de ver_mis_citas`);
+      esperar(/case "ver_mis_citas":/.test(texto)).verdadero(
+        `${quien}: la herramienta se ofrece y nadie la ejecuta`,
+      );
+    }
+    esperar(/accion === "mis_citas"/.test(RUTA)).verdadero(
+      "la ruta del motor no sabe contestar qué citas tiene una persona",
+    );
+    esperar(/citasDePersona\(/.test(RUTA)).verdadero(
+      "la ruta del motor busca las citas de un solo contacto",
+    );
+  });
+
+  test("la herramienta le PROHÍBE al modelo adivinar", () => {
+    /* El fallo no fue no encontrar la cita: fue inventarse por qué. La
+     * descripción tiene que cerrarle esa puerta con todas las letras. */
+    for (const [quien, texto] of [["motor de WhatsApp", WA], ["motor web", HERR]]) {
+      const i = texto.indexOf('name: "ver_mis_citas"');
+      esperar(i > 0).verdadero(`${quien}: no se encuentra la herramienta ver_mis_citas`);
+      const trozo = texto.slice(i, i + 700);
+      esperar(/NO adivines/.test(trozo)).verdadero(
+        `${quien}: la descripción no le prohíbe adivinar, que es lo que hizo`,
+      );
+    }
+  });
+});
+
 process.exit(await correrPruebas());

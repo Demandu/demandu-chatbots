@@ -55,6 +55,14 @@ export const ACCIONES: Accion[] = [
     pista: "Necesita Google Calendar conectado. Úsala siempre antes de agendar.",
   },
   {
+    clave: "ver_mis_citas",
+    nombre: "Ver sus citas",
+    desc: "Le dice a la persona qué citas tiene por delante",
+    pista:
+      "Encuentra sus citas aunque las haya hecho por otro canal. Sin esto, a «¿quedó confirmada mi cita?» " +
+      "el asistente contesta de memoria.",
+  },
+  {
     clave: "agendar_cita",
     nombre: "Agendar una cita",
     desc: "Reserva en tu calendario",

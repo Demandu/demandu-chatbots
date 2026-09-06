@@ -1,4 +1,6 @@
-import { horariosLibres, agendar, proximaCita, moverCita, cancelarCita } from "@/lib/agenda";
+import {
+  horariosLibres, agendar, proximaCita, moverCita, cancelarCita, citasDePersona,
+} from "@/lib/agenda";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { esDelMotor } from "@/lib/motor/autorizado";
 
@@ -61,6 +63,31 @@ export async function POST(req: Request) {
     return Response.json(r);
   }
 
+  /* ── QUÉ CITAS TIENE ESTA PERSONA ──────────────────────────────────────
+   *
+   * Solo lectura, y va aparte de «mover» a propósito: hasta hoy la única forma
+   * de saber si alguien tenía cita era pedir «mover» sin hora. Usar una acción
+   * de escritura para leer es lo que llevó al modelo, el 6 de septiembre, a
+   * inventarse que «no puede ver las citas hechas por Instagram».
+   *
+   * Se devuelve el instante EN CRUDO además de escrito: el motor lo necesita
+   * para contarlo en la zona de quien pregunta, que puede no ser la del
+   * negocio. Lo escrito viaja igual como respaldo, porque la zona del negocio
+   * solo se conoce de este lado. */
+  if (b.accion === "mis_citas") {
+    const citas = await citasDePersona(orgId, String(b.contacto_id ?? "") || null, 5);
+    return Response.json({
+      ok: true,
+      citas: await Promise.all(
+        citas.map(async (c) => ({
+          inicio: c.inicio,
+          titulo: c.titulo ?? null,
+          cuando: await comoSeLee(orgId, c.inicio),
+        })),
+      ),
+    });
+  }
+
   /* ── MOVER Y CANCELAR ──────────────────────────────────────────────────
    *
    * El motor manda A QUIÉN, no QUÉ CITA. Es deliberado: la cita la elige esta
@@ -83,7 +110,9 @@ export async function POST(req: Request) {
     // horaria del negocio, así que formatear allí sería equivocarse de huso.
     const inicio = String(b.inicio ?? "").trim();
     if (!inicio) {
-      return Response.json({ ok: false, cuando: await comoSeLee(orgId, cita.inicio) });
+      // Va también en crudo: el motor prefiere contarlo en la zona de quien
+      // escribe, y solo cae a esto cuando no puede deducirla.
+      return Response.json({ ok: false, cuando: await comoSeLee(orgId, cita.inicio), cuando_iso: cita.inicio });
     }
 
     return Response.json(await moverCita(orgId, cita, inicio));

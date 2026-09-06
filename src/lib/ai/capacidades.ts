@@ -63,6 +63,12 @@ export type Requisito = "agenda" | "tienda" | null;
  */
 export const POR_LA_AGENDA = [
   "ver_horarios",
+  // LEER LA AGENDA VA PRIMERO, y no es orden decorativo: es lo que hace falta
+  // para contestar «¿quedó confirmada mi cita?». Sin ella, el modelo solo podía
+  // llegar a esa respuesta llamando a `reagendar_cita` sin hora —usar una
+  // herramienta de escritura para leer— y cuando no encontraba nada se
+  // inventaba el motivo. Pasó el 6 de septiembre.
+  "ver_mis_citas",
   "agendar_cita",
   "reagendar_cita",
   "cancelar_cita",

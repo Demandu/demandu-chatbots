@@ -99,6 +99,16 @@ export type Fallo = {
   enlace?: string;
 };
 
+/**
+ * La zona del negocio, para cuando hay que decir una hora y no se sabe en qué
+ * reloj vive quien escucha. PUEDE SER NULA: nula significa «no lo sabemos», y
+ * quien llama tiene que decirlo en vez de inventarse una (ver la 0102).
+ */
+export async function zonaDelNegocio(orgId: string): Promise<string | null> {
+  const { timeZone } = await ajustesDeOrg(orgId);
+  return timeZone;
+}
+
 /** Horario laboral y zona horaria del cliente. */
 async function ajustesDeOrg(orgId: string) {
   const { data } = await createAdminClient()
@@ -725,27 +735,110 @@ export async function apuntarCita(
  * Y solo las que están POR VENIR: mover una cita de la semana pasada no
  * significa nada, y ofrecerlo confunde.
  */
-export async function proximaCita(
+/**
+ * Los contactos que son LA MISMA PERSONA.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PASÓ CON UN CLIENTE DE VERDAD, EL 6 DE SEPTIEMBRE. Agendó por Instagram y al
+ * rato preguntó por WhatsApp si su cita había quedado bien. Lana le contestó
+ * con OTRA cita —una de días antes— y, cuando insistió, se inventó una
+ * explicación entera: «no puedo ver las citas hechas por Instagram desde mi
+ * sistema». Nadie le enseñó eso. Lo dedujo porque su única herramienta miraba
+ * un solo contacto y no encontraba nada.
+ *
+ * La causa: cada canal crea su propio contacto. El de Instagram se identifica
+ * por su id de Instagram y el de WhatsApp por su teléfono, así que la misma
+ * persona son DOS filas — con dos agendas, dos historiales y dos de todo.
+ *
+ * ── CÓMO SE UNEN, Y POR QUÉ ASÍ ───────────────────────────────────────────
+ *
+ * Por el correo o el teléfono QUE YA ESTÁN GUARDADOS en el contacto que
+ * escribe. Nunca por uno que alguien teclee en el chat: eso convertiría
+ * «¿puedes revisar la cita de fulano@correo.com?» en una forma de ver —y
+ * cancelar— la cita de otra persona. El dato tiene que haber llegado por ese
+ * canal, de esa persona.
+ *
+ * Es deliberadamente estrecho. La unión de verdad de los contactos —una sola
+ * ficha, un solo historial— es otro trabajo y toca el CRM entero; esto arregla
+ * lo que hoy le pasa a quien escribe.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function contactosDeLaMismaPersona(
   orgId: string,
   contactoId: string | null | undefined,
-): Promise<CitaGuardada | null> {
-  if (!contactoId) return null;
+): Promise<string[]> {
+  if (!contactoId) return [];
+  try {
+    const admin = createAdminClient();
+    const { data: yo } = await admin
+      .from("contacts")
+      .select("id, email, phone")
+      .eq("id", contactoId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (!yo) return [];
+
+    const correo = String((yo as any).email ?? "").trim().toLowerCase();
+    const telefono = String((yo as any).phone ?? "").replace(/\D/g, "");
+    // Sin ninguna de las dos señas no hay nada con qué unir, y unir «por
+    // nombre» sería juntar a dos Marías distintas en una sola agenda.
+    if (!correo && !telefono) return [contactoId];
+
+    const ids = new Set<string>([contactoId]);
+    if (correo) {
+      const { data } = await admin.from("contacts").select("id").eq("org_id", orgId).ilike("email", correo);
+      for (const c of (data ?? []) as any[]) ids.add(c.id);
+    }
+    if (telefono) {
+      const { data } = await admin.from("contacts").select("id, phone").eq("org_id", orgId);
+      for (const c of (data ?? []) as any[]) {
+        if (String(c.phone ?? "").replace(/\D/g, "") === telefono) ids.add(c.id);
+      }
+    }
+    return [...ids];
+  } catch (e) {
+    // NUNCA SE QUEDA SIN RESPUESTA: si esto falla, se sigue con el contacto que
+    // escribe, que es exactamente el comportamiento de antes.
+    console.error("[agenda] no pude unir los contactos de la persona:", (e as Error)?.message ?? e);
+    return [contactoId];
+  }
+}
+
+/** Las citas por delante de esta persona, en todos sus canales, la más próxima primero. */
+export async function citasDePersona(
+  orgId: string,
+  contactoId: string | null | undefined,
+  cuantas = 5,
+): Promise<CitaGuardada[]> {
+  const ids = await contactosDeLaMismaPersona(orgId, contactoId);
+  if (!ids.length) return [];
   try {
     const { data } = await createAdminClient()
       .from("citas")
       .select(CAMPOS_DE_CITA)
       .eq("org_id", orgId)
-      .eq("contact_id", contactoId)
+      .in("contact_id", ids)
       .neq("estado", "cancelada")
       .gte("inicio", new Date().toISOString())
       .order("inicio", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    return (data as CitaGuardada) ?? null;
+      .limit(Math.max(1, cuantas));
+    return ((data ?? []) as CitaGuardada[]);
   } catch (e) {
-    console.error("[agenda] no pude leer la próxima cita:", (e as Error)?.message ?? e);
-    return null;
+    console.error("[agenda] no pude leer las citas de la persona:", (e as Error)?.message ?? e);
+    return [];
   }
+}
+
+export async function proximaCita(
+  orgId: string,
+  contactoId: string | null | undefined,
+): Promise<CitaGuardada | null> {
+  if (!contactoId) return null;
+  // MIRA TODOS SUS CANALES. Antes solo el contacto que escribía, y por eso
+  // mover o cancelar «mi cita» desde WhatsApp no veía la que se hizo por
+  // Instagram — ni siquiera para decir que existía.
+  const citas = await citasDePersona(orgId, contactoId, 1);
+  return citas[0] ?? null;
 }
 
 /**
