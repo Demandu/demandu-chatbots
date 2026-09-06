@@ -22,6 +22,26 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+/**
+ * Minúsculas, sin tildes y sin espacios de más.
+ *
+ * VIVE AQUÍ Y NO SE IMPORTA porque este archivo se copia entero al motor de
+ * WhatsApp, que corre en Deno y no puede importar de `src/`. Una copia con un
+ * import es una copia que no compila.
+ *
+ * Y ES UNO SOLO PARA TODO EL ARCHIVO: dos formas de quitar tildes en el mismo
+ * sitio es garantizar que un día «PROMOCIÓN» coincida en una función y no en
+ * la de al lado.
+ */
+function sinTildes(texto: string | null | undefined): string {
+  return String(texto ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
 /** Lo mínimo que necesita `repartirHorarios`. `computeSlots` devuelve más. */
 export type HorarioRepartible = {
   /** Clave del día en la zona del negocio, p. ej. «2026-9-7». */
@@ -141,9 +161,7 @@ export function correoValido(texto: string | null | undefined): string | null {
  * más que un contacto perfecto que nunca se agendó.
  */
 export function quiereOmitir(texto: string | null | undefined): boolean {
-  const t = String(texto ?? "")
-    .trim().toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const t = sinTildes(texto);
   if (!t) return false;
   return [
     "no", "no.", "nel", "nop", "nope", "paso", "omitir", "saltar", "skip",
@@ -321,4 +339,156 @@ export function nombreDelFormulario(
   const v = (respuesta as any)[nombre];
   if (typeof v !== "string" && typeof v !== "number") return "";
   return String(v).trim().slice(0, 80);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * «LUNES A LAS 9 AM» TIENE QUE PODER AGENDARSE
+ *
+ * ── EL FALLO, CON FECHA ───────────────────────────────────────────────────
+ *
+ * 6 de septiembre de 2026. Lana ofreció horarios de verdad y el cliente
+ * contestó «lunes a las 9 am». La cita nunca se creó y acabó pasando con una
+ * persona, con este motivo escrito por ella misma:
+ *
+ *   «Error técnico al agendar cita para Alex, restaurante.
+ *    Quería lunes 7 de sep 9:00 am»
+ *
+ * ── LA CAUSA ES UN FALLO DE DISEÑO, NO DEL MODELO ─────────────────────────
+ *
+ * `ver_horarios` le devolvía al modelo `lun 07 de sep, 09:00 → inicio:
+ * 2026-09-07T15:00:00.000Z` y le pedía «usa ese valor tal cual». Pero el modelo
+ * REESCRIBE la lista con sus palabras para enseñársela a la persona —«Lunes 7
+ * de sep: 09:00 o 12:00»— y un turno después ya no tiene el ISO a mano.
+ *
+ * Es pedirle que cargue un dato exacto entre turnos. Eso no es fiable y no
+ * tiene por qué serlo: LA PLATAFORMA SABE QUÉ HORARIOS OFRECIÓ, así que la
+ * traducción de «lo que dijo la persona» a «uno de los huecos ofrecidos» es
+ * trabajo suyo, no del modelo.
+ *
+ * ── ANTE LA DUDA, NO SE ADIVINA ───────────────────────────────────────────
+ *
+ * Si lo que dijo encaja con DOS huecos —«a las 9» cuando hay lunes y martes a
+ * las 9— no se elige uno: se devuelve nada, y quien llama le enseña al modelo
+ * las opciones para que pregunte. Agendar la cita del día equivocado es peor
+ * que un mensaje más.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+export type HorarioOfrecido = { iso: string; label: string };
+
+const DIAS_DE_LA_SEMANA: Record<string, string> = {
+  lunes: "lun", lun: "lun",
+  martes: "mar", mar: "mar",
+  miercoles: "mie", mie: "mie",
+  jueves: "jue", jue: "jue",
+  viernes: "vie", vie: "vie",
+  sabado: "sab", sab: "sab",
+  domingo: "dom", dom: "dom",
+};
+
+/** El día de la semana que nombró, en el formato corto de las etiquetas. */
+export function diaQueDijo(texto: string): string | null {
+  const t = sinTildes(texto);
+  for (const [palabra, corto] of Object.entries(DIAS_DE_LA_SEMANA)) {
+    if (new RegExp(`\\b${palabra}\\b`).test(t)) return corto;
+  }
+  return null;
+}
+
+/**
+ * Todas las horas del día que se pueden leer en un texto, en minutos.
+ *
+ * SE DEVUELVEN TODAS Y NO LA PRIMERA. «el 7 a las 9» tiene dos números y solo
+ * uno es una hora; quedarse con el primero acertaría la mitad de las veces.
+ * Devolviéndolas todas, el que cuadre con un hueco ofrecido gana, y si cuadran
+ * dos se considera ambiguo — que es la respuesta correcta.
+ */
+export function horasQueDijo(texto: string): number[] {
+  const t = sinTildes(texto);
+  const out: number[] = [];
+  for (const m of t.matchAll(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/g)) {
+    let h = Number(m[1]);
+    const min = Number(m[2] ?? 0);
+    const sufijo = m[3];
+    if (!Number.isFinite(h) || h > 24 || min > 59) continue;
+    // «9 pm» son las 21; «12 am» es medianoche y «12 pm» mediodía.
+    if (sufijo === "pm" && h < 12) h += 12;
+    if (sufijo === "am" && h === 12) h = 0;
+    out.push(h * 60 + min);
+    // SIN SUFIJO, UNA HORA DE UNA CIFRA ES AMBIGUA: «a las 3» puede ser las 15
+    // en una agenda de tarde. Se apuntan las dos y que decida cuál cuadra con
+    // lo que de verdad se ofreció.
+    if (!sufijo && h < 12) out.push((h + 12) * 60 + min);
+  }
+  return [...new Set(out)];
+}
+
+/** La hora de una etiqueta como «lun 07 de sep, 09:00». */
+export function horaDeLaEtiqueta(label: string): number | null {
+  // DESPUÉS DE LA ÚLTIMA COMA, y no el primer número que aparezca: en «lun 07
+  // de sep, 09:00» el primero es el día del mes.
+  const t = String(label ?? "");
+  const trozo = t.includes(",") ? t.slice(t.lastIndexOf(",") + 1) : t;
+  const m = /(\d{1,2}):(\d{2})/.exec(trozo);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+/**
+ * Cuál de los horarios ofrecidos pidió.
+ *
+ * Tres intentos, de más seguro a menos: el identificador exacto · la etiqueta
+ * tal cual · el día y la hora. Y nunca se adivina entre dos.
+ */
+export function horarioQuePidio(
+  dicho: string | null | undefined,
+  ofrecidos: HorarioOfrecido[] | null | undefined,
+): string | null {
+  const lista = (ofrecidos ?? []).filter((o) => o?.iso && o?.label);
+  if (!lista.length) return null;
+
+  // 1. El identificador exacto, que es lo que se le pidió al modelo.
+  const crudo = String(dicho ?? "").trim();
+  if (lista.some((o) => o.iso === crudo)) return crudo;
+
+  const t = sinTildes(crudo);
+  if (!t) return null;
+
+  // 2. La etiqueta tal cual, por si copió lo que le enseñó a la persona.
+  const porEtiqueta = lista.filter((o) => sinTildes(o.label) === t);
+  if (porEtiqueta.length === 1) return porEtiqueta[0].iso;
+
+  // 3. El día y la hora, que es como habla la gente.
+  const horas = horasQueDijo(t);
+  if (!horas.length) return null;
+  const dia = diaQueDijo(t);
+
+  const cuadran = lista.filter((o) => {
+    const etiqueta = sinTildes(o.label);
+    if (dia && !etiqueta.includes(dia)) return false;
+    const h = horaDeLaEtiqueta(o.label);
+    return h !== null && horas.includes(h);
+  });
+
+  // NI UNO NI DOS: exactamente uno. Con dos, quien llama enseña las opciones.
+  return cuadran.length === 1 ? cuadran[0].iso : null;
+}
+
+/**
+ * Lo que se le contesta al modelo cuando no se reconoce la hora.
+ *
+ * NO «falta la fecha y hora»: eso fue lo que le devolvimos y por eso se rindió
+ * y pasó la conversación con una persona. Un error que no dice qué hacer deja
+ * al modelo sin salida — se le enseñan las horas que SÍ existen.
+ */
+export function comoRecordarLosHorarios(ofrecidos: HorarioOfrecido[] | null | undefined): string {
+  const lista = (ofrecidos ?? []).filter((o) => o?.iso && o?.label);
+  if (!lista.length) {
+    return "No tengo horarios ofrecidos todavía. Llama primero a ver_horarios.";
+  }
+  return (
+    "No reconozco esa hora. Estas son las que ofreciste; llama otra vez con el valor de `inicio` " +
+    "EXACTO de la que elija:\n" +
+    lista.map((o) => `- ${o.label} → inicio: ${o.iso}`).join("\n") +
+    "\nSi lo que dijo encaja con dos, pregúntale cuál de las dos antes de agendar."
+  );
 }

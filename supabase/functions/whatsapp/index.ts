@@ -1327,13 +1327,27 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         if (!slots.length) {
           return "No hay horarios libres o la agenda no está conectada. Dile que le pasarás con una persona.";
         }
+        // LA PLATAFORMA SE ACUERDA DE LO QUE OFRECIÓ. El modelo reescribe la
+        // lista con sus palabras y un turno después ya no tiene el ISO: el 6 de
+        // septiembre eso costó una cita y acabó pasando con una persona.
+        ctx.vars.horarios_ofrecidos = JSON.stringify(
+          slots.map((s: any) => ({ iso: s.startISO, label: s.label })),
+        );
+
         return "Horarios libres (usa el valor de `inicio` tal cual al agendar):\n" +
           slots.map((s: any) => `- ${s.label} → inicio: ${s.startISO}`).join("\n");
       }
 
       case "agendar_cita": {
-        const inicio = String(args?.inicio ?? "").trim();
-        if (!inicio) return "Falta la hora. Llama primero a ver_horarios.";
+        const pedido = String(args?.inicio ?? "").trim();
+        if (!pedido) return "Falta la hora. Llama primero a ver_horarios.";
+
+        // El identificador exacto, la etiqueta o «lunes a las 9 am»: los tres
+        // valen. Lo que no puede volver a pasar es mandarle el texto al
+        // calendario y devolverle «Falta la fecha y hora de la cita».
+        const ofrecidos = leerHorariosOfrecidos(ctx.vars?.horarios_ofrecidos);
+        const inicio = horarioQuePidio(pedido, ofrecidos);
+        if (!inicio) return comoRecordarLosHorarios(ofrecidos);
         const nombreDeLaCita = String(args?.nombre ?? ctx.vars?.nombre ?? "cliente");
         const r = await pedirAgenda({
           accion: "agendar",
@@ -1371,11 +1385,22 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
        * inventado que casualmente exista borra la cita de otra persona. La cita
        * la busca la plataforma por el contacto que está escribiendo. */
       case "reagendar_cita": {
+        // Mismo traductor que al agendar. Si trae algo y no se reconoce, se le
+        // enseñan las horas que sí existen en vez de dejarle sin salida.
+        const pedido = String(args?.inicio ?? "").trim();
+        let inicio: string | undefined;
+        if (pedido) {
+          const ofrecidos = leerHorariosOfrecidos(ctx.vars?.horarios_ofrecidos);
+          const cuadra = horarioQuePidio(pedido, ofrecidos);
+          if (!cuadra) return comoRecordarLosHorarios(ofrecidos);
+          inicio = cuadra;
+        }
+
         const r = await pedirAgenda({
           accion: "mover",
           org_id: ctx.orgId,
           contacto_id: await idDelContacto(ctx),
-          inicio: String(args?.inicio ?? "").trim() || undefined,
+          inicio,
         });
         if (r?.sin_cita) return "Esta persona no tiene ninguna cita por delante. Ofrécele agendar una.";
         if (r?.cuando) {
@@ -1956,9 +1981,7 @@ function correoValido(texto: string | null | undefined): string | null {
 
 /** La persona no quiere dar ese dato. Se respeta: sin correo hay cita igual. */
 function quiereOmitir(texto: string | null | undefined): boolean {
-  const t = String(texto ?? "")
-    .trim().toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const t = sinTildes(texto);
   if (!t) return false;
   return [
     "no", "no.", "nel", "nop", "nope", "paso", "omitir", "saltar", "skip",
@@ -1974,6 +1997,130 @@ function mensajeParaElCliente(
 ): string {
   const e = String(fallo?.error ?? "").trim();
   return fallo?.paraElCliente && e ? e : porDefecto;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * TRADUCIR «LUNES A LAS 9 AM» — copia deliberada de `agendaHorarios.ts`.
+ *
+ * Deno no puede importar de `src/`. Una prueba estática compara las copias y
+ * falla si se separan: dos formas de entender una hora significaría que el
+ * mismo cliente agenda por la web y no por WhatsApp.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+function sinTildes(texto: string | null | undefined): string {
+  return String(texto ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+const DIAS_DE_LA_SEMANA: Record<string, string> = {
+  lunes: "lun", lun: "lun",
+  martes: "mar", mar: "mar",
+  miercoles: "mie", mie: "mie",
+  jueves: "jue", jue: "jue",
+  viernes: "vie", vie: "vie",
+  sabado: "sab", sab: "sab",
+  domingo: "dom", dom: "dom",
+};
+
+function diaQueDijo(texto: string): string | null {
+  const t = sinTildes(texto);
+  for (const [palabra, corto] of Object.entries(DIAS_DE_LA_SEMANA)) {
+    if (new RegExp(`\\b${palabra}\\b`).test(t)) return corto;
+  }
+  return null;
+}
+
+function horasQueDijo(texto: string): number[] {
+  const t = sinTildes(texto);
+  const out: number[] = [];
+  for (const m of t.matchAll(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/g)) {
+    let h = Number(m[1]);
+    const min = Number(m[2] ?? 0);
+    const sufijo = m[3];
+    if (!Number.isFinite(h) || h > 24 || min > 59) continue;
+    // «9 pm» son las 21; «12 am» es medianoche y «12 pm» mediodía.
+    if (sufijo === "pm" && h < 12) h += 12;
+    if (sufijo === "am" && h === 12) h = 0;
+    out.push(h * 60 + min);
+    // SIN SUFIJO, UNA HORA DE UNA CIFRA ES AMBIGUA: «a las 3» puede ser las 15
+    // en una agenda de tarde. Se apuntan las dos y que decida cuál cuadra con
+    // lo que de verdad se ofreció.
+    if (!sufijo && h < 12) out.push((h + 12) * 60 + min);
+  }
+  return [...new Set(out)];
+}
+
+function horaDeLaEtiqueta(label: string): number | null {
+  // DESPUÉS DE LA ÚLTIMA COMA, y no el primer número que aparezca: en «lun 07
+  // de sep, 09:00» el primero es el día del mes.
+  const t = String(label ?? "");
+  const trozo = t.includes(",") ? t.slice(t.lastIndexOf(",") + 1) : t;
+  const m = /(\d{1,2}):(\d{2})/.exec(trozo);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function horarioQuePidio(
+  dicho: string | null | undefined,
+  ofrecidos: HorarioOfrecido[] | null | undefined,
+): string | null {
+  const lista = (ofrecidos ?? []).filter((o) => o?.iso && o?.label);
+  if (!lista.length) return null;
+
+  // 1. El identificador exacto, que es lo que se le pidió al modelo.
+  const crudo = String(dicho ?? "").trim();
+  if (lista.some((o) => o.iso === crudo)) return crudo;
+
+  const t = sinTildes(crudo);
+  if (!t) return null;
+
+  // 2. La etiqueta tal cual, por si copió lo que le enseñó a la persona.
+  const porEtiqueta = lista.filter((o) => sinTildes(o.label) === t);
+  if (porEtiqueta.length === 1) return porEtiqueta[0].iso;
+
+  // 3. El día y la hora, que es como habla la gente.
+  const horas = horasQueDijo(t);
+  if (!horas.length) return null;
+  const dia = diaQueDijo(t);
+
+  const cuadran = lista.filter((o) => {
+    const etiqueta = sinTildes(o.label);
+    if (dia && !etiqueta.includes(dia)) return false;
+    const h = horaDeLaEtiqueta(o.label);
+    return h !== null && horas.includes(h);
+  });
+
+  // NI UNO NI DOS: exactamente uno. Con dos, quien llama enseña las opciones.
+  return cuadran.length === 1 ? cuadran[0].iso : null;
+}
+
+function comoRecordarLosHorarios(ofrecidos: HorarioOfrecido[] | null | undefined): string {
+  const lista = (ofrecidos ?? []).filter((o) => o?.iso && o?.label);
+  if (!lista.length) {
+    return "No tengo horarios ofrecidos todavía. Llama primero a ver_horarios.";
+  }
+  return (
+    "No reconozco esa hora. Estas son las que ofreciste; llama otra vez con el valor de `inicio` " +
+    "EXACTO de la que elija:\n" +
+    lista.map((o) => `- ${o.label} → inicio: ${o.iso}`).join("\n") +
+    "\nSi lo que dijo encaja con dos, pregúntale cuál de las dos antes de agendar."
+  );
+}
+
+type HorarioOfrecido = { iso: string; label: string };
+
+/** Los horarios que se ofrecieron, tal y como quedaron guardados. */
+function leerHorariosOfrecidos(crudo: unknown): HorarioOfrecido[] {
+  try {
+    const v = JSON.parse(String(crudo ?? "[]"));
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Meta corta el título de una opción en 30 caracteres. */

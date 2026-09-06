@@ -6472,4 +6472,82 @@ describe("La zona horaria del negocio", () => {
   });
 });
 
+
+// ─── «LUNES A LAS 9 AM» TIENE QUE PODER AGENDARSE ────────────────────────────
+//
+// 6 de septiembre. Lana ofreció horarios, el cliente contestó «lunes a las 9
+// am», y la cita nunca se creó. Le pedíamos al modelo que cargara un
+// identificador exacto entre turnos después de haber reescrito la lista con sus
+// palabras — y eso no es fiable ni tiene por qué serlo.
+describe("La plataforma recuerda los horarios que ofreció", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const HERR = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8"));
+  const PURO = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agendaHorarios.ts"), "utf8"));
+
+  const declaracion = (texto, nombre) => {
+    const m = new RegExp(`function ${nombre}\\([\\s\\S]*?\\n\\}`).exec(texto);
+    return m ? m[0].replace(/\s+/g, " ").trim() : null;
+  };
+
+  test("las reglas de traducir la hora están en los dos motores y dicen lo mismo", () => {
+    // Dos formas de entender «lunes a las 9» significaría que el mismo cliente
+    // agenda por la web y no por WhatsApp.
+    for (const f of ["sinTildes", "diaQueDijo", "horasQueDijo", "horaDeLaEtiqueta", "horarioQuePidio", "comoRecordarLosHorarios"]) {
+      const a = declaracion(PURO, f);
+      const b = declaracion(WA, f);
+      esperar(a && b).verdadero(`falta ${f} en uno de los dos motores`);
+      esperar(b).igual(a);
+    }
+
+    // Y EL MAPA DE DÍAS, que es contenido de la regla y no una función:
+    // añadirle una entrada a una de las copias no rompía nada visible y hacía
+    // que «lunes» se entendiera en un motor y en el otro no.
+    const mapa = (t) => {
+      const i = t.indexOf("DIAS_DE_LA_SEMANA");
+      return t.slice(i, t.indexOf("};", i)).replace(/\s+/g, " ");
+    };
+    esperar(mapa(WA)).igual(mapa(PURO));
+  });
+
+  test("UN SOLO QUITADOR DE TILDES por archivo", () => {
+    // Dos formas de quitar tildes en el mismo sitio garantiza que un día
+    // «PROMOCIÓN» coincida en una función y no en la de al lado.
+    esperar((PURO.match(/normalize\("NFD"\)/g) ?? []).length).igual(1);
+  });
+
+  test("ver_horarios GUARDA lo que ofreció, en los dos motores", () => {
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", HERR]]) {
+      esperar(/vars\.horarios_ofrecidos = JSON\.stringify\(/.test(texto)).verdadero(
+        `el motor de ${nombre} vuelve a confiar en que el modelo cargue el identificador`,
+      );
+    }
+  });
+
+  test("agendar y mover TRADUCEN contra lo ofrecido", () => {
+    for (const [nombre, texto] of [["WhatsApp", WA], ["web", HERR]]) {
+      esperar((texto.match(/horarioQuePidio\(/g) ?? []).length >= 2).verdadero(
+        `el motor de ${nombre} traduce al agendar pero no al mover, o al revés`,
+      );
+      esperar((texto.match(/comoRecordarLosHorarios\(/g) ?? []).length >= 2).verdadero(
+        `el motor de ${nombre} deja al modelo sin salida en uno de los dos casos`,
+      );
+    }
+  });
+
+  test("NO se le manda el texto suelto al calendario", () => {
+    // Era el fallo: `inicio` iba tal cual, `Date.parse` lo rechazaba, y volvía
+    // «Falta la fecha y hora de la cita» — un error con el que el modelo se
+    // rindió y pasó la conversación con una persona.
+    const i = WA.indexOf('case "agendar_cita"');
+    esperar(i > 0).verdadero("cambió la forma del motor, revisa esta prueba");
+    const trozo = WA.slice(i, i + 900);
+    esperar(/const inicio = horarioQuePidio\(pedido, ofrecidos\)/.test(trozo)).verdadero(
+      "el motor de WhatsApp vuelve a mandar al calendario lo que diga el modelo",
+    );
+    esperar(/if \(!inicio\) return comoRecordarLosHorarios\(ofrecidos\)/.test(trozo)).verdadero(
+      "sin reconocer la hora, el modelo se queda otra vez sin saber qué hacer",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

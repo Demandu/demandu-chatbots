@@ -2,6 +2,7 @@ import "server-only";
 import { horariosLibres, agendar, proximaCita, moverCita, cancelarCita } from "@/lib/agenda";
 import { accionesDelPrompt } from "@/lib/ai/acciones";
 import { herramientasAutomaticas, herramientasQueManda } from "@/lib/ai/capacidades";
+import { horarioQuePidio, comoRecordarLosHorarios, type HorarioOfrecido } from "@/lib/agendaHorarios";
 import { emitir } from "@/lib/salidas";
 import { prometioUnaPersona } from "@/lib/ai/promesas";
 import {
@@ -171,6 +172,22 @@ async function loQueTieneEsteNegocio(ctx: ContextoAgente): Promise<{ agenda: boo
     // negocio marcó a mano sigue funcionando igual.
     console.error("[ia] no pude ver qué tiene conectado este negocio:", (e as Error)?.message ?? e);
     return { agenda: false, tienda: false };
+  }
+}
+
+/**
+ * Los horarios que se ofrecieron, tal y como quedaron guardados.
+ *
+ * Viven en una variable de la conversación —texto— porque es lo que los dos
+ * motores saben guardar y recuperar sin tabla nueva. Si viene roto, se trata
+ * como «no hay ninguno», que hace que se le pida al modelo mirar primero.
+ */
+function leerHorariosOfrecidos(crudo: unknown): HorarioOfrecido[] {
+  try {
+    const v = JSON.parse(String(crudo ?? "[]"));
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
   }
 }
 
@@ -563,13 +580,39 @@ export async function ejecutarHerramienta(
         if (!r.slots.length) {
           return "No hay horarios libres o la agenda no está conectada. Dile que le pasarás con una persona.";
         }
+
+        /* ── LA PLATAFORMA SE ACUERDA DE LO QUE OFRECIÓ ───────────────────
+         *
+         * Antes esto solo se lo decía al modelo y confiaba en que cargara el
+         * identificador exacto hasta el turno siguiente. No lo hace: reescribe
+         * la lista con sus palabras para enseñársela a la persona, y después ya
+         * no tiene el ISO a mano. El 6 de septiembre eso hizo que una cita no
+         * se creara y la conversación acabara con una persona.
+         *
+         * Guardándolos aquí, `agendar_cita` puede traducir «lunes a las 9 am» a
+         * la hora exacta sin depender de la memoria del modelo. */
+        ctx.vars.horarios_ofrecidos = JSON.stringify(
+          r.slots.map((s) => ({ iso: s.startISO, label: s.label })),
+        );
+
         return "Horarios libres (usa el valor de `inicio` tal cual al agendar):\n" +
           r.slots.map((s) => `- ${s.label} → inicio: ${s.startISO}`).join("\n");
       }
 
       case "agendar_cita": {
-        const inicio = String(args?.inicio ?? "").trim();
-        if (!inicio) return "Falta la hora. Llama primero a ver_horarios.";
+        const pedido = String(args?.inicio ?? "").trim();
+        if (!pedido) return "Falta la hora. Llama primero a ver_horarios.";
+
+        /* ── SE TRADUCE CONTRA LO QUE DE VERDAD SE OFRECIÓ ────────────────
+         *
+         * El modelo puede traer el identificador exacto, la etiqueta que le
+         * enseñó a la persona, o «lunes a las 9 am». Los tres valen. Lo que NO
+         * puede pasar es lo de antes: mandar el texto al calendario, que
+         * `Date.parse` lo rechace, y devolverle «Falta la fecha y hora de la
+         * cita» — un error que no dice qué hacer y con el que se rindió. */
+        const ofrecidos = leerHorariosOfrecidos(ctx.vars?.horarios_ofrecidos);
+        const inicio = horarioQuePidio(pedido, ofrecidos);
+        if (!inicio) return comoRecordarLosHorarios(ofrecidos);
 
         const quien = await fichaDeLaConversacion(ctx);
         const nombreDeLaCita = String(args?.nombre ?? ctx.vars?.nombre ?? "cliente");
@@ -616,11 +659,17 @@ export async function ejecutarHerramienta(
         const cita = await proximaCita(ctx.orgId, quien?.id);
         if (!cita) return "Esta persona no tiene ninguna cita por delante. Ofrécele agendar una.";
 
-        const inicio = String(args?.inicio ?? "").trim();
-        if (!inicio) {
+        const pedido = String(args?.inicio ?? "").trim();
+        if (!pedido) {
           return `Su cita es el ${new Date(cita.inicio).toLocaleString("es-MX")}. ` +
             "Llama a ver_horarios y pregúntale a qué hora la quiere mover.";
         }
+
+        // Mismo traductor que al agendar: mover tiene el mismo problema y no
+        // puede resolverse de otra forma, o una de las dos se quedaría atrás.
+        const ofrecidos = leerHorariosOfrecidos(ctx.vars?.horarios_ofrecidos);
+        const inicio = horarioQuePidio(pedido, ofrecidos);
+        if (!inicio) return comoRecordarLosHorarios(ofrecidos);
 
         const r = await moverCita(ctx.orgId, cita, inicio);
         if (!r.ok) {

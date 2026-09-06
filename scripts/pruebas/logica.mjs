@@ -40,6 +40,7 @@ import {
   mensajeParaElCliente, CORTE_DE_TURNO,
   opcionesDeHorario, horaDelFormulario, correoDelFormulario, nombreDelFormulario,
   TITULO_MAX,
+  horarioQuePidio, diaQueDijo, horasQueDijo, horaDeLaEtiqueta, comoRecordarLosHorarios,
 } from "../../src/lib/agendaHorarios.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
@@ -4990,6 +4991,132 @@ describe("Confirmar la zona se pide UNA vez", () => {
     // Un aviso que sigue saliendo después de atenderlo pasa a ser decorado, y
     // entonces tampoco sirve para el siguiente problema.
     esperar(hayQueConfirmar(true)).igual(false);
+  });
+});
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * «LUNES A LAS 9 AM» TIENE QUE PODER AGENDARSE
+ *
+ * 6 de septiembre. Lana ofreció horarios de verdad, el cliente contestó «lunes
+ * a las 9 am», y la cita nunca se creó. Ella misma escribió el motivo al pasar
+ * con una persona: «Error técnico al agendar cita para Alex, restaurante.
+ * Quería lunes 7 de sep 9:00 am».
+ *
+ * La causa no fue del modelo: le pedíamos que cargara un identificador exacto
+ * entre turnos después de haber reescrito la lista con sus palabras.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("Traducir lo que dijo la persona a un horario ofrecido", () => {
+  const ofrecidos = [
+    { iso: "2026-09-07T14:00:00.000Z", label: "lun 07 de sep, 09:00" },
+    { iso: "2026-09-07T17:00:00.000Z", label: "lun 07 de sep, 12:00" },
+    { iso: "2026-09-08T14:00:00.000Z", label: "mar 08 de sep, 09:00" },
+    { iso: "2026-09-08T17:30:00.000Z", label: "mar 08 de sep, 12:30" },
+  ];
+
+  test("EL CASO REAL: «lunes a las 9 am» agenda el lunes a las 9", () => {
+    esperar(horarioQuePidio("lunes a las 9 am", ofrecidos)).igual("2026-09-07T14:00:00.000Z");
+  });
+
+  test("el identificador exacto sigue siendo lo primero que se mira", () => {
+    // Es lo que se le pide al modelo, y cuando lo trae bien no hay nada que
+    // interpretar.
+    esperar(horarioQuePidio("2026-09-08T17:30:00.000Z", ofrecidos)).igual("2026-09-08T17:30:00.000Z");
+  });
+
+  test("la etiqueta tal cual también vale", () => {
+    // El modelo enseña la etiqueta a la persona; es normal que la copie.
+    esperar(horarioQuePidio("mar 08 de sep, 12:30", ofrecidos)).igual("2026-09-08T17:30:00.000Z");
+    esperar(horarioQuePidio("MAR 08 DE SEP, 12:30", ofrecidos)).igual("2026-09-08T17:30:00.000Z");
+  });
+
+  test("como habla la gente", () => {
+    esperar(horarioQuePidio("el martes a las 12:30", ofrecidos)).igual("2026-09-08T17:30:00.000Z");
+    esperar(horarioQuePidio("lun 12:00", ofrecidos)).igual("2026-09-07T17:00:00.000Z");
+    esperar(horarioQuePidio("martes 9", ofrecidos)).igual("2026-09-08T14:00:00.000Z");
+  });
+
+  test("ANTE LA DUDA NO SE ADIVINA", () => {
+    // «a las 9» encaja con el lunes Y con el martes. Agendar el día equivocado
+    // es peor que un mensaje más preguntando cuál.
+    esperar(horarioQuePidio("a las 9", ofrecidos)).igual(null);
+    esperar(horarioQuePidio("9 am", ofrecidos)).igual(null);
+  });
+
+  test("lo que no encaja con nada devuelve nada", () => {
+    esperar(horarioQuePidio("el viernes a las 9", ofrecidos)).igual(null);
+    esperar(horarioQuePidio("lunes a las 17", ofrecidos)).igual(null);
+    esperar(horarioQuePidio("cuando sea", ofrecidos)).igual(null);
+    esperar(horarioQuePidio("", ofrecidos)).igual(null);
+    esperar(horarioQuePidio("lunes a las 9", [])).igual(null);
+    esperar(horarioQuePidio("lunes a las 9", null)).igual(null);
+  });
+
+  test("una opción a medias no se puede elegir", () => {
+    esperar(horarioQuePidio("lunes a las 9", [{ iso: "", label: "lun 07 de sep, 09:00" }])).igual(null);
+    esperar(horarioQuePidio("lunes a las 9", [{ iso: "x", label: "" }])).igual(null);
+  });
+});
+
+describe("Leer la hora y el día de un texto", () => {
+  test("los días, largos y cortos", () => {
+    esperar(diaQueDijo("el lunes por favor")).igual("lun");
+    esperar(diaQueDijo("MIÉRCOLES")).igual("mie");
+    esperar(diaQueDijo("sábado")).igual("sab");
+    esperar(diaQueDijo("mar 08 de sep")).igual("mar");
+    esperar(diaQueDijo("cuando sea")).igual(null);
+  });
+
+  test("«marzo» no es martes", () => {
+    // Sin el borde de palabra, «mar» entraría por «marzo» y agendaría martes.
+    esperar(diaQueDijo("en marzo")).igual(null);
+    esperar(diaQueDijo("domingo o lunes")).igual("lun");
+  });
+
+  test("am y pm", () => {
+    esperar(horasQueDijo("9 am").includes(9 * 60)).igual(true);
+    esperar(horasQueDijo("9 pm").includes(21 * 60)).igual(true);
+    esperar(horasQueDijo("12 am").includes(0)).igual(true);
+    esperar(horasQueDijo("12 pm").includes(12 * 60)).igual(true);
+    esperar(horasQueDijo("12:30").includes(12 * 60 + 30)).igual(true);
+  });
+
+  test("SIN SUFIJO SE APUNTAN LAS DOS", () => {
+    // «a las 3» puede ser las 15 en una agenda de tarde. Se apuntan las dos y
+    // gana la que de verdad se ofreció.
+    const h = horasQueDijo("a las 3");
+    esperar(h.includes(3 * 60)).igual(true);
+    esperar(h.includes(15 * 60)).igual(true);
+  });
+
+  test("un número imposible no es una hora", () => {
+    esperar(horasQueDijo("son 45 personas").includes(45 * 60)).igual(false);
+    esperar(horasQueDijo("nada de horas").length).igual(0);
+  });
+
+  test("la hora de la etiqueta sale DESPUÉS de la coma", () => {
+    // En «lun 07 de sep, 09:00» el primer número es el día del mes: cogerlo
+    // agendaría a las 7 de la mañana una cita de las 9.
+    esperar(horaDeLaEtiqueta("lun 07 de sep, 09:00")).igual(9 * 60);
+    esperar(horaDeLaEtiqueta("mar 08 de sep, 12:30")).igual(12 * 60 + 30);
+    esperar(horaDeLaEtiqueta("sin hora")).igual(null);
+  });
+});
+
+describe("Cuando no se reconoce la hora, se le enseñan las que hay", () => {
+  test("NO se le devuelve «falta la fecha y hora»", () => {
+    // Ese error fue el que hizo que Lana se rindiera y pasara la conversación
+    // con una persona. Un error que no dice qué hacer deja al modelo sin salida.
+    const t = comoRecordarLosHorarios([{ iso: "2026-09-07T14:00:00.000Z", label: "lun 07 de sep, 09:00" }]);
+    esperar(t.includes("2026-09-07T14:00:00.000Z")).igual(true);
+    esperar(t.includes("lun 07 de sep, 09:00")).igual(true);
+    esperar(t.toLowerCase().includes("falta la fecha")).igual(false);
+  });
+
+  test("y si no hay ninguno, se le dice que mire primero", () => {
+    esperar(comoRecordarLosHorarios([]).includes("ver_horarios")).igual(true);
+    esperar(comoRecordarLosHorarios(null).includes("ver_horarios")).igual(true);
   });
 });
 
