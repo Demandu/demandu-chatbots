@@ -1,0 +1,36 @@
+-- AGUJERO GRAVE, CERRADO. Encontrado el 23 ago revisando `memberships` antes
+-- de construir el acceso de soporte.
+--
+-- QUÉ PASABA. `authenticated` tenía INSERT sobre `memberships`, y la política
+-- `mem_insert` solo comprobaba `user_id = auth.uid()` — es decir, «puedes
+-- crear una membresía tuya», SIN decir en qué organización. Cualquier persona
+-- con una cuenta podía ejecutar:
+--
+--     insert into memberships (org_id, user_id, role)
+--     values ('<la-organizacion-de-otro-cliente>', auth.uid(), 'admin');
+--
+-- y a partir de ese instante `auth_org_ids()` le devolvía esa organización:
+-- conversaciones, contactos, embudo y WhatsApp de otro negocio.
+--
+-- Comprobado contra la base haciéndose pasar por un usuario real: el insert
+-- pasaba y la organización ajena quedaba visible. Revertido en la prueba.
+--
+-- El índice único de dueño frenaba `role='owner'`, pero no `'admin'`, que da
+-- prácticamente lo mismo.
+--
+-- POR QUÉ NO HACÍA FALTA ESE PERMISO. Ninguna parte del código inserta
+-- membresías con la llave del cliente: las crea `handle_new_user`, que es
+-- SECURITY DEFINER, o el alta manual con la llave de servicio. La política
+-- estaba de más desde el principio.
+--
+-- LECCIÓN, LA MISMA DE SIEMPRE EN ESTE PROYECTO: una política que dice de
+-- quién es la fila no dice a qué organización pertenece. `user_id = auth.uid()`
+-- se lee como «solo lo mío» y no lo es.
+--
+-- Comprobado después del arreglo, haciéndose pasar por un usuario real:
+--   1. meterse en otra organización ..... bloqueado
+--   2. borrar su propia membresía ....... bloqueado
+--   3. apagar su bandera de contraseña .. sigue funcionando
+--   4. organizaciones que ve ............ 1, la suya
+drop policy if exists "mem_insert" on public.memberships;
+revoke insert, delete, truncate, references on public.memberships from anon, authenticated;

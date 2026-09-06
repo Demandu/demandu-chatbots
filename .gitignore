@@ -1,0 +1,49 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env
+.env*.local
+
+# vercel
+.vercel
+
+# netlify
+.netlify
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# archivos empaquetados
+*.zip
+
+# Papelera de trabajo. El puente con el Mac no puede borrar archivos, así que
+# lo que sobra se mueve aquí en vez de borrarse — pero no tiene que viajar al
+# repositorio: `publish.sh` hace `git add -A` y se lo llevaría todo.
+_to_delete/
+
+# Paquetes que llegan desde la sesión de Claude: se descomprimen y ya está.
+_entrega/
+
+# Llaves privadas de Apple. NUNCA al repositorio.
+*.p8
+AuthKey_*
