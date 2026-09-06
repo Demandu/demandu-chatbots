@@ -6604,4 +6604,217 @@ describe("El estado de un formulario sale de Meta", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EL REPO TIENE QUE PODER LEVANTAR LA PLATAFORMA ENTERA
+//
+// El 6 de septiembre se le preguntó a producción qué tablas y funciones tiene
+// y se buscó cada una en `supabase/migrations/`. Faltaban DIECINUEVE TABLAS y
+// ONCE FUNCIONES: `plans`, `addons`, `platform_admins`, `whatsapp_forms`,
+// `usage_events`, `quick_replies`, `contact_notes`… todas creadas a mano en el
+// panel de Supabase, ninguna escrita en ningún sitio.
+//
+// No se notó NUNCA, porque producción sí las tenía. El repo se fue quedando
+// atrás en silencio durante meses, y el día que se hubiera notado —levantando
+// la base desde cero— habría sido el peor día posible para notarlo.
+//
+// Esta regla convierte ese silencio en un fallo de prueba: si el código lee una
+// tabla o llama a una función que ninguna migración crea, aquí se ve. Es la
+// única defensa posible contra crear cosas a mano, porque el hábito no se
+// arregla con buenas intenciones.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("El repo levanta la plataforma entera", () => {
+  const DIR_MIG = path.join(RAIZ, "supabase/migrations");
+  const MIGRACIONES = fs
+    .readdirSync(DIR_MIG)
+    .filter((f) => f.endsWith(".sql"))
+    .map((f) => fs.readFileSync(path.join(DIR_MIG, f), "utf8"))
+    .join("\n");
+
+  // El motor de WhatsApp es Deno y vive fuera de `src`, pero lee las mismas
+  // tablas: dejarlo fuera sería tener la regla a medias.
+  const MOTOR = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+  const TODO = [...ARCHIVOS.map((a) => a.texto), MOTOR].map(sinComentarios);
+
+  // Lo que NO es una tabla de `public`: los cubos de Storage y las tablas del
+  // esquema `auth`, que las crea Supabase.
+  const NO_SON_TABLAS = new Set(["media", "adjuntos", "conocimiento", "users", "objects"]);
+
+  function tablasQueUsaElCodigo() {
+    const nombres = new Set();
+    for (const texto of TODO) {
+      // `.storage.from("cubo")` es un cubo, no una tabla. Se descarta mirando
+      // lo que hay JUSTO ANTES del `.from`, no el nombre — un cubo y una tabla
+      // se pueden llamar igual y esa coincidencia no puede decidir nada.
+      for (const m of texto.matchAll(/(\.storage)?\s*\.from\(\s*["']([a-z][a-z0-9_]*)["']/g)) {
+        if (m[1]) continue;
+        if (!NO_SON_TABLAS.has(m[2])) nombres.add(m[2]);
+      }
+    }
+    return [...nombres].sort();
+  }
+
+  function funcionesQueLlamaElCodigo() {
+    const nombres = new Set();
+    for (const texto of TODO) {
+      for (const m of texto.matchAll(/\.rpc\(\s*["']([a-z][a-z0-9_]*)["']/g)) nombres.add(m[1]);
+    }
+    return [...nombres].sort();
+  }
+
+  test("toda tabla que el código lee la crea una migración", () => {
+    const usadas = tablasQueUsaElCodigo();
+    // Que la regla tenga de qué tirar. Si un cambio de sintaxis deja el
+    // buscador sin encontrar nada, la regla pasaría vacía para siempre.
+    esperar(usadas.length > 30).verdadero(
+      `solo se encontraron ${usadas.length} tablas en el código: el buscador dejó de reconocer las consultas`,
+    );
+
+    // Una vista sirve igual que una tabla para quien la consulta: `.from()` no
+    // distingue, y `actividad_del_equipo` (la 0061) es una. Lo que importa es
+    // que ALGUNA migración la cree, no de qué tipo sea.
+    const huerfanas = usadas.filter(
+      (t) =>
+        !new RegExp(`create\\s+table\\s+(if\\s+not\\s+exists\\s+)?(public\\.)?${t}\\b`, "i").test(MIGRACIONES) &&
+        !new RegExp(`create\\s+(or\\s+replace\\s+)?(materialized\\s+)?view\\s+(if\\s+not\\s+exists\\s+)?(public\\.)?${t}\\b`, "i").test(MIGRACIONES),
+    );
+    esperar(huerfanas).igual(
+      [],
+      "el código lee tablas que ninguna migración crea: levantar la base desde cero da una plataforma rota",
+    );
+  });
+
+  test("toda función que el código llama la crea una migración", () => {
+    const usadas = funcionesQueLlamaElCodigo();
+    esperar(usadas.length > 10).verdadero(
+      `solo se encontraron ${usadas.length} funciones en el código: el buscador dejó de reconocer los .rpc()`,
+    );
+
+    const huerfanas = usadas.filter(
+      (f) => !new RegExp(`create\\s+(or\\s+replace\\s+)?function\\s+(public\\.)?${f}\\b`, "i").test(MIGRACIONES),
+    );
+    esperar(huerfanas).igual([], "el código llama funciones de base que ninguna migración crea");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UNA CUENTA NUEVA NACE FUNCIONANDO
+//
+// «Hauta Clinic» se registró y nació con cero atributos, cero etiquetas, cero
+// agentes y la prueba vencida. Los cuatro atributos base los creaba la 0006 y
+// la 0011 se los dejó fuera al redefinir `handle_new_user`; cinco
+// redefiniciones después nadie lo había notado.
+//
+// La regla mira la ÚLTIMA definición del disparador, que es la que manda.
+// Comprobarlo sobre todo el archivo dejaría pasar exactamente el fallo
+// original: la 0006 seguiría teniendo el `insert`, y la última no.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("El alta de una cuenta no vuelve a perder piezas", () => {
+  const DIR_MIG = path.join(RAIZ, "supabase/migrations");
+  const ARCHIVOS_MIG = fs.readdirSync(DIR_MIG).filter((f) => f.endsWith(".sql")).sort();
+
+  function ultimoHandleNewUser() {
+    let ultimo = "";
+    for (const f of ARCHIVOS_MIG) {
+      const texto = fs.readFileSync(path.join(DIR_MIG, f), "utf8");
+      const trozos = [...texto.matchAll(/create\s+or\s+replace\s+function\s+public\.handle_new_user[\s\S]*?end \$\$;/g)];
+      if (trozos.length) ultimo = trozos[trozos.length - 1][0];
+    }
+    return ultimo;
+  }
+
+  const H = sinComentarios(ultimoHandleNewUser());
+
+  test("hay un disparador de alta que mirar", () => {
+    esperar(H.length > 500).verdadero("no se encontró la definición de handle_new_user en las migraciones");
+  });
+
+  test("crea los cuatro atributos del lead", () => {
+    esperar(/insert into custom_attributes/.test(H)).verdadero(
+      "el alta volvió a quedarse sin crear los atributos: «Datos del lead» nace vacío y agendar no encuentra el correo",
+    );
+    for (const clave of ["'nombre'", "'correo'", "'telefono'", "'ciudad'"]) {
+      esperar(H.includes(clave)).verdadero(`falta el atributo ${clave} en el alta`);
+    }
+  });
+
+  test("la prueba nace con fecha", () => {
+    // Un nulo aquí lo lee `org_puede_enviar` como «venció»: la cuenta nace muda.
+    esperar(/prueba_termina_at/.test(H) && /interval '14 days'/.test(H)).verdadero(
+      "la prueba vuelve a nacer sin fecha, que el código lee como vencida",
+    );
+  });
+
+  test("el dueño existe como agente y hay ajustes de reparto", () => {
+    /* ── SE MIRA EL `values`, NO EL `insert` ────────────────────────────────
+     *
+     * Buscar solo «insert into team_members» era VACUO y el mutante lo
+     * demostró: dentro de esta misma función hay otro, el de la rama de
+     * invitaciones, que usa `values (inv.org_id, …)`. Con él, borrar entero el
+     * del dueño dejaba la regla en verde.
+     *
+     * El del dueño es el que mete `new_org`. Ese es el que hay que exigir. */
+    esperar(/insert into team_members[\s\S]{0,160}?values \(new_org/.test(H)).verdadero(
+      "el dueño no queda como agente: `crm_elegir_agente` no tiene a quién asignar y el pase a humano no llega a nadie",
+    );
+    esperar(/insert into assignment_settings/.test(H)).verdadero(
+      "sin fila de reparto, `crm_elegir_agente` sale con null y la pantalla no tiene nada que enseñar",
+    );
+  });
+
+  test("hay etiquetas con las que calificar", () => {
+    esperar(/insert into tags/.test(H)).verdadero(
+      "sin etiquetas, la herramienta `etiquetar` de la IA no hace nada y no lo dice",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LA ZONA HORARIA NO SE ADIVINA EN NINGÚN SITIO
+//
+// Eran once respaldos a «America/Mexico_City». El último vivía dentro de la
+// base, en `org_en_horario`, y es el que decide si un negocio está ABIERTO
+// para el reparto: uno de Panamá salía cerrado hasta las 9 de la mañana.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Nadie vuelve a adivinar la zona horaria", () => {
+  const DIR_MIG = path.join(RAIZ, "supabase/migrations");
+  const ARCHIVOS_MIG = fs.readdirSync(DIR_MIG).filter((f) => f.endsWith(".sql")).sort();
+
+  test("la última `org_en_horario` no tiene respaldo de zona", () => {
+    let ultima = "";
+    for (const f of ARCHIVOS_MIG) {
+      const texto = fs.readFileSync(path.join(DIR_MIG, f), "utf8");
+      const trozos = [...texto.matchAll(/create\s+or\s+replace\s+function\s+(public\.)?org_en_horario[\s\S]*?end \$\$;/g)];
+      if (trozos.length) ultima = trozos[trozos.length - 1][0];
+    }
+    esperar(ultima.length > 200).verdadero("no se encontró org_en_horario en las migraciones");
+    const cuerpo = sinComentarios(ultima);
+    esperar(/coalesce\s*\(\s*timezone/i.test(cuerpo)).falso(
+      "org_en_horario volvió a rellenar la zona: un negocio de Panamá vuelve a salir cerrado una hora de más",
+    );
+    esperar(/America\/Mexico_City/.test(cuerpo)).falso("org_en_horario vuelve a nombrar una zona por defecto");
+  });
+
+  test("la pantalla de Horario no preselecciona ninguna zona", () => {
+    const p = ARCHIVOS.find((a) => a.ruta.endsWith("settings/hours/page.tsx"));
+    esperar(!!p).verdadero("desapareció la pantalla de Horario laboral");
+    const t = sinComentarios(p.texto);
+    // ERA LA TRAMPA MÁS FINA: el selector salía marcado en México y guardar el
+    // horario firmaba esa zona como elegida por una persona.
+    esperar(/timezone[^\n]*\?\?\s*"America\/Mexico_City"/.test(t)).falso(
+      "el selector vuelve a preseleccionar México: guardar el horario firma una zona que nadie eligió",
+    );
+    esperar(/required/.test(t)).verdadero("el selector de zona dejó de ser obligatorio");
+  });
+
+  test("las rutas del calendario no calculan con una zona inventada", () => {
+    for (const cual of ["api/calendar/slots/route.ts", "api/calendar/book/route.ts"]) {
+      const p = ARCHIVOS.find((a) => a.ruta.endsWith(cual));
+      esperar(!!p).verdadero(`desapareció ${cual}`);
+      esperar(/America\/Mexico_City/.test(sinComentarios(p.texto))).falso(
+        `${cual} vuelve a inventarse la zona en vez de avisar`,
+      );
+    }
+  });
+});
+
 process.exit(await correrPruebas());
