@@ -2084,8 +2084,22 @@ function horarioQuePidio(
 
   // 3. El día y la hora, que es como habla la gente.
   const horas = horasQueDijo(t);
-  if (!horas.length) return null;
   const dia = diaQueDijo(t);
+
+  /* ── SOLO EL DÍA, CUANDO ESE DÍA NO TIENE MÁS QUE UN HUECO ──────────────
+   *
+   * «el jueves» no lleva hora, y antes se devolvía null: se le volvía a
+   * enseñar la lista entera a alguien que ya había elegido. Si ese día tiene
+   * UN solo hueco ofrecido no hay nada que preguntar — la respuesta es esa.
+   *
+   * Con dos o más sigue siendo ambiguo y se le pregunta, que es lo correcto:
+   * reservar «el jueves» a las 9 cuando también había a las 14 es exactamente
+   * la clase de suposición que acaba en una cita a la que nadie va. */
+  if (!horas.length) {
+    if (!dia) return null;
+    const delDia = lista.filter((o) => sinTildes(o.label).includes(dia));
+    return delDia.length === 1 ? delDia[0].iso : null;
+  }
 
   const cuadran = lista.filter((o) => {
     const etiqueta = sinTildes(o.label);

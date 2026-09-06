@@ -5057,6 +5057,44 @@ describe("Traducir lo que dijo la persona a un horario ofrecido", () => {
     esperar(horarioQuePidio("lunes a las 9", [{ iso: "", label: "lun 07 de sep, 09:00" }])).igual(null);
     esperar(horarioQuePidio("lunes a las 9", [{ iso: "x", label: "" }])).igual(null);
   });
+
+  /* ── DECIR SOLO EL DÍA ──────────────────────────────────────────────────
+   *
+   * «el jueves» es una respuesta normal y no lleva hora. Antes se devolvía
+   * null y se le volvía a enseñar la lista entera a alguien que YA había
+   * elegido — que es justo el bucle que se vio en Instagram.
+   *
+   * Solo cuenta si ese día tiene UN hueco. Con dos, adivinar sería reservar a
+   * las 9 cuando también había a las 12, y a esa cita no va nadie. */
+  test("solo el día vale cuando ese día tiene un único hueco", () => {
+    const unoPorDia = [
+      { iso: "2026-09-09T14:00:00.000Z", label: "mié 09 de sep, 09:00" },
+      { iso: "2026-09-10T17:00:00.000Z", label: "jue 10 de sep, 12:00" },
+    ];
+    esperar(horarioQuePidio("el jueves", unoPorDia)).igual("2026-09-10T17:00:00.000Z");
+    esperar(horarioQuePidio("miercoles", unoPorDia)).igual("2026-09-09T14:00:00.000Z");
+    esperar(horarioQuePidio("el miércoles me viene bien", unoPorDia)).igual("2026-09-09T14:00:00.000Z");
+  });
+
+  test("solo el día NO vale cuando ese día tiene dos", () => {
+    // `ofrecidos` tiene lunes a las 09:00 y a las 12:00.
+    esperar(horarioQuePidio("el lunes", ofrecidos)).igual(null);
+    esperar(horarioQuePidio("lunes", ofrecidos)).igual(null);
+  });
+
+  test("sin día y sin hora sigue sin adivinarse", () => {
+    // Con un solo hueco en toda la lista la tentación es devolverlo. No: quien
+    // escribe «cuando sea» no ha elegido nada, y confirmarle una cita que no
+    // pidió es peor que preguntar.
+    const unico = [{ iso: "2026-09-10T17:00:00.000Z", label: "jue 10 de sep, 12:00" }];
+    esperar(horarioQuePidio("cuando sea", unico)).igual(null);
+    esperar(horarioQuePidio("me da igual", unico)).igual(null);
+    esperar(horarioQuePidio("si", unico)).igual(null);
+  });
+
+  test("un día que no se ofreció no encaja con nada", () => {
+    esperar(horarioQuePidio("el domingo", ofrecidos)).igual(null);
+  });
 });
 
 describe("Leer la hora y el día de un texto", () => {
