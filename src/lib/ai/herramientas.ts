@@ -1,8 +1,15 @@
 import "server-only";
-import { horariosLibres, agendar, proximaCita, moverCita, cancelarCita } from "@/lib/agenda";
+import {
+  horariosLibres, agendar, proximaCita, moverCita, cancelarCita,
+  citasDePersona, zonaDelNegocio,
+} from "@/lib/agenda";
 import { accionesDelPrompt } from "@/lib/ai/acciones";
 import { herramientasAutomaticas, herramientasQueManda } from "@/lib/ai/capacidades";
-import { horarioQuePidio, comoRecordarLosHorarios, type HorarioOfrecido } from "@/lib/agendaHorarios";
+import {
+  horarioQuePidio, comoRecordarLosHorarios, enLaZonaDelCliente, comoSeLoDigo,
+  type HorarioOfrecido,
+} from "@/lib/agendaHorarios";
+import { zonaDelTelefono } from "@/lib/zonaHoraria";
 import { emitir } from "@/lib/salidas";
 import { prometioUnaPersona } from "@/lib/ai/promesas";
 import {
@@ -127,11 +134,50 @@ async function fichaDeLaConversacion(ctx: ContextoAgente) {
 
   const { data: c } = await ctx.admin
     .from("contacts")
-    .select("id, tags, attributes, name, external_id")
+    .select("id, tags, attributes, name, email, phone, external_id")
     .eq("id", conv.contact_id)
     .eq("org_id", ctx.orgId)
     .maybeSingle();
   return c ?? null;
+}
+
+/**
+ * En qué reloj vive la persona con la que se está hablando.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA CITA ES UN INSTANTE; LA HORA ES UNA FORMA DE CONTARLO. Un negocio con
+ * número de Panamá y clientes en México le decía a cada mexicano una hora que
+ * en su teléfono era otra, y el cliente apuntaba la que oyó.
+ *
+ * Se deduce del teléfono, que es lo único que se sabe con certeza de alguien
+ * que escribe por WhatsApp. En Instagram y en el chat de la web no hay
+ * teléfono: se devuelve `null` y todo sigue contándose en la hora del negocio,
+ * que es lo correcto cuando no se sabe nada mejor.
+ *
+ * NO SE ADIVINA POR NADA MÁS. Ni por el idioma, ni por la hora a la que
+ * escribe: la lección de la 0102 es que un respaldo plausible es peor que no
+ * tener respaldo, porque nadie lo revisa.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function zonaDeQuienEscribe(ctx: ContextoAgente): Promise<string | null> {
+  const quien = await fichaDeLaConversacion(ctx);
+  return zonaDelTelefono((quien as any)?.phone ?? null);
+}
+
+/**
+ * Una hora escrita para esta persona: en su reloj si se sabe cuál es, y si no
+ * en el del negocio.
+ *
+ * Y si tampoco se sabe el del negocio, SE DICE — no se formatea en la zona del
+ * servidor, que es lo que hacía `toLocaleString` y contaba una hora que no era
+ * de nadie.
+ */
+async function comoLoDigo(ctx: ContextoAgente, iso: string): Promise<string> {
+  const suya = comoSeLoDigo(iso, await zonaDeQuienEscribe(ctx));
+  if (suya) return `${suya.dia} a las ${suya.hora}`;
+  const delNegocio = comoSeLoDigo(iso, await zonaDelNegocio(ctx.orgId));
+  if (delNegocio) return `${delNegocio.dia} a las ${delNegocio.hora}`;
+  return "(no puedo decirte la hora: a este negocio le falta configurar su zona horaria)";
 }
 
 /**
@@ -270,6 +316,18 @@ export async function armarHerramientas(
           inicio: { type: "string", description: "La hora nueva, tal cual la devolvió ver_horarios." },
         },
       },
+    });
+  }
+
+  if (quiere.includes("ver_mis_citas")) {
+    tools.push({
+      name: "ver_mis_citas",
+      description:
+        "Consulta las citas que ESTA persona tiene por delante, en todos los canales por los que " +
+        "te haya escrito. Úsala SIEMPRE que pregunte por su cita —si la tiene, si quedó confirmada, " +
+        "cuándo es—. NO adivines ni digas que no puedes verlas: llámala. " +
+        "Si devuelve que no hay ninguna, díselo tal cual y ofrécele agendar.",
+      input_schema: { type: "object", properties: {} },
     });
   }
 
@@ -581,6 +639,17 @@ export async function ejecutarHerramienta(
           return "No hay horarios libres o la agenda no está conectada. Dile que le pasarás con una persona.";
         }
 
+        /* ── SE LE DICEN EN SU RELOJ, NO EN EL DEL NEGOCIO ────────────────
+         *
+         * Los huecos se CALCULARON con el horario del negocio y en su zona —eso
+         * no cambia, «abrimos de 9 a 6» son las suyas—. Aquí solo se reescribe
+         * la etiqueta. El instante es el mismo.
+         *
+         * Y se guardan YA TRADUCIDOS: `horarioQuePidio` compara contra estas
+         * etiquetas, así que si se guardaran las del negocio, alguien que
+         * repitiera la hora que acaba de leer no sería reconocido. */
+        const slots = enLaZonaDelCliente(r.slots, await zonaDeQuienEscribe(ctx));
+
         /* ── LA PLATAFORMA SE ACUERDA DE LO QUE OFRECIÓ ───────────────────
          *
          * Antes esto solo se lo decía al modelo y confiaba en que cargara el
@@ -592,11 +661,11 @@ export async function ejecutarHerramienta(
          * Guardándolos aquí, `agendar_cita` puede traducir «lunes a las 9 am» a
          * la hora exacta sin depender de la memoria del modelo. */
         ctx.vars.horarios_ofrecidos = JSON.stringify(
-          r.slots.map((s) => ({ iso: s.startISO, label: s.label })),
+          slots.map((s) => ({ iso: s.startISO, label: s.label })),
         );
 
         return "Horarios libres (usa el valor de `inicio` tal cual al agendar):\n" +
-          r.slots.map((s) => `- ${s.label} → inicio: ${s.startISO}`).join("\n");
+          slots.map((s) => `- ${s.label} → inicio: ${s.startISO}`).join("\n");
       }
 
       case "agendar_cita": {
@@ -632,17 +701,27 @@ export async function ejecutarHerramienta(
         });
         if (!r.ok) return `No se pudo agendar: ${r.error}. Ofrece otra hora.`;
 
+        /* ── SE CONFIRMA EN EL MISMO RELOJ EN QUE SE OFRECIÓ ──────────────
+         *
+         * `agendar` devuelve el día y la hora en la zona del NEGOCIO, que es lo
+         * que su equipo y su Google Calendar necesitan. Pero a quien escribe se
+         * le acaba de ofrecer la lista en SU reloj: confirmarle una hora
+         * distinta de la que eligió es la peor forma posible de terminar. */
+        const suyo = comoSeLoDigo(r.inicioISO, await zonaDeQuienEscribe(ctx));
+        const diaDicho = suyo?.dia ?? r.dia;
+        const horaDicha = suyo?.hora ?? r.hora;
+
         ctx.vars.cita_inicio = r.inicioISO;
-        ctx.vars.cita_dia = r.dia;
-        ctx.vars.cita_hora = r.hora;
+        ctx.vars.cita_dia = diaDicho;
+        ctx.vars.cita_hora = horaDicha;
 
         // EL AVISO YA NO SE MANDA DESDE AQUÍ. Lo emite el disparador de la base
         // al apuntar la cita (ver la 0100), igual que los de la tienda: hay
         // cuatro caminos que agendan y emitir desde cada uno es garantizar que
         // el quinto se olvide — y que este mande el aviso DOS veces.
         return r.sinInvitacion
-          ? `Cita confirmada para el ${r.dia} a las ${r.hora}. NO le prometas un correo: no se pudo mandar la invitación.`
-          : `Cita confirmada para el ${r.dia} a las ${r.hora}. Confírmaselo con esas palabras.`;
+          ? `Cita confirmada para el ${diaDicho} a las ${horaDicha}. NO le prometas un correo: no se pudo mandar la invitación.`
+          : `Cita confirmada para el ${diaDicho} a las ${horaDicha}. Confírmaselo con esas palabras.`;
       }
 
       /* ── MOVER Y CANCELAR ────────────────────────────────────────────────
@@ -654,6 +733,31 @@ export async function ejecutarHerramienta(
        *
        * La cita la busca la plataforma por el contacto que está escribiendo.
        * El modelo solo dice QUÉ hacer, nunca SOBRE QUÉ. */
+      /* ── LEER LA AGENDA ES UNA HERRAMIENTA, NO UN EFECTO SECUNDARIO ────
+       *
+       * Antes la única forma de saber si alguien tenía cita era llamar a
+       * `reagendar_cita` SIN hora y leerse la respuesta. Eso es pedirle al
+       * modelo que use una herramienta de escritura para leer, y el 6 de
+       * septiembre acabó como tenía que acabar: preguntaron «¿quedó confirmada
+       * mi cita?», el modelo no encontró la de Instagram, y se INVENTÓ una
+       * explicación entera —«no puedo ver las citas hechas por Instagram desde
+       * mi sistema»—. Nadie le enseñó eso; lo dedujo de no tener con qué mirar.
+       */
+      case "ver_mis_citas": {
+        const quien = await fichaDeLaConversacion(ctx);
+        const citas = await citasDePersona(ctx.orgId, quien?.id, 5);
+        if (!citas.length) {
+          return "Esta persona NO tiene ninguna cita por delante. Díselo con esas palabras y ofrécele agendar una.";
+        }
+        const lineas: string[] = [];
+        for (const c of citas) lineas.push(`- ${await comoLoDigo(ctx, c.inicio)} (${c.titulo ?? "cita"})`);
+        return (
+          `Sus citas por delante (${citas.length}). Están CONFIRMADAS: si pregunta, la respuesta es sí.\n` +
+          lineas.join("\n") +
+          "\nDíselas con la fecha y la hora tal cual aparecen aquí."
+        );
+      }
+
       case "reagendar_cita": {
         const quien = await fichaDeLaConversacion(ctx);
         const cita = await proximaCita(ctx.orgId, quien?.id);
@@ -661,7 +765,10 @@ export async function ejecutarHerramienta(
 
         const pedido = String(args?.inicio ?? "").trim();
         if (!pedido) {
-          return `Su cita es el ${new Date(cita.inicio).toLocaleString("es-MX")}. ` +
+          /* AQUÍ HABÍA `toLocaleString("es-MX")` A SECAS, que formatea en la
+           * zona DEL SERVIDOR — o sea en UTC. Le decía a la persona una hora
+           * que no era la suya ni la del negocio, sino la de una máquina. */
+          return `Su cita es el ${await comoLoDigo(ctx, cita.inicio)}. ` +
             "Llama a ver_horarios y pregúntale a qué hora la quiere mover.";
         }
 
@@ -679,10 +786,11 @@ export async function ejecutarHerramienta(
           return `No se pudo mover: ${r.error}. Ofrécele otra hora.`;
         }
 
+        const movida = comoSeLoDigo(r.inicioISO, await zonaDeQuienEscribe(ctx));
         ctx.vars.cita_inicio = r.inicioISO;
-        ctx.vars.cita_dia = r.dia;
-        ctx.vars.cita_hora = r.hora;
-        return `Cita movida al ${r.dia} a las ${r.hora}. Confírmaselo con esas palabras.`;
+        ctx.vars.cita_dia = movida?.dia ?? r.dia;
+        ctx.vars.cita_hora = movida?.hora ?? r.hora;
+        return `Cita movida al ${ctx.vars.cita_dia} a las ${ctx.vars.cita_hora}. Confírmaselo con esas palabras.`;
       }
 
       case "cancelar_cita": {

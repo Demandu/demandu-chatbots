@@ -803,7 +803,7 @@ async function pasoElTopeDeIA(ctx: any): Promise<boolean> {
  */
 const CLAVES_DE_ACCION = [
   "etiquetar", "pasar_a_humano", "guardar_dato",
-  "ver_horarios", "agendar_cita", "reagendar_cita", "cancelar_cita", "consultar_sistema",
+  "ver_horarios", "ver_mis_citas", "agendar_cita", "reagendar_cita", "cancelar_cita", "consultar_sistema",
   // Las de la tienda. ESTA LISTA TIENE QUE SER IDÉNTICA a la de
   // `src/lib/ai/acciones.ts`: si una acción existe en un motor y no en el otro,
   // el mismo prompt hace cosas distintas en WhatsApp y en la web, y el cliente
@@ -907,6 +907,9 @@ function accionesDelPrompt(prompt: string | null | undefined): string[] {
 
 const POR_LA_AGENDA = [
   "ver_horarios",
+  // LEER LA AGENDA VA PRIMERO: es lo que hace falta para contestar «¿quedó
+  // confirmada mi cita?». Sin ella el modelo se inventaba el motivo.
+  "ver_mis_citas",
   "agendar_cita",
   "reagendar_cita",
   "cancelar_cita",
@@ -1064,6 +1067,18 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
           inicio: { type: "string", description: "La hora nueva, tal cual la devolvió ver_horarios." },
         },
       },
+    });
+  }
+
+  if (quiere.includes("ver_mis_citas")) {
+    tools.push({
+      name: "ver_mis_citas",
+      description:
+        "Consulta las citas que ESTA persona tiene por delante, en todos los canales por los que " +
+        "te haya escrito. Úsala SIEMPRE que pregunte por su cita —si la tiene, si quedó confirmada, " +
+        "cuándo es—. NO adivines ni digas que no puedes verlas: llámala. " +
+        "Si devuelve que no hay ninguna, díselo tal cual y ofrécele agendar.",
+      input_schema: { type: "object", properties: {} },
     });
   }
 
@@ -1323,7 +1338,12 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           dias: Number(args?.dias) || 14,
           cuantos: 8,
         });
-        const slots = r?.slots ?? [];
+        // SE LE DICEN EN SU RELOJ. Los huecos se calcularon con el horario del
+        // negocio y en su zona —eso no cambia—; aquí solo se reescribe la
+        // etiqueta. Y se guardan ya traducidas, porque `horarioQuePidio`
+        // compara contra ellas: guardar las del negocio haría que repetir la
+        // hora que acaba de leer no se reconociera.
+        const slots = enLaZonaDelCliente(r?.slots ?? [], zonaDelTelefono(ctx.to));
         if (!slots.length) {
           return "No hay horarios libres o la agenda no está conectada. Dile que le pasarás con una persona.";
         }
@@ -1366,17 +1386,21 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         });
         if (!r?.ok) return `No se pudo agendar: ${r?.error ?? "error desconocido"}. Ofrece otra hora.`;
 
+        // SE CONFIRMA EN EL MISMO RELOJ EN QUE SE OFRECIÓ. La web devuelve el
+        // día y la hora en la zona del NEGOCIO, que es lo que necesita su
+        // equipo; a quien escribe se le acaba de ofrecer la lista en la suya.
+        const suyo = comoSeLoDigo(r.inicioISO ?? inicio, zonaDelTelefono(ctx.to));
         ctx.vars.cita_inicio = r.inicioISO ?? inicio;
-        ctx.vars.cita_dia = r.dia ?? "";
-        ctx.vars.cita_hora = r.hora ?? "";
+        ctx.vars.cita_dia = suyo?.dia ?? r.dia ?? "";
+        ctx.vars.cita_hora = suyo?.hora ?? r.hora ?? "";
 
         // EL AVISO YA NO SALE DE AQUÍ. Lo emite el disparador de la base al
         // apuntar la cita (ver la 0100), igual que los de la tienda. Si se
         // dejara esta línea, cada cita agendada por la IA contaría DOS veces:
         // al CRM del cliente y al embudo.
         return r.sinInvitacion
-          ? `Cita confirmada para el ${r.dia ?? ""} a las ${r.hora ?? ""}. NO le prometas un correo: no se pudo mandar la invitación.`
-          : `Cita confirmada para el ${r.dia ?? ""} a las ${r.hora ?? ""}. Confírmaselo con esas palabras.`;
+          ? `Cita confirmada para el ${ctx.vars.cita_dia} a las ${ctx.vars.cita_hora}. NO le prometas un correo: no se pudo mandar la invitación.`
+          : `Cita confirmada para el ${ctx.vars.cita_dia} a las ${ctx.vars.cita_hora}. Confírmaselo con esas palabras.`;
       }
 
       /* ── MOVER Y CANCELAR ────────────────────────────────────────────────
@@ -1384,6 +1408,34 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
        * saber el id de un evento de Google, así que se lo inventaría — y un id
        * inventado que casualmente exista borra la cita de otra persona. La cita
        * la busca la plataforma por el contacto que está escribiendo. */
+      /* LEER LA AGENDA ES UNA HERRAMIENTA, NO UN EFECTO SECUNDARIO. Antes la
+       * única forma de saber si alguien tenía cita era pedir «mover» sin hora,
+       * y el 6 de septiembre acabó como tenía que acabar: preguntaron «¿quedó
+       * confirmada mi cita?», el modelo no encontró la de Instagram —estaba en
+       * el contacto de Instagram— y se INVENTÓ que no podía verla. */
+      case "ver_mis_citas": {
+        const r = await pedirAgenda({
+          accion: "mis_citas",
+          org_id: ctx.orgId,
+          contacto_id: await idDelContacto(ctx),
+        });
+        const citas = r?.citas ?? [];
+        if (!citas.length) {
+          return "Esta persona NO tiene ninguna cita por delante. Díselo con esas palabras y ofrécele agendar una.";
+        }
+        const zona = zonaDelTelefono(ctx.to);
+        const lineas = citas.map((c: any) => {
+          const suya = comoSeLoDigo(c?.inicio, zona);
+          const cuando = suya ? `${suya.dia} a las ${suya.hora}` : String(c?.cuando ?? "");
+          return `- ${cuando} (${c?.titulo ?? "cita"})`;
+        });
+        return (
+          `Sus citas por delante (${citas.length}). Están CONFIRMADAS: si pregunta, la respuesta es sí.\n` +
+          lineas.join("\n") +
+          "\nDíselas con la fecha y la hora tal cual aparecen aquí."
+        );
+      }
+
       case "reagendar_cita": {
         // Mismo traductor que al agendar. Si trae algo y no se reconoce, se le
         // enseñan las horas que sí existen en vez de dejarle sin salida.
@@ -1403,17 +1455,20 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           inicio,
         });
         if (r?.sin_cita) return "Esta persona no tiene ninguna cita por delante. Ofrécele agendar una.";
-        if (r?.cuando) {
-          return `Su cita es el ${r.cuando}. Llama a ver_horarios y pregúntale a qué hora la quiere mover.`;
+        if (r?.cuando || r?.cuando_iso) {
+          const suya = comoSeLoDigo(r?.cuando_iso, zonaDelTelefono(ctx.to));
+          const cuando = suya ? `${suya.dia} a las ${suya.hora}` : String(r?.cuando ?? "");
+          return `Su cita es el ${cuando}. Llama a ver_horarios y pregúntale a qué hora la quiere mover.`;
         }
         if (!r?.ok) {
           if (r?.enlace) return `No se puede mover desde aquí. Dale este enlace tal cual: ${r.enlace}`;
           return `No se pudo mover: ${r?.error ?? "error desconocido"}. Ofrécele otra hora.`;
         }
+        const movida = comoSeLoDigo(r.inicioISO, zonaDelTelefono(ctx.to));
         ctx.vars.cita_inicio = r.inicioISO ?? "";
-        ctx.vars.cita_dia = r.dia ?? "";
-        ctx.vars.cita_hora = r.hora ?? "";
-        return `Cita movida al ${r.dia ?? ""} a las ${r.hora ?? ""}. Confírmaselo con esas palabras.`;
+        ctx.vars.cita_dia = movida?.dia ?? r.dia ?? "";
+        ctx.vars.cita_hora = movida?.hora ?? r.hora ?? "";
+        return `Cita movida al ${ctx.vars.cita_dia} a las ${ctx.vars.cita_hora}. Confírmaselo con esas palabras.`;
       }
 
       case "cancelar_cita": {
@@ -2123,6 +2178,169 @@ function comoRecordarLosHorarios(ofrecidos: HorarioOfrecido[] | null | undefined
     lista.map((o) => `- ${o.label} → inicio: ${o.iso}`).join("\n") +
     "\nSi lo que dijo encaja con dos, pregúntale cuál de las dos antes de agendar."
   );
+}
+
+/* ── COPIA VERBATIM DE `src/lib/zonaHoraria.ts` ─────────────────────────────
+ * Este motor corre en Deno y no puede importar de `src/`. Una prueba estática
+ * compara los dos cuerpos y falla si dejan de decir lo mismo. */
+const ZONA_POR_PREFIJO: Record<string, string> = {
+  "507": "America/Panama",
+  "506": "America/Costa_Rica",
+  "503": "America/El_Salvador",
+  "502": "America/Guatemala",
+  "504": "America/Tegucigalpa",
+  "505": "America/Managua",
+  "51":  "America/Lima",
+  "56":  "America/Santiago",
+  "57":  "America/Bogota",
+  "58":  "America/Caracas",
+  "591": "America/La_Paz",
+  "593": "America/Guayaquil",
+  "595": "America/Asuncion",
+  "598": "America/Montevideo",
+  "54":  "America/Argentina/Buenos_Aires",
+  "53":  "America/Havana",
+  "1809": "America/Santo_Domingo",
+  "1829": "America/Santo_Domingo",
+  "1849": "America/Santo_Domingo",
+  // De varias zonas: va la de la capital y NUNCA se da por confirmada.
+  "52":  "America/Mexico_City",
+  "55":  "America/Sao_Paulo",
+  "34":  "Europe/Madrid",
+};
+
+/**
+ * La zona que sugiere un número de teléfono.
+ *
+ * GANA EL PREFIJO MÁS LARGO. Sin eso, «1809…» (República Dominicana) entraría
+ * por cualquier regla de un solo dígito y acabaría en la zona equivocada.
+ */
+function zonaDelTelefono(
+  telefono: string | null | undefined,
+  // EL MAPA ENTRA POR PARÁMETRO PARA PODER PROBARLO. Hoy no hay dos prefijos
+  // donde uno sea principio del otro, así que la regla del más largo no se
+  // puede demostrar con los datos reales — y una regla que no se puede probar
+  // es una regla que se rompe el día que alguien añada el «1» de Estados
+  // Unidos junto al «1809» de República Dominicana.
+  mapa: Record<string, string> = ZONA_POR_PREFIJO,
+): string | null {
+  const n = String(telefono ?? "").replace(/\D/g, "");
+  if (!n) return null;
+
+  let mejor: string | null = null;
+  let largo = 0;
+  for (const [prefijo, zona] of Object.entries(mapa)) {
+    if (n.startsWith(prefijo) && prefijo.length > largo) {
+      mejor = zona;
+      largo = prefijo.length;
+    }
+  }
+  return mejor;
+}
+
+/**
+ * ¿Es una zona horaria que existe de verdad?
+ *
+ * Se le pregunta al propio motor de fechas en vez de llevar una lista: la lista
+ * se quedaría vieja, y una zona inventada no falla al guardarse — falla al
+ * formatear una hora, meses después, en el mensaje de un cliente.
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LA HORA SE DICE EN EL RELOJ DE QUIEN LA ESCUCHA
+ *
+ * La cita es un instante y no se mueve. Lo que cambia es cómo se cuenta: el
+ * mismo momento son las 9:00 para un cliente de México y las 10:00 para uno de
+ * Panamá, y los dos tienen razón.
+ *
+ * Hasta hoy el bot hablaba SIEMPRE en la zona del negocio. Un negocio con
+ * número de Panamá y clientes en México le decía a cada mexicano una hora que
+ * en su teléfono era otra — y el cliente apuntaba la que oyó.
+ *
+ * ── LO QUE NO CAMBIA, Y ES IMPORTANTE ─────────────────────────────────────
+ *
+ * · Los huecos se CALCULAN en la zona del negocio. El horario laboral es del
+ *   negocio: «abrimos de 9 a 6» son las suyas, no las de quien pregunta.
+ * · La cita se GUARDA en la zona del negocio, y así la lee su equipo y su
+ *   Google Calendar.
+ *
+ * Solo se traduce lo que se DICE. Por eso esto vive aquí, en el archivo puro,
+ * y se aplica al borde —al ofrecer y al confirmar—, no dentro del cálculo.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** ¿Se puede formatear en esta zona? Una zona inventada no falla al guardarse: falla aquí. */
+function zonaUsable(zona: string | null | undefined): boolean {
+  const z = String(zona ?? "").trim();
+  if (!z) return false;
+  try {
+    new Intl.DateTimeFormat("es-MX", { timeZone: z }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * La etiqueta de un instante, con el MISMO formato que usa el resto de la
+ * plataforma: «mié 09 de sep, 09:00».
+ *
+ * Tiene que ser idéntico al de `computeSlots` o `horarioQuePidio` dejaría de
+ * reconocer lo que la persona repite — la etiqueta es lo que se compara.
+ */
+function etiquetaEnZona(iso: string, zona: string): string {
+  return new Intl.DateTimeFormat("es-MX", {
+    timeZone: zona,
+    weekday: "short", day: "2-digit", month: "short",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(iso));
+}
+
+/**
+ * Cómo se le cuenta una cita a esta persona.
+ *
+ * Devuelve `null` si la zona no sirve, y quien llama se queda con lo que ya
+ * tenía. NUNCA se inventa una zona: es la lección de la 0102, y aquí el daño
+ * sería el mismo con otra cara — decirle a alguien una hora que no es la suya.
+ */
+function comoSeLoDigo(
+  iso: string | null | undefined,
+  zona: string | null | undefined,
+): { dia: string; hora: string; etiqueta: string } | null {
+  const t = String(iso ?? "").trim();
+  if (!t || !zonaUsable(zona)) return null;
+  const cuando = new Date(t);
+  if (!Number.isFinite(cuando.getTime())) return null;
+  const z = String(zona);
+  return {
+    dia: new Intl.DateTimeFormat("es-MX", {
+      timeZone: z, weekday: "long", day: "numeric", month: "long",
+    }).format(cuando),
+    hora: new Intl.DateTimeFormat("es-MX", {
+      timeZone: z, hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(cuando),
+    etiqueta: etiquetaEnZona(t, z),
+  };
+}
+
+/**
+ * Reescribe las etiquetas de los huecos para quien está escribiendo.
+ *
+ * Se cambia SOLO `label`. El `dia` y los `minutos` siguen siendo los del
+ * negocio porque son lo que usa `repartirHorarios` para agrupar por día y
+ * turno: repartir por el turno del cliente pondría «mañana y tarde» de un huso
+ * ajeno y el negocio vería su agenda ofrecida de una forma que no reconoce.
+ *
+ * Sin zona utilizable devuelve la lista TAL CUAL. Es lo que pasa en Instagram
+ * y en el chat de la web, donde no hay teléfono del que deducir nada.
+ */
+function enLaZonaDelCliente<T extends { startISO: string; label: string }>(
+  slots: T[] | null | undefined,
+  zona: string | null | undefined,
+): T[] {
+  const lista = slots ?? [];
+  if (!zonaUsable(zona)) return [...lista];
+  const z = String(zona);
+  return lista.map((s) => (s?.startISO ? { ...s, label: etiquetaEnZona(s.startISO, z) } : s));
 }
 
 type HorarioOfrecido = { iso: string; label: string };

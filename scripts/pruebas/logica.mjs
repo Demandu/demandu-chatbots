@@ -41,6 +41,7 @@ import {
   opcionesDeHorario, horaDelFormulario, correoDelFormulario, nombreDelFormulario,
   TITULO_MAX,
   horarioQuePidio, diaQueDijo, horasQueDijo, horaDeLaEtiqueta, comoRecordarLosHorarios,
+  comoSeLoDigo, enLaZonaDelCliente, etiquetaEnZona,
 } from "../../src/lib/agendaHorarios.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
@@ -5006,6 +5007,89 @@ describe("Confirmar la zona se pide UNA vez", () => {
  * La causa no fue del modelo: le pedíamos que cargara un identificador exacto
  * entre turnos después de haber reescrito la lista con sus palabras.
  * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * LA HORA SE DICE EN EL RELOJ DE QUIEN LA ESCUCHA
+ *
+ * Demandu tiene número de Panamá y clientes en México. El bot le decía a todo
+ * el mundo la hora del negocio, así que un cliente mexicano oía «las 10:00» y
+ * apuntaba las 10:00 — cuando en su teléfono la cita eran las 9:00.
+ *
+ * La cita NO se mueve. Solo cambia cómo se cuenta.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("La hora se dice en el reloj de quien la escucha", () => {
+  // 2026-09-09 15:00 UTC = 09:00 en Ciudad de México = 10:00 en Panamá.
+  const ISO = "2026-09-09T15:00:00.000Z";
+
+  test("EL CASO REAL: el mismo instante, dos relojes", () => {
+    esperar(comoSeLoDigo(ISO, "America/Mexico_City").hora).igual("09:00");
+    esperar(comoSeLoDigo(ISO, "America/Panama").hora).igual("10:00");
+  });
+
+  test("el día también cambia cuando toca", () => {
+    // 03:00 UTC del jueves es todavía el miércoles en México.
+    const cruce = "2026-09-10T03:00:00.000Z";
+    esperar(comoSeLoDigo(cruce, "America/Mexico_City").dia.includes("miércoles")).verdadero();
+    esperar(comoSeLoDigo(cruce, "Europe/Madrid").dia.includes("jueves")).verdadero();
+  });
+
+  test("la etiqueta tiene EL MISMO formato que la de los huecos", () => {
+    // Si no fuera idéntico, `horarioQuePidio` dejaría de reconocer lo que la
+    // persona repite: la etiqueta es exactamente lo que se compara.
+    esperar(etiquetaEnZona(ISO, "America/Panama")).igual("mié 09 de sep, 10:00");
+    esperar(comoSeLoDigo(ISO, "America/Panama").etiqueta).igual("mié 09 de sep, 10:00");
+  });
+
+  test("SIN ZONA NO SE INVENTA UNA", () => {
+    // Es la lección de la 0102 con otra cara: decirle a alguien una hora que no
+    // es la suya es peor que no decirle ninguna. Quien llama se queda con lo
+    // que ya tenía.
+    esperar(comoSeLoDigo(ISO, null)).igual(null);
+    esperar(comoSeLoDigo(ISO, "")).igual(null);
+    esperar(comoSeLoDigo(ISO, "   ")).igual(null);
+    esperar(comoSeLoDigo(ISO, "Marte/Olympus_Mons")).igual(null);
+    esperar(comoSeLoDigo(null, "America/Panama")).igual(null);
+    esperar(comoSeLoDigo("cuando sea", "America/Panama")).igual(null);
+  });
+
+  test("los huecos se reetiquetan y NADA MÁS cambia", () => {
+    const slots = [
+      { startISO: ISO, label: "mié 09 de sep, 09:00", dia: "2026-9-9", minutos: 540 },
+    ];
+    const [s] = enLaZonaDelCliente(slots, "America/Panama");
+    esperar(s.label).igual("mié 09 de sep, 10:00");
+    esperar(s.startISO).igual(ISO);
+    // `dia` y `minutos` son los del NEGOCIO y siguen siéndolo: es lo que usa
+    // `repartirHorarios` para agrupar por día y turno. Repartir por el turno
+    // del cliente pondría «mañana y tarde» de un huso ajeno.
+    esperar(s.dia).igual("2026-9-9");
+    esperar(s.minutos).igual(540);
+  });
+
+  test("sin zona, la lista vuelve TAL CUAL", () => {
+    // Es lo que pasa en Instagram y en el chat de la web: no hay teléfono del
+    // que deducir nada, y la hora del negocio es la respuesta correcta.
+    const slots = [{ startISO: ISO, label: "mié 09 de sep, 09:00" }];
+    esperar(enLaZonaDelCliente(slots, null)[0].label).igual("mié 09 de sep, 09:00");
+    esperar(enLaZonaDelCliente(slots, "Marte/Olympus_Mons")[0].label).igual("mié 09 de sep, 09:00");
+    esperar(enLaZonaDelCliente(null, "America/Panama")).igual([]);
+  });
+
+  test("lo reetiquetado SIGUE siendo reconocible", () => {
+    // La cadena entera: se ofrece en el reloj del cliente, el cliente repite lo
+    // que leyó, y tiene que reconocerse. Si se guardaran las etiquetas del
+    // negocio, esto devolvería null y volvería el bucle de Instagram.
+    const ofrecidos = enLaZonaDelCliente(
+      [{ startISO: ISO, label: "mié 09 de sep, 09:00" }],
+      "America/Panama",
+    ).map((s) => ({ iso: s.startISO, label: s.label }));
+    esperar(horarioQuePidio("el miércoles a las 10", ofrecidos)).igual(ISO);
+    // Y la del negocio, que ya no se le enseñó, NO cuadra: es la prueba de que
+    // de verdad se está comparando contra lo que la persona leyó.
+    esperar(horarioQuePidio("el miércoles a las 9", ofrecidos)).igual(null);
+  });
+});
 
 describe("Traducir lo que dijo la persona a un horario ofrecido", () => {
   const ofrecidos = [

@@ -506,3 +506,100 @@ export function comoRecordarLosHorarios(ofrecidos: HorarioOfrecido[] | null | un
     "\nSi lo que dijo encaja con dos, pregúntale cuál de las dos antes de agendar."
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LA HORA SE DICE EN EL RELOJ DE QUIEN LA ESCUCHA
+ *
+ * La cita es un instante y no se mueve. Lo que cambia es cómo se cuenta: el
+ * mismo momento son las 9:00 para un cliente de México y las 10:00 para uno de
+ * Panamá, y los dos tienen razón.
+ *
+ * Hasta hoy el bot hablaba SIEMPRE en la zona del negocio. Un negocio con
+ * número de Panamá y clientes en México le decía a cada mexicano una hora que
+ * en su teléfono era otra — y el cliente apuntaba la que oyó.
+ *
+ * ── LO QUE NO CAMBIA, Y ES IMPORTANTE ─────────────────────────────────────
+ *
+ * · Los huecos se CALCULAN en la zona del negocio. El horario laboral es del
+ *   negocio: «abrimos de 9 a 6» son las suyas, no las de quien pregunta.
+ * · La cita se GUARDA en la zona del negocio, y así la lee su equipo y su
+ *   Google Calendar.
+ *
+ * Solo se traduce lo que se DICE. Por eso esto vive aquí, en el archivo puro,
+ * y se aplica al borde —al ofrecer y al confirmar—, no dentro del cálculo.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** ¿Se puede formatear en esta zona? Una zona inventada no falla al guardarse: falla aquí. */
+function zonaUsable(zona: string | null | undefined): boolean {
+  const z = String(zona ?? "").trim();
+  if (!z) return false;
+  try {
+    new Intl.DateTimeFormat("es-MX", { timeZone: z }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * La etiqueta de un instante, con el MISMO formato que usa el resto de la
+ * plataforma: «mié 09 de sep, 09:00».
+ *
+ * Tiene que ser idéntico al de `computeSlots` o `horarioQuePidio` dejaría de
+ * reconocer lo que la persona repite — la etiqueta es lo que se compara.
+ */
+export function etiquetaEnZona(iso: string, zona: string): string {
+  return new Intl.DateTimeFormat("es-MX", {
+    timeZone: zona,
+    weekday: "short", day: "2-digit", month: "short",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(iso));
+}
+
+/**
+ * Cómo se le cuenta una cita a esta persona.
+ *
+ * Devuelve `null` si la zona no sirve, y quien llama se queda con lo que ya
+ * tenía. NUNCA se inventa una zona: es la lección de la 0102, y aquí el daño
+ * sería el mismo con otra cara — decirle a alguien una hora que no es la suya.
+ */
+export function comoSeLoDigo(
+  iso: string | null | undefined,
+  zona: string | null | undefined,
+): { dia: string; hora: string; etiqueta: string } | null {
+  const t = String(iso ?? "").trim();
+  if (!t || !zonaUsable(zona)) return null;
+  const cuando = new Date(t);
+  if (!Number.isFinite(cuando.getTime())) return null;
+  const z = String(zona);
+  return {
+    dia: new Intl.DateTimeFormat("es-MX", {
+      timeZone: z, weekday: "long", day: "numeric", month: "long",
+    }).format(cuando),
+    hora: new Intl.DateTimeFormat("es-MX", {
+      timeZone: z, hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(cuando),
+    etiqueta: etiquetaEnZona(t, z),
+  };
+}
+
+/**
+ * Reescribe las etiquetas de los huecos para quien está escribiendo.
+ *
+ * Se cambia SOLO `label`. El `dia` y los `minutos` siguen siendo los del
+ * negocio porque son lo que usa `repartirHorarios` para agrupar por día y
+ * turno: repartir por el turno del cliente pondría «mañana y tarde» de un huso
+ * ajeno y el negocio vería su agenda ofrecida de una forma que no reconoce.
+ *
+ * Sin zona utilizable devuelve la lista TAL CUAL. Es lo que pasa en Instagram
+ * y en el chat de la web, donde no hay teléfono del que deducir nada.
+ */
+export function enLaZonaDelCliente<T extends { startISO: string; label: string }>(
+  slots: T[] | null | undefined,
+  zona: string | null | undefined,
+): T[] {
+  const lista = slots ?? [];
+  if (!zonaUsable(zona)) return [...lista];
+  const z = String(zona);
+  return lista.map((s) => (s?.startISO ? { ...s, label: etiquetaEnZona(s.startISO, z) } : s));
+}
