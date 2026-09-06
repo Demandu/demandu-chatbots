@@ -1,3 +1,4 @@
+import { ZONA_POR_PREFIJO, comoSeLee } from "@/lib/zonaHoraria";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { updateBusinessHours } from "../actions";
@@ -15,16 +16,27 @@ const DAYS: { key: string; label: string }[] = [
   { key: "sun", label: "Domingo" },
 ];
 
+/* ── SALE DEL MAPA DE PREFIJOS, NO DE UNA LISTA A MANO ────────────────────
+ *
+ * La lista escrita aquí tenía ocho zonas y NO INCLUÍA PANAMÁ — ni Costa Rica,
+ * ni Guatemala, ni El Salvador, ni Honduras, ni Nicaragua. O sea: en una
+ * plataforma para Latinoamérica, media Centroamérica no podía elegir su propia
+ * hora aunque supiera que la tenía mal.
+ *
+ * Saliendo del mismo mapa que usa la detección por teléfono, añadir un país es
+ * un sitio y no dos, y no se pueden separar.
+ */
 const TIMEZONES = [
-  "America/Mexico_City",
-  "America/Bogota",
-  "America/Lima",
-  "America/Santiago",
-  "America/Argentina/Buenos_Aires",
-  "America/New_York",
-  "America/Los_Angeles",
-  "Europe/Madrid",
-];
+  ...new Set([
+    ...Object.values(ZONA_POR_PREFIJO),
+    // Las que no se deducen de un prefijo pero se eligen a mano: Estados
+    // Unidos tiene seis husos y por eso no se adivina, pero sí se elige.
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+  ]),
+].sort();
 
 export default async function HoursPage({
   searchParams,

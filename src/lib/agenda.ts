@@ -108,9 +108,26 @@ async function ajustesDeOrg(orgId: string) {
     .maybeSingle();
   return {
     businessHours: (data?.business_hours as any) ?? {},
-    timeZone: (data?.timezone as string) || "America/Mexico_City",
+    /* ── SIN RESPALDO A CIUDAD DE MÉXICO ────────────────────────────────
+     *
+     * Aquí había `|| "America/Mexico_City"`, y era uno de los diez sitios que
+     * convertían «no lo sabemos» en una respuesta que parecía correcta. Un
+     * negocio de Panamá ofreció todas sus citas una hora corridas por esto.
+     *
+     * Ahora nulo viaja como nulo y quien lo use decide qué hacer — que en
+     * todos los casos es negarse y decirlo, no inventar un huso. */
+    timeZone: (data?.timezone as string) || null,
   };
 }
+
+/** Lo que se contesta cuando no se sabe en qué hora vive este negocio. */
+const SIN_ZONA: Fallo = {
+  ok: false,
+  motivo: "sin_datos",
+  // NO es `paraElCliente`: a quien escribe no le dice nada y no lo puede
+  // arreglar. El aviso que sí se ve está en la pantalla del negocio.
+  error: "Falta la zona horaria de este negocio: las horas saldrían corridas.",
+};
 
 /**
  * ¿Con qué agenda trabaja este cliente?
@@ -241,7 +258,11 @@ export async function horariosLibres(
     days?: number;
     maxSlots?: number;
   } = {},
-): Promise<{ slots: Slot[]; calendarId: string; conectado: boolean; enlace?: string }> {
+): Promise<{
+  slots: Slot[]; calendarId: string; conectado: boolean; enlace?: string;
+  /** No se sabe en qué hora vive este negocio. Distinto de «no hay huecos». */
+  sinZona?: boolean;
+}> {
   const durationMin = Number(opts.durationMin) || 30;
   const days = Number(opts.days) || 14;
   const maxSlots = Number(opts.maxSlots) || 6;
@@ -268,6 +289,13 @@ export async function horariosLibres(
     // valor puede venir de una petición a la API pública, no solo del bloque.
     const tipo = tipoDeEventoDeCalendly(opts.calendlyTipo);
     const { timeZone: zona } = await ajustesDeOrg(orgId);
+
+    // SIN ZONA NO SE OFRECE NADA. Etiquetar los huecos con un huso inventado
+    // es ofrecer horas que no son las del negocio, que es peor que no ofrecer.
+    if (!zona) {
+      console.error(`[agenda] sin zona horaria, no se ofrecen horarios (org ${orgId})`);
+      return { slots: [], calendarId, conectado: true, sinZona: true };
+    }
 
     try {
       const elTipo = tipo || (await primerTipoDeEvento(conexion));
@@ -301,6 +329,10 @@ export async function horariosLibres(
   if (!token) return { slots: [], calendarId, conectado: false };
 
   const { businessHours, timeZone } = await ajustesDeOrg(orgId);
+  if (!timeZone) {
+    console.error(`[agenda] sin zona horaria, no se ofrecen horarios (org ${orgId})`);
+    return { slots: [], calendarId, conectado: true, sinZona: true };
+  }
   const ahora = new Date();
 
   let ocupado: any[] = [];
@@ -428,6 +460,7 @@ export async function agendar(
 
   if (conexion.cual === "calendly") {
     const { timeZone: zona } = await ajustesDeOrg(orgId);
+    if (!zona) return SIN_ZONA;
     const cuando = new Date(Date.parse(inicio));
     const finCal = new Date(Date.parse(inicio) + durationMin * 60_000).toISOString();
 
@@ -518,6 +551,7 @@ export async function agendar(
   }
 
   const { timeZone } = await ajustesDeOrg(orgId);
+  if (!timeZone) return SIN_ZONA;
   const finISO = new Date(Date.parse(inicio) + durationMin * 60_000).toISOString();
 
   try {
@@ -755,6 +789,7 @@ export async function moverCita(
   }
 
   const { timeZone } = await ajustesDeOrg(orgId);
+  if (!timeZone) return SIN_ZONA;
   const calendarId = cita.calendario || "primary";
   // La duración de la cita que ya existe, si se sabe. Mover una cita de una
   // hora y dejarla en media es cambiarle al cliente algo que no pidió.

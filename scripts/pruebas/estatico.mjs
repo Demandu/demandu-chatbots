@@ -6358,4 +6358,118 @@ describe("Instagram contesta según de dónde venga", () => {
   });
 });
 
+
+// ─── LA ZONA HORARIA NO SE ADIVINA EN SILENCIO ───────────────────────────────
+//
+// `timezone` era `not null default 'America/Mexico_City'` y ese mismo valor
+// estaba escrito a mano como respaldo en DIEZ sitios. La base no podía
+// representar «no sé dónde está este negocio».
+//
+// El 5 de septiembre de 2026 un negocio de Panamá ofreció todas sus citas una
+// hora corridas. Nadie lo vio: la pantalla enseñaba una zona plausible y el
+// síntoma no se parecía a la causa.
+describe("La zona horaria del negocio", () => {
+  const AG = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agenda.ts"), "utf8"));
+
+  test("SE ACABÓ EL RESPALDO A CIUDAD DE MÉXICO donde se agenda", () => {
+    // Cada uno de esos respaldos convertía «no lo sabemos» en una respuesta que
+    // parecía correcta.
+    esperar(/America\/Mexico_City/.test(AG)).falso(
+      "`agenda.ts` vuelve a inventarse la zona horaria cuando no la sabe",
+    );
+    const acciones = sinComentarios(fs.readFileSync(path.join(SRC, "app/(dashboard)/settings/actions.ts"), "utf8"));
+    esperar(/America\/Mexico_City/.test(acciones)).falso(
+      "guardar el horario laboral vuelve a re-imponer México a quien no lo tocó",
+    );
+    const motor = sinComentarios(fs.readFileSync(path.join(SRC, "app/api/motor/agenda/route.ts"), "utf8"));
+    esperar(/America\/Mexico_City/.test(motor)).falso(
+      "el motor vuelve a inventarse la zona al escribir una fecha",
+    );
+  });
+
+  test("sin zona NO se ofrecen horarios ni se agenda", () => {
+    // Etiquetar los huecos con un huso inventado es ofrecer horas que no son
+    // las del negocio — peor que no ofrecer ninguna.
+    // LA GUARDA ENTERA, no la cadena suelta: metiéndole un `if (false)`
+    // delante, contar apariciones de `sinZona: true` seguía pasando en verde.
+    esperar(/if \(!zona\) \{[\s\S]{0,200}sinZona: true/.test(AG)).verdadero(
+      "la agenda de Calendly ofrece horarios sin saber en qué huso está",
+    );
+    esperar(/if \(!timeZone\) \{[\s\S]{0,200}sinZona: true/.test(AG)).verdadero(
+      "la agenda de Google ofrece horarios sin saber en qué huso está",
+    );
+    esperar((AG.match(/return SIN_ZONA;/g) ?? []).length >= 3).verdadero(
+      "agendar o mover una cita sigue funcionando sin zona horaria",
+    );
+  });
+
+  test("«sin zona» NO se le enseña al cliente", () => {
+    // A quien escribe no le dice nada y no lo puede arreglar. El aviso que sí
+    // se ve está en la pantalla del negocio.
+    const i = AG.indexOf("const SIN_ZONA");
+    esperar(i > 0).verdadero("desapareció el fallo de zona horaria");
+    esperar(/paraElCliente/.test(AG.slice(i, i + 300))).falso(
+      "el error interno de la zona horaria se le enseña a quien está agendando",
+    );
+  });
+
+  test("PUESTA NO ES MIRADA: se pide confirmar una vez", () => {
+    // La zona de México parecía perfectamente correcta y corrió todas las citas
+    // de una cuenta una hora.
+    const iaAgenda = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/agenda.ts"), "utf8"));
+    // La CONDICIÓN, no el nombre: el parámetro sigue declarado aunque nadie lo
+    // mire, y la regla pasaba en verde con el aviso desactivado.
+    esperar(/v\.zonaConfirmada === false/.test(iaAgenda)).verdadero(
+      "la pantalla no distingue una zona confirmada de una que nadie miró",
+    );
+    const pag = fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/ai/page.tsx"), "utf8");
+    // Con el borde: `<ConfirmarZonaX` contiene `<ConfirmarZona`.
+    esperar(/<ConfirmarZona\b/.test(pag)).verdadero("el aviso de la zona ya no sale en la pantalla de la IA");
+    esperar(/zona_confirmada/.test(pag)).verdadero("la pantalla no lee si la zona está confirmada");
+  });
+
+  test("confirmar guarda la zona Y la confirmación, juntas", () => {
+    // Guardar solo la confirmación dejaría al negocio marcado como «ya lo miró»
+    // con la zona vieja puesta: el fallo original con un sello de aprobado.
+    const acc = sinComentarios(fs.readFileSync(path.join(SRC, "app/(dashboard)/settings/zonaActions.ts"), "utf8"));
+    esperar(/timezone: z, zona_confirmada: true/.test(acc)).verdadero(
+      "confirmar no guarda las dos cosas a la vez",
+    );
+    esperar(/zonaValida\(z\)/.test(acc)).verdadero(
+      "se guarda lo que mande el navegador sin comprobar que esa zona exista",
+    );
+  });
+
+  test("el selector de zonas sale del mapa, y ya no se deja fuera a nadie", () => {
+    // La lista escrita a mano tenía ocho zonas y NO incluía Panamá, ni Costa
+    // Rica, ni Guatemala, ni El Salvador, ni Honduras, ni Nicaragua: en una
+    // plataforma para Latinoamérica, media Centroamérica no podía elegir su
+    // propia hora aunque supiera que la tenía mal.
+    const hours = fs.readFileSync(path.join(SRC, "app/(dashboard)/settings/hours/page.tsx"), "utf8");
+    // Que se VUELQUE en la lista, no que esté importado: quitando el spread, el
+    // import se queda y la regla pasaba en verde con la lista a mano de vuelta.
+    esperar(/\.\.\.Object\.values\(ZONA_POR_PREFIJO\)/.test(hours)).verdadero(
+      "el selector de zonas volvió a ser una lista escrita a mano",
+    );
+    const zonas = sinComentarios(fs.readFileSync(path.join(SRC, "lib/zonaHoraria.ts"), "utf8"));
+    for (const z of ["America/Panama", "America/Costa_Rica", "America/Guatemala", "America/Bogota"]) {
+      esperar(zonas.includes(z)).verdadero(`falta ${z} en el mapa de zonas`);
+    }
+  });
+
+  test("Estados Unidos NO se deduce de su prefijo", () => {
+    // Seis husos y ninguno mayoritario: adivinar sería tirar una moneda, y una
+    // moneda con cara de certeza es lo que causó todo esto. Elegirlo a mano sí
+    // se puede.
+    const zonas = sinComentarios(fs.readFileSync(path.join(SRC, "lib/zonaHoraria.ts"), "utf8"));
+    const i = zonas.indexOf("ZONA_POR_PREFIJO");
+    const mapa = zonas.slice(i, zonas.indexOf("};", i));
+    esperar(/"1":/.test(mapa)).falso("se está adivinando la zona de un número de Estados Unidos");
+    const hours = fs.readFileSync(path.join(SRC, "app/(dashboard)/settings/hours/page.tsx"), "utf8");
+    esperar(/America\/New_York/.test(hours)).verdadero(
+      "un negocio de Estados Unidos no puede elegir su zona a mano",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

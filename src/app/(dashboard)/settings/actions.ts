@@ -1,5 +1,7 @@
 "use server";
 
+import { zonaValida } from "@/lib/zonaHoraria";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -22,8 +24,24 @@ export async function updateBusinessHours(formData: FormData) {
       close: s(formData.get(`${d}_close`)) || "18:00",
     };
   }
-  const timezone = s(formData.get("timezone")) || "America/Mexico_City";
-  await createClient().from("organizations").update({ business_hours, timezone }).eq("id", orgId);
+  /* ── ELEGIRLA A MANO ES CONFIRMARLA ──────────────────────────────────────
+   *
+   * Aquí había `|| "America/Mexico_City"`: guardar el horario laboral sin tocar
+   * el selector le RE-IMPONÍA México a cualquiera. Era uno de los diez sitios
+   * que convertían «no lo sabemos» en una respuesta plausible.
+   *
+   * Ahora, si la eligió, se guarda Y se marca confirmada —vino de una persona
+   * mirando la pantalla, que es la única fuente que de verdad cuenta—. Y si el
+   * campo llega vacío no se toca nada: dejar la de antes es honesto, pisarla
+   * con una suposición no.
+   */
+  const timezone = s(formData.get("timezone"));
+  const cambios: Record<string, unknown> = { business_hours };
+  if (zonaValida(timezone)) {
+    cambios.timezone = timezone;
+    cambios.zona_confirmada = true;
+  }
+  await createClient().from("organizations").update(cambios).eq("id", orgId);
   revalidatePath("/settings/hours");
   redirect("/settings/hours?saved=1");
 }

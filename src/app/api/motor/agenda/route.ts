@@ -92,12 +92,21 @@ export async function POST(req: Request) {
   return Response.json({ error: "acción desconocida" }, { status: 400 });
 }
 
-/** Una fecha, escrita como la lee una persona, en la zona del negocio. */
+/**
+ * Una fecha, escrita como la lee una persona, en la zona del negocio.
+ *
+ * SIN ZONA SE DEVUELVE VACÍO, no una fecha en el huso de otro país. Aquí había
+ * `|| "America/Mexico_City"` y era uno de los diez respaldos que convirtieron
+ * «no lo sabemos» en una respuesta plausible: decirle a alguien «tu cita es el
+ * lunes a las 10» con una hora que no es la suya es peor que no decirle nada.
+ */
 async function comoSeLee(orgId: string, iso: string): Promise<string> {
   const { data } = await createAdminClient()
     .from("organizations").select("timezone").eq("id", orgId).maybeSingle();
+  const zona = (data?.timezone as string) || "";
+  if (!zona) return "";
   return new Intl.DateTimeFormat("es-MX", {
-    timeZone: (data?.timezone as string) || "America/Mexico_City",
+    timeZone: zona,
     weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(iso));
 }

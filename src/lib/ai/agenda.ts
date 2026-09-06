@@ -40,6 +40,8 @@ export function loQueFaltaParaAgendar(v: {
   herramientas: string[];
   conectado: boolean;
   timezone: string;
+  /** ¿Alguien la miró y dijo que era la suya? Ver `zonaHoraria.ts`. */
+  zonaConfirmada?: boolean;
   horas: Record<string, DiaLaboral>;
 }): EstadoAgenda {
   const h = Array.isArray(v.herramientas) ? v.herramientas : [];
@@ -64,6 +66,20 @@ export function loQueFaltaParaAgendar(v: {
 
     if (!String(v.timezone ?? "").trim()) {
       problemas.push("Falta la zona horaria: las horas que ofrezca pueden no ser las tuyas.");
+    } else if (v.zonaConfirmada === false) {
+      /* ── PUESTA PERO SIN MIRAR ES CASI IGUAL DE MALO ────────────────────
+       *
+       * Es el caso que se llevó por delante una cuenta entera: la zona decía
+       * «America/Mexico_City», parecía perfectamente correcta, y el negocio
+       * estaba en Panamá. Todas sus citas salieron una hora corridas y el
+       * síntoma no se parecía en nada a la causa.
+       *
+       * Va como AVISO y no como problema: la agenda funciona, y bloquearla por
+       * esto sería peor. Pero tiene que estar delante hasta que alguien la
+       * mire una vez. */
+      avisos.push(
+        "Nadie ha confirmado tu zona horaria: si no es la tuya, todas tus citas saldrán corridas.",
+      );
     }
 
     // AGENDAR SIN MIRAR ANTES ES CÓMO SE PISAN DOS CITAS. La acción de reservar

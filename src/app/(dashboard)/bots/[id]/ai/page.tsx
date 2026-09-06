@@ -17,6 +17,7 @@ import {
 import { saveAiSettings, elegirTiendaDelAgente, usarOtroAgente } from "./actions";
 import { Sparkles, BookOpen } from "lucide-react";
 import { EstadoDeAgenda } from "@/components/bots/EstadoDeAgenda";
+import { ConfirmarZona } from "@/components/ConfirmarZona";
 import { loQueFaltaParaAgendar, type DiaLaboral } from "@/lib/ai/agenda";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +69,7 @@ export default async function BotAiPage({
     // como citas ofrecidas con horas de diferencia.
     supabase
       .from("organizations")
-      .select("timezone, business_hours")
+      .select("timezone, business_hours, zona_confirmada")
       .eq("id", (await getCurrentOrgId()) ?? "")
       .maybeSingle(),
   ]);
@@ -133,6 +134,9 @@ export default async function BotAiPage({
     herramientas: encendidas,
     conectado: Boolean(integracion),
     timezone: String(org?.timezone ?? ""),
+    // PUESTA NO ES MIRADA. La zona de México parecía perfectamente correcta y
+    // corrió todas las citas de una cuenta una hora.
+    zonaConfirmada: (org as any)?.zona_confirmada === true,
     horas,
   });
 
@@ -326,6 +330,14 @@ export default async function BotAiPage({
                   <p className="mb-3 mt-0.5 text-xs text-ink-2">
                     Lo que conectas se enciende solo. Lo demás lo marcas tú.
                   </p>
+
+                  {/* La zona horaria va ANTES que todo lo demás de la agenda:
+                      conectar el calendario con la zona equivocada solo sirve
+                      para agendar mal más rápido. */}
+                  <ConfirmarZona
+                    guardada={(org?.timezone as string) ?? null}
+                    confirmada={(org as any)?.zona_confirmada === true}
+                  />
 
                   {/* ── CONECTAR LA AGENDA, AQUÍ MISMO ──────────────────────
                       Antes había que irse a Ajustes → Integraciones, volver, y

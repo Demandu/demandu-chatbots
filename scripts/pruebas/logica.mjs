@@ -24,6 +24,9 @@ import {
 } from "../../src/lib/integrations/calendly.ts";
 import { accionesDelPrompt, CLAVES_DE_ACCION, sinMarcadores } from "../../src/lib/ai/acciones.ts";
 import {
+  ZONA_POR_PREFIJO, zonaDelTelefono, zonaValida, comoSeLee, hayQueConfirmar, zonaQueManda,
+} from "../../src/lib/zonaHoraria.ts";
+import {
   superficieDe, coincidenLasPalabras, reglaQueAplica, dondeContestar,
   puedeEscribirEnPrivado, TIENE_COMENTARIO_PUBLICO,
 } from "../../src/lib/canales/instagramReglas.ts";
@@ -4831,6 +4834,162 @@ describe("Una sola vez por persona", () => {
 
   test("quien lo apaga a propósito puede insistir", () => {
     esperar(puedeEscribirEnPrivado({ una_por_persona: false }, true)).igual(true);
+  });
+});
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * EN QUÉ HORA ESTÁ ESTE NEGOCIO
+ *
+ * `timezone` era `not null default 'America/Mexico_City'`: la base no podía
+ * representar «no sé dónde está», así que todos nacían en Ciudad de México.
+ *
+ * Un negocio de Panamá ofreció TODAS sus citas una hora corridas. El bot decía
+ * «09:00» y el evento caía a las 10:00. Nadie lo vio, porque una zona plausible
+ * no se parece a un error.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("La zona que sugiere un teléfono", () => {
+  test("EL CASO REAL: un +507 es Panamá, no Ciudad de México", () => {
+    esperar(zonaDelTelefono("50762171875")).igual("America/Panama");
+    esperar(zonaDelTelefono("+507 6217-1875")).igual("America/Panama");
+  });
+
+  test("GANA EL PREFIJO MÁS LARGO", () => {
+    esperar(zonaDelTelefono("18095551234")).igual("America/Santo_Domingo");
+    esperar(zonaDelTelefono("5215540929167")).igual("America/Mexico_City");
+    esperar(zonaDelTelefono("5511999998888")).igual("America/Sao_Paulo");
+
+    // CON UN MAPA DONDE UN PREFIJO ES PRINCIPIO DE OTRO, que es el caso que la
+    // regla existe para resolver. Con los prefijos reales de hoy no se puede
+    // demostrar —ninguno solapa— y quedaría una regla que nadie prueba hasta
+    // el día que alguien añada el «1» de Estados Unidos al lado del «1809».
+    const solapado = { "1": "America/New_York", "1809": "America/Santo_Domingo" };
+    esperar(zonaDelTelefono("18095551234", solapado)).igual("America/Santo_Domingo");
+    esperar(zonaDelTelefono("12125551234", solapado)).igual("America/New_York");
+  });
+
+  test("ESTADOS UNIDOS NO SE ADIVINA", () => {
+    // Seis husos y ninguno mayoritario: adivinar sería tirar una moneda, y una
+    // moneda con cara de certeza es lo que causó todo esto.
+    esperar(zonaDelTelefono("12125551234")).igual(null);
+    esperar(zonaDelTelefono("14155551234")).igual(null);
+  });
+
+  test("sin número no se inventa nada", () => {
+    esperar(zonaDelTelefono("")).igual(null);
+    esperar(zonaDelTelefono(null)).igual(null);
+    esperar(zonaDelTelefono("999")).igual(null);
+  });
+
+  test("todas las zonas del mapa existen de verdad", () => {
+    // Una zona mal escrita aquí no falla al guardarse: falla meses después, al
+    // formatear la hora en el mensaje de un cliente.
+    for (const z of Object.values(ZONA_POR_PREFIJO)) {
+      esperar(zonaValida(z)).igual(true);
+    }
+  });
+});
+
+describe("Una zona horaria que no existe no se guarda", () => {
+  test("lo que no es una zona se rechaza", () => {
+    esperar(zonaValida("America/Panama")).igual(true);
+    esperar(zonaValida("Europe/Madrid")).igual(true);
+    esperar(zonaValida("America/Atlantis")).igual(false);
+    esperar(zonaValida("GMT-5")).igual(false);
+    esperar(zonaValida("")).igual(false);
+    esperar(zonaValida(null)).igual(false);
+  });
+});
+
+describe("La zona, escrita para una persona", () => {
+  test("se lee la ciudad y el desfase, no el identificador", () => {
+    // Nadie sabe qué es `America/Panama`. Pedirle a alguien que confirme eso es
+    // pedirle que confirme una cadena de texto.
+    const t = comoSeLee("America/Panama", new Date("2026-09-06T18:00:00Z"));
+    esperar(t.includes("Panama")).igual(true);
+    esperar(t.includes("GMT-5")).igual(true);
+    esperar(t.includes("13:00")).igual(true);
+    // Y NO el identificador crudo: «America/Panama» es lo que hay que quitar,
+    // no lo que hay que enseñar.
+    esperar(t.includes("America/")).igual(false);
+    // Los guiones bajos también: «Buenos_Aires» no lo escribe nadie así.
+    esperar(comoSeLee("America/Argentina/Buenos_Aires").includes("Buenos Aires")).igual(true);
+    esperar(comoSeLee("America/Argentina/Buenos_Aires").includes("_")).igual(false);
+  });
+
+  test("la hora que enseña es la de ESA zona, para poder mirar el reloj", () => {
+    const momento = new Date("2026-09-06T18:00:00Z");
+    esperar(comoSeLee("America/Mexico_City", momento).includes("12:00")).igual(true);
+    esperar(comoSeLee("America/Panama", momento).includes("13:00")).igual(true);
+  });
+
+  test("una zona rota no pinta un aviso a medias", () => {
+    esperar(comoSeLee("America/Atlantis")).igual("");
+    esperar(comoSeLee(null)).igual("");
+  });
+});
+
+describe("Qué zona manda, y de dónde salió", () => {
+  test("LO CONFIRMADO GANA SIEMPRE", () => {
+    // Si no, el negocio de Panamá que configura desde un viaje a Madrid se
+    // encontraría sus citas mudadas a Europa.
+    const r = zonaQueManda({
+      guardada: "America/Panama", confirmada: true,
+      navegador: "Europe/Madrid", telefono: "50762171875",
+    });
+    esperar(r.zona).igual("America/Panama");
+    esperar(r.de).igual("confirmada");
+  });
+
+  test("sin confirmar, manda el navegador", () => {
+    const r = zonaQueManda({ guardada: "America/Mexico_City", navegador: "America/Panama" });
+    esperar(r.zona).igual("America/Panama");
+    esperar(r.de).igual("navegador");
+  });
+
+  test("sin navegador, lo guardado vale más que el teléfono", () => {
+    // Alguien pudo ponerla a mano y no haber vuelto a pasar por el aviso.
+    const r = zonaQueManda({ guardada: "America/Bogota", telefono: "50762171875" });
+    esperar(r.zona).igual("America/Bogota");
+    esperar(r.de).igual("guardada");
+  });
+
+  test("SE DICE DE DÓNDE SALIÓ, sin mentir", () => {
+    // Un aviso que dice «detectada de tu navegador» cuando salió de la base es
+    // peor que uno que no lo dice: manda a mirar donde no está el problema.
+    esperar(zonaQueManda({ guardada: "America/Bogota" }).de).igual("guardada");
+    esperar(zonaQueManda({ navegador: "America/Bogota" }).de).igual("navegador");
+    esperar(zonaQueManda({ telefono: "50762171875" }).de).igual("telefono");
+  });
+
+  test("sin nada, se dice que no hay — no se cae a México", () => {
+    // Es el fallo entero. Una respuesta por defecto que parece correcta es peor
+    // que no tener respuesta: sin estado «sin configurar» no hay qué avisar.
+    const r = zonaQueManda({});
+    esperar(r.zona).igual(null);
+    esperar(r.de).igual("ninguna");
+  });
+
+  test("una zona inventada no se usa aunque esté guardada y confirmada", () => {
+    const r = zonaQueManda({ guardada: "America/Atlantis", confirmada: true, telefono: "50762171875" });
+    esperar(r.zona).igual("America/Panama");
+    esperar(r.de).igual("telefono");
+  });
+});
+
+describe("Confirmar la zona se pide UNA vez", () => {
+  test("mientras no la confirme, se pregunta aunque parezca bien", () => {
+    // La de México parecía bien y estaba mal.
+    esperar(hayQueConfirmar(false)).igual(true);
+    esperar(hayQueConfirmar(null)).igual(true);
+    esperar(hayQueConfirmar(undefined)).igual(true);
+  });
+
+  test("en cuanto dice que sí, no se le vuelve a molestar", () => {
+    // Un aviso que sigue saliendo después de atenderlo pasa a ser decorado, y
+    // entonces tampoco sirve para el siguiente problema.
+    esperar(hayQueConfirmar(true)).igual(false);
   });
 });
 
