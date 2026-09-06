@@ -145,6 +145,20 @@ export default async function BotInstallPage({
               envíos, es lo primero que el cliente necesita ver. */}
           {diagnostico && <EstadoMeta d={diagnostico} />}
 
+          {/* ── SIN CONECTAR SE DICE, NO SE INSINÚA ────────────────────────
+              Antes esta pantalla solo enseñaba un botón. Un botón sin pulsar no
+              es un aviso: un cliente nuevo creó su chatbot de Instagram, no
+              pudo conectarlo, y se quedó esperando mensajes que nunca iban a
+              llegar. Lo que falta hay que decirlo con todas las letras. */}
+          {channel !== "webchat" && !(channel === "instagram" ? ig : wa) && (
+            <div className="rounded-2xl border border-danger/40 bg-danger/5 p-4 text-sm leading-relaxed text-ink-2">
+              <b className="text-ink">Este chatbot todavía no está conectado a {LABEL[channel]}.</b>{" "}
+              Está creado y puedes seguir preparándolo, pero{" "}
+              <b className="text-ink">no va a recibir ni responder ningún mensaje</b> hasta que
+              conectes la cuenta aquí abajo.
+            </div>
+          )}
+
           {channel === "instagram" && ig && (
             <div className="rounded-2xl border border-success/40 bg-success/5 p-4 text-sm text-ink-2">
               Conectado a{" "}

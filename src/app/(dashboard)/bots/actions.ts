@@ -16,6 +16,51 @@ const CHANNEL_LABEL: Record<string, string> = {
   webchat: "Web",
 };
 
+/**
+ * ¿Este chatbot está DE VERDAD conectado a su canal?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EXISTE POR UN FALLO QUE SE VIO CON UN CLIENTE NUEVO. Creó su chatbot de
+ * Instagram, le dio a conectar, Meta no le dejó —la revisión de los permisos de
+ * Instagram sigue pendiente, así que hoy solo conectan las cuentas con rol en
+ * la app— y aun así terminó el asistente, que le dijo «¡Y listo!». Salió
+ * convencido de que su chatbot estaba funcionando. No lo estaba: no iba a
+ * recibir un solo mensaje.
+ *
+ * El asistente no puede saberlo por su cuenta: la conexión se hace saliendo a
+ * Meta y volviendo por otra ruta, así que hay que PREGUNTAR.
+ *
+ * `webchat` siempre cuenta como conectado y no es una excepción tramposa: el
+ * widget no se «conecta» a ningún sitio, se pega en la web del cliente. No hay
+ * nada que Meta pueda negar.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function canalConectado(botId: string): Promise<boolean> {
+  const orgId = await getCurrentOrgId();
+  if (!orgId || !botId) return false;
+  const supabase = createClient();
+
+  const { data: bot } = await supabase
+    .from("bots").select("channel").eq("id", botId).maybeSingle();
+  const canal = String((bot as any)?.channel ?? "webchat");
+  if (canal === "webchat") return true;
+
+  // CADA CANAL TIENE SU TABLA, y las que no la tienen NO se dan por buenas.
+  // Escribir `canal === "instagram" ? ig : wa` metía a Messenger en la tabla de
+  // WhatsApp: como ahí nunca hay fila, habría contestado siempre «no
+  // conectado» — que da la casualidad de ser cierto hoy, pero por accidente. Un
+  // acierto por accidente deja de acertar el día que alguien añada Messenger.
+  const TABLA: Record<string, string> = {
+    instagram: "instagram_channels",
+    whatsapp: "whatsapp_channels",
+  };
+  const tabla = TABLA[canal];
+  if (!tabla) return false;
+
+  const { data } = await supabase.from(tabla).select("id").eq("bot_id", botId).maybeSingle();
+  return !!data;
+}
+
 /** Crea un bot + su flujo inicial (semilla) y abre el editor. */
 export async function createBot(formData: FormData) {
   const rawCh = String(formData.get("channel") ?? "").trim();

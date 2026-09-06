@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { ConnectButton } from "@/components/builder/ConnectButton";
 import { LanaAvatar } from "@/components/Lana";
-import { createDraftBot, setWelcomeMessage } from "@/app/(dashboard)/bots/actions";
+import { canalConectado, createDraftBot, setWelcomeMessage } from "@/app/(dashboard)/bots/actions";
 import type { BotChannel } from "@/lib/flow/types";
-import { Check, ArrowRight, ArrowLeft, Loader2 } from "lucide-react";
+import { Check, ArrowRight, ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 
 const CHANNELS: { value: BotChannel; label: string; desc: string; color: string }[] = [
   { value: "whatsapp", label: "WhatsApp", desc: "El canal más usado por tus clientes", color: "#25D366" },
@@ -19,12 +19,25 @@ const CHANNELS: { value: BotChannel; label: string; desc: string; color: string 
 const STEPS = ["Canal", "Nombre", "Conectar", "Primer mensaje"];
 const DEFAULT_WELCOME = "¡Hola! 👋 Gracias por escribirnos. ¿En qué te puedo ayudar hoy?";
 
-function lanaText(step: number, channelLabel: string) {
+/*
+ * LO QUE DICE LANA NO PUEDE PROMETER LO QUE NO PASÓ.
+ *
+ * El paso 4 terminaba con «¡Y listo!» pasara lo que pasara. Un cliente nuevo
+ * creó su chatbot de Instagram, no consiguió conectarlo —Meta no le dejó—, leyó
+ * «listo» y salió creyendo que ya funcionaba. No iba a recibir un solo mensaje.
+ *
+ * Por eso el texto del último paso depende de si el canal quedó conectado DE
+ * VERDAD, que es un dato que hay que pedirle al servidor.
+ */
+function lanaText(step: number, channelLabel: string, conectado: boolean | null) {
   switch (step) {
     case 1: return "¡Hola! Soy Lana 🩷 Te acompaño a crear tu chatbot. Primero, ¿dónde vas a atender a tus clientes?";
     case 2: return `Perfecto, ${channelLabel}. Ahora ponle un nombre para reconocerlo — como “Ventas” o “Soporte”. Tranqui, se puede cambiar después.`;
     case 3: return "Vamos a conectarlo para que reciba mensajes de verdad. Si prefieres, puedes hacerlo después desde la pestaña Conexión.";
-    case 4: return "Por último, escribe el primer mensaje que enviará tu chatbot cuando alguien le escriba. ¡Y listo!";
+    case 4:
+      return conectado === false
+        ? `Escribe el primer mensaje de tu chatbot. Eso sí: ${channelLabel} todavía NO está conectado, así que aún no le van a llegar mensajes.`
+        : "Por último, escribe el primer mensaje que enviará tu chatbot cuando alguien le escriba. ¡Y listo!";
     default: return "";
   }
 }
@@ -40,10 +53,32 @@ export function NewBotWizard({ initialChannel }: { initialChannel?: string }) {
   const [welcome, setWelcome] = useState(DEFAULT_WELCOME);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // `null` = todavía no lo hemos preguntado. NO se inicializa en `true`: eso
+  // haría que el caso bueno fuera el que se enseña mientras no se sabe, que es
+  // justo la mentira que estamos quitando.
+  const [conectado, setConectado] = useState<boolean | null>(null);
 
   const chMeta = CHANNELS.find((c) => c.value === channel);
 
   const pick = (ch: BotChannel) => { setChannel(ch); setStep(2); };
+
+  /**
+   * Del paso 3 al 4 se le PREGUNTA al servidor si el canal quedó conectado.
+   *
+   * No se puede saber de otra forma: conectar es salir a Meta y volver por otra
+   * ruta, así que el asistente no ve nada de lo que pasó por el camino. Si la
+   * consulta falla se asume que NO está conectado — ante la duda, avisar de más
+   * es mucho mejor que decirle «listo» a quien no lo tiene.
+   */
+  const irAlUltimoPaso = async () => {
+    setStep(4);
+    if (!botId) return;
+    try {
+      setConectado(await canalConectado(botId));
+    } catch {
+      setConectado(false);
+    }
+  };
 
   const create = async () => {
     if (!channel) return;
@@ -65,7 +100,10 @@ export function NewBotWizard({ initialChannel }: { initialChannel?: string }) {
     try {
       await setWelcomeMessage(flowId, welcome || DEFAULT_WELCOME);
     } catch { /* seguimos igual */ }
-    router.push(`/bots/${botId}`);
+    // SIN CONECTAR SE ATERRIZA EN CONEXIÓN, no en el editor. Mandar a alguien
+    // al editor de flujos de un chatbot que no recibe mensajes es enseñarle a
+    // decorar una puerta que no abre.
+    router.push(conectado === false ? `/bots/${botId}/install` : `/bots/${botId}`);
   };
 
   return (
@@ -75,7 +113,7 @@ export function NewBotWizard({ initialChannel }: { initialChannel?: string }) {
         <LanaAvatar size={64} />
         <div className="rounded-2xl rounded-bl-md border border-pink/25 bg-gradient-to-br from-pink/10 to-violet/10 px-4 py-3">
           <div className="text-[11px] font-bold uppercase tracking-wide text-pink">Lana</div>
-          <p className="text-sm text-ink">{lanaText(step, chMeta?.label ?? "")}</p>
+          <p className="text-sm text-ink">{lanaText(step, chMeta?.label ?? "", conectado)}</p>
         </div>
       </div>
 
@@ -165,8 +203,8 @@ export function NewBotWizard({ initialChannel }: { initialChannel?: string }) {
             )}
           </div>
           <div className="mt-6 flex items-center justify-between">
-            <button onClick={() => setStep(4)} className="text-sm font-semibold text-ink-3 transition hover:text-ink">Conectar después</button>
-            <button onClick={() => setStep(4)} className="btn-primary">Continuar <ArrowRight className="h-4 w-4" /></button>
+            <button onClick={irAlUltimoPaso} className="text-sm font-semibold text-ink-3 transition hover:text-ink">Conectar después</button>
+            <button onClick={irAlUltimoPaso} className="btn-primary">Continuar <ArrowRight className="h-4 w-4" /></button>
           </div>
         </div>
       )}
@@ -176,6 +214,20 @@ export function NewBotWizard({ initialChannel }: { initialChannel?: string }) {
         <div className="card-l p-6">
           <h2 className="font-display text-xl font-bold text-ink">Tu primer mensaje</h2>
           <p className="mt-1 text-sm text-ink-2">Esto es lo que tu chatbot responderá cuando alguien le escriba por primera vez.</p>
+
+          {/* EL AVISO VA AQUÍ, ANTES DEL BOTÓN DE TERMINAR, y no en una pantalla
+              posterior: quien termina el asistente tiene que salir sabiendo lo
+              que tiene, no descubrirlo cuando nadie le escriba. */}
+          {conectado === false && (
+            <div className="mt-4 flex gap-3 rounded-xl border border-danger/40 bg-danger/5 p-4 text-sm leading-relaxed text-ink-2">
+              <AlertTriangle className="h-5 w-5 flex-none text-danger" />
+              <div>
+                <b className="text-ink">{chMeta?.label} todavía no está conectado.</b> Tu chatbot se va a
+                crear igual y puedes seguir preparándolo, pero <b className="text-ink">no va a recibir ni
+                un mensaje</b> hasta que conectes la cuenta. Al terminar te llevamos a esa pantalla.
+              </div>
+            </div>
+          )}
           <div className="mt-4">
             <label className="mb-1.5 block text-xs font-semibold text-ink-2">Mensaje de bienvenida</label>
             <textarea
@@ -189,7 +241,11 @@ export function NewBotWizard({ initialChannel }: { initialChannel?: string }) {
           <div className="mt-6 flex items-center justify-between">
             <button onClick={() => setStep(3)} className="btn-soft"><ArrowLeft className="h-4 w-4" /> Atrás</button>
             <button onClick={finish} disabled={busy} className="btn-primary">
-              {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Terminando…</> : <><Check className="h-4 w-4" /> Terminar y abrir mi chatbot</>}
+              {busy
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Terminando…</>
+                : conectado === false
+                  ? <><ArrowRight className="h-4 w-4" /> Terminar e ir a conectar</>
+                  : <><Check className="h-4 w-4" /> Terminar y abrir mi chatbot</>}
             </button>
           </div>
         </div>
