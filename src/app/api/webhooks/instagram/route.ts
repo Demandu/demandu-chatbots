@@ -1,0 +1,767 @@
+import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { agenteDelBot } from "@/lib/ai/agentes";
+import { runWebFlow, chooseWebFlow } from "@/lib/flow/webRuntime";
+import { reglaQueAplica, superficieDe, dondeContestar, puedeEscribirEnPrivado } from "@/lib/canales/instagramReglas";
+import {
+  modoDeRespuestaPublica, preguntaParaElComentario, limpiarParaComentario, sePuedePublicar,
+} from "@/lib/canales/comentarioPublico";
+import { aiAnswer } from "@/lib/ai/answer";
+import { cerrarRecorrido } from "@/lib/flow/flowRuns";
+import {
+  leerEventos, abreConversacion, textoParaElFlujo,
+  type EventoInstagram,
+} from "@/lib/canales/instagramEntrante";
+import { enviarDm, responderEnPrivado, responderComentario, perfilDeInstagram } from "@/lib/canales/instagramEnviar";
+import { firmaValida } from "@/lib/canales/instagramFirma";
+import type { Flow } from "@/lib/flow/types";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * El webhook de Instagram: por aquí entra TODO lo que pasa en la cuenta del
+ * cliente — mensajes directos, comentarios, respuestas a historias y menciones.
+ *
+ * ES UN ENDPOINT PÚBLICO SIN SESIÓN. Meta llama desde sus servidores, así que
+ * no hay usuario, ni cookie, ni RLS que valga: se usa la llave de servicio.
+ * Por eso lo PRIMERO que hace es comprobar la firma. Sin esa comprobación,
+ * cualquiera que sepa la dirección podría inventarse mensajes de clientes,
+ * meter conversaciones falsas en la Bandeja y gastar la cuota de IA del
+ * cliente. La firma es lo único que separa este endpoint de un formulario
+ * abierto a internet.
+ *
+ * SE CONTESTA 200 SIEMPRE (después de la firma). Si Meta recibe un error,
+ * reintenta; y si reintenta muchas veces, DESACTIVA la suscripción del
+ * cliente. Un fallo tonto procesando un mensaje no puede acabar en «a este
+ * cliente le dejó de funcionar Instagram y nadie sabe desde cuándo».
+ */
+
+/** Meta manda el reto de verificación aquí al guardar la URL en el panel. */
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const modo = url.searchParams.get("hub.mode");
+  const token = url.searchParams.get("hub.verify_token");
+  const reto = url.searchParams.get("hub.challenge");
+
+  const esperado = process.env.META_VERIFY_TOKEN ?? "";
+  if (!esperado) {
+    console.error("[ig webhook] falta META_VERIFY_TOKEN");
+    return new NextResponse("no configurado", { status: 503 });
+  }
+  if (modo === "subscribe" && token === esperado && reto) {
+    // Texto plano y tal cual: Meta compara la respuesta carácter a carácter.
+    return new NextResponse(reto, { status: 200, headers: { "content-type": "text/plain" } });
+  }
+  return new NextResponse("no", { status: 403 });
+}
+
+export async function POST(req: Request) {
+  // EL CUERPO SE LEE COMO TEXTO, NO CON `req.json()`. La firma se calcula sobre
+  // los bytes exactos que mandó Meta: si se parsea y se vuelve a serializar,
+  // cualquier diferencia de espacios o de orden cambia el HMAC y la firma
+  // válida se rechazaría. Esto solo se puede hacer bien una vez.
+  const crudo = await req.text();
+
+  // ── QUIÉN FIRMA ESTO ─────────────────────────────────────────────────────
+  //
+  // LA APP DE INSTAGRAM, NO LA DE FACEBOOK. Son dos apps distintas con dos
+  // claves distintas, y este webhook lo manda la de Instagram — la misma con la
+  // que el cliente inició sesión. Verificar con la de Facebook rechaza
+  // ABSOLUTAMENTE TODO con un 401.
+  //
+  // Y ese 401 es el fallo más silencioso de toda la plataforma: Meta cree que
+  // entregó, la pantalla dice «conectado», y no llega ni un mensaje. Nos costó
+  // una tarde. Por eso abajo se deja constancia cuando una firma no cuadra.
+  //
+  // Se aceptan las dos claves porque el canal de Messenger, cuando exista,
+  // llegará firmado por la de Facebook a este mismo sitio. Ambas son NUESTRAS:
+  // aceptar cualquiera de las dos no abre la puerta a nadie.
+  const claves = [
+    ["instagram", process.env.INSTAGRAM_APP_SECRET ?? ""],
+    ["facebook", process.env.META_APP_SECRET ?? ""],
+  ].filter(([, s]) => s) as [string, string][];
+
+  if (!claves.length) {
+    console.error("[ig webhook] no hay ninguna clave de app: no se puede verificar nada");
+    return new NextResponse("no configurado", { status: 503 });
+  }
+
+  const cabecera = req.headers.get("x-hub-signature-256");
+  const cual = claves.find(([, s]) => firmaValida(crudo, cabecera, s));
+  if (!cual) {
+    await firmaNoCuadra(crudo, cabecera, claves.map(([n]) => n));
+    return new NextResponse("firma inválida", { status: 401 });
+  }
+
+  let cuerpo: any = null;
+  try {
+    cuerpo = JSON.parse(crudo);
+  } catch {
+    return NextResponse.json({ ok: true });
+  }
+
+  try {
+    const eventos = leerEventos(cuerpo);
+    for (const e of eventos) {
+      // Cada evento va por su cuenta: que uno falle no puede dejar sin
+      // atender a los demás del mismo lote.
+      try {
+        await atender(e);
+      } catch (err: any) {
+        console.error("[ig webhook] evento:", e.tipo, err?.message ?? err);
+      }
+    }
+  } catch (err: any) {
+    console.error("[ig webhook]", err?.message ?? err);
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
+// ─── Atender un evento ───────────────────────────────────────────────────────
+
+async function atender(e: EventoInstagram): Promise<void> {
+  const admin = createAdminClient();
+
+  // De qué cliente de la plataforma es esta cuenta. `ig_user_id` es único en
+  // toda la base, así que esto no puede devolver la cuenta de otro.
+  const { data: canal } = await admin
+    .from("instagram_channels")
+    .select("org_id, bot_id, ig_user_id, access_token")
+    .eq("ig_user_id", e.cuentaNegocio)
+    .maybeSingle();
+
+  // Una cuenta que nadie conectó no es un error: puede ser una suscripción
+  // vieja de Meta. Pero SE DEJA CONSTANCIA, porque este `return` es también por
+  // donde se cae el fallo más difícil de ver de toda la integración: si el id
+  // que manda Meta no es el que guardamos al conectar, todo parece bien —la
+  // pantalla dice «conectado», Meta dice que entregó el aviso— y no pasa
+  // absolutamente nada. Sin este apunte no queda ni rastro que mirar.
+  if (!canal) {
+    await noHayCanal(admin, e.cuentaNegocio);
+    return;
+  }
+
+  // NO ATENDER DOS VECES. Meta reintenta los webhooks, y un reintento haría
+  // que el bot contestara dos veces al mismo mensaje. Se reutiliza la misma
+  // tabla del motor de WhatsApp: los ids de Instagram y los de WhatsApp no se
+  // parecen, así que no chocan, y así hay UN solo sitio que limpiar.
+  if (e.id) {
+    const { error: repetido } = await admin.from("mensajes_vistos").insert({ wa_message_id: e.id });
+    if (repetido) {
+      if ((repetido as any).code === "23505") return; // ya lo atendimos
+      // Cualquier otro fallo no puede dejar al cliente sin respuesta: es mejor
+      // arriesgarse a un duplicado que a un silencio. Mismo criterio que el
+      // motor de WhatsApp.
+      console.error("[ig webhook] no pude anotar el mensaje:", repetido);
+    }
+  }
+
+  const { data: bot } = await admin
+    .from("bots")
+    .select("id, org_id, name, channel, ai, shortcuts, agente_id")
+    .eq("id", canal.bot_id)
+    .maybeSingle();
+  if (!bot) return;
+
+  const texto = textoParaElFlujo(e);
+
+  // ── Un comentario: se contesta y NO se abre conversación ──────────────────
+  //
+  // Hasta que la persona no responde al DM, Instagram no deja escribirle más.
+  // Por eso el comentario se trata aparte y no entra en la Bandeja como una
+  // charla normal: el equipo no podría contestarla.
+  if (!abreConversacion(e)) {
+    await atenderComentario(admin, canal, bot, e, texto);
+    return;
+  }
+
+  // ── Un DM, una respuesta a historia o una mención: conversación normal ────
+  const contacto = await contactoDeInstagram(admin, canal, e);
+  if (!contacto) return;
+
+  let { data: conv } = await admin
+    .from("conversations")
+    .select("id, flow_state, status")
+    .eq("org_id", canal.org_id)
+    .eq("contact_id", contacto)
+    .eq("channel", "instagram")
+    .order("last_message_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!conv || conv.status === "closed") {
+    const ins = await admin
+      .from("conversations")
+      .insert({
+        org_id: canal.org_id,
+        contact_id: contacto,
+        bot_id: bot.id,
+        channel: "instagram",
+        status: "open",
+        flow_state: {},
+      })
+      .select("id, flow_state, status")
+      .single();
+    conv = ins.data as any;
+  }
+  if (!conv) return;
+
+  // El mensaje del cliente se guarda SIEMPRE, conteste el bot o no. Si un
+  // agente tiene la conversación tomada, el bot se calla pero el mensaje tiene
+  // que estar en la Bandeja: si no, el equipo no ve lo que le escribieron.
+  // ── SI ESTO FALLA, QUE SE SEPA ──────────────────────────────────────────
+  // Este `insert` estuvo un día entero fallando en silencio —lo tumbaba un
+  // disparador de la base— y el resultado fue que NINGÚN mensaje de cliente se
+  // guardaba, en ningún canal. El bot contestaba perfecto, así que desde fuera
+  // parecía que hablaba solo. No apareció un error en ninguna parte porque
+  // nadie miraba el resultado.
+  const { error: errEntrante } = await admin.from("messages").insert({
+    conversation_id: conv.id,
+    org_id: canal.org_id,
+    direction: "inbound",
+    sender: "contact",
+    body: texto,
+    payload: {
+      ig: {
+        tipo: e.tipo,
+        mid: e.id,
+        ...(e.respuestaRapida ? { respuesta_rapida: e.respuestaRapida } : {}),
+        ...(e.historiaId ? { historia_id: e.historiaId } : {}),
+        ...(e.adjuntos?.length ? { adjuntos: e.adjuntos } : {}),
+      },
+    },
+  });
+  if (errEntrante) {
+    console.error("[ig] NO SE GUARDÓ EL MENSAJE DEL CLIENTE:", errEntrante.message);
+  }
+  await admin
+    .from("conversations")
+    .update({ last_message_at: new Date().toISOString() })
+    .eq("id", conv.id);
+
+  // Un humano tomó el chat: el bot no interrumpe.
+  if (conv.status === "assigned") return;
+
+  // AL MOTOR VA EL IDENTIFICADOR DEL BOTÓN, no la etiqueta. Es lo que decide por
+  // dónde sigue el flujo; la etiqueta ya quedó guardada arriba, que es lo que
+  // el agente tiene que leer en la Bandeja.
+  const salidas = await correrElFlujo(admin, bot, conv, e.respuestaRapida || texto, canal.org_id);
+  for (const m of salidas) {
+    await mandarYGuardar(admin, canal, conv.id, e.de!, m);
+  }
+}
+
+/**
+ * QUÉ SE PUBLICA DEBAJO DEL COMENTARIO.
+ *
+ * Tres modos y una sola salida: el texto ya listo para mandar, o cadena vacía
+ * si no hay que publicar nada. Quien llama no tiene que saber en qué modo está
+ * el flujo — así no hay dos sitios decidiendo lo mismo.
+ *
+ * ── LA IA AQUÍ NO TIENE HERRAMIENTAS, Y ES A PROPÓSITO ────────────────────
+ *
+ * No se le pasa contexto de agente, así que `aiAnswer` no le da ninguna. Un
+ * comentario público no puede agendar una cita ni etiquetar a nadie: quien
+ * comentó no ha pedido nada todavía, y actuar sobre la ficha de una persona
+ * por un «qué bonito» sería ensuciar el CRM del negocio.
+ *
+ * Sí cuenta como consumo de IA, porque lo es. Un cliente que enciende esto en
+ * un reel viral tiene que verlo en su medidor.
+ */
+async function textoPublico(
+  admin: any,
+  bot: any,
+  canal: any,
+  flujo: any,
+  e: EventoInstagram,
+  texto: string,
+  habraPrivado: boolean,
+): Promise<string> {
+  const modo = modoDeRespuestaPublica(flujo);
+  if (modo === "no") return "";
+  if (modo === "texto") return String(flujo?.respuesta_publica ?? "").trim();
+
+  const elAgente = await agenteDelBot(admin, bot);
+  const ajustes = {
+    ...(elAgente.ajustes ?? {}),
+    // MÁS CORTO QUE EN EL PRIVADO. Un comentario de ochenta palabras no lo lee
+    // nadie y se le nota la máquina a distancia.
+    maxWords: 35,
+    // Sin herramientas aunque el negocio las tenga encendidas para el chat.
+    herramientas: [],
+  };
+
+  const respuesta = await aiAnswer({
+    admin,
+    botId: bot.id,
+    orgId: canal.org_id,
+    question: preguntaParaElComentario({ texto, usuario: e.usuario, habraPrivado }),
+    settings: ajustes as any,
+  });
+
+  const limpio = limpiarParaComentario(respuesta);
+  // El respaldo («esa no me la sé todavía») está escrito para un privado,
+  // donde se puede ofrecer una persona. En público deja al negocio como si no
+  // supiera de lo suyo, delante de todos sus seguidores.
+  return sePuedePublicar(limpio, (ajustes as any).fallback) ? limpio : "";
+}
+
+/**
+ * Un comentario en una publicación, un reel o un directo.
+ *
+ * LA RESPUESTA PRIVADA ES DE UN SOLO DISPARO. Meta permite UNA por comentario
+ * y dentro de 7 días; el segundo intento lo rechaza. El turno se pide a la base
+ * ANTES de enviar, y la clave primaria de `ig_respuestas_privadas` hace de
+ * candado: si dos entregas del mismo webhook llegan a la vez, solo una gana.
+ */
+async function atenderComentario(
+  admin: any, canal: any, bot: any, e: EventoInstagram, texto: string,
+): Promise<void> {
+  const flujos = await flujosDelBot(admin, bot.id);
+
+  /* ── MANDA LA REGLA; LO DE ANTES QUEDA DE RESPALDO ────────────────────────
+   *
+   * Antes esto era solo `chooseWebFlow(flujos, texto)`: cualquier comentario
+   * caía en «el flujo que coincida por palabra clave», viniera de un reel, de
+   * un post o de un directo. Un negocio no habla igual en los tres.
+   *
+   * Ahora primero se busca el flujo que DIJO escuchar aquí —esta superficie,
+   * esta publicación, estas palabras— y solo si ninguno encaja se cae a la
+   * búsqueda de siempre. Así nadie pierde lo que ya le funcionaba: los flujos
+   * de antes tienen `origen = 'dm'` y siguen atendiéndose por el respaldo.
+   * ────────────────────────────────────────────────────────────────────── */
+  const porRegla = reglaQueAplica(flujos, {
+    tipo: e.tipo, tipoDeMedia: e.tipoDeMedia, mediaId: e.mediaId, texto,
+  });
+  const elegido = porRegla ?? chooseWebFlow(flujos, texto, false, {});
+  if (!elegido) return;
+
+  const superficie = superficieDe({ tipo: e.tipo, tipoDeMedia: e.tipoDeMedia });
+  const donde = dondeContestar(porRegla, superficie);
+
+  /* ── LA RESPUESTA PÚBLICA VA PRIMERO, Y VA PASE LO QUE PASE ───────────────
+   *
+   * `respuesta_publica` se guardaba desde la 0033 y no se mandaba NUNCA. Es la
+   * mitad visible de esto: quien comenta «PROMO» en un reel espera ver algo
+   * debajo de su comentario, y los demás que pasan por ahí también — es lo que
+   * hace que comenten los siguientes.
+   *
+   * Va antes que el privado y no depende de él: el privado tiene el límite de
+   * uno por comentario y puede perderse, y quedarse sin la pública además
+   * sería quedarse sin nada.
+   */
+  /* ── SE AVERIGUA ANTES SI VA A HABER PRIVADO, Y NO ES UN DETALLE ─────────
+   *
+   * Cuando contesta Lana, lo que diga en público depende de esto: «te escribo
+   * por privado» es la frase que hace que la persona abra el mensaje. Pero a
+   * quien ya le escribimos por esta misma publicación NO le va a llegar otro
+   * —lo impide `una_por_persona`— y prometérselo sería mentirle delante de
+   * todo el mundo. Por eso se pregunta primero y se pasa como dato.
+   */
+  const contacto = await contactoDeInstagram(admin, canal, e);
+  const yaLeEscribimos = contacto
+    ? await yaLeEscribimosPor(admin, canal.org_id, contacto, e.mediaId ?? null)
+    : false;
+  const puedePrivado = !!contacto && puedeEscribirEnPrivado(porRegla, yaLeEscribimos);
+
+  if (donde.publico && e.comentarioId) {
+    const publica = await textoPublico(admin, bot, canal, porRegla, e, texto, puedePrivado);
+    // VACÍO NO SE PUBLICA. Con la IA puede pasar —no sabía la respuesta, o la
+    // llave falló— y publicar un comentario en blanco, o el «esa no me la sé»
+    // que está escrito para un privado, deja peor al negocio que callarse.
+    if (publica) {
+      const r = await responderComentario(e.comentarioId, canal.access_token, publica);
+      if (!r.ok) console.error("[ig webhook] no pude contestar en público:", r.error);
+    }
+  }
+
+  const graph = (elegido.graph as any) ?? { nodes: [], edges: [] };
+  if (!(graph.nodes ?? []).length) return;
+
+  // Sin saber quién comentó no hay a quién escribirle en privado ni dónde
+  // dejar rastro. El comentario público ya salió, que es lo que se ve.
+  if (!contacto) return;
+
+  const { data: conv } = await admin
+    .from("conversations")
+    .insert({
+      org_id: canal.org_id,
+      contact_id: contacto,
+      bot_id: bot.id,
+      channel: "instagram",
+      status: "open",
+      flow_state: {},
+      // Queda apuntado de dónde salió: un lead que llegó por un comentario en
+      // un reel no es lo mismo que uno que escribió por su cuenta, y quien
+      // paga la publicidad quiere poder distinguirlos.
+      origen: {
+        tipo: "comentario",
+        plataforma: "meta",
+        canal: "instagram",
+        anuncio_id: e.mediaId ?? null,
+        titular: e.tipoDeMedia ?? null,
+        visto_en: new Date().toISOString(),
+      },
+    })
+    .select("id, flow_state, status")
+    .single();
+  if (!conv) return;
+
+  await admin.from("messages").insert({
+    conversation_id: conv.id,
+    org_id: canal.org_id,
+    direction: "inbound",
+    sender: "contact",
+    body: texto,
+    payload: { ig: { tipo: e.tipo, comentario_id: e.comentarioId, media_id: e.mediaId } },
+  });
+
+  const salidas = await correrElFlujo(admin, bot, conv, texto, canal.org_id);
+  if (!salidas.length) return;
+
+  // El primer mensaje del flujo se manda EN PRIVADO al comentario: es lo que
+  // abre el DM y convierte un comentario público en una conversación.
+  const primero = String(salidas[0]?.text ?? "").trim();
+
+  /* ── UNA SOLA VEZ POR PERSONA ────────────────────────────────────────────
+   *
+   * `una_por_persona` también se guardaba y también se ignoraba: quien
+   * comentaba tres veces el mismo reel recibía tres mensajes privados. Eso no
+   * es insistir, es lo que hace que alguien te silencie.
+   *
+   * Se mira si ya le escribimos por ESTA publicación, no en general: la
+   * promoción del mes que viene tiene que poder llegarle igual.
+   */
+  if (primero && e.comentarioId && puedePrivado) {
+    const { data: turno } = await admin.rpc("tomar_turno_respuesta_privada", {
+      p_org_id: canal.org_id,
+      p_ig_user_id: canal.ig_user_id,
+      p_comment_id: e.comentarioId,
+    });
+
+    if (turno === true) {
+      const r = await responderEnPrivado(canal.ig_user_id, canal.access_token, e.comentarioId, primero);
+      await admin
+        .from("ig_respuestas_privadas")
+        .update({ resultado: r.ok ? "enviada" : (r.error ?? "falló") })
+        .eq("comment_id", e.comentarioId);
+
+      await admin.from("messages").insert({
+        conversation_id: conv.id,
+        org_id: canal.org_id,
+        direction: "outbound",
+        sender: "bot",
+        body: primero,
+        payload: {
+          // `media_id` VA TAMBIÉN EN EL SALIENTE, y no es decorativo: es lo
+          // único que después permite saber «a esta persona ya le escribimos
+          // por esta publicación». Sin él, `una_por_persona` no tendría dónde
+          // mirar y volvería a mandar un privado por cada comentario.
+          ig: { tipo: "respuesta_privada", comentario_id: e.comentarioId, media_id: e.mediaId ?? null },
+          ...(r.ok ? {} : { no_entregado: { motivo: r.error, code: r.code ?? null } }),
+        },
+      });
+    }
+  }
+
+  // El resto del flujo NO se manda: hasta que la persona no conteste al DM,
+  // Instagram no deja mandarle nada más. Mandarlo en público sería peor: son
+  // mensajes escritos para una conversación privada.
+}
+
+/**
+ * Llegó un aviso que no pasa la firma.
+ *
+ * ESTE APUNTE VALE MÁS QUE TODOS LOS DEMÁS. Un 401 aquí es indistinguible,
+ * desde fuera, de que Instagram no esté mandando nada: Meta reintenta un rato y
+ * después DESACTIVA la suscripción del cliente. El cliente ve «conectado» y no
+ * recibe un solo mensaje, para siempre, sin ningún error en ninguna pantalla.
+ *
+ * Se apunta con QUÉ claves se intentó y un trozo del cuerpo, para poder
+ * distinguir «la clave es la que no toca» de «esto no lo mandó Meta». El cuerpo
+ * se recorta y NUNCA se apunta la firma ni ninguna clave.
+ */
+async function firmaNoCuadra(
+  crudo: string, cabecera: string | null, probadas: string[],
+): Promise<void> {
+  console.error("[ig webhook] firma inválida; probadas:", probadas.join(", "));
+  try {
+    const admin = createAdminClient();
+    const hace10min = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: yaApuntado } = await admin
+      .from("conexiones_fallidas")
+      .select("id")
+      .eq("canal", "instagram")
+      .eq("paso", "webhook_firma")
+      .gte("created_at", hace10min)
+      .limit(1)
+      .maybeSingle();
+    if (yaApuntado) return;
+
+    await admin.from("conexiones_fallidas").insert({
+      org_id: null,
+      canal: "instagram",
+      paso: "webhook_firma",
+      detalle:
+        `probadas=[${probadas.join(",")}] trae_cabecera=${!!cabecera} ` +
+        `cuerpo=${crudo.slice(0, 200)}`.slice(0, 900),
+    });
+  } catch (err) {
+    console.error("[ig webhook] tampoco pude anotar la firma inválida:", err);
+  }
+}
+
+/**
+ * Llegó un aviso para una cuenta que no tenemos.
+ *
+ * Se apunta el id que mandó Meta AL LADO de los que sí tenemos guardados, que
+ * es justo la comparación que hace falta y la que no se puede hacer de memoria:
+ * son dos números largos que se parecen. Si son distintos, el fallo es que
+ * guardamos el identificador equivocado al conectar.
+ *
+ * NUNCA LANZA y no toca la respuesta: esto es diagnóstico. Y no se repite el
+ * apunte si ya hay uno reciente del mismo id — Meta reintenta, y no queremos
+ * llenar la tabla con la misma línea.
+ */
+async function noHayCanal(admin: any, idQueMandoMeta: string): Promise<void> {
+  try {
+    const hace10min = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: yaApuntado } = await admin
+      .from("conexiones_fallidas")
+      .select("id")
+      .eq("canal", "instagram")
+      .eq("paso", "webhook_sin_cuenta")
+      .gte("created_at", hace10min)
+      .limit(1)
+      .maybeSingle();
+    if (yaApuntado) return;
+
+    const { data: cuentas } = await admin
+      .from("instagram_channels")
+      .select("ig_user_id, username")
+      .limit(5);
+    const guardadas = ((cuentas as any[]) ?? [])
+      .map((c) => `${c.ig_user_id}(@${c.username ?? "?"})`)
+      .join(" ") || "ninguna";
+
+    await admin.from("conexiones_fallidas").insert({
+      org_id: null,
+      canal: "instagram",
+      paso: "webhook_sin_cuenta",
+      detalle: `meta mandó id=${idQueMandoMeta} · guardadas=${guardadas}`.slice(0, 900),
+    });
+  } catch (err) {
+    console.error("[ig webhook] no pude anotar la cuenta desconocida:", err);
+  }
+}
+
+// ─── Piezas compartidas ──────────────────────────────────────────────────────
+
+async function flujosDelBot(admin: any, botId: string): Promise<any[]> {
+  const { data } = await admin
+    .from("flows")
+    // LOS CUATRO CAMPOS DEL DISPARADOR VIAJAN. Se guardaban desde la 0033 y
+    // esta consulta no los pedía, así que el webhook no podía usarlos aunque
+    // hubiera querido: el negocio elegía «comentario en un reel», lo veía
+    // guardado, y su flujo se activaba igual desde un mensaje directo.
+    .select(
+      "id, name, graph, trigger_type, keywords, enabled, priority, updated_at, " +
+      "origen, publicacion, respuesta_publica, respuesta_publica_modo, una_por_persona",
+    )
+    .eq("bot_id", botId);
+  return ((data as any[]) ?? []).filter((f) => f.enabled !== false);
+}
+
+/**
+ * ¿Ya le mandamos un privado a esta persona por esta publicación?
+ *
+ * Se mira en los mensajes salientes que llevan apuntado el comentario y la
+ * publicación de la que salieron. NO hace falta tabla nueva: el rastro ya se
+ * guarda en `messages.payload.ig` desde que existe el canal.
+ *
+ * ANTE LA DUDA, SE ESCRIBE. Si la consulta falla, es mejor un privado repetido
+ * que un lead que comentó una promoción y no recibió nada.
+ */
+async function yaLeEscribimosPor(
+  admin: any, orgId: string, contactoId: string, mediaId: string | null,
+): Promise<boolean> {
+  if (!mediaId) return false;
+  try {
+    const { data } = await admin
+      .from("messages")
+      .select("id, conversations!inner(contact_id)")
+      .eq("org_id", orgId)
+      .eq("direction", "outbound")
+      .eq("conversations.contact_id", contactoId)
+      .eq("payload->ig->>media_id", mediaId)
+      .limit(1);
+    return !!((data as any[]) ?? []).length;
+  } catch (e) {
+    console.error("[ig webhook] no pude comprobar si ya le escribimos:", e);
+    return false;
+  }
+}
+
+/**
+ * El contacto de quien escribe, creándolo si es la primera vez.
+ *
+ * Se identifica por `external_id`, que en Instagram es el IGSID — un id que
+ * Meta da POR CADA NEGOCIO. La misma persona escribiendo a dos clientes
+ * distintos de la plataforma tiene dos ids distintos, y eso es correcto: son
+ * dos relaciones distintas y ninguno de los dos negocios tiene por qué saber
+ * que el otro existe.
+ */
+async function contactoDeInstagram(admin: any, canal: any, e: EventoInstagram): Promise<string | null> {
+  const igsid = e.de;
+  if (!igsid) return null;
+
+  const { data: hay } = await admin
+    .from("contacts")
+    .select("id")
+    .eq("org_id", canal.org_id)
+    .eq("channel", "instagram")
+    .eq("external_id", igsid)
+    .maybeSingle();
+  if (hay) return hay.id;
+
+  // El nombre se pide aparte y nunca bloquea: que no se sepa cómo se llama es
+  // feo, perder el mensaje es grave.
+  const perfil = e.usuario
+    ? { nombre: null, usuario: e.usuario }
+    : await perfilDeInstagram(igsid, canal.access_token);
+
+  const ins = await admin
+    .from("contacts")
+    .insert({
+      org_id: canal.org_id,
+      channel: "instagram",
+      external_id: igsid,
+      name: perfil.nombre || (perfil.usuario ? `@${perfil.usuario}` : "Contacto de Instagram"),
+    })
+    .select("id")
+    .maybeSingle();
+  if (ins.data) return ins.data.id;
+
+  // Dos mensajes casi a la vez pueden intentar crearlo los dos: el segundo
+  // choca. No es un error, el contacto ya existe.
+  const { data: otra } = await admin
+    .from("contacts")
+    .select("id")
+    .eq("org_id", canal.org_id)
+    .eq("channel", "instagram")
+    .eq("external_id", igsid)
+    .maybeSingle();
+  return otra?.id ?? null;
+}
+
+/** Corre el motor y devuelve lo que hay que decir. */
+async function correrElFlujo(
+  admin: any, bot: any, conv: any, texto: string, orgId: string,
+): Promise<{ text: string }[]> {
+  const flujos = await flujosDelBot(admin, bot.id);
+  const estado = (conv.flow_state as any) ?? {};
+  const elegido = chooseWebFlow(flujos, texto, false, estado);
+  if (!elegido) return [];
+
+  const graph = (elegido.graph as any) ?? { nodes: [], edges: [] };
+  const flow = { id: elegido.id, name: "", nodes: graph.nodes ?? [], edges: graph.edges ?? [] } as Flow;
+  if (!flow.nodes.length) return [];
+
+  const mismoFlujo = estado.flow_id === elegido.id;
+  if (!mismoFlujo && estado.run_id) await cerrarRecorrido(admin, estado.run_id, "cambio");
+
+  const elAgente = await agenteDelBot(admin, bot as any);
+
+  const resultado = await runWebFlow({
+    flow,
+    orgId,
+    conversationId: conv.id,
+    admin,
+    flowState: mismoFlujo ? estado : { vars: estado.vars ?? {} },
+    text: texto,
+    botId: bot.id,
+    // Mismo agente que en el widget y en WhatsApp: el negocio escribe su forma
+    // de hablar una vez. Con `bots.ai` de respaldo si el bot no tiene agente.
+    aiSettings: elAgente.ajustes,
+    tiendaElegida: elAgente.tiendaId,
+    atajos: (bot as any).shortcuts ?? null,
+    flowName: (elegido as any).name ?? null,
+    // LAS GUARDA ESTA RUTA, NO EL MOTOR. Aquí se manda por la API de Meta y se
+    // apunta si la entrega falló; el motor no puede saber eso. Con los dos
+    // guardando, cada respuesta del bot salía DUPLICADA en la Bandeja — al
+    // cliente le llegaba una sola vez, pero el equipo veía dos.
+    guardarEnBandeja: false,
+    iaDeRespaldo: (bot as any).ai?.enabled !== false && (bot as any).ai?.fallback_flujo !== false,
+    ofreciAgente: estado.ofreciAgente === true,
+  });
+
+  const respaldo = String((bot as any).ai?.fallback ?? "").trim();
+  const ofreciAgente =
+    respaldo.length > 0 && resultado.out.some((m: any) => String(m?.text ?? "").trim() === respaldo);
+
+  await admin
+    .from("conversations")
+    .update({
+      flow_state: {
+        vars: resultado.vars,
+        awaiting: resultado.awaiting,
+        // Igual que en el widget: si un bloque «Ir a otra conversación» saltó
+        // de flujo en este turno, hay que guardar el NUEVO. Con el viejo, el
+        // turno siguiente buscaría el nodo en un gráfico donde no existe.
+        flow_id: resultado.flowIdNuevo ?? elegido.id,
+        hintEnviado: resultado.hintEnviado,
+        run_id: resultado.runId ?? null,
+        ofreciAgente,
+        terminado: resultado.terminado ?? false,
+      },
+    })
+    .eq("id", conv.id);
+
+  return resultado.out as any[];
+}
+
+/**
+ * Manda por Instagram y guarda lo que pasó.
+ *
+ * PRIMERO SE ENVÍA Y DESPUÉS SE GUARDA, igual que en WhatsApp y por lo mismo:
+ * guardar antes dejaría al equipo viendo en la Bandeja una conversación que el
+ * cliente nunca tuvo. Si el envío falla, el mensaje se guarda MARCADO, que la
+ * Bandeja ya sabe pintar con el motivo en cristiano.
+ */
+async function mandarYGuardar(
+  admin: any,
+  canal: any,
+  conversationId: string,
+  destinatario: string,
+  m: { text?: string; buttons?: { id: string; label: string }[] },
+): Promise<void> {
+  const texto = String(m?.text ?? "").trim();
+  const opciones = (m?.buttons ?? []).filter((b) => b && b.id && String(b.label ?? "").trim());
+  if (!texto && !opciones.length) return;
+
+  // ── LAS OPCIONES VIAJAN, Y ANTES SE TIRABAN ────────────────────────────
+  // Esta función solo pasaba `text`, así que todo bloque de menú llegaba a
+  // Instagram como una frase suelta: el lead veía la pregunta y nada que
+  // tocar. Quedaba atorado, y el agente en la Bandeja tampoco veía qué se le
+  // había ofrecido.
+  const r = await enviarDm(canal.ig_user_id, canal.access_token, destinatario, texto, opciones);
+
+  const { error } = await admin.from("messages").insert({
+    conversation_id: conversationId,
+    org_id: canal.org_id,
+    direction: "outbound",
+    sender: "bot",
+    body: texto,
+    payload: {
+      // Se guardan para que la Bandeja pinte lo mismo que vio el cliente.
+      ...(opciones.length ? { buttons: opciones } : {}),
+      ...(r.ok ? {} : { no_entregado: { motivo: r.error, code: r.code ?? null } }),
+    },
+  });
+
+  // SI NO SE PUDO GUARDAR, QUE SE SEPA. Un `insert` sin comprobar es cómo se
+  // estuvo perdiendo el mensaje de cada cliente durante un día entero sin que
+  // apareciera un solo error en ninguna parte.
+  if (error) console.error("[ig] no pude guardar la respuesta del bot:", error.message);
+}

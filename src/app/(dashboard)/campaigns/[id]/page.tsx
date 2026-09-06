@@ -1,0 +1,164 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { Topbar } from "@/components/Topbar";
+import { createClient } from "@/lib/supabase/server";
+import { getCurrentOrgId } from "@/lib/org";
+import { ArrowLeft } from "lucide-react";
+
+export const dynamic = "force-dynamic";
+
+// `pendiente` y `enviando` son de la cola: todavía no salieron. Van en cero para
+// que no cuenten como enviados en el embudo de arriba.
+const RANK: Record<string, number> = {
+  pendiente: 0, enviando: 0, queued: 0, sent: 1, delivered: 2, read: 3, replied: 4,
+};
+
+// Etiqueta humana por destinatario
+function label(status: string) {
+  switch (status) {
+    case "replied": return { t: "Respondió", c: "bg-pink/15 text-pink" };
+    case "read": return { t: "Leído (sin responder)", c: "bg-success/15 text-exito" };
+    case "delivered": return { t: "Entregado (no leído)", c: "bg-sky-500/15 text-sky-600" };
+    case "sent": return { t: "Enviado", c: "bg-suave text-ink-2" };
+    case "failed": return { t: "Falló", c: "bg-danger/15 text-danger" };
+    case "enviando": return { t: "Saliendo…", c: "bg-warning/20 text-aviso" };
+    default: return { t: "En cola", c: "bg-suave text-ink-3" };
+  }
+}
+
+function fmt(ts: string | null) {
+  if (!ts) return "—";
+  return new Date(ts).toLocaleString();
+}
+
+export default async function CampaignDetail({ params }: { params: { id: string } }) {
+  const orgId = await getCurrentOrgId();
+  const sb = createClient();
+
+  const [{ data: campaign }, { data: recipients }] = await Promise.all([
+    sb.from("campaigns").select("*").eq("id", params.id).maybeSingle(),
+    sb.from("campaign_recipients").select("*").eq("campaign_id", params.id).order("created_at", { ascending: true }),
+  ]);
+  if (!campaign) notFound();
+
+  const recs = (recipients as any[]) ?? [];
+  const funnel = { sent: 0, delivered: 0, read: 0, replied: 0, failed: 0 };
+  for (const r of recs) {
+    if (r.status === "failed") { funnel.failed++; continue; }
+    const rk = RANK[r.status] ?? 0;
+    if (rk >= 1) funnel.sent++;
+    if (rk >= 2) funnel.delivered++;
+    if (rk >= 3) funnel.read++;
+    if (rk >= 4) funnel.replied++;
+  }
+  // ── CUÁNTO LLEVA ─────────────────────────────────────────────────────────
+  // Una difusión de mil tarda un rato, y sin esto la pantalla no dice nada
+  // durante todo ese rato: parecería colgada justo cuando está trabajando.
+  const enCola = recs.filter((r) => r.status === "pendiente" || r.status === "enviando").length;
+  const yaSalieron = recs.length - enCola;
+  const enMarcha = enCola > 0;
+
+  const base = funnel.sent || recs.length || 1;
+  const pctOf = (n: number) => Math.round((n / base) * 100) + "%";
+
+  // Orden: los más avanzados primero (respondieron → leídos → entregados → enviados → fallidos)
+  const sorted = [...recs].sort((a, b) => (RANK[b.status] ?? -1) - (RANK[a.status] ?? -1));
+
+  return (
+    <>
+      <Topbar crumb={<span className="font-semibold text-white">Campañas / {(campaign as any).name}</span>} />
+      <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
+        <Link href="/campaigns" className="mb-4 inline-flex items-center gap-1.5 text-sm text-ink-2 hover:text-ink">
+          <ArrowLeft className="h-4 w-4" /> Volver a Envíos
+        </Link>
+
+        <h2 className="font-display text-2xl font-bold text-ink">{(campaign as any).name}</h2>
+        <p className="mt-1 text-sm text-ink-3">
+          Plantilla: <b className="text-ink-2">{(campaign as any).template_name ?? "—"}</b> ·{" "}
+          {(campaign as any).audience_count} destinatarios · {new Date((campaign as any).created_at).toLocaleString()}
+        </p>
+
+        {/* ── Cuánto lleva ────────────────────────────────────────────────
+            SE PINTA SOLO MIENTRAS QUEDA GENTE EN LA COLA. Una difusión de mil
+            tarda un rato, y sin esto la pantalla no dice nada durante todo ese
+            rato: parece colgada justo cuando está trabajando, y quien la mira
+            vuelve a pulsar «enviar». */}
+        {enMarcha && (
+          <div className="mt-4 rounded-2xl border border-warning/50 bg-warning/10 p-3">
+            <p className="text-sm font-semibold text-ink">
+              Saliendo: {yaSalieron} de {recs.length}
+            </p>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-suave">
+              <div
+                className="h-full rounded-full bg-violet transition-all"
+                style={{ width: `${Math.round((yaSalieron / (recs.length || 1)) * 100)}%` }}
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-ink-2">
+              Van saliendo por tandas para no saturar WhatsApp. Puedes cerrar esta pantalla: siguen
+              solos. Recarga para ver cómo va.
+            </p>
+          </div>
+        )}
+
+        {/* Embudo */}
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { k: "Enviados", v: funnel.sent, c: "text-ink" },
+            { k: "Entregados", v: funnel.delivered, c: "text-sky-600", p: pctOf(funnel.delivered) },
+            { k: "Leídos", v: funnel.read, c: "text-exito", p: pctOf(funnel.read) },
+            { k: "Respondieron", v: funnel.replied, c: "text-pink", p: pctOf(funnel.replied) },
+          ].map((m) => (
+            <div key={m.k} className="card-l p-4 text-center">
+              <div className={`text-2xl font-bold ${m.c}`}>{m.v}</div>
+              <div className="mt-0.5 text-[11px] uppercase tracking-wide text-ink-3">{m.k}{m.p ? ` · ${m.p}` : ""}</div>
+            </div>
+          ))}
+        </div>
+        {funnel.failed > 0 && <p className="mt-2 text-sm text-danger">{funnel.failed} mensajes fallidos</p>}
+
+        {/* Lista por destinatario */}
+        <h3 className="mb-3 mt-8 font-display text-lg font-semibold text-ink">Detalle por contacto</h3>
+        <div className="overflow-x-auto rounded-2xl border border-linea">
+          <table className="min-w-[560px] w-full text-left text-sm">
+            <thead className="bg-suave text-xs uppercase tracking-wide text-ink-3">
+              <tr>
+                <th className="px-4 py-3">Contacto</th>
+                <th className="px-4 py-3">Estado</th>
+                <th className="px-4 py-3">Entregado</th>
+                <th className="px-4 py-3">Leído</th>
+                <th className="px-4 py-3">Respondió</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r) => {
+                const l = label(r.status);
+                return (
+                  <tr key={r.id} className="border-t border-linea bg-tarjeta">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-ink">{r.name || r.phone}</div>
+                      <div className="text-xs text-ink-3">{r.phone}</div>
+                      {r.error && <div className="text-[11px] text-danger">{r.error}</div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${l.c}`}>{l.t}</span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-ink-2">{fmt(r.delivered_at)}</td>
+                    <td className="px-4 py-3 text-xs text-ink-2">{fmt(r.read_at)}</td>
+                    <td className="px-4 py-3 text-xs text-ink-2">{fmt(r.replied_at)}</td>
+                  </tr>
+                );
+              })}
+              {!sorted.length && (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-ink-3">Sin destinatarios.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs text-ink-3">
+          "Leído (sin responder)" = lo abrió pero no contestó (lo que llamarías "ignoró"). Los tiempos de entregado/leído se llenan conforme Meta manda los estados.
+        </p>
+      </div>
+    </>
+  );
+}
