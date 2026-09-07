@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listarFacturas, estadoDeFactura } from "@/lib/billing/facturas";
-import { reenviar, restablecer, entrarComoSoporte, eliminarCliente } from "../acciones";
+import { reenviar, restablecer, entrarComoSoporte, eliminarCliente, guardarContacto } from "../acciones";
 import { Tratos } from "@/components/superadmin/Tratos";
 import { descuentoActual } from "@/lib/billing/descuentos";
 import { ArrowLeft, FileText, ExternalLink, Send, TriangleAlert, Check, KeyRound, Mail, Phone, User, LifeBuoy } from "lucide-react";
@@ -44,7 +44,7 @@ export default async function FichaCliente({
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { enviada?: string; error?: string; clave?: string; reset?: string; hecho?: string };
+  searchParams: { enviada?: string; error?: string; clave?: string; reset?: string; hecho?: string; contacto?: string; fallo?: string };
 }) {
   const admin = createAdminClient();
 
@@ -181,21 +181,55 @@ export default async function FichaCliente({
             </form>
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        {/*
+          SE EDITA AQUÍ MISMO, SIN BOTÓN DE «EDITAR».
+          Esto es una ficha interna que se abre para hacer algo, no para leerla:
+          un modo lectura y un modo edición serían un clic de ceremonia antes de
+          cada corrección. El teléfono, además, NACE vacío siempre — no hay
+          proveedor que lo dé — así que el estado normal de esta tarjeta es
+          «falta algo por escribir».
+        */}
+        <form action={guardarContacto} className="grid gap-3 sm:grid-cols-3">
+          <input type="hidden" name="org_id" value={org.id} />
           {[
-            [User, "Persona", org.contacto_nombre],
-            [Mail, "Correo", org.contacto_email],
-            [Phone, "Teléfono", org.contacto_telefono],
-          ].map(([Icono, etiqueta, valor]: any) => (
-            <div key={etiqueta} className="flex items-start gap-2">
-              <Icono className="mt-0.5 h-3.5 w-3.5 flex-none text-ink-3" />
-              <div className="min-w-0">
-                <p className="text-[11px] text-ink-3">{etiqueta}</p>
-                <p className="truncate text-sm text-ink">{valor || "—"}</p>
-              </div>
-            </div>
+            [User, "Persona", "contacto_nombre", org.contacto_nombre, "text", "Nombre y apellido"],
+            [Mail, "Correo", "contacto_email", org.contacto_email, "email", "correo@ejemplo.com"],
+            [Phone, "Teléfono", "contacto_telefono", org.contacto_telefono, "tel", "+507 6123-4567"],
+          ].map(([Icono, etiqueta, campo, valor, tipo, pista]: any) => (
+            <label key={campo} className="flex items-start gap-2">
+              <Icono className="mt-6 h-3.5 w-3.5 flex-none text-ink-3" />
+              <span className="min-w-0 flex-1">
+                <span className="mb-1 block text-[11px] text-ink-3">{etiqueta}</span>
+                <input
+                  name={campo}
+                  type={tipo}
+                  defaultValue={valor ?? ""}
+                  placeholder={pista}
+                  className="input-l w-full text-sm"
+                />
+              </span>
+            </label>
           ))}
-        </div>
+          <div className="sm:col-span-3 flex flex-wrap items-center gap-3">
+            <button className="btn-soft px-3 py-1.5 text-xs font-semibold">Guardar contacto</button>
+            {/*
+              UN GUARDADO SIN CONFIRMACIÓN ES INDISTINGUIBLE DE UNO QUE FALLÓ, y
+              en esta plataforma ya pasó una vez con otra pantalla. La
+              confirmación va PEGADA al formulario y no arriba del todo: quien
+              acaba de pulsar está mirando aquí.
+            */}
+            {searchParams?.contacto && (
+              <span className="text-xs font-semibold text-emerald-400">Contacto guardado.</span>
+            )}
+            {searchParams?.fallo && (
+              <span className="text-xs font-semibold text-danger">{searchParams.fallo}</span>
+            )}
+            <span className="text-[11px] text-ink-3">
+              El nombre y el correo se llenan solos al darse de alta; el teléfono no lo da ningún
+              proveedor y va a mano.
+            </span>
+          </div>
+        </form>
         {org.notas_internas && (
           <div className="mt-4 rounded-lg bg-suave px-3.5 py-2.5">
             <p className="mb-0.5 text-[11px] font-semibold text-ink-3">Notas internas · el cliente no las ve</p>

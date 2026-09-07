@@ -3327,6 +3327,90 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     }
   });
 
+  test("NINGUNA acción del superadmin se fía del marco", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Lo dice el propio archivo en su cabecera y conviene que algo lo vigile:
+    // «una acción de servidor se puede invocar por su propia dirección sin
+    // pasar por ninguna pantalla». El marco de /superadmin comprueba el permiso
+    // para PINTAR; no protege un POST que alguien mande a mano.
+    //
+    // Estas acciones cambian contraseñas, entran a cuentas ajenas, borran
+    // organizaciones enteras y editan los datos con los que se factura. Una sola
+    // que se olvide de comprobar quién llama es una puerta abierta a toda la
+    // base de clientes, y no se ve mirando la pantalla.
+    //
+    // `entrarComoSoporte` es la única que no llama a `soyDelEquipo`: delega en
+    // `abrirSoporte`, que comprueba más cosas que ésta —equipo, partner, si el
+    // cliente es suyo, si pidió el borrado—. Por eso se acepta esa forma
+    // también, y solo esa.
+    // ─────────────────────────────────────────────────────────────────────────
+    const ruta = "app/superadmin/clientes/acciones.ts";
+    const texto = sinComentarios(fs.readFileSync(path.join(SRC, ruta), "utf8"));
+
+    const marcas = [...texto.matchAll(/export async function (\w+)/g)];
+    esperar(marcas.length >= 3).verdadero("no se encontraron las acciones del superadmin");
+
+    const sinGuardia = [];
+    for (let i = 0; i < marcas.length; i++) {
+      const desde = marcas[i].index;
+      const hasta = i + 1 < marcas.length ? marcas[i + 1].index : texto.length;
+      const cuerpo = texto.slice(desde, hasta);
+      if (!/soyDelEquipo\(\)/.test(cuerpo) && !/abrirSoporte\(/.test(cuerpo)) {
+        sinGuardia.push(marcas[i][1]);
+      }
+    }
+
+    esperar(sinGuardia.join(", ")).igual(
+      "",
+      "hay acciones del superadmin que no comprueban quién llama: se pueden invocar por su dirección sin pasar por la pantalla",
+    );
+  });
+
+  test("un negocio nuevo NACE con el contacto de su dueño", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // EL SÍNTOMA FUE «los que entran con Facebook o Apple salen en blanco en el
+    // superadmin». La explicación evidente —«los proveedores sociales no dan
+    // esos datos»— era falsa: `auth.users` tenía el nombre desde el primer
+    // segundo. Y no eran solo los sociales: las TRES organizaciones estaban
+    // vacías, incluida una creada con correo y contraseña.
+    //
+    // La causa: `contacto_*` lo escribía UN solo sitio, el alta manual del
+    // superadmin. El alta normal —`provisionar_negocio`, por donde pasa todo el
+    // que se registra solo— creaba la organización sin tocar esas columnas. La
+    // pantalla no estaba rota: enseñaba fielmente unas columnas que nadie
+    // llenaba.
+    //
+    // Esas columnas las leen CUATRO pantallas (clientes, ficha, panel del
+    // equipo y comisiones). Que se llenen al nacer es lo que las arregla todas
+    // a la vez, y esta regla es lo que impide que la próxima versión de la
+    // función se las vuelva a dejar fuera.
+    // ─────────────────────────────────────────────────────────────────────────
+    const dir = path.join(RAIZ, "supabase/migrations");
+    const define = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort()
+      .filter((f) =>
+        /create or replace function public\.provisionar_negocio/.test(
+          fs.readFileSync(path.join(dir, f), "utf8"),
+        ),
+      );
+
+    esperar(define.length > 0).verdadero("no existe `provisionar_negocio` en ninguna migración");
+
+    // SOLO LA ÚLTIMA. Las migraciones son un historial: las viejas describen
+    // cómo era la función entonces y no se tocan. Manda la que está viva.
+    const ultima = fs.readFileSync(path.join(dir, define[define.length - 1]), "utf8");
+    const cuerpo = ultima.slice(ultima.indexOf("create or replace function public.provisionar_negocio"));
+    const alta = cuerpo.slice(0, cuerpo.indexOf("returning id into new_org"));
+
+    for (const col of ["contacto_nombre", "contacto_email"]) {
+      esperar(alta.includes(col)).verdadero(
+        `el alta no guarda ${col}: el cliente nuevo saldría en blanco en el superadmin y nadie sabría a quién llamar`,
+      );
+    }
+  });
+
   test("después del pago se le PIDE la ubicación al cliente", () => {
     // ─────────────────────────────────────────────────────────────────────────
     // ESTE BOQUETE SE VIO EN VIVO: Alex pagó un pedido de verdad y la

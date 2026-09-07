@@ -252,3 +252,83 @@ export async function eliminarCliente(formData: FormData): Promise<void> {
       : `Se eliminó «${cuenta.name}».`;
   redirect("/superadmin/clientes?aviso=" + encodeURIComponent(aviso));
 }
+
+/**
+ * Guardar a mano el contacto de un cliente.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL TELÉFONO NO PUEDE VENIR DE NINGÚN SITIO, Y POR ESO EXISTE ESTA PANTALLA.
+ *
+ * El nombre y el correo ya se llenan solos al nacer el negocio (0110). El
+ * teléfono no: ni Facebook, ni Apple, ni el registro con correo lo piden, y
+ * pedirlo en el alta sería una casilla más entre la persona y su cuenta — de
+ * las que se pagan en altas que nadie termina.
+ *
+ * Así que se escribe aquí, que es donde alguien lo necesita: cuando hay que
+ * llamar a un cliente. Hasta hoy la ficha lo ENSEÑABA y no dejaba tocarlo, que
+ * es la peor combinación posible — un hueco visible que nadie puede llenar.
+ *
+ * ── SE PUEDEN EDITAR LOS TRES, NO SOLO EL TELÉFONO ────────────────────────
+ *
+ * Porque los otros dos también se equivocan: el nombre que trae Facebook es el
+ * del perfil personal («Darwin B.»), y el correo con el que alguien se registró
+ * no siempre es al que quiere que le escriban. Dejar editable solo uno de los
+ * tres obliga a pedirnos los otros dos por chat.
+ *
+ * ── VACÍO ES NULO, NO CADENA VACÍA ────────────────────────────────────────
+ *
+ * Una cadena vacía se pinta igual que un dato ausente pero NO es lo mismo para
+ * las pantallas que preguntan `is null` — el panel del equipo, las comisiones.
+ * Borrar un campo tiene que dejarlo como si nunca hubiera estado.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function guardarContacto(formData: FormData): Promise<void> {
+  if (!(await soyDelEquipo())) return;
+
+  const org = String(formData.get("org_id") ?? "");
+  if (!org) return;
+
+  const volverA = `/superadmin/clientes/${org}`;
+  const limpio = (k: string, tope: number) =>
+    String(formData.get(k) ?? "").trim().slice(0, tope) || null;
+
+  const nombre = limpio("contacto_nombre", 120);
+  const email = limpio("contacto_email", 200);
+  // EL TELÉFONO SE GUARDA COMO LO ESCRIBIERON. Aquí no es un identificador que
+  // haya que normalizar —para eso está el de WhatsApp del negocio—: es el
+  // número que una persona va a marcar. «+507 6123-4567» se lee mejor que
+  // «50761234567», y quitarle los espacios no lo hace más correcto.
+  const telefono = limpio("contacto_telefono", 40);
+
+  // UNA SOLA COMPROBACIÓN, Y LA QUE IMPORTA. Un correo sin arroba no es un
+  // correo, y guardarlo hace que «reenviar factura» falle más tarde con un
+  // error de Stripe que nadie va a relacionar con este momento.
+  // VA POR `fallo` Y NO POR `error`: el banner de `error` de esta ficha dice
+  // «No se pudo enviar. Stripe dijo: …», y colgarle ahí un problema del correo
+  // le echaría la culpa a Stripe de algo que pasó aquí.
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    redirect(`${volverA}?fallo=${encodeURIComponent("Ese correo no parece un correo. Revísalo.")}`);
+  }
+
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const { error } = await createAdminClient()
+    .from("organizations")
+    .update({ contacto_nombre: nombre, contacto_email: email, contacto_telefono: telefono })
+    .eq("id", org);
+
+  if (error) {
+    redirect(`${volverA}?fallo=${encodeURIComponent("No se pudo guardar el contacto.")}`);
+  }
+
+  // QUEDA APUNTADO. Son los datos con los que el equipo llama y factura a un
+  // cliente: quién los cambió y cuándo tiene que poder mirarse después.
+  await anotarComoYo({
+    orgId: org,
+    accion: "cambió los datos de contacto del cliente",
+    detalle: { nombre, email, telefono },
+    visibleParaElCliente: false,
+  });
+
+  revalidatePath(volverA);
+  redirect(`${volverA}?contacto=1`);
+}
