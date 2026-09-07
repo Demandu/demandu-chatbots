@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ipnValido, PAGOS_YAPPY, dominioDeCobro } from "@/lib/tienda/yappy";
 import { DOMINIO_TIENDAS } from "@/lib/tienda/direccion";
-import { avisarDelPedido } from "@/lib/tienda/avisar";
+import { avisarDelPedido, pedirUbicacionSiHaceFalta } from "@/lib/tienda/avisar";
 
 /**
  * El aviso de pago de Yappy (IPN).
@@ -152,6 +152,32 @@ export async function GET(req: Request) {
       await avisarDelPedido(sb, pedido.id, momento);
     } catch (e) {
       console.error("[ipn aviso]", e);
+    }
+  }
+
+  // ── «¿Y A DÓNDE TE LO LLEVAMOS?» ──────────────────────────────────────────
+  //
+  // ESTE ES EL MOMENTO Y NO HAY OTRO. La persona acaba de confirmar en su app y
+  // está mirando el chat esperando a ver qué pasa: es el único rato del día en
+  // que va a leer y contestar al instante. Pedírsela media hora después, cuando
+  // ya guardó el teléfono, es pedírsela a nadie — y descubrir que falta cuando
+  // el paquete está armado es peor todavía.
+  //
+  // VA DESPUÉS DEL AVISO DE PAGO, no antes ni pegado a él: primero se le dice
+  // que su plata llegó —que es lo que está esperando— y luego se le pide algo.
+  // Al revés se lee como si le estuviéramos cobrando por adelantado el favor.
+  //
+  // SOLO SI HACE FALTA. `hayQuePedirLaUbicacion` comprueba que el pedido no la
+  // traiga ya y que esta tienda de verdad lleve a domicilio. A una barbería o a
+  // una panadería de mostrador este mensaje no le sirve a nadie, y en WhatsApp
+  // cada mensaje de más es un chat silenciado.
+  if (pago === "pagado") {
+    try {
+      await pedirUbicacionSiHaceFalta(sb, pedido.id, pedido.tienda_id);
+    } catch (e) {
+      // NUNCA ROMPE LA RESPUESTA A YAPPY, igual que el aviso de arriba: el pago
+      // ya está guardado y un fallo aquí haría que Yappy reintentara el aviso.
+      console.error("[ipn ubicacion]", e);
     }
   }
 

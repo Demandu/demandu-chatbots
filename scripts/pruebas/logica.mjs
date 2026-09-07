@@ -97,7 +97,7 @@ import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaPar
 import {
   comoRespuesta, leerUbicacion, esEnlaceAcortado, porQueNoSirve, enlaceDeMapa,
   precisionDudosa, comoSeLeeLaPrecision, preguntaDeUbicacion,
-  ubicacionDeLasRespuestas, direccionDeLasRespuestas,
+  ubicacionDeLasRespuestas, direccionDeLasRespuestas, hayQuePedirLaUbicacion,
 } from "../../src/lib/tienda/ubicacion.ts";
 import {
   aQuePedidoVa, ubicacionDelMensaje, VENTANA_UBICACION_HORAS,
@@ -5872,6 +5872,105 @@ describe("La ubicación del cliente", () => {
     esperar(conEnlace.respuestas.mapa).igual("9.0136814,-79.4796534");
     esperar(conEnlace.respuestas.mapa).igual(conNumeros.respuestas.mapa);
     esperar(conEnlace.pregunta).igual(1, "no avanzó a la siguiente pregunta");
+  });
+
+  test("«pedir la ubicación» es un aviso más, editable por el negocio", () => {
+    /* NO SE ESCRIBIÓ UN ENVÍO APARTE a propósito. `avisarDelPedido` ya resuelve
+     * lo que no se ve hasta que falla: encontrar la conversación, la ventana de
+     * 24 h de WhatsApp, dejarlo escrito en la Bandeja, no repetirlo, y apuntar
+     * por qué no salió. Duplicar eso era duplicar los cinco fallos. */
+    const m = MOMENTOS.find((x) => x.clave === "pedir_ubicacion");
+    esperar(!!m).verdadero("el momento no está en el catálogo: no habría dónde editarlo");
+    esperar(m.esEstado).falso("no se alcanza arrastrando la tarjeta: lo dispara el pago");
+    esperar(m.activo).verdadero("nacería apagado y el boquete seguiría igual");
+    /* Y el texto tiene que decir CÓMO se hace: «mándame tu ubicación» a secas
+     * deja a la persona buscando dónde. */
+    esperar(m.texto).contiene("📎");
+    /* Sin botón: no hay nada que pulsar, la acción está en el clip de WhatsApp. */
+    esperar(botonDelAviso("pedir_ubicacion")).igual(null);
+    /* Y viene con texto de fábrica, como todos. */
+    const a = sanearAvisos({});
+    esperar(a.momentos.pedir_ubicacion.texto.length > 0).verdadero();
+  });
+
+  test("LA DIRECCIÓN REPARTIDA EN TRES CAMPOS SE ARMA IGUAL", () => {
+    /* Este es el formulario de la tienda que de VERDAD está vendiendo. La
+     * dirección existe entera y no hay ni un campo llamado «dirección» ni uno
+     * de texto largo: buscar el campo de dirección devolvía vacío, y con
+     * `desti_address` vacío ASAP rechaza el pedido aunque las coordenadas estén
+     * perfectas. Un fallo mudo, en la única tienda real que hay. */
+    const preguntas = [
+      { id: "nombre_completo", etiqueta: "Nombre completo", tipo: "texto" },
+      { id: "telefono", etiqueta: "Teléfono", tipo: "telefono" },
+      { id: "nombre_de_ph", etiqueta: "Nombre de PH", tipo: "texto" },
+      { id: "numero_interior", etiqueta: "Número Interior:", tipo: "texto" },
+      { id: "calle", etiqueta: "Calle:", tipo: "texto" },
+    ];
+    const respuestas = [
+      { id: "nombre_completo", valor: "Alí Buenaño" },
+      { id: "telefono", valor: "62159100" },
+      { id: "nombre_de_ph", valor: "Torre Mar" },
+      { id: "numero_interior", valor: "12B" },
+      { id: "calle", valor: "Av. Balboa" },
+    ];
+    const d = direccionDeLasRespuestas(preguntas, respuestas);
+    esperar(d).igual("Nombre de PH: Torre Mar, Número Interior: 12B, Calle: Av. Balboa");
+    /* CON SUS ETIQUETAS: «Torre Mar, 12B, Av. Balboa» no le dice al mensajero
+     * si el 12B es el piso o la casa. */
+    esperar(d).contiene("Nombre de PH:");
+    /* Y SIN EL NOMBRE NI EL TELÉFONO: los dos ya viajan en su propio campo de
+     * ASAP, y el nombre del cliente en la dirección es ruido. */
+    esperar(d.includes("Alí")).falso("el nombre del cliente acabó dentro de la dirección");
+    esperar(d.includes("62159100")).falso("el teléfono acabó dentro de la dirección");
+  });
+
+  test("«Nombre de PH» SÍ entra: no es la pregunta del nombre", () => {
+    /* La regla es la misma que ya usa el pedido para sacar el nombre del
+     * cliente: la PRIMERA pregunta que lleva «nombre». Excluir todas las que lo
+     * lleven se comería media dirección en Panamá, donde el edificio se llama
+     * «Nombre de PH». */
+    const ps = [
+      { id: "nombre_de_ph", etiqueta: "Nombre de PH", tipo: "texto" },
+      { id: "calle", etiqueta: "Calle", tipo: "texto" },
+    ];
+    /* Aquí «Nombre de PH» ES la primera con «nombre», así que sale — y es
+     * correcto: sin otra pregunta de nombre, ésa es la que el pedido usaría. */
+    esperar(direccionDeLasRespuestas(ps, [
+      { id: "nombre_de_ph", valor: "Torre Mar" }, { id: "calle", valor: "Av. Balboa" },
+    ])).igual("Calle: Av. Balboa");
+  });
+
+  test("si hay un campo de dirección de verdad, manda ése y no se arma nada", () => {
+    const ps = [
+      { id: "nombre", etiqueta: "Nombre completo", tipo: "texto" },
+      { id: "direccion", etiqueta: "Dirección de entrega", tipo: "parrafo" },
+      { id: "apto", etiqueta: "Apto", tipo: "texto" },
+    ];
+    esperar(direccionDeLasRespuestas(ps, [
+      { id: "nombre", valor: "Alí" },
+      { id: "direccion", valor: "Casa azul frente al parque" },
+      { id: "apto", valor: "3" },
+    ])).igual("Casa azul frente al parque");
+  });
+
+  test("la ubicación NO se pide a quien ya la dio ni a quien no lleva a domicilio", () => {
+    /* Pedírsela a una barbería o a una panadería de mostrador es un mensaje que
+     * no sirve para nada — y en WhatsApp cada mensaje cuesta y cada mensaje de
+     * más es un chat silenciado. */
+    const conMapa = [{ id: "mapa", etiqueta: "Ubicación", tipo: "ubicacion" }];
+    const sinMapa = [{ id: "dir", etiqueta: "Dirección", tipo: "parrafo" }];
+
+    esperar(hayQuePedirLaUbicacion({ lat: null, long: null, preguntas: sinMapa }))
+      .falso("se le pide la ubicación a una tienda que no lleva a domicilio");
+    esperar(hayQuePedirLaUbicacion({ lat: 9.01, long: -79.47, preguntas: conMapa }))
+      .falso("se le vuelve a pedir a quien ya la marcó en la tienda");
+
+    /* Y SÍ se pide con cualquiera de las dos señales del negocio. */
+    esperar(hayQuePedirLaUbicacion({ lat: null, long: null, preguntas: conMapa })).verdadero();
+    esperar(hayQuePedirLaUbicacion({ lat: null, long: null, preguntas: sinMapa, enviosActivos: true }))
+      .verdadero();
+    /* El cero no es una ubicación puesta: con la columna vacía SÍ hay que pedirla. */
+    esperar(hayQuePedirLaUbicacion({ lat: 0, long: 0, preguntas: conMapa })).verdadero();
   });
 
   test("el negocio recibe un enlace que puede pulsar, no dos números", () => {

@@ -267,5 +267,87 @@ export function direccionDeLasRespuestas(
     .filter(Boolean);
 
   // El más largo: es el que trae la referencia, no el que trae «apto 3».
-  return candidatos.sort((a, b) => b.length - a.length)[0] ?? "";
+  const directa = candidatos.sort((a, b) => b.length - a.length)[0] ?? "";
+  if (directa) return directa;
+
+  // ── NINGUNA PREGUNTA SE LLAMA «DIRECCIÓN». Y ES LO NORMAL ────────────────
+  //
+  // Esto lo encontré mirando la tienda que de verdad está vendiendo. Su
+  // formulario es:
+  //
+  //     Nombre completo · Teléfono · Nombre de PH · Número Interior: · Calle:
+  //
+  // La dirección existe —está entera— pero repartida en tres campos, ninguno
+  // llamado «dirección» y ninguno de texto largo. Buscar el campo de dirección
+  // devolvía VACÍO, y con `desti_address` vacío ASAP rechaza el pedido aunque
+  // las coordenadas estén perfectas. Un fallo mudo, en la única tienda real.
+  //
+  // Así que se arma juntando lo que hay, CON SUS ETIQUETAS: el mensajero lee
+  // «Nombre de PH: Torre Mar, Número Interior: 12B, Calle: Av. Balboa» y sabe
+  // qué es cada cosa. Sin las etiquetas sería «Torre Mar, 12B, Av. Balboa», que
+  // en un edificio no dice si el 12B es el piso o la casa.
+  //
+  // QUÉ SE DEJA FUERA, Y POR QUÉ CADA UNO:
+  //   · el teléfono   → ya viaja en su propio campo de ASAP.
+  //   · la ubicación  → son las coordenadas; repetirlas como texto no ayuda.
+  //   · las listas    → casi siempre son «Método de pago» o «Retiro / Delivery».
+  //   · el nombre     → va en `desti_customer_name`, y es la MISMA regla que ya
+  //     usa el pedido para sacarlo: la PRIMERA pregunta que lleva «nombre».
+  //     Por eso «Nombre de PH» sí entra: no es la primera.
+  const sinTilde = (t: string) =>
+    t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const elNombre = lista.find((p) => p?.tipo !== "lista" && sinTilde(String(p?.etiqueta ?? "")).includes("nombre"));
+
+  return lista
+    .filter((p) => p !== elNombre)
+    .filter((p) => p?.tipo !== "telefono" && p?.tipo !== "ubicacion" && p?.tipo !== "lista")
+    .map((p) => {
+      const valor = valorDe(p.id);
+      if (!valor) return "";
+      // «Número Interior:» ya trae los dos puntos escritos por el negocio.
+      const etiqueta = String(p?.etiqueta ?? "").trim().replace(/[:\s]+$/, "");
+      return etiqueta ? `${etiqueta}: ${valor}` : valor;
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+/**
+ * ¿HAY QUE PEDIRLE LA UBICACIÓN A ESTE CLIENTE?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL BOQUETE QUE SE VIO EN VIVO. Alex pagó un pedido de verdad y la conversación
+ * siguió como si nada: el sistema ya sabía guardar una ubicación si el cliente
+ * la mandaba, y ya sabía qué pedidos no la tenían, pero no había nadie que
+ * juntara las dos cosas y la pidiera. La función existía entera y era invisible.
+ *
+ * ── NO SE LE PIDE A TODO EL MUNDO ─────────────────────────────────────────
+ *
+ * Hay tiendas que no llevan a domicilio: una barbería, una panadería donde se
+ * recoge en el mostrador. Pedirle la ubicación a esa gente es un mensaje que no
+ * sirve para nada — y en WhatsApp cada mensaje cuesta y cada mensaje de más es
+ * un chat silenciado.
+ *
+ * Así que hacen falta DOS SEÑALES, y las dos las da el negocio a propósito:
+ *
+ *   · tiene los envíos con mensajero encendidos, o
+ *   · puso la pregunta de ubicación en su formulario.
+ *
+ * Cualquiera de las dos significa «yo llevo a domicilio». Ninguna se adivina.
+ *
+ * Y NO SE PIDE SI YA LA HAY: quien la marcó en la tienda no tiene que volver a
+ * mandarla por el chat.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function hayQuePedirLaUbicacion(v: {
+  /** Lo que ya trae el pedido guardado. */
+  lat?: unknown;
+  long?: unknown;
+  /** Las preguntas del formulario de la tienda. */
+  preguntas?: PreguntaMinima[] | null;
+  /** ¿La tienda tiene el mensajero encendido? */
+  enviosActivos?: boolean | null;
+}): boolean {
+  if (ubicacionDe(v?.lat, v?.long)) return false;
+  return v?.enviosActivos === true || !!preguntaDeUbicacion(v?.preguntas);
 }

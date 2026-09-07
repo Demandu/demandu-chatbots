@@ -27,6 +27,7 @@
 /** Los momentos en los que se le puede escribir al cliente. */
 export type MomentoAviso =
   | "pagado"
+  | "pedir_ubicacion"
   | "enlace_vencido"
   | "pago_no_completado"
   | "confirmado"
@@ -106,6 +107,24 @@ export const MOMENTOS: {
     esEstado: false,
     texto:
       "¡Pago recibido! ✅ Tu pedido #{numero} en {tienda} quedó confirmado por {total}. Te vamos avisando por aquí.",
+  },
+  {
+    clave: "pedir_ubicacion",
+    etiqueta: "Pedir la ubicación",
+    // ─────────────────────────────────────────────────────────────────────────
+    // SALE JUSTO DESPUÉS DEL PAGO, Y NO ES CASUALIDAD. Es el único momento en
+    // que la persona está mirando el chat: acaba de confirmar en su app y está
+    // esperando a ver qué pasa. Pedírsela media hora después, cuando ya cerró el
+    // teléfono, es pedírsela a nadie.
+    //
+    // Y SOLO SI EL PEDIDO NO LA TRAE. Quien la marcó en la tienda no recibe este
+    // mensaje: sería preguntarle algo que ya contestó.
+    // ─────────────────────────────────────────────────────────────────────────
+    cuando: "Justo después del pago, si el pedido no trae la ubicación para el mensajero.",
+    activo: true,
+    esEstado: false,
+    texto:
+      "Para llevártelo necesitamos saber a dónde 📍\n\nMándanos tu ubicación: toca el clip 📎 aquí abajo y elige *Ubicación*. Con eso el mensajero llega directo.",
   },
   {
     clave: "enlace_vencido",

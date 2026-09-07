@@ -3327,6 +3327,35 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     }
   });
 
+  test("después del pago se le PIDE la ubicación al cliente", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ESTE BOQUETE SE VIO EN VIVO: Alex pagó un pedido de verdad y la
+    // conversación siguió como si nada. El sistema ya sabía guardar una
+    // ubicación si el cliente la mandaba, y ya sabía qué pedidos no la tenían —
+    // pero no había nadie que juntara las dos cosas y la pidiera. La función
+    // estaba entera y era invisible.
+    //
+    // El IPN es el único sitio que se entera del pago, y el pago es el único
+    // momento en que la persona está mirando el chat.
+    // ─────────────────────────────────────────────────────────────────────────
+    const ipn = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/api/tienda/yappy/ipn/route.ts"), "utf8"),
+    );
+    esperar(ipn.includes("pedirUbicacionSiHaceFalta")).verdadero(
+      "tras el pago nadie le pide la ubicación: el pedido se queda sin poder despacharse y nadie se entera",
+    );
+
+    // NO PUEDE TUMBAR LA RESPUESTA A YAPPY. Si esto lanzara y contestáramos
+    // error, Yappy reintentaría el aviso de un pago que ya está guardado.
+    // Se busca la LLAMADA, no el import: `indexOf` encontraba el import de
+    // arriba y miraba 400 caracteres de la nada.
+    const i = ipn.indexOf("await pedirUbicacionSiHaceFalta");
+    esperar(i > 0).verdadero("no se está llamando, solo importando");
+    esperar(/try\s*\{/.test(ipn.slice(Math.max(0, i - 200), i))).verdadero(
+      "pedir la ubicación puede romper el aviso de pago de Yappy",
+    );
+  });
+
   test("la ubicación que comparte el cliente por WhatsApp no se tira", () => {
     // ─────────────────────────────────────────────────────────────────────────
     // ASÍ ESTABA HASTA HOY, Y ERA EL AGUJERO DEL DELIVERY: llegaba un mensaje

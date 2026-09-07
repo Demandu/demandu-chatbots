@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { leerConfig } from "./config";
+import { hayQuePedirLaUbicacion } from "./ubicacion";
 import { textoDelAviso, botonDelAviso, type MomentoAviso } from "./avisos";
 import { comoDinero } from "./variedades";
 import { enlaceDeTienda, enlaceDePago } from "./direccion";
@@ -350,4 +351,70 @@ async function ultimoMensajeDelCliente(
     .limit(1)
     .maybeSingle();
   return (data?.created_at as string | undefined) ?? null;
+}
+
+/**
+ * Pedirle la ubicación al cliente, si es que hace falta.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SE APOYA EN `avisarDelPedido` Y NO ES PEREZA: ES LO CORRECTO.
+ *
+ * Escribir aquí un envío propio habría sido escribir por segunda vez todo lo
+ * que ese aviso ya resuelve y que no se ve hasta que falla: buscar la
+ * conversación por el pedido o por el contacto, comprobar la ventana de 24 h de
+ * WhatsApp, dejar el mensaje escrito en la Bandeja para que el agente sepa qué
+ * recibió el cliente, no repetirlo si ya salió, y apuntar en la bitácora por
+ * qué no salió cuando no sale.
+ *
+ * Y el texto es del negocio, editable en su pantalla de avisos, como todos los
+ * demás. Una veterinaria y una pastelería no piden las cosas igual.
+ *
+ * ── LAS DOS PREGUNTAS QUE DECIDEN ─────────────────────────────────────────
+ *
+ * ¿Le falta la ubicación a este pedido? ¿Esta tienda lleva a domicilio? Las dos
+ * tienen que ser que sí. La segunda no se adivina: o el negocio tiene el
+ * mensajero encendido, o puso la pregunta del mapa en su formulario.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function pedirUbicacionSiHaceFalta(
+  sb: SupabaseClient,
+  pedidoId: string,
+  tiendaId: string,
+): Promise<ResultadoAviso> {
+  const { data: ped } = await sb
+    .from("pedidos")
+    .select("id,entrega_lat,entrega_long")
+    .eq("id", pedidoId)
+    .maybeSingle();
+
+  if (!ped) return { enviado: false, motivo: "No encuentro ese pedido." };
+
+  const { data: tienda } = await sb
+    .from("tiendas")
+    .select("config")
+    .eq("id", tiendaId)
+    .maybeSingle();
+
+  // EL MENSAJERO SE LEE CON LA LLAVE DE SERVICIO Y SIN PEDIR LAS LLAVES. Aquí
+  // solo interesa el interruptor: si está encendido, esta tienda lleva a
+  // domicilio. Los secretos de ASAP no pintan nada en esta decisión y no se
+  // traen — lo que no se pide no se puede filtrar.
+  const { data: envio } = await sb
+    .from("tienda_envios")
+    .select("activo")
+    .eq("tienda_id", tiendaId)
+    .maybeSingle();
+
+  const hace = hayQuePedirLaUbicacion({
+    lat: ped.entrega_lat,
+    long: ped.entrega_long,
+    preguntas: leerConfig(tienda?.config).preguntas,
+    enviosActivos: envio?.activo === true,
+  });
+
+  // Ni se apunta: si cada pedido de cada tienda que no lleva a domicilio dejara
+  // un «no hacía falta» en la bitácora, la bitácora dejaría de servir.
+  if (!hace) return { enviado: false, motivo: "" };
+
+  return avisarDelPedido(sb, pedidoId, "pedir_ubicacion");
 }
