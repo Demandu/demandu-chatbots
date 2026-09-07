@@ -3327,6 +3327,58 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     }
   });
 
+  test("la ubicación que comparte el cliente por WhatsApp no se tira", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ASÍ ESTABA HASTA HOY, Y ERA EL AGUJERO DEL DELIVERY: llegaba un mensaje
+    // de tipo `location`, el motor lo apuntaba en la Bandeja como
+    // «📍 Ubicación», y la latitud y la longitud se perdían en esa misma línea.
+    // El cliente hacía exactamente lo que había que hacer —pulsar el clip y
+    // mandar su ubicación, que es lo que la gente ya hace todos los días— y no
+    // servía absolutamente para nada.
+    //
+    // El motor corre en Deno contra WhatsApp de verdad: aquí no se puede
+    // ejecutar. Esta regla es lo único que impide que vuelva a perderse.
+    // ─────────────────────────────────────────────────────────────────────────
+    const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+    esperar(/latitude/.test(wa)).verdadero(
+      "el motor no lee la latitud del mensaje: la ubicación del cliente se sigue tirando",
+    );
+    esperar(wa.includes("/api/motor/ubicacion")).verdadero(
+      "el motor no le cuenta a la plataforma que llegó una ubicación",
+    );
+
+    // ── Y NO DECIDE ÉL A QUÉ PEDIDO VA ──────────────────────────────────────
+    // Hay dos motores que no comparten un archivo. Si la regla viviera aquí
+    // habría que escribirla dos veces, y el día que se separen un canal
+    // guardaría la ubicación en el pedido de ayer y el otro en el de hoy.
+    const sinComs = sinComentarios(wa);
+    esperar(/entrega_lat/.test(sinComs)).falso(
+      "el motor está escribiendo la ubicación en el pedido por su cuenta: eso se decide en la plataforma",
+    );
+
+    // ── Y LA UBICACIÓN TIENE QUE LLEGAR AL BLOQUE DE PEDIDO ────────────────
+    //
+    // Un mutante que borró esta sola pieza sobrevivió a todo lo demás, y el
+    // fallo que dejaba era de los que no se ven: durante un pedido por chat, el
+    // bloque pregunta «mándame tu ubicación», el cliente la manda, y el motor
+    // le pasa al bloque un texto VACÍO — así que vuelve a preguntar lo mismo,
+    // una y otra vez, mientras el cliente hace exactamente lo que le piden.
+    //
+    // La ubicación viaja como «lat,long» dentro del texto del mensaje justo
+    // para que todo lo de abajo la entienda sin cambiar nada más.
+    const cadena = sinComs.slice(sinComs.indexOf("const text = msg.text?.body"));
+    esperar(/punto\?\.texto/.test(cadena.slice(0, cadena.indexOf(";")))).verdadero(
+      "la ubicación no entra en el texto del mensaje: durante un pedido por chat se preguntaría en bucle",
+    );
+
+    // El agente de la Bandeja tiene que poder PULSAR y ver dónde es. «📍
+    // Ubicación» a secas no le sirve a nadie.
+    esperar(/google\.com\/maps/.test(wa)).verdadero(
+      "en la Bandeja la ubicación se vería sin enlace: el agente no puede hacer nada con eso",
+    );
+  });
+
   test("el pedido nace con la ubicación puesta, no se la ponen después", () => {
     // ─────────────────────────────────────────────────────────────────────────
     // ES LA LÍNEA MÁS CARA DE TODO ESTO Y NO LA CUBRE NINGUNA PRUEBA DE LÓGICA:

@@ -3846,6 +3846,80 @@ async function mandarEstadoDePedido(ctx: any, node: any): Promise<string | undef
  * «ahora no puedo, escríbeme en un momento».
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * LA UBICACIÓN QUE MANDA WHATSAPP, CONVERTIDA EN TEXTO.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ESTA FUNCIÓN ES DIEZ LÍNEAS Y ES LO QUE HACÍA FALTA PARA EL DELIVERY.
+ *
+ * WhatsApp trae el botón de ubicación desde hace una década: la gente lo usa
+ * todos los días para quedar con sus amigos, no hay nada que enseñarle, y lo
+ * que manda es exacto. Hasta hoy lo tirábamos: el mensaje llegaba, se apuntaba
+ * en la Bandeja como «📍 Ubicación» y la latitud y la longitud se perdían aquí
+ * mismo. El cliente hacía exactamente lo que había que hacer y no servía.
+ *
+ * ── SE CONVIERTE A TEXTO A PROPÓSITO ──────────────────────────────────────
+ *
+ * «9.0136814,-79.4796534» es un texto que TODO lo de abajo ya sabe tratar: el
+ * bloque de pedido lo recibe como una respuesta más y la plataforma lo lee con
+ * `leerUbicacion`, que ya entiende ese formato. Sin esto habría que enseñarle a
+ * cada bloque qué es una ubicación — en los dos motores, por separado.
+ *
+ * (0,0) NO ES UNA UBICACIÓN. Es un punto real en el Atlántico y es también lo
+ * que queda cuando el dato se pierde por el camino.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function puntoDelMensaje(location: any): { texto: string; enlace: string; nombre: string } | null {
+  const lat = Number(location?.latitude);
+  const long = Number(location?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(long)) return null;
+  if (lat < -90 || lat > 90 || long < -180 || long > 180) return null;
+  if (lat === 0 && long === 0) return null;
+
+  const corto = (n: number) => String(Number(n.toFixed(7)));
+  const texto = `${corto(lat)},${corto(long)}`;
+  const nombre = [location?.name, location?.address]
+    .map((x: any) => String(x ?? "").trim())
+    .filter(Boolean)
+    .join(" · ");
+
+  return { texto, enlace: `https://www.google.com/maps/search/?api=1&query=${texto}`, nombre };
+}
+
+/**
+ * Se le cuenta a la plataforma que llegó una ubicación, y ella decide.
+ *
+ * A QUÉ PEDIDO VA NO SE DECIDE AQUÍ. Hay dos motores que no comparten un solo
+ * archivo; si la regla viviera en cada uno, el día que se separen un canal
+ * guardaría la ubicación en el pedido de ayer y el otro en el de hoy. Es el
+ * mismo motivo por el que el pedido tampoco se escribe aquí.
+ */
+async function avisarUbicacion(cuerpo: Record<string, any>): Promise<any> {
+  const base = Deno.env.get("PLATAFORMA_URL") ?? "https://platform.demandu.tech";
+  const llave = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const ctl = new AbortController();
+  const reloj = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const r = await fetch(`${base}/api/motor/ubicacion`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-demandu-motor": llave },
+      body: JSON.stringify(cuerpo),
+      signal: ctl.signal,
+    });
+    const crudo = await r.text();
+    if (!r.ok) {
+      console.error(`[ubicacion] la plataforma respondió ${r.status}: ${crudo.slice(0, 200)}`);
+      return null;
+    }
+    try { return JSON.parse(crudo); } catch { return null; }
+  } catch (e) {
+    console.error("[ubicacion] no contestó:", e);
+    return null;
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
 async function pedirALaTienda(cuerpo: Record<string, any>): Promise<any> {
   const base = Deno.env.get("PLATAFORMA_URL") ?? "https://platform.demandu.tech";
   const llave = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -5509,17 +5583,24 @@ Deno.serve(async (req: Request) => {
       // expresión a propósito. Encadenarlos con `??` no funcionaría — el primero
       // devolvería "" (que no es null) y el segundo no llegaría a evaluarse
       // nunca, dejando los formularios sin reconocer.
+      // La ubicación compartida deja de perderse: se convierte en «lat,long»,
+      // que es un texto que el resto del motor y la plataforma ya saben leer.
+      const punto = msg.type === "location" ? puntoDelMensaje(msg.location) : null;
+
       const text = msg.text?.body
         ?? msg.interactive?.button_reply?.id
         ?? msg.interactive?.list_reply?.id
         ?? msg.button?.text
+        ?? punto?.texto
         ?? (permisoLlamada ? "__permiso_llamada__" : respuestaDeFormulario ? "__formulario__" : "");
       const etiquetaAdjunto =
         msg.type === "image" ? "📷 Imagen"
         : msg.type === "video" ? "🎥 Video"
         : msg.type === "audio" ? "🎤 Audio"
         : msg.type === "document" ? "📎 Archivo"
-        : msg.type === "location" ? "📍 Ubicación"
+        // CON EL ENLACE DENTRO. Un agente que lee «📍 Ubicación» a secas no
+        // puede hacer nada con eso; con el enlace, pulsa y ve dónde es.
+        : msg.type === "location" ? `📍 Ubicación${punto ? `: ${punto.enlace}` : ""}`
         : msg.type === "sticker" ? "🩷 Sticker"
         : "";
       const visible =
@@ -5749,6 +5830,43 @@ Deno.serve(async (req: Request) => {
           // dejar a un cliente sin respuesta.
           console.error("[campaña] no pude guardar el origen:", e);
         }
+      }
+
+      // ── LLEGÓ UNA UBICACIÓN Y NADIE SE LA HABÍA PEDIDO ──────────────────
+      //
+      // Es EL caso del delivery, y es el que más va a pasar: el cliente pidió
+      // por la tienda, el pedido le llegó al negocio por aquí, y ahora manda su
+      // ubicación —porque se la pidieron, o porque en Panamá es lo que se hace.
+      // Se guarda en el pedido que la está esperando y se le contesta.
+      //
+      // NO SE HACE SI EL BLOQUE DE PEDIDO ESTÁ CONDUCIENDO LA CHARLA: ahí la
+      // ubicación es la respuesta a la pregunta que acaba de hacer, y quien la
+      // tiene que recibir es el carrito. Meterse por delante guardaría el dato
+      // en un pedido viejo y dejaría la pregunta sin contestar — dos errores de
+      // una vez.
+      const esperandoPedido = (conv.flow_state as any)?.awaiting?.type === "tienda_pedir";
+      if (punto && !esperandoPedido && contact?.id) {
+        const r = await avisarUbicacion({
+          org_id: cfg.org_id,
+          contacto_id: contact.id,
+          location: msg.location,
+        });
+        const contestacion = String(r?.mensaje ?? "").trim();
+        if (contestacion) {
+          const envio = await sendText(cfg.phone_number_id, cfg.access_token, from, contestacion);
+          await db.from("messages").insert({
+            conversation_id: conv.id, org_id: cfg.org_id,
+            direction: "outbound", sender: "bot", body: contestacion,
+          });
+          if (!envio?.ok) console.error("[ubicacion] no se pudo contestar:", envio?.error);
+        }
+        // EL FLUJO NO CORRE ESTE TURNO. Compartir una ubicación no es tocar una
+        // opción del menú: si el flujo corriera, el cliente recibiría nuestra
+        // confirmación y encima un «no entendí» del bot, uno detrás del otro.
+        //
+        // Se contesta 200 a Meta igual: el mensaje SÍ se atendió. Un 500 aquí
+        // haría que Meta lo reenviara, y con él la ubicación otra vez.
+        return json({ ok: true });
       }
 
       if (cfg.bot_id && (conv.status !== "assigned")) {

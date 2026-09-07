@@ -99,6 +99,9 @@ import {
   precisionDudosa, comoSeLeeLaPrecision, preguntaDeUbicacion,
   ubicacionDeLasRespuestas, direccionDeLasRespuestas,
 } from "../../src/lib/tienda/ubicacion.ts";
+import {
+  aQuePedidoVa, ubicacionDelMensaje, VENTANA_UBICACION_HORAS,
+} from "../../src/lib/tienda/ubicacionQueLlega.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
 import { recalcularPedido } from "../../src/lib/tienda/recalcular.ts";
@@ -5883,6 +5886,115 @@ describe("La ubicación del cliente", () => {
     esperar(texto).contiene("https://");
     esperar(texto).contiene("9.0136814,-79.4796534");
     esperar(/Ubicaci[oó]n: 9\.0136814/.test(texto)).falso("le llegarían los números pelados");
+  });
+});
+
+
+/**
+ * Llega una ubicación por WhatsApp: ¿a qué pedido va?
+ *
+ * CUATRO RESPUESTAS Y TRES SON FÁCILES DE EQUIVOCAR. Metida dentro del motor no
+ * se podría probar ninguna: el motor corre en Deno, contra WhatsApp de verdad.
+ */
+describe("La ubicación que llega por el chat", () => {
+  const ahora = new Date("2026-09-07T18:00:00Z");
+  const hace = (h) => new Date(ahora.getTime() - h * 3600_000).toISOString();
+
+  const abierto = (extra = {}) => ({
+    id: "p1", numero: 1042, estado: "recibido", created_at: hace(2),
+    entrega_lat: null, entrega_long: null, envio_id: null, ...extra,
+  });
+
+  test("va al pedido abierto que la está esperando", () => {
+    const r = aQuePedidoVa([abierto()], ahora);
+    esperar(r.que).igual("guardar");
+    esperar(r.pedido.numero).igual(1042);
+    esperar(r.corrige).falso();
+    esperar(r.mensaje).contiene("1042", "el cliente no sabría a qué pedido se guardó");
+  });
+
+  test("SE ELIGE EL QUE LA NECESITA, NO EL MÁS NUEVO", () => {
+    /* Parece lo mismo y no lo es. Con un pedido de ayer sin ubicación y uno de
+     * hoy que ya la trae, quedarse con el más nuevo la pisaría encima de una
+     * que estaba bien y dejaría el de ayer igual de parado. */
+    const r = aQuePedidoVa([
+      { ...abierto(), id: "hoy", numero: 99, created_at: hace(1), entrega_lat: 9.01, entrega_long: -79.47 },
+      { ...abierto(), id: "ayer", numero: 98, created_at: hace(20) },
+    ], ahora);
+    esperar(r.que).igual("guardar");
+    esperar(r.pedido.id).igual("ayer", "se pisó una ubicación buena y el pedido parado siguió parado");
+  });
+
+  test("entre los que la necesitan, manda el más nuevo", () => {
+    const r = aQuePedidoVa([
+      { ...abierto(), id: "viejo", created_at: hace(30) },
+      { ...abierto(), id: "nuevo", created_at: hace(1) },
+    ], ahora);
+    esperar(r.pedido.id).igual("nuevo");
+  });
+
+  test("si ninguno la necesita, es una corrección y SE DICE", () => {
+    /* «Me equivoqué, esta es mi casa» es un caso real. Pisar una ubicación en
+     * silencio es cómo un pedido acaba en la dirección de otro día. */
+    const r = aQuePedidoVa([abierto({ entrega_lat: 9.01, entrega_long: -79.47 })], ahora);
+    esperar(r.que).igual("guardar");
+    esperar(r.corrige).verdadero();
+    esperar(r.mensaje).contiene("cambié");
+  });
+
+  test("UNA UBICACIÓN NUEVA NO CAMBIA UN ENVÍO QUE YA SALIÓ", () => {
+    /* El mensajero va en la calle con la dirección de antes. Guardarla y callar
+     * dejaría al negocio viendo en pantalla una ubicación que no es a la que va
+     * la moto. */
+    const r = aQuePedidoVa([abierto({ envio_id: "23949" })], ahora);
+    esperar(r.que).igual("nada");
+    esperar(r.mensaje).contiene("camino");
+  });
+
+  test("un pedido entregado o cancelado ya no espera nada", () => {
+    for (const estado of ["entregado", "cancelado"]) {
+      esperar(aQuePedidoVa([abierto({ estado })], ahora).que).igual(
+        "nada", `un pedido ${estado} se quedó con la ubicación nueva`,
+      );
+    }
+  });
+
+  test("no se le cambia el destino a un pedido de hace tres semanas", () => {
+    /* Quien manda su ubicación por costumbre —o le da al botón sin querer— no
+     * puede acabar moviendo un pedido que quedó a medias hace un mes. */
+    esperar(aQuePedidoVa([abierto({ created_at: hace(24 * 21) })], ahora).que).igual("nada");
+    /* Justo dentro de la ventana sí entra. */
+    esperar(aQuePedidoVa([abierto({ created_at: hace(VENTANA_UBICACION_HORAS - 1) })], ahora).que).igual("guardar");
+    esperar(aQuePedidoVa([abierto({ created_at: hace(VENTANA_UBICACION_HORAS + 1) })], ahora).que).igual("nada");
+  });
+
+  test("una fecha ilegible no entra", () => {
+    /* `Date.parse` devuelve NaN y toda comparación con NaN es falsa: un filtro
+     * escrito al revés la dejaría pasar sin que nada avisara. */
+    esperar(aQuePedidoVa([abierto({ created_at: "el martes" })], ahora).que).igual("nada");
+    esperar(aQuePedidoVa([abierto({ created_at: null })], ahora).que).igual("nada");
+  });
+
+  test("sin pedidos, se contesta igual y sin mentir", () => {
+    const r = aQuePedidoVa([], ahora);
+    esperar(r.que).igual("nada");
+    esperar(r.mensaje.trim().length > 0).verdadero("el cliente mandó su ubicación y no recibió nada");
+  });
+
+  test("lo que manda WhatsApp se lee, y (0,0) no", () => {
+    const u = ubicacionDelMensaje({ latitude: 9.0136814, longitude: -79.4796534 });
+    esperar(u.punto).igual({ lat: 9.0136814, long: -79.4796534 });
+    esperar(u.nombre).igual("", "«mi ubicación actual» no trae nombre y eso es lo normal");
+
+    const conNombre = ubicacionDelMensaje({
+      latitude: 8.9853921, longitude: -79.5131792, name: "Multiplaza", address: "Panamá",
+    });
+    esperar(conNombre.nombre).contiene("Multiplaza");
+
+    esperar(ubicacionDelMensaje({ latitude: 0, longitude: 0 })).igual(null);
+    esperar(ubicacionDelMensaje({})).igual(null);
+    esperar(ubicacionDelMensaje(null)).igual(null);
+    esperar(ubicacionDelMensaje({ latitude: 200, longitude: -79 })).igual(null);
   });
 });
 
