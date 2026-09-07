@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { llamadaDeTareaProgramada } from "@/lib/cron";
 import { correoDeBienvenida } from "@/lib/correo/plantillas";
+import { leerPlantilla } from "@/lib/correo/guardadas";
 import { enviarYApuntar } from "@/lib/correo/enviar";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +68,14 @@ export async function POST(req: Request) {
 
   const panel = `${(process.env.NEXT_PUBLIC_SITE_URL ?? "https://platform.demandu.tech").replace(/\/+$/, "")}/dashboard`;
 
+  // EL TEXTO SE LEE UNA VEZ POR VUELTA, NO UNA POR CORREO. Es el mismo para
+  // todos los de esta tanda, y leerlo veinticinco veces es veinticinco viajes a
+  // la base para recibir la misma fila.
+  //
+  // Si no se pudo leer, `correoDeBienvenida` usa el texto del código. La tarea
+  // no se para por eso: el cliente prefiere el correo de siempre a ninguno.
+  const plantilla = await leerPlantilla(admin, "bienvenida");
+
   let mandados = 0;
   let fallidos = 0;
 
@@ -87,6 +96,7 @@ export async function POST(req: Request) {
         nombre: org.contacto_nombre,
         negocio: org.name,
         panel,
+        plantilla,
       }),
       etiqueta: "bienvenida",
       orgId: String(org.id),

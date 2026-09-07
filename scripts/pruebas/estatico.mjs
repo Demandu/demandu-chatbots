@@ -1942,7 +1942,7 @@ describe("Tareas programadas", () => {
     }
   });
 
-  test("el correo de bienvenida se manda desde UN solo sitio", () => {
+  test("EL CORREO DE BIENVENIDA SOLO SE LE MANDA A UN CLIENTE DESDE UN SITIO", () => {
     // Se manda por tarea programada porque el alta ocurre DENTRO de la base
     // —un disparador de Postgres llama a `provisionar_negocio`— y Postgres no
     // manda correos. La tentación es engancharlo además en la pantalla de
@@ -1950,15 +1950,91 @@ describe("Tareas programadas", () => {
     // las dos puertas recibe dos correos idénticos.
     //
     // La marca `bienvenida_enviada_at` protege de eso en la base, pero una
-    // carrera entre dos caminos simultáneos se le puede escapar. Que solo haya
-    // un sitio que lo arma es la protección de verdad.
+    // carrera entre dos caminos simultáneos se le puede escapar.
+    //
+    // ── POR QUÉ LA LISTA TIENE TRES ARCHIVOS Y NO UNO ─────────────────────
+    //
+    // Antes esta regla exigía que SOLO la tarea armara el correo. Eso mezclaba
+    // dos cosas distintas: armarlo y mandárselo a un cliente. La pantalla del
+    // superadmin tiene que armarlo para pintar la vista previa —con el MISMO
+    // código, que es toda la gracia— y para mandárselo a quien lo edita. Ni la
+    // vista previa ni la prueba pueden llegarle a un cliente: eso lo garantizan
+    // las dos reglas de aquí abajo, no ésta.
+    const PERMITIDOS = [
+      "src/app/api/correos/bienvenida/route.ts", // la manda de verdad, por tarea
+      "src/app/superadmin/correos/Editor.tsx", // la pinta, no manda nada
+      "src/app/superadmin/correos/acciones.ts", // se la manda a uno mismo
+    ];
     const usan = ARCHIVOS.filter((f) => sinComentarios(f.texto).includes("correoDeBienvenida("))
       .map((f) => f.ruta)
-      .filter((r) => !r.endsWith("lib/correo/plantillas.ts"));
+      .filter((r) => !r.endsWith("lib/correo/plantillas.ts"))
+      .sort();
 
     esperar(usan.join(", ")).igual(
-      "src/app/api/correos/bienvenida/route.ts",
-      "el correo de bienvenida se arma desde más de un sitio: alguien va a recibirlo dos veces",
+      PERMITIDOS.slice().sort().join(", "),
+      "el correo de bienvenida se arma desde un sitio nuevo: si ése se lo manda a un cliente, alguien lo recibirá dos veces",
+    );
+  });
+
+  test("LA PRUEBA DEL CORREO SOLO PUEDE IR A QUIEN LA PIDE", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Es la diferencia entre una prueba y una metedura de pata irreversible.
+    //
+    // Un campo «mandar a:» en la pantalla que edita el correo de bienvenida es
+    // un campo donde un día alguien pega —o el navegador autocompleta— la
+    // dirección de un cliente, y ese cliente recibe un borrador a medio
+    // escribir con nuestro nombre. Un correo es lo único del producto que no se
+    // puede corregir después.
+    //
+    // El destino sale de la SESIÓN. No se puede equivocar porque no se puede
+    // escribir.
+    // ─────────────────────────────────────────────────────────────────────────
+    const acc = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/superadmin/correos/acciones.ts"), "utf8"),
+    );
+    const prueba = acc.slice(acc.indexOf("export async function mandarmePrueba"));
+    esperar(prueba.length > 100).verdadero("no encontré la acción que manda la prueba");
+
+    esperar(/const\s+mio\s*=\s*String\(user\?\.email/.test(prueba)).verdadero(
+      "el destino de la prueba ya no sale de la sesión",
+    );
+    esperar(/para:\s*mio/.test(prueba)).verdadero("la prueba se manda a otra cosa que no es el correo de la sesión");
+    esperar(/formData\.get\(\s*["'](para|destino|correo|email)["']/.test(prueba)).falso(
+      "el destino de la prueba se puede escribir desde el formulario: un día llega a un cliente",
+    );
+  });
+
+  test("la vista previa no manda nada", () => {
+    // Pinta el correo con el mismo código que lo manda, y ésa es toda su razón
+    // de ser — una vista previa dibujada aparte da permiso para publicar sin
+    // mirar, y el día que se despeguen, la que miente es la que estás mirando.
+    //
+    // Pero pintar y mandar no pueden vivir en el mismo botón: se repinta en
+    // cada tecla que se pulsa.
+    const vista = fs.readFileSync(path.join(SRC, "app/superadmin/correos/Editor.tsx"), "utf8");
+    esperar(/enviarCorreo|enviarYApuntar|postmarkapp/.test(sinComentarios(vista))).falso(
+      "la vista previa puede mandar correos: se repinta en cada tecla",
+    );
+  });
+
+  test("el cuerpo que escribe una persona NO se pinta como HTML", () => {
+    // El cuerpo se guarda como texto llano y se escapa al pintarlo. Si alguien
+    // lo metiera con `dangerouslySetInnerHTML` en la pantalla —o sin escapar en
+    // la plantilla— quien edita el correo podría colar un enlace a otro sitio
+    // en un mensaje que sale desde nuestro dominio verificado. Eso es un
+    // phishing bien hecho, firmado por nosotros.
+    const editor = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/correos/Editor.tsx"), "utf8"));
+    esperar(editor.includes("dangerouslySetInnerHTML")).falso(
+      "la pantalla pinta HTML del cuerpo directamente en el panel",
+    );
+    // La vista previa va en un `iframe` sin permisos: es HTML nuestro, pero el
+    // cuerpo lo escribe una persona y no hay razón para que ejecute nada.
+    esperar(/sandbox=""/.test(editor)).verdadero("la vista previa del correo puede ejecutar lo que le metan");
+
+    const plant = sinComentarios(fs.readFileSync(path.join(SRC, "lib/correo/plantillas.ts"), "utf8"));
+    const cuerpo = plant.slice(plant.indexOf("export function cuerpoEnHtml"));
+    esperar(cuerpo.indexOf("escapar(") >= 0 && cuerpo.indexOf("escapar(") < cuerpo.indexOf(".replace(")).verdadero(
+      "el cuerpo se da forma antes de escaparlo: por ahí entra una etiqueta",
     );
   });
 

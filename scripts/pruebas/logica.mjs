@@ -104,6 +104,7 @@ import {
 } from "../../src/lib/tienda/ubicacionQueLlega.ts";
 import {
   primerNombre, saludo, correoDeBienvenida, correoDelEquipo, loQueFaltaParaEscribir, LOGO,
+  rellenarHuecos, cuerpoEnHtml, laPlantilla, BIENVENIDA_POR_DEFECTO, HUECOS,
 } from "../../src/lib/correo/plantillas.ts";
 import { REMITENTE } from "../../src/lib/correo/enviar.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
@@ -6144,11 +6145,20 @@ describe("Correos de la plataforma", () => {
     esperar(c.html).contiene("Pastelería &amp; Co");
   });
 
-  test("sin negocio, el asunto no queda con una coma colgando", () => {
-    /* «Bienvenido a Demandu, » es de las cosas que se notan en la bandeja. */
+  test("sin negocio, el asunto sigue siendo una frase", () => {
+    /* «Bienvenido a Demandu, » o « ya está en Demandu» son de las cosas que se
+     * notan en la bandeja de entrada y en ninguna otra parte.
+     *
+     * NO SE COMPRUEBA EL TEXTO EXACTO A PROPÓSITO: ese texto ahora se edita
+     * desde el superadmin, así que fijarlo aquí sería una prueba que rompe cada
+     * vez que alguien corrige una coma. Lo que no puede cambiar es que la frase
+     * esté entera. */
     const sin = correoDeBienvenida({ nombre: "Darwin", negocio: null, panel: PANEL });
-    esperar(sin.asunto).igual("Tu cuenta de Demandu está lista");
-    esperar(/,\s*$/.test(sin.asunto)).falso();
+    esperar(/,\s*$/.test(sin.asunto)).falso("el asunto acaba en coma");
+    esperar(sin.asunto.trim().length > 10).verdadero("el asunto se quedó en nada");
+    esperar(/^\s|\s{2}/.test(sin.asunto)).falso("quedó un agujero donde iba el negocio");
+    /* Y la mayúscula inicial: «tu negocio ya está…» delata la plantilla. */
+    esperar(/^[A-ZÁÉÍÓÚÑ]/.test(sin.asunto)).verdadero("el asunto empieza en minúscula");
 
     const con = correoDeBienvenida({ nombre: "Darwin", negocio: "Ventas de zapatos", panel: PANEL });
     esperar(con.asunto).contiene("Ventas de zapatos");
@@ -6251,6 +6261,176 @@ describe("Correos de la plataforma", () => {
     esperar(/@demandu\.tech>/.test(REMITENTE)).falso(
       "el remitente sale del dominio raíz: un spam de la plataforma dañaría el correo de la empresa",
     );
+  });
+});
+
+describe("El texto del correo se edita sin publicar", () => {
+  const PANEL = "https://platform.demandu.tech/dashboard";
+  const CLIENTE = { nombre: "Darwin Bracho", negocio: "Ventas de zapatos" };
+
+  test("lo que alguien escriba en la pantalla es lo que recibe el cliente", () => {
+    /* Si no fuera así, la pantalla sería un formulario decorativo — y peor:
+     * alguien creería haber cambiado el correo y seguiría saliendo el viejo. */
+    const c = correoDeBienvenida({
+      ...CLIENTE,
+      panel: PANEL,
+      plantilla: {
+        asunto: "Bienvenido a bordo, {nombre}",
+        titulo: "{negocio} ya puede vender por WhatsApp",
+        cuerpo: "{saludo}. Esto lo escribió una persona.",
+        boton: "Empezar",
+      },
+    });
+    esperar(c.asunto).igual("Bienvenido a bordo, Darwin");
+    esperar(c.html).contiene("Ventas de zapatos ya puede vender por WhatsApp");
+    esperar(c.html).contiene("Hola, Darwin. Esto lo escribió una persona.");
+    esperar(c.html).contiene("Empezar");
+    /* Y el texto plano también, que es el que leen algunos clientes de correo. */
+    esperar(c.texto).contiene("Esto lo escribió una persona.");
+  });
+
+  test("UN CAMPO VACÍO NO MANDA EL CORREO EN BLANCO", () => {
+    /* Es el fallo que convierte una pantalla de edición en un incidente:
+     * alguien borra el asunto para reescribirlo, guarda sin querer, y a partir
+     * de ese momento cada cliente nuevo recibe un correo «(sin asunto)» con el
+     * cuerpo vacío. Vacío significa «usa el del código», no «manda nada». */
+    const vacia = correoDeBienvenida({
+      ...CLIENTE,
+      panel: PANEL,
+      plantilla: { asunto: "", titulo: "   ", cuerpo: "", boton: null },
+    });
+    const sinPlantilla = correoDeBienvenida({ ...CLIENTE, panel: PANEL });
+    esperar(vacia.asunto).igual(sinPlantilla.asunto);
+    esperar(vacia.html).igual(sinPlantilla.html);
+    esperar(vacia.asunto.trim().length > 5).verdadero("se quedó sin asunto");
+    esperar(vacia.html).contiene("WhatsApp");
+
+    /* Y campo a campo: uno vacío no arrastra a los otros. */
+    const media = laPlantilla({ asunto: "Solo cambio esto", cuerpo: "" });
+    esperar(media.asunto).igual("Solo cambio esto");
+    esperar(media.cuerpo).igual(BIENVENIDA_POR_DEFECTO.cuerpo);
+  });
+
+  test("la base que no contesta no deja al cliente sin correo", () => {
+    /* `leerPlantilla` devuelve `null` cuando la tabla no está, la fila no
+     * existe o la base no responde. Eso NO puede parar la bienvenida: el
+     * cliente prefiere el correo de siempre a ninguno. */
+    const c = correoDeBienvenida({ ...CLIENTE, panel: PANEL, plantilla: null });
+    esperar(c.asunto.trim().length > 5).verdadero();
+    esperar(c.html).contiene("WhatsApp");
+  });
+
+  test("NINGÚN HUECO QUEDA ABIERTO NI DEJA UN AGUJERO", () => {
+    /* «Hola, {nombre}» —el hueco sin rellenar— y «Hola, .» —el hueco relleno
+     * con nada— son los dos errores clásicos de las plantillas, y los dos se
+     * ven en la bandeja del cliente antes que en ninguna otra parte.
+     *
+     * Se prueban TODOS los huecos del catálogo contra los datos más pobres
+     * posibles: así, el día que alguien añada uno nuevo a `HUECOS` sin
+     * enseñarle a `rellenar` qué hacer con él, esta prueba lo cuenta. */
+    const pobres = [
+      { nombre: null, negocio: null },
+      { nombre: "", negocio: "" },
+      { nombre: "   ", negocio: "  " },
+      { nombre: "50761234567", negocio: "Tienda" },
+    ];
+    for (const h of HUECOS) {
+      for (const datos of pobres) {
+        const salida = rellenarHuecos(`Antes ${h.clave}, después.`, datos);
+        esperar(salida.includes(h.clave)).falso(`el hueco ${h.clave} no se rellenó: ${salida}`);
+        esperar(salida).contiene("después.");
+        esperar(/,\s*[.,]/.test(salida)).falso(`quedó una coma colgando: ${salida}`);
+        esperar(/\s{2,}/.test(salida)).falso(`quedó un agujero de espacios: ${salida}`);
+        esperar(salida.includes("undefined") || salida.includes("null")).falso(salida);
+      }
+    }
+  });
+
+  test("sin nombre no queda «Hola, .»", () => {
+    esperar(rellenarHuecos("{saludo}. Tu cuenta ya está.", { nombre: null, negocio: "X" })).igual(
+      "Hola. Tu cuenta ya está.",
+    );
+    esperar(rellenarHuecos("Hola, {nombre}. Qué tal.", { nombre: "", negocio: "X" })).igual("Hola. Qué tal.");
+  });
+
+  test("sin negocio se dice «tu negocio», y no un hueco", () => {
+    /* Vacío dejaría « ya está en Demandu». Se elige una palabra que funcione en
+     * la frase, y con la mayúscula puesta si el hueco iba al principio. */
+    esperar(rellenarHuecos("{negocio} ya está en Demandu", { negocio: null })).igual("Tu negocio ya está en Demandu");
+    esperar(rellenarHuecos("Creada para {negocio}.", { negocio: "  " })).igual("Creada para tu negocio.");
+  });
+
+  test("EL CUERPO ESCRITO A MANO NO PUEDE METER HTML", () => {
+    /* Es la razón de que el cuerpo se guarde como texto llano. Quien edita el
+     * correo no escribe HTML: escribe palabras. Si pudiera colar una etiqueta,
+     * podría colar un enlace a otro sitio en un correo que sale con nuestro
+     * nombre y nuestro dominio verificado — que es exactamente lo que hace un
+     * phishing bien hecho. */
+    const c = correoDeBienvenida({
+      ...CLIENTE,
+      panel: PANEL,
+      plantilla: { cuerpo: 'Pulsa <a href="http://malo.com">aquí</a> <script>robar()</script>' },
+    });
+    esperar(c.html.includes("<script>")).falso("se coló una etiqueta en el cuerpo del correo");
+    esperar(c.html.includes("<a href=\"http://malo.com\"")).falso("se coló un enlace ajeno");
+    esperar(c.html).contiene("&lt;a href=");
+
+    /* Y por el título y el asunto tampoco. */
+    const d = correoDeBienvenida({
+      ...CLIENTE,
+      panel: PANEL,
+      plantilla: { titulo: "<img src=x onerror=alert(1)>" },
+    });
+    esperar(d.html.includes("onerror=alert(1)>")).falso("se coló una etiqueta en el título");
+  });
+
+  test("los párrafos y la negrita SÍ se respetan", () => {
+    /* Sin esto, un mensaje de tres párrafos llega como un muro de texto. Son
+     * las dos únicas cosas que se interpretan, y se interpretan DESPUÉS de
+     * escapar: por eso no abren la puerta a nada más. */
+    const html = cuerpoEnHtml("Primero.\n\nSegundo con *negrita*.");
+    esperar(html).contiene("<br /><br />");
+    esperar(html).contiene("<b style=");
+    esperar(html).contiene("negrita</b>");
+    esperar(html.includes("*")).falso("los asteriscos se quedaron a la vista");
+
+    /* Un asterisco suelto no puede romper el correo ni abrir una etiqueta. */
+    const suelto = cuerpoEnHtml("Cuesta 5*3 pesos");
+    esperar(suelto).contiene("5*3");
+    esperar(suelto.includes("<b")).falso();
+  });
+
+  test("el texto plano dice lo mismo que el HTML, sin los asteriscos", () => {
+    /* Si el texto plano se escribiera aparte, el día que alguien cambie el
+     * correo desde la pantalla cambiaría uno y no el otro — y quien lea la
+     * versión de texto recibiría el mensaje de antes sin que nadie se entere. */
+    const c = correoDeBienvenida({
+      ...CLIENTE,
+      panel: PANEL,
+      plantilla: { cuerpo: "Hola. Tienes *14 días* de prueba." },
+    });
+    esperar(c.texto).contiene("Tienes 14 días de prueba.");
+    esperar(c.texto.includes("*")).falso("los asteriscos llegaron al texto plano");
+    esperar(c.texto.includes("<")).falso("el texto plano lleva HTML dentro");
+    esperar(c.texto).contiene(PANEL);
+  });
+
+  test("el armazón NO se puede editar desde la pantalla", () => {
+    /* Solo hay cuatro campos de texto. El logo, los colores, la caja y el pie
+     * se quedan en el código a propósito: un editor con el que se puede romper
+     * el HTML del correo de todos los clientes desde el navegador, sin pruebas
+     * y sin revisión, es un editor que un día rompe el correo de todos los
+     * clientes. */
+    const c = correoDeBienvenida({
+      ...CLIENTE,
+      panel: PANEL,
+      plantilla: { asunto: "x", titulo: "y", cuerpo: "z", boton: "w" },
+    });
+    esperar(c.html).contiene(LOGO);
+    esperar(c.html).contiene('alt="Demandu"');
+    esperar(c.html).contiene("demandu.tech");
+    /* Y el botón sigue llevando al panel, diga lo que diga por fuera. */
+    esperar(c.html).contiene(`href="${PANEL}"`);
   });
 });
 

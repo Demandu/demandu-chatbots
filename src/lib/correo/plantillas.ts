@@ -135,6 +135,122 @@ export function armazon(v: { titulo: string; cuerpo: string; boton?: { texto: st
 /* ── Bienvenida ────────────────────────────────────────────────────────────── */
 
 /**
+ * EL TEXTO DE LA BIENVENIDA ES DATO, NO CÓDIGO.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Estaba escrito aquí dentro. Cambiar una coma exigía tocar el repositorio,
+ * pasar las pruebas y publicar — para un texto que se corrige leyéndolo. Ahora
+ * vive en la base y se edita desde el superadmin.
+ *
+ * ESTO DE AQUÍ SIGUE SIENDO LA VERDAD DE RESPALDO. Si la fila no está, si
+ * alguien vació un campo, o si la base no contesta, se manda ESTE texto. Un
+ * correo de bienvenida en blanco es peor que uno viejo: el cliente abre y no
+ * hay nada, y ya no se puede recoger.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export type PlantillaBienvenida = {
+  asunto: string;
+  titulo: string;
+  /** Texto llano. Una línea en blanco separa párrafos y `*así*` pone negrita. */
+  cuerpo: string;
+  boton: string;
+};
+
+export const BIENVENIDA_POR_DEFECTO: PlantillaBienvenida = {
+  asunto: "{negocio} ya está en Demandu",
+  titulo: "{negocio} ya está lista",
+  cuerpo: [
+    "{saludo}. Tu cuenta ya está creada para *{negocio}*.",
+    "",
+    "Falta una cosa para que empiece a contestar: *conectar tu WhatsApp*. Se hace desde el panel en un par de minutos y no hace falta instalar nada.",
+    "",
+    "Tienes *14 días de prueba*, sin tarjeta.",
+  ].join("\n"),
+  boton: "Conectar mi WhatsApp",
+};
+
+/** Los huecos que se pueden usar, con lo que significan. Para enseñarlos en la pantalla. */
+export const HUECOS: { clave: string; explica: string }[] = [
+  { clave: "{saludo}", explica: "«Hola, Darwin» — o solo «Hola» si no sabemos su nombre" },
+  { clave: "{nombre}", explica: "El primer nombre a secas. Vacío si no lo tenemos" },
+  { clave: "{negocio}", explica: "El nombre del negocio" },
+];
+
+/**
+ * Rellenar los huecos.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NINGÚN HUECO PUEDE QUEDARSE ABIERTO NI DEJAR UN AGUJERO. Los dos errores
+ * clásicos de las plantillas son «Hola, {nombre}» —el hueco sin rellenar— y
+ * «Hola, .» —el hueco relleno con nada—, y los dos se ven en la bandeja del
+ * cliente antes que en ninguna prueba.
+ *
+ * Por eso: `{negocio}` sin valor NO se queda vacío, dice «tu negocio»; y
+ * después de sustituir se barren las comas y los espacios que quedaron
+ * colgando de un `{nombre}` vacío.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function rellenarHuecos(
+  texto: string | null | undefined,
+  v: { nombre?: string | null; negocio?: string | null },
+): string {
+  const negocio = String(v?.negocio ?? "").trim() || "tu negocio";
+  const nombre = primerNombre(v?.nombre);
+
+  const salida = String(texto ?? "")
+    .replace(/\{saludo\}/g, saludo(v?.nombre))
+    .replace(/\{negocio\}/g, negocio)
+    .replace(/\{nombre\}/g, nombre)
+    // Lo que dejó un `{nombre}` vacío: «Hola, .» → «Hola.», «para  y» → «para y».
+    .replace(/,\s*([.,;:!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+([.,;:!?])/g, "$1")
+    .trim();
+
+  // Si el hueco iba al principio de la frase, «tu negocio ya está…» empieza en
+  // minúscula. Se arregla aquí y no pidiéndole al que escribe que lo piense.
+  return salida.charAt(0).toUpperCase() + salida.slice(1);
+}
+
+/**
+ * El cuerpo escrito a mano, convertido en HTML.
+ *
+ * SE ESCAPA PRIMERO Y SE DA FORMATO DESPUÉS, y ese orden es toda la seguridad
+ * de esta función: quien escribe el correo no puede meter HTML —ni queriendo ni
+ * sin querer— en un mensaje que sale con nuestro nombre. Lo único que se
+ * interpreta son dos cosas suyas: la línea en blanco separa párrafos y `*así*`
+ * pone negrita.
+ */
+export function cuerpoEnHtml(texto: string | null | undefined): string {
+  return escapar(String(texto ?? "").trim())
+    .replace(/\*([^*\n]+)\*/g, `<b style="color:${BLANCO};">$1</b>`)
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/\n/g, "<br />"))
+    .join("<br /><br />");
+}
+
+/**
+ * Junta lo guardado con lo de por defecto, campo a campo.
+ *
+ * UN CAMPO VACÍO NO ES UNA ELECCIÓN, ES UN DESCUIDO. Si alguien borró el asunto
+ * y guardó, mandar un correo sin asunto —llega como «(sin asunto)» y se lee
+ * como spam— no es respetar su decisión: es obedecer un error. Se usa el de por
+ * defecto y el correo sale entero.
+ */
+export function laPlantilla(guardada?: Partial<PlantillaBienvenida> | null): PlantillaBienvenida {
+  const uno = (v: unknown, porDefecto: string) => {
+    const t = String(v ?? "").trim();
+    return t || porDefecto;
+  };
+  return {
+    asunto: uno(guardada?.asunto, BIENVENIDA_POR_DEFECTO.asunto),
+    titulo: uno(guardada?.titulo, BIENVENIDA_POR_DEFECTO.titulo),
+    cuerpo: uno(guardada?.cuerpo, BIENVENIDA_POR_DEFECTO.cuerpo),
+    boton: uno(guardada?.boton, BIENVENIDA_POR_DEFECTO.boton),
+  };
+}
+
+/**
  * El correo que recibe un negocio recién creado.
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -148,6 +264,13 @@ export function armazon(v: { titulo: string; cuerpo: string; boton?: { texto: st
  * NO SE PROMETE LO QUE NO HAY. Nada de «tu asistente ya está aprendiendo» ni
  * «configuramos todo por ti»: lo que hay al entrar es un panel donde conectar
  * un número, y eso es lo que se dice.
+ *
+ * ── ESTA FUNCIÓN SIGUE SIENDO PURA AUNQUE EL TEXTO VENGA DE LA BASE ───────
+ *
+ * La plantilla ENTRA por parámetro; aquí no se lee nada. Es lo que permite
+ * comprobar cada texto —el de por defecto y el que alguien escriba mañana— sin
+ * mandarle un correo a nadie. Un correo es lo único del producto que no se
+ * puede corregir después.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function correoDeBienvenida(v: {
@@ -155,33 +278,24 @@ export function correoDeBienvenida(v: {
   negocio?: string | null;
   /** A dónde lleva el botón. Se pasa para no fijar el dominio aquí dentro. */
   panel: string;
+  /** Lo guardado en la base. Sin esto, el texto de por defecto. */
+  plantilla?: Partial<PlantillaBienvenida> | null;
 }): Correo {
-  const negocio = String(v.negocio ?? "").trim();
-  const hola = saludo(v.nombre);
+  const p = laPlantilla(v.plantilla);
+  const con = { nombre: v.nombre, negocio: v.negocio };
 
-  // EL ASUNTO NO LLEVA EL NOMBRE DEL NEGOCIO SI NO LO HAY. «Bienvenido a
-  // Demandu, » con la coma colgando es de las cosas que se notan.
-  const asunto = negocio ? `${negocio} ya está en Demandu` : "Tu cuenta de Demandu está lista";
+  const asunto = rellenarHuecos(p.asunto, con);
+  const titulo = rellenarHuecos(p.titulo, con);
+  const cuerpo = rellenarHuecos(p.cuerpo, con);
+  const boton = rellenarHuecos(p.boton, con);
 
-  const cuerpo =
-    `${escapar(hola)}. Tu cuenta ya está creada${negocio ? ` para <b style="color:${BLANCO};">${escapar(negocio)}</b>` : ""}.` +
-    `<br /><br />` +
-    `Falta una cosa para que empiece a contestar: <b style="color:${BLANCO};">conectar tu WhatsApp</b>. ` +
-    `Se hace desde el panel en un par de minutos y no hace falta instalar nada.` +
-    `<br /><br />` +
-    `Tienes <b style="color:${BLANCO};">14 días de prueba</b>, sin tarjeta.`;
-
+  // EL TEXTO PLANO SALE DEL MISMO SITIO QUE EL HTML. Si se escribiera aparte,
+  // el día que alguien cambie el correo desde la pantalla cambiaría uno y no el
+  // otro — y quien lea la versión de texto recibiría el mensaje de antes.
   const texto = [
-    `${hola}.`,
-    "",
-    `Tu cuenta de Demandu ya está creada${negocio ? ` para ${negocio}` : ""}.`,
-    "",
-    "Falta una cosa para que empiece a contestar: conectar tu WhatsApp.",
-    "Se hace desde el panel en un par de minutos.",
+    cuerpo.replace(/\*([^*\n]+)\*/g, "$1"),
     "",
     `Entrar: ${v.panel}`,
-    "",
-    "Tienes 14 días de prueba, sin tarjeta.",
     "",
     "Demandu · demandu.tech",
   ].join("\n");
@@ -189,9 +303,9 @@ export function correoDeBienvenida(v: {
   return {
     asunto,
     html: armazon({
-      titulo: negocio ? `${negocio} ya está lista` : "Tu cuenta ya está lista",
-      cuerpo,
-      boton: { texto: "Conectar mi WhatsApp", url: v.panel },
+      titulo,
+      cuerpo: cuerpoEnHtml(cuerpo),
+      boton: { texto: boton, url: v.panel },
     }),
     texto,
   };
