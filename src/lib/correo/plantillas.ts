@@ -30,6 +30,31 @@
 
 export type Correo = { asunto: string; html: string; texto: string };
 
+/**
+ * EL LOGO, Y POR QUÉ ES UNA IMAGEN Y UN TEXTO A LA VEZ.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * OUTLOOK BLOQUEA LAS IMÁGENES POR DEFECTO, y Gmail lo hace en cuanto el
+ * remitente no es conocido. Un correo cuya cabecera es solo una imagen le llega
+ * a mucha gente con un recuadro roto donde debería estar la marca — y un correo
+ * sin marca que habla de tu cuenta se lee como phishing.
+ *
+ * Por eso el `alt` dice «Demandu» Y lleva los estilos del texto encima: cuando
+ * la imagen no carga, el cliente de correo pinta el `alt` con esa tipografía y
+ * ese color, y se ve exactamente el logotipo escrito que había antes. Con
+ * imágenes se ve el logo; sin ellas, la palabra. Nunca un hueco.
+ *
+ * LA DIRECCIÓN ES ABSOLUTA Y NO PUEDE NO SERLO: un correo no tiene página desde
+ * la que colgar una ruta relativa. Sale del dominio de la plataforma, que es
+ * público y no pide sesión.
+ *
+ * OJO AL CAMBIAR EL DOMINIO: los correos ya enviados apuntan a la dirección
+ * vieja. Si se apaga, la marca desaparece de todo el histórico que alguien
+ * vuelva a abrir. Es una razón más para no mudar el dominio a la ligera.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const LOGO = `${(process.env.NEXT_PUBLIC_SITE_URL ?? "https://platform.demandu.tech").replace(/\/+$/, "")}/demandu-logo-white.png`;
+
 /** Los colores del correo, que son los de la marca y no los del panel. */
 const FONDO = "#0b0d1a";
 const TARJETA = "#12142a";
@@ -93,7 +118,8 @@ export function armazon(v: { titulo: string; cuerpo: string; boton?: { texto: st
   <tr><td align="center">
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;background:${TARJETA};border-radius:16px;padding:32px;">
       <tr><td style="padding-bottom:24px;">
-        <span style="font-size:22px;font-weight:800;color:${BLANCO};letter-spacing:-0.5px;">demandu</span>
+        <img src="${LOGO}" width="140" alt="Demandu"
+             style="display:block;border:0;outline:none;text-decoration:none;height:auto;font-size:22px;font-weight:800;color:${BLANCO};letter-spacing:-0.5px;" />
       </td></tr>
       <tr><td style="font-size:22px;font-weight:800;color:${BLANCO};padding-bottom:12px;line-height:1.3;">${escapar(v.titulo)}</td></tr>
       <tr><td style="font-size:15px;color:${GRIS};line-height:1.6;padding-bottom:24px;">${v.cuerpo}</td></tr>

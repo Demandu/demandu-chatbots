@@ -103,7 +103,7 @@ import {
   aQuePedidoVa, ubicacionDelMensaje, VENTANA_UBICACION_HORAS,
 } from "../../src/lib/tienda/ubicacionQueLlega.ts";
 import {
-  primerNombre, saludo, correoDeBienvenida, correoDelEquipo, loQueFaltaParaEscribir,
+  primerNombre, saludo, correoDeBienvenida, correoDelEquipo, loQueFaltaParaEscribir, LOGO,
 } from "../../src/lib/correo/plantillas.ts";
 import { REMITENTE } from "../../src/lib/correo/enviar.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
@@ -6209,6 +6209,37 @@ describe("Correos de la plataforma", () => {
     esperar(loQueFaltaParaEscribir({ para: "a@b.com", asunto: "Hola", mensaje: "  " }).length).igual(1);
     esperar(loQueFaltaParaEscribir({ para: "", asunto: "Hola", mensaje: "Qué tal" }).length).igual(1);
     esperar(loQueFaltaParaEscribir({ para: "no-es-correo", asunto: "Hola", mensaje: "Qué tal" }).length).igual(1);
+  });
+
+  test("el logo se ve con imágenes Y sin imágenes", () => {
+    /* Outlook bloquea las imágenes por defecto y Gmail lo hace con remitentes
+     * desconocidos. Una cabecera que es SOLO una imagen le llega a mucha gente
+     * como un recuadro roto — y un correo sin marca que habla de tu cuenta se
+     * lee como phishing. El `alt` es lo que salva ese caso. */
+    const c = correoDeBienvenida({ nombre: "Darwin", negocio: "Ventas de zapatos", panel: "https://x/y" });
+    esperar(c.html).contiene(LOGO);
+    esperar(c.html).contiene('alt="Demandu"');
+
+    /* Y el `alt` lleva los estilos del texto encima, para que cuando la imagen
+     * no cargue el cliente pinte la palabra con la tipografía del logotipo en
+     * vez de con la de por defecto. */
+    const etiqueta = c.html.slice(c.html.indexOf("<img"), c.html.indexOf("/>", c.html.indexOf("<img")));
+    esperar(etiqueta).contiene("font-weight:800");
+    esperar(etiqueta).contiene("color:#ffffff");
+  });
+
+  test("la dirección del logo es ABSOLUTA", () => {
+    /* Un correo no tiene página desde la que colgar una ruta relativa: `/logo.png`
+     * en una bandeja de entrada no apunta a ninguna parte. */
+    esperar(LOGO.startsWith("https://")).verdadero("el logo del correo no se vería en ninguna bandeja");
+    esperar(LOGO).contiene("demandu-logo-white");
+  });
+
+  test("el logo es el BLANCO, porque el sobre es oscuro", () => {
+    /* El fondo del correo es #0b0d1a. El logo negro sobre eso es un rectángulo
+     * invisible, y no se nota hasta que llega a un cliente de verdad. */
+    esperar(LOGO.includes("white")).verdadero();
+    esperar(/black|color\.png/.test(LOGO)).falso("el logo no contrasta con el fondo del correo");
   });
 
   test("el remitente sale del subdominio, no del dominio raíz", () => {
