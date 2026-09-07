@@ -59,6 +59,12 @@ import {
 import {
   rangoDeFechas, rangoEscrito, comoRango, cambio, comoCsv, aQuienSePuedeEscribir,
 } from "../../src/lib/tienda/panel.ts";
+import {
+  API_ASAP, esAmbienteEnvio, VEHICULOS, vehiculoValido, latitud, longitud,
+  ubicacionDe, telefonoAsap, instrucciones, loQueFaltaParaMandar, cuerpoDeOrden,
+  leerDeliveryId, motivoDelFallo, ESTADOS_ASAP, estadoDeCodigo, envioTerminado,
+  estadoDelPedido, estadoDeAviso, estadoDeAvisoConEstado,
+} from "../../src/lib/tienda/asap.ts";
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
 import { membresiaActiva, soporteVigente } from "../../src/lib/membresia.ts";
 import { FEATURES, feature, tiene } from "../../src/lib/planes/features.ts";
@@ -5424,6 +5430,249 @@ describe("Respuestas automáticas sin abrir un flujo", () => {
         `una promoción guardada como «${d.label}» se enseñaría con otra opción marcada`,
       );
     }
+  });
+});
+
+
+/**
+ * ASAP: mandar el pedido al mensajero.
+ *
+ * LO QUE SE PRUEBA AQUÍ NO ES «QUE LA LLAMADA SALGA». Es lo que falla en
+ * silencio: una coordenada que no existe y se manda igual, el teléfono del
+ * negocio donde va el del cliente, un aviso de «llegó al local» leído como
+ * «llegó a casa del cliente». Nada de eso da error; da una moto en otro barrio
+ * y un cliente esperando en la puerta.
+ */
+describe("ASAP · envío del pedido", () => {
+  const TIENDA = {
+    activo: true,
+    ambiente: "prueba",
+    api_key: "K", user_token: "U", shared_secret: "S",
+    telefono: "+5078000000",
+    origen_direccion: "PH Pijao, Panamá",
+    origen_lat: 9.0136814,
+    origen_long: -79.4796534,
+    origen_nombre: "Ariana Gonzales",
+    origen_telefono: "62159199",
+    origen_nota: "Timbre del local, no el del edificio",
+    vehiculo: "bike",
+  };
+  const PEDIDO = {
+    codigo: "ABC123XYZ789",
+    entrega_direccion: "Multiplaza",
+    entrega_lat: 8.9853921,
+    entrega_long: -79.5131792,
+    entrega_nota: "Portón verde",
+    cliente_nombre: "Alí Buenaño",
+    cliente_telefono: "+507 6215-9100",
+  };
+
+  test("(0,0) no es una ubicación: es el dato perdido por el camino", () => {
+    /* `Number("")` y `Number(null)` son 0, y (0,0) es un punto REAL en el
+     * Atlántico frente a África. Dejarlo pasar manda la moto al golfo de
+     * Guinea sin que nada dé error. */
+    esperar(ubicacionDe(0, 0)).igual(null, "se mandaría una moto al Atlántico");
+    esperar(ubicacionDe("", "")).igual(null);
+    esperar(ubicacionDe(null, undefined)).igual(null);
+  });
+
+  test("media coordenada no lleva a ninguna parte", () => {
+    esperar(ubicacionDe(9.01, null)).igual(null);
+    esperar(ubicacionDe(null, -79.47)).igual(null);
+    esperar(ubicacionDe(9.01, -79.47)).igual({ lat: 9.01, long: -79.47 });
+  });
+
+  test("fuera del planeta se descarta, NO se recorta", () => {
+    /* Recortar una latitud de 200 a 90 no arregla nada: inventa una ubicación
+     * en el polo y la manda como si fuera la del cliente. */
+    esperar(latitud(200)).igual(null);
+    esperar(latitud(-91)).igual(null);
+    esperar(latitud(90)).igual(90);
+    esperar(longitud(180)).igual(180);
+    esperar(longitud(181)).igual(null);
+    /* Y una latitud válida NO se cuela por el rango de la longitud. */
+    esperar(latitud(120)).igual(null, "120 es longitud válida pero latitud imposible");
+    esperar(longitud(120)).igual(120);
+  });
+
+  test("un texto que no es número no se convierte en cero", () => {
+    esperar(latitud("por la panadería")).igual(null);
+    esperar(latitud("  9.0136814 ")).igual(9.0136814);
+  });
+
+  test("el teléfono se normaliza como lo enseña ASAP: ocho dígitos", () => {
+    for (const t of ["+507 6215-9100", "507 62159100", "62159100", "(507) 6215 9100"]) {
+      esperar(telefonoAsap(t)).igual("62159100", `«${t}» llegaría distinto al mensajero`);
+    }
+    esperar(telefonoAsap(null)).igual("");
+    /* Uno de otro país NO se recorta a ocho: sería basura con forma de
+     * teléfono, y el mensajero la marcaría. */
+    esperar(telefonoAsap("+34 600 123 456")).igual("34600123456");
+  });
+
+  test("las instrucciones no llevan campos vacíos", () => {
+    /* «Nombre: ; Teléfono: ;» le hace creer al mensajero que el dato existe y
+     * está en blanco, que es peor que no poner nada. */
+    esperar(instrucciones({ nombre: "", telefono: "", nota: "" })).igual("");
+    esperar(instrucciones({ nombre: "Daniel", telefono: "", nota: "" })).igual("Nombre: Daniel");
+    esperar(instrucciones({ nombre: "Daniel", telefono: "+507 6215-9100", nota: "Portón verde" }))
+      .igual("Nombre: Daniel; Teléfono: 62159100; Portón verde");
+  });
+
+  test("sin ubicación del cliente no se manda, y se dice cómo se arregla", () => {
+    const falta = loQueFaltaParaMandar(TIENDA, { ...PEDIDO, entrega_lat: null, entrega_long: null });
+    esperar(falta.length).igual(1);
+    esperar(falta[0]).contiene("WhatsApp", "el negocio no puede poner él la ubicación del cliente");
+  });
+
+  test("con todo puesto no falta nada", () => {
+    esperar(loQueFaltaParaMandar(TIENDA, PEDIDO)).igual([]);
+  });
+
+  test("cada llave que falte se dice por su nombre", () => {
+    for (const campo of ["api_key", "user_token", "shared_secret", "telefono", "origen_direccion"]) {
+      const sin = { ...TIENDA, [campo]: "" };
+      esperar(loQueFaltaParaMandar(sin, PEDIDO).length).igual(
+        1, `falta «${campo}» y el negocio no se enteraría`,
+      );
+    }
+    esperar(loQueFaltaParaMandar({ ...TIENDA, activo: false }, PEDIDO).length).igual(1);
+    esperar(loQueFaltaParaMandar({ ...TIENDA, origen_lat: null }, PEDIDO).length).igual(1);
+  });
+
+  test("el pedido de ASAP lleva cada cosa en SU campo", () => {
+    /* Este es el error que no avisa: origen y destino cambiados de sitio, o el
+     * teléfono del local donde va el del cliente. ASAP acepta el pedido igual
+     * y la entrega sale mal. */
+    const b = cuerpoDeOrden(TIENDA, PEDIDO);
+    esperar(b.source_lat).igual("9.0136814");
+    esperar(b.source_long).igual("-79.4796534");
+    esperar(b.desti_lat).igual("8.9853921");
+    esperar(b.desti_long).igual("-79.5131792");
+    esperar(b.source_seller_phone).igual("62159199");
+    esperar(b.desti_customer_phone).igual("62159100");
+    esperar(b.source_address).igual("PH Pijao, Panamá");
+    esperar(b.desti_address).igual("Multiplaza");
+    esperar(b.desti_customer_name).igual("Alí Buenaño");
+    /* Y las coordenadas viajan como TEXTO, que es lo que espera su API. */
+    esperar(typeof b.source_lat).igual("string");
+    esperar(typeof b.desti_long).igual("string");
+  });
+
+  test("va el código del pedido, no su número", () => {
+    /* El número va por tienda y empieza en 1 en todas: el pedido 12 existe en
+     * cien tiendas a la vez, y el aviso de ASAP no dice de cuál habla. */
+    esperar(cuerpoDeOrden(TIENDA, PEDIDO).external_order_id).igual("ABC123XYZ789");
+  });
+
+  test("se pide para ahora, no para más tarde", () => {
+    /* El envío se pide cuando el negocio pulsa «Enviar», o sea cuando el
+     * paquete ya está sobre el mostrador. */
+    const b = cuerpoDeOrden(TIENDA, PEDIDO);
+    esperar(b.request_later).igual(0);
+    esperar(b.request_later_time).igual(undefined);
+    esperar(b.type_id).igual(2);
+    esperar(b.is_oneway).igual(1);
+  });
+
+  test("un vehículo inventado no se manda tal cual", () => {
+    esperar(vehiculoValido("helicóptero")).igual("bike");
+    esperar(vehiculoValido("CAR")).igual("car");
+    for (const v of VEHICULOS) esperar(vehiculoValido(v.valor)).igual(v.valor);
+  });
+
+  test("el delivery_id se encuentra lo llamen como lo llamen", () => {
+    /* Lo dan UNA VEZ. Si no se guarda ahí mismo, el envío ya está en la calle
+     * y no hay forma de seguirlo, cancelarlo ni rastrearlo. */
+    esperar(leerDeliveryId({ delivery_id: 23949 })).igual("23949");
+    esperar(leerDeliveryId({ data: { delivery_id: "23949" } })).igual("23949");
+    esperar(leerDeliveryId({ order: { id: 23949 } })).igual("23949");
+    esperar(leerDeliveryId({ status: true })).igual("");
+    esperar(leerDeliveryId(null)).igual("");
+    /* Un cero no es un identificador: es el campo vacío de su base. */
+    esperar(leerDeliveryId({ delivery_id: 0 })).igual("");
+  });
+
+  test("el motivo del fallo se enseña tal cual, no se traduce a «hubo un error»", () => {
+    esperar(motivoDelFallo({ message: "Invalid user_token" })).igual("Invalid user_token");
+    esperar(motivoDelFallo({})).contiene("no dijo por qué");
+  });
+
+  test("el número del estado NO es un progreso", () => {
+    /* Van 0,1,2…7 y saltan a 100 y 101; y el 100 («llegó») pasa ANTES que el 7
+     * («despachado») porque el mensajero llega primero al local. Tratar el
+     * número como avance haría retroceder un pedido entregado a «en camino». */
+    esperar(estadoDeCodigo(2).clave).igual("entregado");
+    esperar(estadoDeCodigo(7).clave).igual("en_camino");
+    esperar(estadoDeCodigo(100).clave).igual("recogiendo");
+    esperar(estadoDeCodigo(101).clave).igual("en_camino");
+    esperar(estadoDeCodigo(1).clave).igual("cancelado");
+    esperar(estadoDeCodigo(6).clave).igual("confirmado");
+    esperar(estadoDeCodigo(0).clave).igual("pedido");
+    /* Un código que no conocemos no se inventa. */
+    esperar(estadoDeCodigo(42)).igual(null);
+    esperar(estadoDeCodigo("dos")).igual(null);
+    esperar(estadoDeCodigo(null)).igual(null);
+  });
+
+  test("todos los códigos documentados están traducidos", () => {
+    for (const n of [0, 1, 2, 3, 4, 5, 6, 7, 100, 101]) {
+      esperar(!!ESTADOS_ASAP[n]).verdadero(`el código ${n} de ASAP llegaría sin traducir`);
+      esperar(String(ESTADOS_ASAP[n].label).trim().length > 0).verdadero();
+    }
+  });
+
+  test("un envío terminado ya no se toca", () => {
+    for (const c of ["entregado", "cancelado", "devuelto", "fallido"]) {
+      esperar(envioTerminado(c)).verdadero(`se seguiría preguntando por un envío ${c}`);
+    }
+    for (const c of ["pedido", "confirmado", "recogiendo", "en_camino", "", null]) {
+      esperar(envioTerminado(c)).falso();
+    }
+  });
+
+  test("un envío cancelado NO cancela el pedido", () => {
+    /* El negocio lo puede volver a mandar o llevarlo él. Mezclar las dos cosas
+     * llenaría el embudo de pedidos cancelados porque se averió una moto. */
+    esperar(estadoDelPedido("cancelado")).igual(null);
+    esperar(estadoDelPedido("fallido")).igual(null);
+    esperar(estadoDelPedido("devuelto")).igual(null);
+    esperar(estadoDelPedido("confirmado")).igual(null);
+    /* Y lo que sí mueve el pedido, lo mueve. */
+    esperar(estadoDelPedido("en_camino")).igual("en_camino");
+    esperar(estadoDelPedido("entregado")).igual("entregado");
+  });
+
+  test("«llegó al local» no es «llegó a casa del cliente»", () => {
+    /* Las dos palabras son casi iguales y confundirlas le diría al cliente que
+     * su pedido llegó cuando el mensajero está todavía en la panadería. */
+    esperar(estadoDeAviso("pickupAgentArrived")).igual("recogiendo");
+    esperar(estadoDeAviso("deliveryAgentArrived")).igual("en_camino");
+    esperar(estadoDeAviso("deliverySuccessful")).igual("entregado");
+    esperar(estadoDeAviso("pickupSuccessful")).igual("en_camino");
+    /* Y el aviso desconocido no mueve nada. */
+    esperar(estadoDeAviso("algoQueNoConocemos")).igual(null);
+    esperar(estadoDeAviso(null)).igual(null);
+  });
+
+  test("«Cancel» manda sobre la acción", () => {
+    /* `deliveryTaskUpdate` con state «Cancel» no es una actualización más: es
+     * que nadie va a ir. */
+    esperar(estadoDeAvisoConEstado("deliveryTaskUpdate", "Cancel")).igual("cancelado");
+    esperar(estadoDeAvisoConEstado("pickupTaskUpdate", "Declined")).igual("fallido");
+    esperar(estadoDeAvisoConEstado("deliveryTaskUpdate", "Assigned")).igual("confirmado");
+    esperar(estadoDeAvisoConEstado("deliverySuccessful", null)).igual("entregado");
+  });
+
+  test("pruebas y producción no comparten dirección", () => {
+    esperar(API_ASAP.prueba).contiene("goasap.dev");
+    esperar(API_ASAP.produccion).contiene("goasap.app");
+    esperar(API_ASAP.prueba === API_ASAP.produccion).falso();
+    /* Y ante la duda, PRUEBAS: equivocarse hacia producción saca motos reales
+     * a la calle y se las cobra al negocio. */
+    esperar(esAmbienteEnvio(null)).igual("prueba");
+    esperar(esAmbienteEnvio("Producción")).igual("prueba");
+    esperar(esAmbienteEnvio("produccion")).igual("produccion");
   });
 });
 

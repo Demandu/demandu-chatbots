@@ -960,14 +960,22 @@ describe("Puerta de agenda del motor", () => {
     // columnas, incluida la secreta, y la consulta ENTERA falla — la pantalla
     // se quedaría diciendo «no conectado» a todo el mundo.
     // ─────────────────────────────────────────────────────────────────────────
-    const TABLAS = ["whatsapp_channels", "instagram_channels", "integrations", "salidas", "tienda_cobros"];
+    const TABLAS = [
+      "whatsapp_channels", "instagram_channels", "integrations", "salidas",
+      "tienda_cobros",
+      // `tienda_envios` guarda la cuenta de ASAP del negocio: quien tenga esas
+      // tres llaves puede pedir motos a su nombre y a su cuenta. Entra en la
+      // lista el mismo día que nace la tabla, no el día que alguien se dé
+      // cuenta — que es cuando ya está pedida desde una pantalla.
+      "tienda_envios",
+    ];
     // `firma` ES DE LA MISMA FAMILIA aunque no lo parezca: es la clave con la
     // que se comprueban los avisos de Calendly, y quien la tenga puede mandar
     // un `invitee.created` firmado que nos creeremos — o sea, meter contactos
     // y mensajes en las conversaciones de ese cliente. La 0093 la sacó de
     // `data` justo por esto; esta línea impide que vuelva a pedirse con la
     // sesión del usuario.
-    const SECRETAS = ["access_token", "refresh_token", "secreto", "firma"];
+    const SECRETAS = ["access_token", "refresh_token", "secreto", "firma", "api_key", "user_token", "shared_secret"];
     const malos = [];
 
     for (const { ruta, texto } of ARCHIVOS) {
