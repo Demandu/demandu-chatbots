@@ -16,6 +16,7 @@
 
 import { comoDinero, type GrupoVariedad } from "./variedades";
 import type { PreguntaPedido } from "./config";
+import { leerUbicacion, enlaceDeMapa } from "./ubicacion";
 
 export type LineaCarrito = {
   /** Identifica la línea: el mismo producto con otras opciones es OTRA línea. */
@@ -132,8 +133,20 @@ export function textoDelPedido({
   partes.push("");
   partes.push(`*Total: ${comoDinero(totalDelCarrito(lineas), moneda)}*`);
 
+  // LA UBICACIÓN SE ESCRIBE COMO ENLACE, no como dos números.
+  //
+  // «Ubicación: 9.0136814,-79.4796534» en el WhatsApp del negocio no le sirve a
+  // nadie: quien prepara el pedido no puede pulsar eso, y quien sale a llevarlo
+  // menos. Un enlace se toca y abre el mapa que esa persona ya tiene. Los
+  // números siguen guardados en el pedido, que es de donde los toma el
+  // mensajero; esto es solo cómo se lee.
   const contestadas = (preguntas ?? [])
-    .map((p) => ({ etiqueta: p.etiqueta, valor: (respuestas?.[p.id] ?? "").trim() }))
+    .map((p) => {
+      const valor = (respuestas?.[p.id] ?? "").trim();
+      if (p.tipo !== "ubicacion" || !valor) return { etiqueta: p.etiqueta, valor };
+      const u = leerUbicacion(valor);
+      return { etiqueta: p.etiqueta, valor: u ? enlaceDeMapa(u) : valor };
+    })
     .filter((r) => r.valor);
 
   if (contestadas.length) {

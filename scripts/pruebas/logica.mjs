@@ -93,7 +93,12 @@ import {
 } from "../../src/lib/tienda/pedirPorChat.ts";
 import { aCentavos, leerOpciones, leerModo, recargoDe, comoDinero, sanearGrupos } from "../../src/lib/tienda/variedades.ts";
 import { aDireccion, direccionValida, enlaceDePago, enlaceDeTienda, hostDeLaPeticion } from "../../src/lib/tienda/direccion.ts";
-import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS } from "../../src/lib/tienda/config.ts";
+import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaParaVender, sanearPreguntas, MAX_PREGUNTAS, TIPOS_PREGUNTA } from "../../src/lib/tienda/config.ts";
+import {
+  comoRespuesta, leerUbicacion, esEnlaceAcortado, porQueNoSirve, enlaceDeMapa,
+  precisionDudosa, comoSeLeeLaPrecision, preguntaDeUbicacion,
+  ubicacionDeLasRespuestas, direccionDeLasRespuestas,
+} from "../../src/lib/tienda/ubicacion.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
 import { recalcularPedido } from "../../src/lib/tienda/recalcular.ts";
@@ -5673,6 +5678,211 @@ describe("ASAP · envío del pedido", () => {
     esperar(esAmbienteEnvio(null)).igual("prueba");
     esperar(esAmbienteEnvio("Producción")).igual("prueba");
     esperar(esAmbienteEnvio("produccion")).igual("produccion");
+  });
+});
+
+
+/**
+ * La ubicación del cliente.
+ *
+ * TODO LO QUE SE PRUEBA AQUÍ ACABA EN UNA MOTO YENDO A UN SITIO. Un enlace que
+ * se lee mal, un zoom confundido con una coordenada, una precisión de dos
+ * kilómetros aceptada sin decir nada: ninguna de esas cosas da error en
+ * pantalla, todas dan un pedido que no llega.
+ */
+describe("La ubicación del cliente", () => {
+  const PIJAO = { lat: 9.0136814, long: -79.4796534 };
+
+  test("se guarda y se vuelve a leer igual", () => {
+    const texto = comoRespuesta(PIJAO);
+    esperar(texto).igual("9.0136814,-79.4796534");
+    esperar(leerUbicacion(texto)).igual(PIJAO);
+  });
+
+  test("el chorro de decimales del GPS se recorta a once centímetros", () => {
+    /* Un teléfono da quince decimales y los últimos ocho son ruido. Guardar el
+     * chorro entero hace que el panel del negocio parezca roto. */
+    esperar(comoRespuesta({ lat: 9.013681412345678, long: -79.47965341234567 }))
+      .igual("9.0136814,-79.4796534");
+  });
+
+  test("un enlace de Google Maps con ?q= se entiende", () => {
+    /* Es el que manda WhatsApp al compartir una ubicación: el caso más común
+     * de todos en Panamá. */
+    esperar(leerUbicacion("https://maps.google.com/maps?q=9.0136814,-79.4796534")).igual(PIJAO);
+    /* Y EL NUESTRO TAMBIÉN, que usa `query=`. Es el enlace que le mandamos al
+     * negocio por WhatsApp: sin leerlo, el cliente que copia el enlace que le
+     * enseñamos y lo vuelve a pegar recibe «no pude leer esa ubicación» con
+     * nuestro propio enlace delante. */
+    esperar(leerUbicacion(enlaceDeMapa(PIJAO))).igual(PIJAO, "no sabemos leer nuestro propio enlace");
+  });
+
+  test("EL ZOOM NO ES UNA COORDENADA", () => {
+    /* `@9.0136,-79.4796,17z` trae TRES números y el tercero es el nivel de
+     * acercamiento del mapa. Tomar los tres primeros números de la cadena es
+     * exactamente cómo el zoom acaba metido dentro de una coordenada. */
+    esperar(leerUbicacion("https://www.google.com/maps/@9.0136814,-79.4796534,17z")).igual(PIJAO);
+    esperar(leerUbicacion("https://www.google.com/maps/place/PH+Pijao/@9.0136814,-79.4796534,17z/data=!3m1"))
+      .igual(PIJAO);
+  });
+
+  test("dos números escritos a mano", () => {
+    esperar(leerUbicacion("9.0136814, -79.4796534")).igual(PIJAO);
+    esperar(leerUbicacion("9.0136814;-79.4796534")).igual(PIJAO);
+  });
+
+  test("una frase con números NO es una ubicación", () => {
+    /* «Llego en 15,20 minutos» tiene dos números separados por coma y no es
+     * una coordenada. Si se colara, la moto saldría hacia el golfo de Guinea. */
+    esperar(leerUbicacion("llego en 15,20 minutos")).igual(null);
+    esperar(leerUbicacion("apto 3, casa azul")).igual(null);
+    esperar(leerUbicacion("")).igual(null);
+    esperar(leerUbicacion(null)).igual(null);
+  });
+
+  test("el enlace corto se reconoce y se explica, no se traga", () => {
+    /* `maps.app.goo.gl/AbC123` no lleva las coordenadas dentro. Aceptarlo en
+     * silencio deja al cliente creyendo que mandó su ubicación y al negocio con
+     * un pedido que no se puede despachar. */
+    esperar(esEnlaceAcortado("https://maps.app.goo.gl/AbC123")).verdadero();
+    esperar(leerUbicacion("https://maps.app.goo.gl/AbC123")).igual(null);
+    esperar(porQueNoSirve("https://maps.app.goo.gl/AbC123")).contiene("cópiame el enlace");
+    /* Y su mensaje NO es el mismo que el de un texto cualquiera: cada motivo
+     * tiene su frase, o el cliente no sabe qué hacer. */
+    esperar(porQueNoSirve("https://maps.app.goo.gl/AbC123") === porQueNoSirve("hola")).falso();
+  });
+
+  test("(0,0) tampoco se cuela por aquí", () => {
+    esperar(leerUbicacion("0,0")).igual(null);
+    esperar(leerUbicacion("https://maps.google.com/maps?q=0,0")).igual(null);
+  });
+
+  test("el enlace del mapa se puede volver a leer", () => {
+    /* Es el enlace que se le manda al negocio por WhatsApp. Si un día dejara de
+     * poder leerse, el pedido llegaría con una dirección que nadie puede
+     * convertir de vuelta en dos números. */
+    const enlace = enlaceDeMapa(PIJAO);
+    esperar(enlace).contiene("9.0136814,-79.4796534");
+    esperar(enlace.startsWith("https://")).verdadero();
+  });
+
+  test("una precisión mala se acepta, pero se dice", () => {
+    /* Rechazarla dejaría sin poder pedir a quien está en un sótano. Callarla
+     * manda la moto a dos cuadras sin que nadie lo sepa. */
+    esperar(precisionDudosa(2000)).verdadero();
+    esperar(precisionDudosa(12)).falso();
+    esperar(precisionDudosa(null)).falso("no la dijo: no se opina");
+    esperar(precisionDudosa(0)).falso();
+    esperar(comoSeLeeLaPrecision(2000)).contiene("ventana");
+    esperar(comoSeLeeLaPrecision(12)).contiene("±12");
+    esperar(comoSeLeeLaPrecision(null)).igual("");
+  });
+
+  test("un formulario tiene UNA pregunta de mapa, no dos", () => {
+    /* Con dos, el cliente rellena una u otra y la moto sale a un sitio o a otro
+     * según cuál. La segunda se degrada a texto largo: su respuesta sigue
+     * llegando como referencia en vez de perderse. */
+    const ps = sanearPreguntas([
+      { etiqueta: "Ubicación", tipo: "ubicacion", obligatoria: true },
+      { etiqueta: "Otra ubicación", tipo: "ubicacion", obligatoria: false },
+    ]);
+    esperar(ps.map((p) => p.tipo)).igual(["ubicacion", "parrafo"]);
+  });
+
+  test("el tipo «ubicacion» sobrevive al saneo", () => {
+    /* Si `sanearPreguntas` no lo conociera lo guardaría como «texto», y el
+     * negocio configuraría el mapa y vería una casilla de escribir. */
+    const ps = sanearPreguntas([{ etiqueta: "Ubicación", tipo: "ubicacion", obligatoria: true }]);
+    esperar(ps[0].tipo).igual("ubicacion");
+    /* Y un tipo inventado sigue cayendo a texto. */
+    esperar(sanearPreguntas([{ etiqueta: "X", tipo: "holograma" }])[0].tipo).igual("texto");
+  });
+
+  test("todos los tipos del catálogo se guardan tal cual", () => {
+    /* La lista de tipos que acepta el saneo sale del catálogo. Esta prueba es
+     * la que lo obliga: con una copia escrita a mano, el tipo nuevo se guardaría
+     * como «texto» sin que nada avisara. */
+    for (const t of TIPOS_PREGUNTA) {
+      const ps = sanearPreguntas([
+        t.valor === "lista"
+          ? { etiqueta: `P ${t.valor}`, tipo: t.valor, opciones: ["a", "b"] }
+          : { etiqueta: `P ${t.valor}`, tipo: t.valor },
+      ]);
+      esperar(ps[0].tipo).igual(t.valor, `el tipo «${t.label}» se guardaría como otra cosa`);
+    }
+  });
+
+  test("del pedido guardado se sacan los dos números y la dirección escrita", () => {
+    const preguntas = [
+      { id: "nombre", etiqueta: "Nombre completo", tipo: "texto" },
+      { id: "direccion", etiqueta: "Dirección de entrega", tipo: "parrafo" },
+      { id: "mapa", etiqueta: "Ubicación en el mapa", tipo: "ubicacion" },
+    ];
+    const respuestas = [
+      { id: "nombre", valor: "Alí" },
+      { id: "direccion", valor: "Casa azul frente al parque, PH Pijao" },
+      { id: "mapa", valor: "9.0136814,-79.4796534" },
+    ];
+    esperar(ubicacionDeLasRespuestas(preguntas, respuestas)).igual(PIJAO);
+    esperar(direccionDeLasRespuestas(preguntas, respuestas))
+      .igual("Casa azul frente al parque, PH Pijao");
+  });
+
+  test("sin pregunta de mapa no se inventa una ubicación", () => {
+    const preguntas = [{ id: "direccion", etiqueta: "Dirección", tipo: "parrafo" }];
+    esperar(ubicacionDeLasRespuestas(preguntas, [{ id: "direccion", valor: "9.01,-79.47" }]))
+      .igual(null, "una dirección escrita NO es una ubicación aunque parezca dos números");
+  });
+
+  test("la dirección se encuentra aunque la tienda la llame de otra forma", () => {
+    /* Una tienda real la llama «Nombre PH» y otra «A dónde lo llevamos». Buscar
+     * solo «Dirección de entrega» habría funcionado en la tienda que miré y en
+     * ninguna otra. */
+    const ps = [{ id: "adonde", etiqueta: "A dónde lo llevamos", tipo: "parrafo" }];
+    esperar(direccionDeLasRespuestas(ps, [{ id: "adonde", valor: "Multiplaza, local 3" }]))
+      .igual("Multiplaza, local 3");
+    /* Y si no hay ninguna, se devuelve vacío en vez de inventarse un campo. */
+    esperar(direccionDeLasRespuestas([{ id: "n", etiqueta: "Nombre", tipo: "texto" }],
+      [{ id: "n", valor: "Alí" }])).igual("");
+  });
+
+  test("por chat, «casa azul» NO se guarda como ubicación", () => {
+    /* Si se guardara, el pedido se crearía perfecto y sin una sola coordenada.
+     * Nadie se enteraría hasta el momento de mandarlo —con el cliente
+     * esperando y el paquete armado— y para entonces la conversación terminó
+     * hace rato y no hay a quién preguntarle. */
+    const q = { id: "mapa", etiqueta: "Ubicación", tipo: "ubicacion", obligatoria: true };
+    const antes = { tienda_id: "t", lineas: [], pregunta: 0, respuestas: {} };
+    esperar(contestar(antes, q, "casa azul frente al parque")).igual(
+      antes, "se guardó una dirección escrita como si fuera una ubicación",
+    );
+  });
+
+  test("por chat, la ubicación se guarda normalizada venga como venga", () => {
+    /* El enlace que pegó uno y los dos números que dictó otro tienen que acabar
+     * siendo la misma cosa: quien la lea después no puede tener que saber de
+     * cuál de las dos formas viene. */
+    const q = { id: "mapa", etiqueta: "Ubicación", tipo: "ubicacion", obligatoria: true };
+    const antes = { tienda_id: "t", lineas: [], pregunta: 0, respuestas: {} };
+    const conEnlace = contestar(antes, q, "https://maps.google.com/maps?q=9.0136814,-79.4796534");
+    const conNumeros = contestar(antes, q, "9.0136814, -79.4796534");
+    esperar(conEnlace.respuestas.mapa).igual("9.0136814,-79.4796534");
+    esperar(conEnlace.respuestas.mapa).igual(conNumeros.respuestas.mapa);
+    esperar(conEnlace.pregunta).igual(1, "no avanzó a la siguiente pregunta");
+  });
+
+  test("el negocio recibe un enlace que puede pulsar, no dos números", () => {
+    /* «Ubicación: 9.0136814,-79.4796534» en su WhatsApp no le sirve a nadie:
+     * ni al que prepara ni al que sale a llevarlo. */
+    const texto = textoDelPedido({
+      lineas: [{ nombre: "Torta", precio: 1500, cantidad: 1, elegidas: [] }],
+      moneda: "$",
+      preguntas: [{ id: "mapa", etiqueta: "Ubicación", tipo: "ubicacion", obligatoria: true }],
+      respuestas: { mapa: "9.0136814,-79.4796534" },
+    });
+    esperar(texto).contiene("https://");
+    esperar(texto).contiene("9.0136814,-79.4796534");
+    esperar(/Ubicaci[oó]n: 9\.0136814/.test(texto)).falso("le llegarían los números pelados");
   });
 });
 

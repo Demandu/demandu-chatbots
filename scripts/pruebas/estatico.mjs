@@ -3327,6 +3327,83 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     }
   });
 
+  test("el pedido nace con la ubicación puesta, no se la ponen después", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ES LA LÍNEA MÁS CARA DE TODO ESTO Y NO LA CUBRE NINGUNA PRUEBA DE LÓGICA:
+    // `crearPedido` habla con la base, así que no se puede correr sin ella. Un
+    // mutante lo demostró — se borró la línea que escribe las coordenadas y las
+    // 592 pruebas siguieron en verde.
+    //
+    // Y el fallo sería mudo: el pedido se crea, se cobra, se prepara, y el día
+    // que el negocio pulse «Enviar» resulta que no hay a dónde. Con el cliente
+    // esperando y sin nadie a quien preguntarle, porque el formulario se llenó
+    // hace media hora.
+    //
+    // Se escribe DONDE NACE EL PEDIDO y no en la pantalla que lo manda, para
+    // que la interpretación del `jsonb` de respuestas viva en un solo sitio: si
+    // cada pantalla lo leyera por su cuenta, una vería la coordenada y otra no.
+    // ─────────────────────────────────────────────────────────────────────────
+    const crear = fs.readFileSync(path.join(SRC, "lib/tienda/crearPedido.ts"), "utf8");
+    const inserta = crear.slice(crear.indexOf('.from("pedidos")'));
+    const cuerpo = inserta.slice(0, inserta.indexOf(".select("));
+
+    for (const col of ["entrega_lat", "entrega_long", "entrega_direccion"]) {
+      esperar(cuerpo.includes(col)).verdadero(
+        `el pedido se guardaría sin ${col}: no habría a dónde mandarlo y nadie se enteraría hasta el momento de enviarlo`,
+      );
+    }
+
+    // Y SE SACA DEL MÓDULO, no leyendo el jsonb a mano aquí. Dos lectores del
+    // mismo dato es como acaban discrepando.
+    esperar(crear.includes("ubicacionDeLasRespuestas")).verdadero(
+      "crearPedido está interpretando las respuestas por su cuenta en vez de usar el módulo de ubicación",
+    );
+  });
+
+  test("un tipo de pregunta nuevo no puede quedar invisible", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // LA TRAMPA ES QUE NO FALLA. Los tipos de pregunta viven en un catálogo
+    // (`TIPOS_PREGUNTA`), pero quien los PINTA es el escaparate, con un
+    // `p.tipo === "…"` por cada uno. Un tipo que el catálogo tiene y el
+    // escaparate no conoce cae en el `else` y se pinta como una casilla de
+    // texto: el negocio configura «Ubicación en el mapa», el cliente ve un
+    // campo de escribir, y el pedido llega sin coordenadas.
+    //
+    // Nada da error. Ni el compilador, ni el navegador, ni la base. Solo la
+    // moto, que no sale.
+    //
+    // «texto» queda fuera a propósito: ES el `else`, y no necesita rama.
+    // ─────────────────────────────────────────────────────────────────────────
+    const catalogo = fs.readFileSync(path.join(SRC, "lib/tienda/config.ts"), "utf8");
+    const bloque = catalogo.slice(catalogo.indexOf("TIPOS_PREGUNTA"));
+    const tipos = [...bloque.slice(0, bloque.indexOf("];")).matchAll(/valor:\s*"([a-z]+)"/g)]
+      .map((m) => m[1])
+      .filter((t) => t !== "texto");
+
+    esperar(tipos.length > 0).verdadero("no se pudo leer el catálogo de tipos de pregunta");
+
+    const escaparate = fs.readFileSync(path.join(SRC, "components/tienda/Escaparate.tsx"), "utf8");
+    const sinPintar = tipos.filter((t) => !escaparate.includes(`p.tipo === "${t}"`));
+    esperar(sinPintar.join(", ")).igual(
+      "",
+      "hay tipos de pregunta que el escaparate no sabe pintar: se verían como una casilla de texto",
+    );
+
+    // Y EL EDITOR NO PUEDE TENER SU PROPIA COPIA de la lista. La tenía: cuatro
+    // tipos escritos a mano. Al añadir el quinto se habría quedado corta sin
+    // que nada fallara — el tipo existiría, el escaparate sabría pintarlo, y el
+    // negocio no tendría dónde elegirlo.
+    const editor = fs.readFileSync(path.join(SRC, "components/tienda/EditorPreguntas.tsx"), "utf8");
+    esperar(editor.includes("TIPOS_PREGUNTA")).verdadero(
+      "el editor de preguntas no usa el catálogo de tipos",
+    );
+    const copiados = tipos.filter((t) => new RegExp(`valor:\\s*"${t}"`).test(editor));
+    esperar(copiados.join(", ")).igual(
+      "",
+      "el editor volvió a escribir a mano la lista de tipos: el próximo tipo nuevo no aparecerá ahí",
+    );
+  });
+
   test("el secreto de cobro NUNCA se pide a la base desde la pantalla", () => {
     // No se puede filtrar lo que nunca se leyó. La pantalla solo necesita
     // saber SI hay secreto, y eso se pregunta contando.

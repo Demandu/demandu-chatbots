@@ -23,6 +23,7 @@ import {
   type CarritoChat,
   type ProductoChat,
 } from "./pedirPorChat";
+import { porQueNoSirve } from "./ubicacion";
 
 /**
  * La conversación de un pedido, de principio a fin.
@@ -278,7 +279,17 @@ export async function conversar(entrada: Entrada): Promise<Turno> {
         return {
           carrito,
           mensajes: [
-            { tipo: "texto", texto: `Necesito ${q.etiqueta.replace(/\s*\*+\s*$/, "")} para poder seguir.` },
+            {
+              tipo: "texto",
+              // CON LA UBICACIÓN SE DICE POR QUÉ NO SIRVIÓ. «Necesito la
+              // ubicación para poder seguir» delante de alguien que acaba de
+              // mandar un enlace corto de Google no le dice qué hacer, y va a
+              // volver a mandar el mismo enlace. Cada motivo tiene su frase.
+              texto:
+                q.tipo === "ubicacion"
+                  ? porQueNoSirve(valor)
+                  : `Necesito ${q.etiqueta.replace(/\s*\*+\s*$/, "")} para poder seguir.`,
+            },
             preguntaDelFormulario(q),
           ],
           salida: null,
@@ -487,6 +498,26 @@ export async function conversar(entrada: Entrada): Promise<Turno> {
           id: `op-${o}`.slice(0, 200),
           titulo: o.slice(0, 24),
         })),
+      };
+    }
+
+    // ── LA UBICACIÓN HAY QUE PEDIRLA DICIENDO CÓMO ───────────────────────────
+    //
+    // «Ubicación en el mapa» a secas, en un chat, se contesta con «PH Pijao
+    // apto 12B» — y eso no es una ubicación: es la misma dirección escrita que
+    // ya dio dos preguntas antes. El pedido se crearía sin coordenadas y el
+    // mensajero no tendría a dónde ir.
+    //
+    // Se dice qué se espera y cómo se hace, porque la persona SÍ sabe hacerlo
+    // (lo hace todos los días con sus amigos) pero no sabe que es eso lo que le
+    // estamos pidiendo.
+    if (q.tipo === "ubicacion") {
+      return {
+        tipo: "texto",
+        texto:
+          `${etiqueta}\n\n` +
+          "Mándame tu ubicación para que el mensajero sepa llegar: en el clip 📎 elige *Ubicación*.\n" +
+          "_También sirve si me pegas tu enlace de Google Maps._",
       };
     }
 

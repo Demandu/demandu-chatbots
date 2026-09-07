@@ -29,7 +29,29 @@
 
 import { sanearAvisos, AVISOS_POR_DEFECTO, type AvisosTienda } from "./avisos";
 
-export type TipoPregunta = "texto" | "parrafo" | "lista" | "telefono";
+/**
+ * `ubicacion` ES EL TIPO QUE HACE POSIBLE EL DOMICILIO.
+ *
+ * Un mensajero necesita dos números, no un párrafo. Y como el formulario de
+ * cada tienda es DATO —el negocio lo arma como quiere—, la ubicación tiene que
+ * ser una pregunta más: así se puede mover de sitio, hacerla opcional o
+ * quitarla del todo si el negocio no lleva a domicilio. Por fuera de la lista
+ * habría sido un segundo sistema de preguntas que el negocio no puede tocar.
+ */
+export type TipoPregunta = "texto" | "parrafo" | "lista" | "telefono" | "ubicacion";
+
+/** Los tipos, con su nombre, para las pantallas que dejan elegir. */
+export const TIPOS_PREGUNTA: { valor: TipoPregunta; label: string; desc: string }[] = [
+  { valor: "texto", label: "Texto corto", desc: "Un nombre, un edificio, un número de casa." },
+  { valor: "telefono", label: "Teléfono", desc: "Abre el teclado numérico en el móvil." },
+  { valor: "lista", label: "Lista de opciones", desc: "El cliente elige una de las que tú pongas." },
+  { valor: "parrafo", label: "Texto largo", desc: "Indicaciones, referencias, comentarios." },
+  {
+    valor: "ubicacion",
+    label: "Ubicación",
+    desc: "El cliente marca dónde está. Es lo que necesita el mensajero para llegar.",
+  },
+];
 
 export type PreguntaPedido = {
   /** Estable: es lo que se guarda con el pedido. No cambia al renombrar. */
@@ -186,6 +208,12 @@ function idDeEtiqueta(etiqueta: string): string {
 export function sanearPreguntas(crudo: unknown): PreguntaPedido[] {
   if (!Array.isArray(crudo)) return [];
   const vistos = new Set<string>();
+  // UN PEDIDO TIENE UN DESTINO. Dos preguntas de mapa en el mismo formulario no
+  // son una función: el cliente rellena una u otra y la moto sale a un sitio o
+  // a otro según cuál. La segunda se degrada a texto largo —la respuesta sigue
+  // llegando y sirviendo de referencia— en vez de borrarse, que sería tirar una
+  // pregunta que el negocio sí escribió.
+  let yaHayMapa = false;
 
   return crudo
     .map((x) => {
@@ -193,11 +221,17 @@ export function sanearPreguntas(crudo: unknown): PreguntaPedido[] {
       const etiqueta = String(p.etiqueta ?? "").trim();
       if (!etiqueta) return null;
 
-      const tipo: TipoPregunta = (["texto", "parrafo", "lista", "telefono"] as const).includes(
-        p.tipo as TipoPregunta,
-      )
+      // LA LISTA DE TIPOS SALE DEL CATÁLOGO, no de una copia escrita aquí. Ya
+      // pasó con otras listas: se añade un tipo, se olvida la copia, y el tipo
+      // nuevo se guarda como «texto» sin que nada avise.
+      let tipo: TipoPregunta = TIPOS_PREGUNTA.some((t) => t.valor === p.tipo)
         ? (p.tipo as TipoPregunta)
         : "texto";
+
+      if (tipo === "ubicacion") {
+        if (yaHayMapa) tipo = "parrafo";
+        else yaHayMapa = true;
+      }
 
       const opciones = Array.isArray(p.opciones)
         ? [...new Set(p.opciones.map((o) => String(o).trim()).filter(Boolean))]

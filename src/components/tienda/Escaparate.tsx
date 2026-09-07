@@ -5,6 +5,7 @@ import { Search, ShoppingBag, Plus, Minus, ArrowLeft, ChevronDown } from "lucide
 import { comoDinero, type GrupoVariedad } from "@/lib/tienda/variedades";
 import type { ConfigTienda } from "@/lib/tienda/config";
 import { proporcionDe } from "@/lib/tienda/imagenes";
+import { PedirUbicacion } from "./PedirUbicacion";
 import {
   claveDeLinea,
   cuantasUnidades,
@@ -1084,7 +1085,14 @@ function VistaCarrito({
                       {p.etiqueta}
                       {p.obligatoria && " *"}
                     </label>
-                    {p.tipo === "lista" ? (
+                    {p.tipo === "ubicacion" ? (
+                      <PedirUbicacion
+                        valor={respuestas[p.id] ?? ""}
+                        onCambio={(v) => setRespuestas((r) => ({ ...r, [p.id]: v }))}
+                        estilo={campo}
+                        acento={c.acento}
+                      />
+                    ) : p.tipo === "lista" ? (
                       <select
                         value={respuestas[p.id] ?? ""}
                         onChange={(e) => setRespuestas((r) => ({ ...r, [p.id]: e.target.value }))}

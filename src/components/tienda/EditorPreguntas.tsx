@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Plus, Trash2, X, ChevronUp, ChevronDown } from "lucide-react";
-import { MAX_PREGUNTAS, type PreguntaPedido, type TipoPregunta } from "@/lib/tienda/config";
+import { MAX_PREGUNTAS, TIPOS_PREGUNTA, type PreguntaPedido } from "@/lib/tienda/config";
 
 /**
  * Las preguntas del pedido, hasta diez, como en la hoja.
@@ -24,18 +24,24 @@ import { MAX_PREGUNTAS, type PreguntaPedido, type TipoPregunta } from "@/lib/tie
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const TIPOS: { valor: TipoPregunta; titulo: string; pista: string }[] = [
-  { valor: "texto", titulo: "Texto corto", pista: "Un nombre, un edificio, un número de casa." },
-  { valor: "telefono", titulo: "Teléfono", pista: "Abre el teclado numérico en el móvil." },
-  { valor: "lista", titulo: "Lista de opciones", pista: "El cliente elige una de las que tú pongas." },
-  { valor: "parrafo", titulo: "Texto largo", pista: "Indicaciones, referencias, comentarios." },
-];
+/**
+ * LOS TIPOS SALEN DEL CATÁLOGO, no de una copia escrita aquí.
+ *
+ * Aquí HABÍA una segunda lista, escrita a mano, con los cuatro tipos de
+ * entonces. Al añadir la ubicación se habría quedado corta sin que nada fallara:
+ * el tipo existiría, el escaparate sabría pintarlo, y el negocio no tendría
+ * dónde elegirlo — una función completa e invisible.
+ */
+const TIPOS = TIPOS_PREGUNTA.map((t) => ({ valor: t.valor, titulo: t.label, pista: t.desc }));
 
 /** Lo que casi todas las tiendas preguntan, para no empezar en blanco. */
 const PLANTILLAS: PreguntaPedido[] = [
   { id: "", etiqueta: "Nombre completo", tipo: "texto", obligatoria: true },
   { id: "", etiqueta: "Teléfono", tipo: "telefono", obligatoria: true },
   { id: "", etiqueta: "Dirección de entrega", tipo: "parrafo", obligatoria: true },
+  // SIN ESTA NO HAY DOMICILIO CON MENSAJERO. La dirección escrita le sirve a un
+  // vecino; a una API de delivery hay que darle dos números.
+  { id: "", etiqueta: "Ubicación en el mapa", tipo: "ubicacion", obligatoria: true },
   { id: "", etiqueta: "Nombre PH", tipo: "texto", obligatoria: false },
   { id: "", etiqueta: "Número Apto / Casa", tipo: "texto", obligatoria: false },
   {

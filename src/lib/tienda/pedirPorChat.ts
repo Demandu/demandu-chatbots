@@ -44,6 +44,7 @@
 
 import type { GrupoVariedad } from "./variedades";
 import type { PreguntaPedido } from "./config";
+import { leerUbicacion, comoRespuesta } from "./ubicacion";
 
 /* ── Lo que se guarda entre mensajes ───────────────────────────────────────── */
 
@@ -470,6 +471,26 @@ export function seguirComprando(carrito: CarritoChat): CarritoChat {
 export function contestar(carrito: CarritoChat, pregunta: PreguntaPedido, texto: string): CarritoChat {
   const valor = String(texto ?? "").trim().slice(0, 500);
   const respuestas = { ...(carrito.respuestas ?? {}) };
+
+  // ── LA UBICACIÓN SE COMPRUEBA AQUÍ, Y NO ES UN CAPRICHO ───────────────────
+  //
+  // Si «casa azul frente al parque» se guardara como respuesta a la pregunta
+  // del mapa, el pedido se crearía perfecto y sin una sola coordenada. Nadie se
+  // enteraría hasta el momento de mandarlo, con el cliente esperando y el
+  // paquete armado — y para entonces ya no hay a quién preguntarle, porque la
+  // conversación terminó hace rato.
+  //
+  // Se guarda NORMALIZADA, no como la escribió: así el enlace de Google Maps
+  // que pegó y los dos números que dictó otro cliente acaban siendo la misma
+  // cosa, y quien la lea después no tiene que saber de cuál de las dos viene.
+  if (pregunta.tipo === "ubicacion") {
+    const u = leerUbicacion(valor);
+    // Se vuelve a preguntar. Vale también para la opcional: media ubicación es
+    // peor que ninguna, porque parece que la hay.
+    if (!u) return carrito;
+    respuestas[pregunta.id] = comoRespuesta(u);
+    return { ...carrito, respuestas, pregunta: (Number(carrito.pregunta) || 0) + 1 };
+  }
 
   if (valor) respuestas[pregunta.id] = valor;
   else if (pregunta.obligatoria) return carrito; // vacía y obligatoria: se vuelve a preguntar

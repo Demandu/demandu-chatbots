@@ -9,6 +9,7 @@ import { paisDesdeTelefono } from "@/lib/phoneCountry";
 import { cobroPublico } from "./cobro-publico";
 import { enlaceDePago } from "./direccion";
 import { codigoDePedido } from "./yappy";
+import { ubicacionDeLasRespuestas, direccionDeLasRespuestas } from "./ubicacion";
 
 /**
  * Crear un pedido. UNO SOLO, para la tienda y para el chat.
@@ -188,6 +189,19 @@ export async function crearPedido(encargo: Encargo): Promise<PedidoHecho | Pedid
     return { ok: false, error: `Falta ${faltan.join(", ")}.`, estado: 400 };
   }
 
+  // ── DÓNDE HAY QUE LLEVARLO, EN NÚMEROS ────────────────────────────────────
+  //
+  // Se saca AQUÍ, en el mismo sitio donde nace el pedido, y no en la pantalla
+  // que lo manda al mensajero. Las respuestas son un `jsonb` que puede haber
+  // escrito el escaparate, el chat o una versión anterior: si cada pantalla lo
+  // interpretara por su cuenta, un día una leería la coordenada y otra no, y el
+  // botón de «Enviar» saldría gris con el dato delante.
+  //
+  // La dirección escrita se guarda IGUAL que la coordenada, y no sobra: es lo
+  // que el mensajero lee cuando el pin cae en la acera de enfrente.
+  const donde = ubicacionDeLasRespuestas(config.preguntas, respuestas);
+  const direccionEscrita = direccionDeLasRespuestas(config.preguntas, respuestas);
+
   const { data: numero, error: errNumero } = await sb.rpc("siguiente_numero_pedido", {
     p_tienda: tienda.id,
   });
@@ -214,6 +228,8 @@ export async function crearPedido(encargo: Encargo): Promise<PedidoHecho | Pedid
         canal,
         respuestas,
         codigo,
+        ...(direccionEscrita ? { entrega_direccion: direccionEscrita } : {}),
+        ...(donde ? { entrega_lat: donde.lat, entrega_long: donde.long } : {}),
         // EL CHAT YA SABE CON QUIÉN HABLA, y se ata desde el primer momento. En
         // el escaparate esto va nulo y se resuelve abajo por el teléfono.
         ...(encargo.quien?.contacto_id ? { contacto_id: encargo.quien.contacto_id } : {}),
