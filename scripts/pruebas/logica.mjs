@@ -102,6 +102,10 @@ import {
 import {
   aQuePedidoVa, ubicacionDelMensaje, VENTANA_UBICACION_HORAS,
 } from "../../src/lib/tienda/ubicacionQueLlega.ts";
+import {
+  primerNombre, saludo, correoDeBienvenida, correoDelEquipo, loQueFaltaParaEscribir,
+} from "../../src/lib/correo/plantillas.ts";
+import { REMITENTE } from "../../src/lib/correo/enviar.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
 import { recalcularPedido } from "../../src/lib/tienda/recalcular.ts";
@@ -6094,6 +6098,128 @@ describe("La ubicación que llega por el chat", () => {
     esperar(ubicacionDelMensaje({})).igual(null);
     esperar(ubicacionDelMensaje(null)).igual(null);
     esperar(ubicacionDelMensaje({ latitude: 200, longitude: -79 })).igual(null);
+  });
+});
+
+
+/**
+ * Los correos que escribe la plataforma.
+ *
+ * UN CORREO ES LO ÚNICO DEL PRODUCTO QUE NO SE PUEDE CORREGIR. Una pantalla mal
+ * escrita se arregla y nadie se entera; un correo con el nombre mal o un hueco
+ * sin rellenar ya está en la bandeja de un cliente para siempre.
+ */
+describe("Correos de la plataforma", () => {
+  const PANEL = "https://platform.demandu.tech/dashboard";
+
+  test("nunca sale un hueco vacío en el saludo", () => {
+    /* «Hola, ,» es el error clásico de las plantillas con variables, y se ve en
+     * la bandeja del cliente antes que en ninguna otra parte. */
+    esperar(saludo(null)).igual("Hola");
+    esperar(saludo("")).igual("Hola");
+    esperar(saludo("   ")).igual("Hola");
+    esperar(saludo("Darwin Bracho")).igual("Hola, Darwin");
+  });
+
+  test("solo el primer nombre", () => {
+    /* «Hola, María José Rodríguez de la Guardia» no lo escribe nadie que
+     * conozca a María. */
+    esperar(primerNombre("María José Rodríguez de la Guardia")).igual("María");
+    esperar(primerNombre("Elsie Y Molina A")).igual("Elsie");
+  });
+
+  test("un teléfono NO es un nombre", () => {
+    /* Un contacto sin nombre se guarda con su número. «Hola, 50761234567» es
+     * peor que no saludar. */
+    esperar(primerNombre("50761234567")).igual("");
+    esperar(primerNombre("+507 6123-4567")).igual("");
+    esperar(saludo("+507 6123-4567")).igual("Hola");
+  });
+
+  test("un nombre con HTML no rompe el correo", () => {
+    /* El nombre viene de Facebook o de un formulario: no se puede confiar en
+     * que sea texto. */
+    const c = correoDeBienvenida({ nombre: "<script>x</script>", negocio: "Pastelería & Co", panel: PANEL });
+    esperar(c.html.includes("<script>")).falso("se coló una etiqueta dentro del correo");
+    esperar(c.html).contiene("Pastelería &amp; Co");
+  });
+
+  test("sin negocio, el asunto no queda con una coma colgando", () => {
+    /* «Bienvenido a Demandu, » es de las cosas que se notan en la bandeja. */
+    const sin = correoDeBienvenida({ nombre: "Darwin", negocio: null, panel: PANEL });
+    esperar(sin.asunto).igual("Tu cuenta de Demandu está lista");
+    esperar(/,\s*$/.test(sin.asunto)).falso();
+
+    const con = correoDeBienvenida({ nombre: "Darwin", negocio: "Ventas de zapatos", panel: PANEL });
+    esperar(con.asunto).contiene("Ventas de zapatos");
+  });
+
+  test("la bienvenida dice QUÉ HACER y lleva a hacerlo", () => {
+    /* Un correo de bienvenida que solo saluda es un correo que nadie abre dos
+     * veces. El momento del alta es el único en que alguien va a hacer lo que
+     * le digas, y lo que hace falta es UNA cosa: conectar su WhatsApp. */
+    const c = correoDeBienvenida({ nombre: "Darwin", negocio: "Ventas de zapatos", panel: PANEL });
+    esperar(c.html).contiene("WhatsApp");
+    esperar(c.html).contiene(PANEL);
+    esperar(c.texto).contiene(PANEL);
+  });
+
+  test("siempre va la versión de texto plano, y no vacía", () => {
+    /* Hay clientes de correo que solo leen esa parte, y los filtros de spam
+     * desconfían de un correo que solo trae HTML. */
+    const c = correoDeBienvenida({ nombre: null, negocio: null, panel: PANEL });
+    esperar(c.texto.trim().length > 50).verdadero("el texto plano se quedó vacío o casi");
+    esperar(c.texto.includes("<")).falso("el texto plano lleva HTML dentro");
+  });
+
+  test("no queda ni un hueco de plantilla sin rellenar", () => {
+    /* La forma más rápida de mandar un correo que diga «Hola {nombre}» es
+     * dejarse un marcador. Se comprueba con los datos más pobres posibles. */
+    for (const c of [
+      correoDeBienvenida({ nombre: null, negocio: null, panel: PANEL }),
+      correoDeBienvenida({ nombre: "", negocio: "", panel: PANEL }),
+      correoDelEquipo({ asunto: "Hola", mensaje: "Un mensaje" }),
+    ]) {
+      for (const trozo of [c.asunto, c.html, c.texto]) {
+        esperar(/\{\{|\}\}|\{nombre\}|\{negocio\}|undefined|null/.test(trozo)).falso(
+          `quedó un hueco sin rellenar: ${trozo.slice(0, 80)}`,
+        );
+      }
+    }
+  });
+
+  test("lo que escribe el equipo se respeta, pero no puede meter HTML", () => {
+    const c = correoDelEquipo({
+      asunto: "Sobre tu cuenta",
+      mensaje: "Hola,\n\nTe escribo por <esto>.",
+    });
+    esperar(c.html).contiene("&lt;esto&gt;");
+    /* Los saltos de línea SÍ se respetan: sin eso, un mensaje de tres párrafos
+     * llega como un muro de texto. */
+    esperar(c.html).contiene("<br />");
+    esperar(c.asunto).igual("Sobre tu cuenta");
+  });
+
+  test("no se manda un correo sin asunto o sin cuerpo", () => {
+    /* Sin asunto llega como «(sin asunto)» y se lee como spam. Sin cuerpo es
+     * peor: el cliente lo abre, no hay nada, y escribe preguntando qué era.
+     * Los dos son irreversibles. */
+    esperar(loQueFaltaParaEscribir({ para: "a@b.com", asunto: "Hola", mensaje: "Qué tal" })).igual([]);
+    esperar(loQueFaltaParaEscribir({ para: "a@b.com", asunto: "", mensaje: "Qué tal" }).length).igual(1);
+    esperar(loQueFaltaParaEscribir({ para: "a@b.com", asunto: "Hola", mensaje: "  " }).length).igual(1);
+    esperar(loQueFaltaParaEscribir({ para: "", asunto: "Hola", mensaje: "Qué tal" }).length).igual(1);
+    esperar(loQueFaltaParaEscribir({ para: "no-es-correo", asunto: "Hola", mensaje: "Qué tal" }).length).igual(1);
+  });
+
+  test("el remitente sale del subdominio, no del dominio raíz", () => {
+    /* Si un cliente marca como spam un correo de la plataforma, el golpe se lo
+     * lleva `envios.demandu.tech`. La reputación del dominio raíz es la que
+     * hace que lleguen los correos que escribe una persona desde Google
+     * Workspace, y esas dos no deben tocarse. */
+    esperar(REMITENTE).contiene("envios.demandu.tech");
+    esperar(/@demandu\.tech>/.test(REMITENTE)).falso(
+      "el remitente sale del dominio raíz: un spam de la plataforma dañaría el correo de la empresa",
+    );
   });
 });
 

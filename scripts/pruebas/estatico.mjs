@@ -1909,6 +1909,59 @@ describe("Tareas programadas", () => {
     );
   });
 
+  test("cada tarea programada registrada tiene su puerta, y su puerta la comprueba", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // DOS FORMAS DE QUE UNA TAREA NO SIRVA, Y LAS DOS SON MUDAS:
+    //
+    //   1. El cron llama a una dirección que no existe. El registro del cron
+    //      dice «succeeded» —el SQL sí corrió— y la petición HTTP muere en otra
+    //      tabla que nadie mira. Es literalmente lo que pasó con Sheets durante
+    //      4.859 ejecuciones.
+    //   2. La dirección existe y no comprueba quién llama. Entonces cualquiera
+    //      puede dispararla desde el navegador: en el caso de los correos, eso
+    //      es mandarle correo a los clientes de otro.
+    //
+    // Esta regla mira las tareas que sabemos registradas en la base y exige que
+    // su ruta exista y llame a `llamadaDeTareaProgramada` con SU propósito —el
+    // ticket es de un solo propósito, así que uno de otra tarea no vale.
+    // ─────────────────────────────────────────────────────────────────────────
+    const TAREAS = [
+      ["app/api/campanas/enviar/route.ts", "difusiones"],
+      ["app/api/correos/bienvenida/route.ts", "correo_bienvenida"],
+    ];
+
+    for (const [ruta, proposito] of TAREAS) {
+      const entera = path.join(SRC, ruta);
+      esperar(fs.existsSync(entera)).verdadero(
+        `el cron llama a una dirección que no existe (${ruta}): el registro diría «succeeded» igual`,
+      );
+      const texto = sinComentarios(fs.readFileSync(entera, "utf8"));
+      esperar(new RegExp(`llamadaDeTareaProgramada\\(\\s*req\\s*,\\s*"${proposito}"`).test(texto)).verdadero(
+        `${ruta} no comprueba el ticket con su propósito «${proposito}»: cualquiera podría dispararla`,
+      );
+    }
+  });
+
+  test("el correo de bienvenida se manda desde UN solo sitio", () => {
+    // Se manda por tarea programada porque el alta ocurre DENTRO de la base
+    // —un disparador de Postgres llama a `provisionar_negocio`— y Postgres no
+    // manda correos. La tentación es engancharlo además en la pantalla de
+    // bienvenida «para que llegue antes»; el resultado sería que quien pasa por
+    // las dos puertas recibe dos correos idénticos.
+    //
+    // La marca `bienvenida_enviada_at` protege de eso en la base, pero una
+    // carrera entre dos caminos simultáneos se le puede escapar. Que solo haya
+    // un sitio que lo arma es la protección de verdad.
+    const usan = ARCHIVOS.filter((f) => sinComentarios(f.texto).includes("correoDeBienvenida("))
+      .map((f) => f.ruta)
+      .filter((r) => !r.endsWith("lib/correo/plantillas.ts"));
+
+    esperar(usan.join(", ")).igual(
+      "src/app/api/correos/bienvenida/route.ts",
+      "el correo de bienvenida se arma desde más de un sitio: alguien va a recibirlo dos veces",
+    );
+  });
+
   test("el ticket se comprueba y se gasta en una sola operación", () => {
     // Comprobar y marcar por separado deja pasar dos peticiones simultáneas.
     const lib = fs.readFileSync(path.join(RAIZ, "src/lib/cron.ts"), "utf8");
