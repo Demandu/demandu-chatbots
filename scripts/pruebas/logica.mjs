@@ -62,7 +62,7 @@ import {
 import {
   API_ASAP, esAmbienteEnvio, VEHICULOS, vehiculoValido, latitud, longitud,
   ubicacionDe, telefonoAsap, instrucciones, loQueFaltaParaMandar, cuerpoDeOrden,
-  leerDeliveryId, loAcepto, motivoDelFallo, ESTADOS_ASAP, estadoDeCodigo, envioTerminado,
+  leerDeliveryId, loAcepto, leerEstado, motivoDelFallo, ESTADOS_ASAP, estadoDeCodigo, envioTerminado,
   estadoDelPedido, estadoDeAviso, estadoDeAvisoConEstado,
 } from "../../src/lib/tienda/asap.ts";
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
@@ -5644,6 +5644,63 @@ describe("ASAP · envío del pedido", () => {
     esperar(loAcepto({ status: true })).falso("sin identificador no hay nada que seguir");
     esperar(loAcepto({ status: true, result: {} })).falso();
     esperar(loAcepto(null)).falso();
+  });
+
+  test("EL ESTADO REAL DE SU API, EL DEL 8 SEP 2026", () => {
+    /* ─────────────────────────────────────────────────────────────────────────
+     * La respuesta literal de `GET /order/status` para el envío 2818877:
+     *
+     *   {"status":true,"delivery_status":1,"provider_status":1,
+     *    "status_message":"Order Cancelled",...}
+     *
+     * Sirve para dos cosas. Confirma que nuestra tabla de códigos ACIERTA —el 1
+     * es «cancelado» y su propio mensaje dice «Order Cancelled»—, y fija la
+     * forma de la respuesta antes de que a alguien se le ocurra deducirla.
+     * ───────────────────────────────────────────────────────────────────────── */
+    const REAL = {
+      status: true,
+      delivery_status: 1,
+      provider_status: 1,
+      status_message: "Order Cancelled",
+      updated_at: "2026-09-08T00:25:04.000Z",
+    };
+    esperar(leerEstado(REAL)?.clave).igual("cancelado");
+    esperar(envioTerminado(leerEstado(REAL)?.clave)).verdadero("un envío cancelado seguiría preguntándose para siempre");
+  });
+
+  test("HAY DOS CAMPOS «STATUS» Y NO SIGNIFICAN LO MISMO", () => {
+    /* `status` es si la CONSULTA funcionó. `delivery_status` es en qué punto va
+     * el ENVÍO. Leer el primero creyendo que es el segundo es el error que
+     * `leerEstado` existe para impedir.
+     *
+     * ── EL CASO QUE DE VERDAD MUERDE ────────────────────────────────────
+     *
+     * Con `status: true` no pasa nada: «true» no es un número y `estadoDeCodigo`
+     * lo rechaza. Lo comprobé, y por eso este caso NO es la prueba — un caso que
+     * no puede fallar no prueba nada.
+     *
+     * El que muerde es `status: 1`. Un montón de APIs devuelven 1 por «bien», y
+     * la suya podría hacerlo mañana sin avisar. Ahí sí: 1 es un código válido, y
+     * significa CANCELADO. Un envío entregado se anunciaría como cancelado.
+     *
+     * Por eso `status` no está entre los candidatos ni como último respaldo. Un
+     * respaldo que puede acertar por accidente es peor que no tenerlo. */
+    esperar(leerEstado({ status: 1, delivery_status: 2 })?.clave).igual(
+      "entregado",
+      "se leyó «status» como si fuera el estado del envío",
+    );
+    esperar(leerEstado({ status: true, delivery_status: 2 })?.clave).igual("entregado");
+    esperar(leerEstado({ status: true, delivery_status: 7 })?.clave).igual("en_camino");
+
+    /* Sin el campo del envío NO se inventa un estado, aunque la consulta fuera
+     * bien. Devolver «pedido» (el 0) pisaría un «entregado» que ya estaba. */
+    esperar(leerEstado({ status: true })).igual(null);
+    esperar(leerEstado({ status: true, delivery_status: null })).igual(null);
+    esperar(leerEstado({ status: true, delivery_status: "" })).igual(null);
+
+    /* Y si la consulta falló, no hay nada que leer. */
+    esperar(leerEstado({ status: false, delivery_status: 2 })).igual(null);
+    esperar(leerEstado(null)).igual(null);
   });
 
   test("el motivo del fallo se enseña tal cual, no se traduce a «hubo un error»", () => {

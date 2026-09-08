@@ -422,6 +422,36 @@ export function estadoDeCodigo(codigo: unknown): { clave: EstadoEnvio; label: st
   return ESTADOS_ASAP[n] ?? null;
 }
 
+/**
+ * El estado que viene en la respuesta de `GET /order/status`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA RESPUESTA REAL, COMPROBADA EL 8 SEP 2026:
+ *
+ *   {"status":true,"delivery_status":1,"provider_status":1,
+ *    "status_message":"Order Cancelled","updated_at":"2026-09-08T00:25:04.000Z"}
+ *
+ * ── HAY DOS CAMPOS QUE SE LLAMAN «STATUS» Y NO SIGNIFICAN LO MISMO ────────
+ *
+ * `status` es **si la consulta funcionó** (un booleano). `delivery_status` es
+ * **en qué punto va el envío** (un número). Leer el primero creyendo que es el
+ * segundo es el error que esta función existe para impedir: `true` no es un
+ * código de estado, y en cuanto se convierte a número deja de tener sentido.
+ *
+ * Por eso `status` NO está entre los candidatos, ni siquiera el último. Un
+ * respaldo que puede acertar por accidente es peor que no tenerlo.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function leerEstado(respuesta: unknown): { clave: EstadoEnvio; label: string } | null {
+  const r = (respuesta ?? {}) as Record<string, any>;
+  if (r.status === false) return null;
+  for (const c of [r.delivery_status, r.provider_status, r.result?.delivery_status]) {
+    const leido = estadoDeCodigo(c);
+    if (leido) return leido;
+  }
+  return null;
+}
+
 /** Ya no va a cambiar más: ni se vuelve a preguntar ni se puede cancelar. */
 export function envioTerminado(clave: string | null | undefined): boolean {
   return ["entregado", "cancelado", "devuelto", "fallido"].includes(String(clave ?? ""));
