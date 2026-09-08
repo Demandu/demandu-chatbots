@@ -486,6 +486,21 @@ export function estadoDelPedido(clave: EstadoEnvio | null | undefined): string |
  * Los avisos del webhook, traducidos a un estado.
  *
  * ─────────────────────────────────────────────────────────────────────────────
+ * EL WEBHOOK EXISTE, Y ES LA FORMA BUENA DE ENTERARSE.
+ *
+ * Consta en su documento «ASAP Webhooks». NO está en su colección de Postman, y
+ * mirar solo la colección me llevó a escribir en un commit que no existía: una
+ * cosa es «no lo encuentro aquí» y otra «no existe», y las dije como si fueran
+ * la misma. Queda apuntado porque la conclusión equivocada ya está publicada.
+ *
+ * ── Y NO ES UNA PREFERENCIA, ES UNA NECESIDAD ─────────────────────────────
+ *
+ * Preguntando el estado NO se puede saber si el mensajero llegó al local o a
+ * casa del cliente: los dos son el código 100. Su propio registro de una orden
+ * completada lo enseña saliendo dos veces. Con el webhook sí se distinguen
+ * —`pickupAgentArrived` y `deliveryAgentArrived`—, y de eso depende no decirle
+ * al cliente «tu pedido está llegando» cuando la moto sigue en la panadería.
+ *
  * EL WEBHOOK NO MANDA EL CÓDIGO, MANDA UN NOMBRE (`action`). Y algunos nombres
  * hablan de la RECOGIDA y otros de la ENTREGA, con palabras casi iguales:
  * `pickupAgentArrived` es «llegó al local» y `deliveryAgentArrived` es «llegó

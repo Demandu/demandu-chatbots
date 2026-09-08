@@ -63,6 +63,7 @@ import {
   API_ASAP, esAmbienteEnvio, VEHICULOS, vehiculoValido, latitud, longitud,
   ubicacionDe, telefonoAsap, instrucciones, loQueFaltaParaMandar, cuerpoDeOrden,
   leerDeliveryId, loAcepto, leerEstado, motivoDelFallo, ESTADOS_ASAP, estadoDeCodigo, envioTerminado,
+  AVISOS_ASAP,
   estadoDelPedido, estadoDeAviso, estadoDeAvisoConEstado,
 } from "../../src/lib/tienda/asap.ts";
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
@@ -6528,6 +6529,134 @@ describe("El texto del correo se edita sin publicar", () => {
     esperar(c.html).contiene("demandu.tech");
     /* Y el botón sigue llevando al panel, diga lo que diga por fuera. */
     esperar(c.html).contiene(`href="${PANEL}"`);
+  });
+});
+
+describe("ASAP: su documentación oficial, ya no mis deducciones", () => {
+  /* ───────────────────────────────────────────────────────────────────────────
+   * Estas pruebas fijan lo que dicen SUS PDF: «Fetch Order Status / Log» y
+   * «ASAP Webhooks». Hasta ahora la tabla de estados y la de avisos salían de
+   * lo que pude deducir. Coincidían — pero coincidir y estar comprobado no es
+   * lo mismo, y el `delivery_id` ya demostró lo que cuesta la diferencia.
+   * ─────────────────────────────────────────────────────────────────────────── */
+
+  test("los cinco estados que documentan, con su mensaje literal", () => {
+    /* Copiados de su PDF. Cada uno trae el `status_message` que ELLOS mandan,
+     * así que si mañana cambiamos una etiqueta y deja de significar lo mismo
+     * que su mensaje, esto lo canta. */
+    const SUYOS = [
+      { delivery_status: 0, status_message: "Order Placed", clave: "pedido" },
+      { delivery_status: 6, status_message: "Order Confirmed", clave: "confirmado" },
+      { delivery_status: 7, status_message: "Order Dispatched", clave: "en_camino" },
+      { delivery_status: 2, status_message: "Order Completed", clave: "entregado" },
+      { delivery_status: 1, status_message: "Order Cancelled", clave: "cancelado" },
+    ];
+    for (const e of SUYOS) {
+      esperar(leerEstado({ status: true, ...e })?.clave).igual(
+        e.clave,
+        `su «${e.status_message}» (${e.delivery_status}) no es lo que creemos`,
+      );
+    }
+  });
+
+  test("EL 100 NO ES «LLEGÓ A CASA DEL CLIENTE», Y ESO CAMBIA EL DISEÑO", () => {
+    /* ─────────────────────────────────────────────────────────────────────────
+     * Su propio `delivery_log` de una orden completada, en orden real:
+     *
+     *     0   CONFIRMING_ORDER   20:19:24
+     *     6   CONFIRMED          20:20:57
+     *     100 Driver has ARRIVED 20:22:34   ← llegó AL LOCAL
+     *     100 Driver has ARRIVED 20:23:07   ← el MISMO código otra vez
+     *     7   DISPATCHED         20:23:13
+     *     101 Driver has STARTED 20:23:13
+     *     2   COMPLETED          20:24:16
+     *
+     * Dos cosas que no se ven leyendo la tabla de códigos:
+     *
+     * 1. NO ES UNA PROGRESIÓN. El 100 ocurre ANTES que el 7. Ordenar por el
+     *    número para saber «cuál es más avanzado» daría un embudo al revés.
+     * 2. EL 100 SALE DOS VECES Y SIGNIFICA COSAS DISTINTAS: llegó al local y
+     *    llegó a casa del cliente. Preguntando el estado NO se pueden
+     *    distinguir. El webhook SÍ: `pickupAgentArrived` y
+     *    `deliveryAgentArrived` son avisos distintos.
+     *
+     * Por eso avisar al cliente «tu pedido está llegando» NO se puede hacer
+     * consultando el estado: le llegaría cuando el mensajero está todavía en la
+     * panadería. Es el argumento de peso para usar el webhook y no un bucle.
+     * ───────────────────────────────────────────────────────────────────────── */
+    const LOG = [0, 6, 100, 100, 7, 101, 2];
+    const claves = LOG.map((c) => estadoDeCodigo(c)?.clave);
+    esperar(claves).igual(["pedido", "confirmado", "recogiendo", "recogiendo", "en_camino", "en_camino", "entregado"]);
+
+    /* El 100 llega antes que el 7: el número NO ordena. */
+    esperar(LOG.indexOf(100) < LOG.indexOf(7)).verdadero(
+      "si el 100 viniera después del 7, ordenar por el número sería válido y esta regla sobra",
+    );
+
+    /* Y la prueba de que consultando el estado no se distinguen: el mismo
+     * código da la misma respuesta las dos veces, mientras que los dos avisos
+     * del webhook sí se distinguen. */
+    esperar(estadoDeAviso("pickupAgentArrived")).igual("recogiendo");
+    esperar(estadoDeAviso("deliveryAgentArrived")).igual("en_camino");
+    esperar(estadoDeAviso("pickupAgentArrived") !== estadoDeAviso("deliveryAgentArrived")).verdadero(
+      "los dos «llegó» se confundieron: le diríamos al cliente que su pedido llegó estando el mensajero en el local",
+    );
+  });
+
+  test("las diez acciones del webhook son las diez suyas, ni una más ni una menos", () => {
+    /* De su PDF «ASAP Webhooks». Si ellos añaden una y nosotros no, ese aviso
+     * llega y no mueve nada — en silencio, que es como se pierden los estados. */
+    const SUYAS = [
+      "pickupRequestReceived", "deliveryRequestReceived",
+      "pickupTaskUpdate", "deliveryTaskUpdate",
+      "pickupStarted", "pickupAgentArrived", "pickupSuccessful",
+      "deliveryAgentStarted", "deliveryAgentArrived", "deliverySuccessful",
+    ];
+    for (const a of SUYAS) {
+      esperar(estadoDeAviso(a) !== null).verdadero(`no conocemos el aviso «${a}»`);
+    }
+    esperar(Object.keys(AVISOS_ASAP).length).igual(
+      SUYAS.length,
+      "nuestra tabla tiene acciones que ASAP no manda, o le faltan de las que sí",
+    );
+  });
+
+  test("«Cancel» y «Declined» mandan sobre la acción", () => {
+    /* Un `deliveryTaskUpdate` con `state: "Cancel"` no es una actualización
+     * cualquiera: es que nadie va a ir. Leer solo la acción lo dejaría en
+     * «confirmado» y el pedido esperaría a un mensajero que ya dijo que no. */
+    esperar(estadoDeAvisoConEstado("deliveryTaskUpdate", "Assigned")).igual("confirmado");
+    esperar(estadoDeAvisoConEstado("deliveryTaskUpdate", "Cancel")).igual("cancelado");
+    esperar(estadoDeAvisoConEstado("deliveryTaskUpdate", "Declined")).igual("fallido");
+    /* Incluso sobre una acción que hablaba de éxito. */
+    esperar(estadoDeAvisoConEstado("deliverySuccessful", "Cancel")).igual("cancelado");
+  });
+
+  test("un aviso desconocido NO inventa un estado", () => {
+    /* Si mañana mandan `driverTookANap`, lo que no puede pasar es que el pedido
+     * se mueva a cualquier sitio. Se queda donde estaba. */
+    esperar(estadoDeAviso("driverTookANap")).igual(null);
+    esperar(estadoDeAviso("")).igual(null);
+    esperar(estadoDeAviso(null)).igual(null);
+  });
+
+  test("el aviso trae NUESTRO código de pedido, y por eso se puede casar", () => {
+    /* Su cuerpo de webhook:
+     *
+     *   {"commerce":"5fc17…","order_id":18002,"external_order_id":"1614611272",
+     *    "source":"asap-webhooks","action":"deliveryRequestReceived",
+     *    "date":"2021-03-03T01:51:59.683Z","payload":{}}
+     *
+     * `external_order_id` es lo que NOSOTROS mandamos como `codigo` del pedido.
+     * Es la forma de saber de qué pedido habla un aviso sin depender de haber
+     * guardado bien su `order_id` — el mismo dato que casi perdemos. */
+    const b = cuerpoDeOrden(
+      { user_token: "t", shared_secret: "s", telefono: "50760000000",
+        origen_direccion: "Local", origen_lat: 9.01, origen_long: -79.5, vehiculo: "bike" },
+      { codigo: "1614611272", entrega_direccion: "Casa", entrega_lat: 9.02, entrega_long: -79.46,
+        cliente_nombre: "Ana", cliente_telefono: "50761111111" },
+    );
+    esperar(b.external_order_id).igual("1614611272");
   });
 });
 
