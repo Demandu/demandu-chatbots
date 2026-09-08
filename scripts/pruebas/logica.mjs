@@ -107,6 +107,10 @@ import {
   primerNombre, saludo, correoDeBienvenida, correoDelEquipo, loQueFaltaParaEscribir, LOGO,
   rellenarHuecos, cuerpoEnHtml, laPlantilla, BIENVENIDA_POR_DEFECTO, HUECOS,
 } from "../../src/lib/correo/plantillas.ts";
+import {
+  LETRAS_MINIMAS, ESPERA_MS, MAX_POR_BUSQUEDA, valeLaPenaBuscar, nuevaBusqueda,
+  cuerpoDeSugerencias, leerSugerencias, leerPunto, CAMPOS_DEL_PUNTO,
+} from "../../src/lib/lugares/google.ts";
 import { REMITENTE } from "../../src/lib/correo/enviar.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
@@ -6657,6 +6661,115 @@ describe("ASAP: su documentación oficial, ya no mis deducciones", () => {
         cliente_nombre: "Ana", cliente_telefono: "50761111111" },
     );
     esperar(b.external_order_id).igual("1614611272");
+  });
+});
+
+describe("Buscar una dirección sin que la factura se dispare", () => {
+  test("NO SE PREGUNTA POR UNA O DOS LETRAS", () => {
+    /* Cada intento se paga aunque no sirva de nada, y con dos letras Google
+     * devuelve las calles más famosas del país. La cuarta letra es donde una
+     * sugerencia empieza a valer algo. */
+    esperar(valeLaPenaBuscar("")).falso();
+    esperar(valeLaPenaBuscar("v")).falso();
+    esperar(valeLaPenaBuscar("vía")).falso();
+    esperar(valeLaPenaBuscar("vía ")).falso("los espacios no cuentan como letras");
+    esperar(valeLaPenaBuscar("vía e")).verdadero();
+    esperar(LETRAS_MINIMAS >= 3).verdadero("el mínimo se bajó tanto que ya no ahorra nada");
+  });
+
+  test("y se para a las doce", () => {
+    /* Una dirección se encuentra en tres o cuatro intentos. En la doce, o el
+     * sitio no está en Google o alguien está jugando con el campo — y en los
+     * dos casos seguir preguntando solo suma factura. */
+    esperar(valeLaPenaBuscar("Vía España 100", MAX_POR_BUSQUEDA - 1)).verdadero();
+    esperar(valeLaPenaBuscar("Vía España 100", MAX_POR_BUSQUEDA)).falso();
+    esperar(valeLaPenaBuscar("Vía España 100", 999)).falso();
+  });
+
+  test("se espera a que deje de escribir", () => {
+    /* Sin espera, una dirección de treinta letras son treinta llamadas de pago
+     * —y la mayoría por respuestas que la tecla siguiente borra antes de que
+     * nadie las lea. */
+    esperar(ESPERA_MS >= 250).verdadero("la espera es tan corta que vuelve a preguntar por cada tecla");
+    esperar(ESPERA_MS <= 600).verdadero("tanta espera se nota como lentitud");
+  });
+
+  test("EL IDENTIFICADOR DE BÚSQUEDA ES LA MITAD DE LA FACTURA", () => {
+    /* Google agrupa las llamadas con el mismo identificador y las cobra como
+     * UNA búsqueda. Sin él, cada tecla se cobra suelta. Y dos búsquedas no
+     * pueden compartirlo: dejaría de agrupar lo que toca. */
+    const a = nuevaBusqueda();
+    const b = nuevaBusqueda();
+    esperar(a.length > 8).verdadero("el identificador se quedó en nada");
+    esperar(a === b).falso("dos búsquedas comparten identificador");
+    esperar(cuerpoDeSugerencias({ texto: "Vía España", busqueda: a }).sessionToken).igual(a);
+  });
+
+  test("se sesga a Panamá pero no se prohíbe el resto", () => {
+    /* Prohibir daría un «no encuentro tu dirección» sin explicación a quien
+     * pide desde fuera, que es raro pero pasa. */
+    const c = cuerpoDeSugerencias({ texto: "Vía España", busqueda: "x" });
+    esperar(c.includedRegionCodes).igual(["pa"]);
+    esperar(c.languageCode).igual("es");
+  });
+
+  test("solo se piden tres campos, y eso es dinero", () => {
+    /* Google cobra por familias: la dirección y el punto entran en la tarifa
+     * barata; añadir horarios, fotos o reseñas —que no usamos— salta a una
+     * tarifa tres veces mayor por la MISMA llamada. */
+    esperar(CAMPOS_DEL_PUNTO).contiene("location");
+    esperar(CAMPOS_DEL_PUNTO).contiene("formattedAddress");
+    for (const caro of ["photos", "reviews", "regularOpeningHours", "rating", "priceLevel", "*"]) {
+      esperar(CAMPOS_DEL_PUNTO.includes(caro)).falso(`se pide «${caro}», que salta a la tarifa cara`);
+    }
+  });
+
+  test("las sugerencias se leen, y las rotas se tiran", () => {
+    const r = leerSugerencias({
+      suggestions: [
+        { placePrediction: { placeId: "a1", structuredFormat: { mainText: { text: "Súper 99" }, secondaryText: { text: "Vía España" } } } },
+        { placePrediction: { placeId: "", text: { text: "Sin id" } } },
+        { queryPrediction: { text: { text: "no es un sitio" } } },
+        { placePrediction: { placeId: "a2", text: { text: "PH Pijao" } } },
+      ],
+    });
+    esperar(r.map((x) => x.id)).igual(["a1", "a2"]);
+    esperar(r[0].texto).igual("Súper 99");
+    esperar(r[0].detalle).igual("Vía España");
+    esperar(leerSugerencias(null)).igual([]);
+    esperar(leerSugerencias({})).igual([]);
+  });
+
+  test("EL CERO OTRA VEZ: (0,0) ES UN PUNTO REAL", () => {
+    /* `Number(null)` y `Number("")` son 0, y (0,0) está en el Atlántico frente
+     * a Ghana. Una respuesta a la que le falte la latitud diría tenerla, el
+     * pedido saldría con coordenadas «válidas» y la moto se pediría para el
+     * golfo de Guinea. Es el mismo cero que ya mordió tres veces en ASAP. */
+    esperar(leerPunto({ formattedAddress: "X", location: { latitude: null, longitude: -79.5 } })).igual(null);
+    esperar(leerPunto({ formattedAddress: "X", location: { latitude: "", longitude: -79.5 } })).igual(null);
+    esperar(leerPunto({ formattedAddress: "X", location: {} })).igual(null);
+    esperar(leerPunto({ formattedAddress: "X" })).igual(null);
+    esperar(leerPunto(null)).igual(null);
+
+    /* Un (0,0) EXPLÍCITO sí se lee: es un punto legítimo, aunque improbable.
+     * Lo que no puede es aparecer por un campo que falta. */
+    const cero = leerPunto({ formattedAddress: "En medio del mar", location: { latitude: 0, longitude: 0 } });
+    esperar(cero?.lat).igual(0);
+  });
+
+  test("una coordenada imposible no pasa", () => {
+    esperar(leerPunto({ formattedAddress: "X", location: { latitude: 91, longitude: 0 } })).igual(null);
+    esperar(leerPunto({ formattedAddress: "X", location: { latitude: 0, longitude: 181 } })).igual(null);
+    const bien = leerPunto({ formattedAddress: "Vía España, Panamá", location: { latitude: 8.98, longitude: -79.51 } });
+    esperar(bien?.lat).igual(8.98);
+    esperar(bien?.direccion).igual("Vía España, Panamá");
+  });
+
+  test("sin dirección no hay punto que valga", () => {
+    /* El punto va a ASAP junto con `desti_address`, y ASAP rechaza una
+     * dirección vacía. Guardar las coordenadas sin la dirección daría un pedido
+     * que parece completo y que se cae al mandarlo. */
+    esperar(leerPunto({ location: { latitude: 8.98, longitude: -79.51 } })).igual(null);
   });
 });
 

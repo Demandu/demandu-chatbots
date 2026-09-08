@@ -8193,4 +8193,107 @@ describe("Los secretos no se preguntan con la sesión del usuario", () => {
   });
 });
 
+describe("La llave de Google no sale del servidor", () => {
+  const RUTA = sinComentarios(fs.readFileSync(path.join(SRC, "app/api/lugares/route.ts"), "utf8"));
+  const CAMPO = sinComentarios(fs.readFileSync(path.join(SRC, "components/BuscarDireccion.tsx"), "utf8"));
+
+  test("LA LLAVE NUNCA VIAJA AL NAVEGADOR", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Lo normal en Google Maps es meter la llave en la página y restringirla
+    // por dominio. Para una web corporativa vale. AQUÍ NO: la tienda es
+    // pública, su código lo ve cualquiera, y la restricción por dominio se
+    // salta mandando una cabecera `Referer` a mano.
+    //
+    // Y la factura no la pagaría quien la robó: la paga Demandu. Una llave de
+    // Google suelta en una página pública es una tarjeta de crédito con el
+    // número escrito por fuera.
+    //
+    // `NEXT_PUBLIC_` es la forma en que esto pasaría sin querer: Next mete esas
+    // variables DENTRO del paquete que se descarga el navegador. Por eso se
+    // prohíbe el prefijo, no solo el uso.
+    // ─────────────────────────────────────────────────────────────────────────
+    const culpables = [];
+    for (const f of ARCHIVOS) {
+      const t = sinComentarios(f.texto);
+      if (/NEXT_PUBLIC_[A-Z_]*(GOOGLE|MAPS|PLACES|LUGARES)[A-Z_]*/.test(t)) {
+        culpables.push(`${f.ruta}: la llave iría dentro del paquete del navegador`);
+      }
+      // Un componente de cliente no puede leerla ni aunque sea del servidor.
+      if (/^\s*"use client"/m.test(t) && /GOOGLE_LUGARES_API_KEY|X-Goog-Api-Key/.test(t)) {
+        culpables.push(`${f.ruta}: un componente de cliente toca la llave`);
+      }
+      // Y nadie llama a Google directo desde el navegador.
+      if (/^\s*"use client"/m.test(t) && /places\.googleapis\.com|maps\.googleapis\.com/.test(t)) {
+        culpables.push(`${f.ruta}: se llama a Google desde el navegador`);
+      }
+    }
+    esperar(culpables.join(", ")).igual("", "la llave de Google puede acabar en el navegador");
+  });
+
+  test("el campo pasa por nuestra puerta y por ninguna otra", () => {
+    esperar(CAMPO.includes('"/api/lugares"')).verdadero("el buscador dejó de pasar por nuestro endpoint");
+    esperar(/googleapis/.test(CAMPO)).falso("el buscador llama a Google directamente");
+  });
+
+  test("SIN LLAVE EL FORMULARIO SIGUE FUNCIONANDO", () => {
+    // Quedarse sin sugerencias es una molestia; un formulario que revienta es
+    // una venta perdida. Y esto no es hipotético: la llave puede faltar en un
+    // entorno de pruebas, agotarse la cuota, o caerse Google.
+    esperar(/sin_llave/.test(RUTA)).verdadero("sin llave ya no se contesta con elegancia");
+    esperar(/status:\s*5\d\d/.test(RUTA)).falso(
+      "la ruta de direcciones puede devolver un error de servidor: el campo se rompería",
+    );
+  });
+
+  test("ESCRIBIR A MANO NO SE PUEDE BLOQUEAR NUNCA", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // En Panamá hay direcciones que Google no conoce: una barriada sin
+    // nomenclatura, un PH recién entregado, «al lado de la panadería». Si
+    // hubiera que elegir de la lista por narices, esa gente no podría comprar —
+    // y el negocio nunca se enteraría, porque quien no puede terminar no
+    // escribe para quejarse: se va.
+    // ─────────────────────────────────────────────────────────────────────────
+    esperar(/onChange=\{\(e\)\s*=>\s*\{[\s\S]{0,120}onCambio\(e\.target\.value\)/.test(CAMPO)).verdadero(
+      "lo escrito a mano dejó de contar como respuesta",
+    );
+    esperar(/disabled/.test(CAMPO)).falso("el campo de dirección se puede deshabilitar");
+    esperar(/required/.test(CAMPO)).falso("el campo exige elegir de la lista");
+    esperar(/Escríbela igual/.test(CAMPO)).verdadero(
+      "se quitó el aviso de que puede escribirla igual: quien no la encuentra creerá que no puede seguir",
+    );
+  });
+
+  test("el tope de gasto se comprueba también en el servidor", () => {
+    // El componente ya para las búsquedas cortas, pero el componente es una
+    // comodidad: esto es la puerta. Una pestaña con un bucle, un `useEffect`
+    // mal puesto o alguien con curl llegan aquí igual.
+    // ── SE MIRA LA LLAMADA, NO EL NOMBRE ──────────────────────────────────
+    //
+    // `RUTA.includes("valeLaPenaBuscar")` pasaba con la comprobación BORRADA:
+    // el nombre seguía en la línea del `import`. Un mutante que quitó la
+    // llamada sobrevivió, y es la segunda vez esta noche que una regla se
+    // conforma con ver una palabra en algún sitio del archivo.
+    //
+    // Se exige la forma de la llamada Y que esté dentro del tramo que atiende
+    // las sugerencias, que es donde tiene que estar.
+    const sugerencias = RUTA.slice(RUTA.indexOf('que === "sugerencias"'), RUTA.indexOf('que === "punto"'));
+    esperar(sugerencias.length > 100).verdadero("no encontré el tramo de sugerencias");
+    esperar(/if\s*\(!valeLaPenaBuscar\(/.test(sugerencias)).verdadero(
+      "el servidor acepta cualquier búsqueda: un bucle en el navegador sería una factura",
+    );
+    esperar(/TOPE_POR_HORA/.test(RUTA)).verdadero("desapareció el tope por navegador");
+    esperar(/status:\s*429/.test(RUTA)).verdadero("pasado el tope ya no se contesta «demasiadas»");
+  });
+
+  test("las coordenadas del cliente NO se piden por la dirección", () => {
+    // La respuesta que se guarda sigue siendo la COORDENADA, no el texto. Si se
+    // guardara la dirección escrita creyendo que basta, ASAP la rechazaría al
+    // mandar el pedido — con el cliente ya cobrado y esperando.
+    const ub = sinComentarios(fs.readFileSync(path.join(SRC, "components/tienda/PedirUbicacion.tsx"), "utf8"));
+    esperar(/onPunto=\{\(punto\)[\s\S]{0,320}comoRespuesta\(\{\s*lat:\s*punto\.lat/.test(ub)).verdadero(
+      "elegir una dirección ya no guarda la coordenada: el pedido entraría sin punto",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

@@ -6,6 +6,7 @@ import {
   comoRespuesta, leerUbicacion, enlaceDeMapa, porQueNoSirve,
   comoSeLeeLaPrecision, precisionDudosa,
 } from "@/lib/tienda/ubicacion";
+import { BuscarDireccion } from "@/components/BuscarDireccion";
 
 /**
  * «¿DÓNDE TE LO LLEVAMOS?», SIN MAPA Y SIN LLAVE DE API.
@@ -25,6 +26,18 @@ import {
  * arrastrado a ojo. El mapa hace falta para el otro caso —pedir desde la
  * oficina para que lo lleven a casa— y para ese está la casilla de pegar el
  * enlace de Google Maps, que es lo que esa gente ya hace hoy por WhatsApp.
+ *
+ * ── Y AHORA HAY UNA TERCERA PUERTA, QUE ES LA MÁS ANCHA ───────────────────
+ *
+ * Escribir la dirección y elegirla de una lista. Da el punto sin que el cliente
+ * sepa que existe una coordenada, sin pedir permisos y sin salir de la tienda.
+ * VA LA PRIMERA porque es la que entiende todo el mundo: «usar mi ubicación»
+ * pide un permiso que mucha gente niega por costumbre, y pegar un enlace de
+ * Google Maps solo lo sabe hacer quien ya lo hace.
+ *
+ * Las otras dos se quedan, y no por si acaso: el GPS es más exacto que
+ * cualquier dirección cuando pides desde donde vas a recibir, y hay
+ * direcciones en Panamá que Google sencillamente no conoce.
  *
  * ── LA CONFIRMACIÓN NO ES OPCIONAL ────────────────────────────────────────
  *
@@ -49,6 +62,9 @@ export function PedirUbicacion({
   const [pegado, setPegado] = useState("");
   const [aviso, setAviso] = useState("");
   const [precision, setPrecision] = useState<number | null>(null);
+  // Lo que escribe en el buscador. No es la respuesta: la respuesta sigue
+  // siendo la coordenada. Esto solo es lo que se ve mientras busca.
+  const [escrito, setEscrito] = useState("");
 
   const puesta = leerUbicacion(valor);
 
@@ -117,7 +133,28 @@ export function PedirUbicacion({
           </button>
         </div>
       ) : (
-        <button
+        <>
+          {/* ── LA PUERTA ANCHA VA PRIMERA ─────────────────────────────────
+              Elegir de una lista lo sabe hacer cualquiera. El botón de abajo
+              pide un permiso que mucha gente niega sin leerlo, y la casilla de
+              pegar el enlace solo la usa quien ya lo hacía por WhatsApp. */}
+          <BuscarDireccion
+            valor={escrito}
+            onCambio={setEscrito}
+            onPunto={(punto) => {
+              setEscrito(punto.direccion);
+              setPrecision(null);
+              setAviso("");
+              onCambio(comoRespuesta({ lat: punto.lat, long: punto.long }));
+            }}
+            placeholder="Escribe tu dirección"
+            estilo={estilo}
+            acento={acento}
+          />
+
+          <p className="text-center text-xs opacity-50">o</p>
+
+          <button
           type="button"
           onClick={pedirAlNavegador}
           disabled={buscando}
@@ -126,7 +163,8 @@ export function PedirUbicacion({
         >
           {buscando ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
           {buscando ? "Buscando dónde estás…" : "Usar mi ubicación"}
-        </button>
+          </button>
+        </>
       )}
 
       {/* LA CASILLA NO DESAPARECE AL ACERTAR: quien ve que el pin quedó mal

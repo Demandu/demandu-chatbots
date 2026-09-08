@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { Bike, MapPin, ExternalLink } from "lucide-react";
 import { VEHICULOS } from "@/lib/tienda/asap";
+import { BuscarDireccion } from "@/components/BuscarDireccion";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
 
 function Guardar() {
@@ -70,6 +71,7 @@ export function Envios({
   const [estado, enviar] = useFormState(accion, { ok: false, mensaje: "" });
   const [lat, setLat] = useState(config.origen_lat);
   const [long, setLong] = useState(config.origen_long);
+  const [direccion, setDireccion] = useState(config.origen_direccion);
 
   const hayPunto = lat.trim() !== "" && long.trim() !== "";
 
@@ -173,14 +175,23 @@ export function Envios({
         </p>
 
         <div className="grid gap-4">
+          {/* ── ESCRIBIR Y ELEGIR RELLENA LAS COORDENADAS SOLO ─────────────
+              Es la parte que de verdad importa: nadie tiene que enterarse de
+              que existe una latitud. Los dos campos de abajo siguen ahí, para
+              corregir a mano y para ver qué se guardó. */}
           <label className="block">
             <span className="mb-1 block text-sm font-semibold text-ink">Dirección del local</span>
-            <input
-              name="origen_direccion"
-              defaultValue={config.origen_direccion}
+            <BuscarDireccion
+              valor={direccion}
+              onCambio={setDireccion}
+              onPunto={(p) => {
+                setDireccion(p.direccion);
+                setLat(String(p.lat));
+                setLong(String(p.long));
+              }}
               placeholder="PH Pijao, Calle 50, Ciudad de Panamá"
-              className="input-l"
             />
+            <input type="hidden" name="origen_direccion" value={direccion} />
           </label>
 
           {/* ── LAS COORDENADAS, CON LAS INSTRUCCIONES DELANTE ─────────────────
@@ -189,7 +200,8 @@ export function Envios({
           <div className="rounded-xl border border-linea bg-suave p-4">
             <p className="mb-2 text-sm font-semibold text-ink">Tu local en el mapa</p>
             <p className="mb-3 text-xs leading-relaxed text-ink-2">
-              ASAP necesita el punto exacto, no la dirección escrita. Para sacarlo: abre{" "}
+              Si elegiste tu local de la lista de arriba, esto ya está puesto y no hay que tocarlo. Si tu local no
+              aparece en Google, sácalo a mano: abre{" "}
               <a
                 href="https://maps.google.com"
                 target="_blank"
