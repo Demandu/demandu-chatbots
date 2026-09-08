@@ -8491,4 +8491,174 @@ describe("No se le piden a una tabla columnas que no existen", () => {
   });
 });
 
+describe("El motor de Deno no tiene nombres repetidos", () => {
+  test("NADA SE DECLARA DOS VECES EN EL MISMO ARCHIVO", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ESTA NOCHE ESTUVE A UN PASO DE PUBLICAR UN MOTOR QUE NO ARRANCA.
+    //
+    // Al añadir el filtro del dinero declaré `const AFIRMACIONES` sin saber que
+    // ya existía otro con ese nombre —el conjunto de «sí», «claro», «ok»— desde
+    // hace meses. Dos `const` con el mismo nombre en el mismo ámbito es un
+    // error de sintaxis: la función no carga, y WhatsApp deja de contestarle a
+    // TODOS los clientes.
+    //
+    // Lo vi por casualidad, porque una regla mía buscaba ese nombre y encontró
+    // el otro. Sin esa casualidad, se publica.
+    //
+    // POR QUÉ SE ESCAPA: el motor vive en `supabase/functions/`, que no entra
+    // en el `tsc` del proyecto y no lo importa ninguna prueba. Se despliega con
+    // `publicar-motor.sh` y el primero que se entera de que está roto es un
+    // cliente escribiendo por WhatsApp.
+    // ─────────────────────────────────────────────────────────────────────────
+    const motores = ["supabase/functions/whatsapp/index.ts"];
+
+    for (const ruta of motores) {
+      const texto = sinComentarios(fs.readFileSync(path.join(RAIZ, ruta), "utf8"));
+
+      // Solo lo declarado en el margen izquierdo: eso es el ámbito del módulo.
+      // Lo de dentro de una función puede repetirse sin problema.
+      const nombres = [
+        ...texto.matchAll(/^(?:export\s+)?(?:const|let|function|async function|class)\s+([A-Za-z_$][\w$]*)/gm),
+      ].map((m) => m[1]);
+
+      esperar(nombres.length > 50).verdadero(
+        `solo encontré ${nombres.length} declaraciones en ${ruta}: el lector falla y esta regla no prueba nada`,
+      );
+
+      const vistos = new Set();
+      const repetidos = [];
+      for (const n of nombres) {
+        if (vistos.has(n)) repetidos.push(n);
+        vistos.add(n);
+      }
+
+      esperar([...new Set(repetidos)].join(", ")).igual(
+        "",
+        `${ruta} declara el mismo nombre dos veces: el motor no arranca y WhatsApp deja de contestar a TODOS`,
+      );
+    }
+  });
+});
+
+describe("La IA no habla con la voz del sistema", () => {
+  const WA = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+  const WEB = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+
+  test("NADIE VUELVE A APLASTAR EL HISTORIAL A «assistant»", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ES LA LÍNEA QUE CAUSÓ «¡PAGO RECIBIDO!».
+    //
+    //     role: m.direction === "inbound" ? "user" : "assistant"
+    //
+    // Mirando solo la dirección, los avisos automáticos de la tienda y los
+    // mensajes de las personas del equipo se convertían en palabras del modelo.
+    // El 8 sep 2026 a las 02:46 el modelo continuó ese patrón y le dijo a una
+    // clienta que su pago estaba confirmado. No se había pagado nada.
+    //
+    // Se prohíbe la FORMA, no solo el sitio: escrita en otro archivo haría
+    // exactamente el mismo daño.
+    // ─────────────────────────────────────────────────────────────────────────
+    const culpables = [];
+    const aplasta = /direction\s*===?\s*["']inbound["']\s*\?[\s\S]{0,60}assistant/;
+
+    for (const f of ARCHIVOS) {
+      if (aplasta.test(sinComentarios(f.texto))) culpables.push(f.ruta);
+    }
+    if (aplasta.test(sinComentarios(WA))) culpables.push("supabase/functions/whatsapp/index.ts");
+
+    esperar(culpables.join(", ")).igual(
+      "",
+      "el historial de la IA vuelve a marcar como suyo todo lo saliente: los avisos del sistema se convierten en sus palabras",
+    );
+  });
+
+  test("los dos motores PIDEN `sender`", () => {
+    // Sin `sender` no se puede distinguir la voz del sistema de la del chat, y
+    // el aplastado vuelve por la puerta de atrás.
+    for (const [nombre, texto] of [["WhatsApp", sinComentarios(WA)], ["el motor web", WEB]]) {
+      const i = texto.indexOf('from("messages")');
+      esperar(i > 0).verdadero(`no encontré la consulta del historial en ${nombre}`);
+      esperar(/select\(\s*"direction,\s*sender,\s*body"/.test(texto.slice(i, i + 260))).verdadero(
+        `${nombre} dejó de pedir «sender»: no puede saber quién habló`,
+      );
+      esperar(/historialParaLaIA\(/.test(texto)).verdadero(`${nombre} ya no usa historialParaLaIA`);
+    }
+  });
+
+  test("LOS AVISOS DEL SISTEMA NO ENTRAN COMO «assistant», EN NINGUNA COPIA", () => {
+    // La función vive dos veces —Deno no puede importar del proyecto— y el
+    // peligro es que alguien afine una y olvide la otra: entonces WhatsApp se
+    // porta bien y el widget se inventa un pago, o al revés. Solo pasa en un
+    // canal y nadie lo reproduce.
+    const PURO = fs.readFileSync(path.join(SRC, "lib/ai/historial.ts"), "utf8");
+    for (const [nombre, texto] of [["WhatsApp", WA], ["el módulo puro", PURO]]) {
+      const i = texto.indexOf("function historialParaLaIA");
+      esperar(i > 0).verdadero(`no encontré historialParaLaIA en ${nombre}`);
+      const cuerpo = texto.slice(i, i + 1400);
+      // `bot` es lo ÚNICO que se marca como palabras del modelo.
+      esperar(/quien === "bot"[\s\S]{0,120}assistant/.test(cuerpo)).verdadero(
+        `${nombre}: «bot» dejó de ser lo único que habla por el modelo`,
+      );
+      // Y `agent` entra como usuario, con marca.
+      esperar(/quien === "agent"[\s\S]{0,160}"user"/.test(cuerpo)).verdadero(
+        `${nombre}: lo que escribe una persona del equipo puede volver a entrar como palabras del modelo`,
+      );
+      // No hay ninguna rama que mande `system` a assistant.
+      esperar(/system[\s\S]{0,80}assistant/.test(cuerpo)).falso(
+        `${nombre}: los avisos del sistema vuelven a ser palabras del modelo`,
+      );
+    }
+  });
+});
+
+describe("La IA no puede afirmar que hay dinero", () => {
+  const WA = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+  const WEB = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+  const PURO = fs.readFileSync(path.join(SRC, "lib/ai/loQueNoPuedeDecir.ts"), "utf8");
+
+  test("EL FILTRO SE APLICA A TODO LO QUE ESCRIBE EL MODELO", () => {
+    // No solo al caso del recibo. Las otras dos defensas son evitables —basta
+    // una tercera forma de llamar al modelo— y ésta es la que queda.
+    const wa = sinComentarios(WA);
+    esperar(/const texto = sinLoQueNoPuedeDecir\(/.test(wa)).verdadero(
+      "el texto de la IA de WhatsApp ya no pasa por el filtro del dinero",
+    );
+    esperar(/sinLoQueNoPuedeDecir\(respuesta/.test(WEB)).verdadero(
+      "el texto de la IA del motor web ya no pasa por el filtro del dinero",
+    );
+  });
+
+  test("«¿cómo pago?» SIGUE PUDIENDO CONTESTARSE", () => {
+    // La regla se rompe por el otro lado: prohibir la palabra «pago» dejaría
+    // mudo al bot ante la pregunta más frecuente de una tienda. Cada patrón
+    // tiene que exigir una AFIRMACIÓN —un verbo—, no un sustantivo suelto.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["el módulo puro", PURO]]) {
+      const i = texto.indexOf("NO_PUEDE_AFIRMAR");
+      esperar(i > 0).verdadero(`no encontré la lista de afirmaciones en ${nombre}`);
+      const lista = texto.slice(i, texto.indexOf("];", i));
+      // Ningún patrón puede ser solo la palabra, sin verbo detrás.
+      esperar(/\/\s*pago\s*\/i/.test(lista)).falso(
+        `${nombre}: hay un patrón que prohíbe «pago» a secas y deja mudo al bot`,
+      );
+      esperar(/\/\s*pagar\s*\/i/.test(lista)).falso(`${nombre}: se prohibió «pagar» a secas`);
+    }
+  });
+
+  test("las dos copias del filtro dicen lo mismo", () => {
+    // Se comparan los patrones, no el archivo: exigir textos idénticos
+    // obligaría a copiar comentarios.
+    const patrones = (t) => {
+      const i = t.indexOf("NO_PUEDE_AFIRMAR");
+      return (t.slice(i, t.indexOf("];", i)).match(/\/[^\n]*\/i/g) ?? []).length;
+    };
+    const enWa = patrones(WA);
+    const enPuro = patrones(PURO);
+    esperar(enPuro >= 8).verdadero(`el módulo puro se quedó con ${enPuro} patrones: el lector falla o se borraron`);
+    esperar(enWa).igual(
+      enPuro,
+      "las dos copias del filtro tienen distinto número de reglas: un canal se protege y el otro no",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

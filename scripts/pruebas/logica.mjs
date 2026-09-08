@@ -111,6 +111,8 @@ import {
   cuerpoDeSugerencias, leerSugerencias, leerPunto, CAMPOS_DEL_PUNTO,
 } from "../../src/lib/lugares/google.ts";
 import { esElReciboDeUnPedido, codigoDelRecibo } from "../../src/lib/tienda/pedidoQueLlega.ts";
+import { historialParaLaIA, MARCA_AGENTE } from "../../src/lib/ai/historial.ts";
+import { sinLoQueNoPuedeDecir, afirmaAlgoQueNoSabe, quedaAlgoQueDecir } from "../../src/lib/ai/loQueNoPuedeDecir.ts";
 import { REMITENTE } from "../../src/lib/correo/enviar.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
@@ -6928,6 +6930,159 @@ describe("Quién recibe el pedido, sacado del formulario", () => {
     esperar(telefonoDeLasRespuestas(null, null)).igual("");
     esperar(nombreDeLasRespuestas([], [])).igual("");
     esperar(telefonoDeLasRespuestas(PREGUNTAS, [])).igual("");
+  });
+});
+
+describe("La IA no habla con la voz del sistema", () => {
+  /* Los SEIS mensajes reales que la IA tenía delante el 8 sep 2026 a las
+   * 02:46, justo antes de escribirle a Morelva que su pago estaba confirmado. */
+  const LO_QUE_VIO = [
+    { direction: "outbound", sender: "system", body: "Tu pedido #16 ya se está preparando." },
+    { direction: "inbound", sender: "contact", body: "*Pedido #17* ... Código: V66YW3EUD5A8" },
+    { direction: "outbound", sender: "bot", body: "Veo que el pedido #17 aparece duplicado..." },
+    { direction: "outbound", sender: "system", body: "¡Pago recibido! ✅ Tu pedido #17 quedó confirmado por $1.00." },
+    { direction: "outbound", sender: "system", body: "Tu pedido #17 ya se está preparando." },
+    { direction: "inbound", sender: "contact", body: "*Pedido #18* ... Morelva Bracho" },
+  ];
+
+  test("LOS AVISOS DEL SISTEMA NO SON PALABRAS DE LA IA", () => {
+    /* ─────────────────────────────────────────────────────────────────────────
+     * ES LA CAUSA EXACTA DE «¡PAGO RECIBIDO!».
+     *
+     * El motor pasaba TODO lo saliente como `assistant`, mirando solo
+     * `direction`. Para el modelo, la conversación decía «llega un pedido, yo
+     * digo pago recibido, yo digo ya se está preparando». Llegó el #18 y
+     * continuó el patrón.
+     * ───────────────────────────────────────────────────────────────────────── */
+    const turnos = historialParaLaIA(LO_QUE_VIO);
+    const suyas = turnos.filter((t) => t.role === "assistant").map((t) => t.content).join(" ");
+    esperar(suyas.includes("Pago recibido")).falso(
+      "los avisos del sistema vuelven a entrar como palabras de la IA: volverá a inventarse un pago",
+    );
+    esperar(suyas.includes("se está preparando")).falso(
+      "los estados del pedido vuelven a entrar como palabras de la IA",
+    );
+    /* Lo que SÍ dijo la IA sigue siendo suyo. */
+    esperar(suyas).contiene("duplicado");
+  });
+
+  test("lo que escribe una PERSONA del equipo tampoco es su voz", () => {
+    /* Si Darwin contesta por la Bandeja, el modelo lo leería como propio e
+     * imitaría sus palabras — incluidos los compromisos que Darwin puede
+     * cumplir y el modelo no. Pero no se tira: sin ello el bot repreguntaría
+     * lo que un compañero ya preguntó. */
+    const t = historialParaLaIA([
+      { direction: "inbound", sender: "contact", body: "hola" },
+      { direction: "outbound", sender: "agent", body: "Te lo mando mañana sin costo" },
+      { direction: "inbound", sender: "contact", body: "gracias" },
+    ]);
+    const suyas = t.filter((x) => x.role === "assistant").map((x) => x.content).join(" ");
+    esperar(suyas.includes("sin costo")).falso("la IA se apropió de lo que dijo una persona");
+    esperar(t.map((x) => x.content).join(" ")).contiene(MARCA_AGENTE);
+  });
+
+  test("un remitente desconocido NO se convierte en la IA por descarte", () => {
+    const t = historialParaLaIA([
+      { direction: "inbound", sender: "contact", body: "hola" },
+      { direction: "outbound", sender: "loquesea", body: "algo raro" },
+    ]);
+    esperar(t.some((x) => x.role === "assistant")).falso(
+      "un remitente que no conocemos acabó hablando por la IA",
+    );
+  });
+
+  test("EL HISTORIAL SIGUE SIENDO VÁLIDO DESPUÉS DE TIRAR AVISOS", () => {
+    /* Al quitar los avisos, un historial puede quedar empezando por el modelo,
+     * y la API exige que empiece el cliente. Sin esto, el arreglo rompería la
+     * llamada justo en las conversaciones con MÁS avisos — las de los clientes
+     * que más compran. Un arreglo que revienta donde más duele no es un arreglo. */
+    const t = historialParaLaIA([
+      { direction: "outbound", sender: "system", body: "Tu pedido #1 va en camino" },
+      { direction: "outbound", sender: "bot", body: "¡Hola!" },
+      { direction: "inbound", sender: "contact", body: "hola" },
+      { direction: "inbound", sender: "contact", body: "¿me llegó?" },
+    ]);
+    esperar(t[0]?.role).igual("user", "el historial empieza por el modelo: la API lo rechaza");
+    /* Y dos seguidos del mismo lado se juntan. */
+    esperar(t.length).igual(1);
+    esperar(t[0].content).contiene("¿me llegó?");
+  });
+
+  test("sin nada, historial vacío y no una llamada rota", () => {
+    esperar(historialParaLaIA(null)).igual([]);
+    esperar(historialParaLaIA([{ direction: "outbound", sender: "system", body: "x" }])).igual([]);
+    esperar(historialParaLaIA([{ direction: "inbound", sender: "contact", body: "   " }])).igual([]);
+  });
+});
+
+describe("La IA no puede afirmar que hay dinero", () => {
+  test("EL MENSAJE QUE LEYÓ MORELVA NO PUEDE VOLVER A SALIR", () => {
+    const loQueSalio =
+      "¡Pago recibido! ✅ Tu pedido #18 en Paws at Home quedó confirmado por $1.00. Te vamos avisando por aquí.\n\n" +
+      "Tu pedido #18 ya se está preparando.\n\n" +
+      "Nota: Veo que el pedido #18 aparece duplicado con los mismos datos para Morelva Bracho.";
+    const limpio = sinLoQueNoPuedeDecir(loQueSalio);
+    esperar(limpio.includes("Pago recibido")).falso("volvería a salir la confirmación de pago");
+    esperar(limpio.includes("confirmado por $1.00")).falso("volvería a salir el importe confirmado");
+    esperar(limpio.includes("ya se está preparando")).falso("volvería a salir el estado del pedido");
+  });
+
+  test("PERO EL BOT SIGUE PUDIENDO HABLAR DE CÓMO PAGAR", () => {
+    /* ─────────────────────────────────────────────────────────────────────────
+     * Es la mitad que hace útil esta regla. Prohibir la palabra «pago» dejaría
+     * mudo al bot ante «¿cómo pago?», que es de las preguntas más frecuentes de
+     * una tienda. Lo que no puede es decir que el pago YA ocurrió.
+     * ───────────────────────────────────────────────────────────────────────── */
+    const legitimas = [
+      "Puedes pagar con Yappy en el enlace de arriba.",
+      "Aceptamos pago con Yappy y transferencia.",
+      "¿Ya intentaste pagar? Si el enlace no abre, te mando otro.",
+      "El pago se hace antes de preparar el pedido.",
+      "Tu pedido lo preparamos apenas entre el pago.",
+      "Para pagar, toca el enlace que te mandamos.",
+      "El envío lo cobra el mensajero aparte.",
+    ];
+    for (const f of legitimas) {
+      esperar(afirmaAlgoQueNoSabe(f)).falso(`se está bloqueando una frase legítima: «${f}»`);
+      esperar(sinLoQueNoPuedeDecir(f)).igual(f);
+    }
+  });
+
+  test("las formas de decir que ya se pagó, todas", () => {
+    const prohibidas = [
+      "Pago recibido, gracias.",
+      "Tu pago fue confirmado.",
+      "Ya recibimos tu pago.",
+      "Confirmamos tu pago.",
+      "Tu pedido ya está pagado.",
+      "Ya pagaste, así que lo preparamos.",
+      "Quedó pagado.",
+      "Tu pedido #4 quedó confirmado por $12.50",
+      "Tu pedido #7 ya se está preparando.",
+      "Tu pedido va en camino.",
+      "El mensajero ya salió.",
+    ];
+    for (const f of prohibidas) {
+      esperar(afirmaAlgoQueNoSabe(f)).verdadero(`se le escapa una afirmación de dinero: «${f}»`);
+    }
+  });
+
+  test("se corta la FRASE, no el mensaje entero", () => {
+    /* Tirar la respuesta completa dejaría mudo al bot ante una conversación
+     * legítima que solo roza el tema. */
+    const mezclado = "Ya pagaste. ¿Te lo mandamos a la misma dirección de siempre?";
+    const limpio = sinLoQueNoPuedeDecir(mezclado);
+    esperar(limpio.includes("Ya pagaste")).falso();
+    esperar(limpio).contiene("misma dirección");
+  });
+
+  test("si solo quedaba eso, se calla — y eso está bien", () => {
+    /* Callarse es correcto: lo único que iba a decir era algo que no le consta.
+     * El sistema de avisos ya le contará al cliente lo que de verdad pase. */
+    esperar(quedaAlgoQueDecir("¡Pago recibido! Tu pedido ya se está preparando.")).falso();
+    esperar(quedaAlgoQueDecir("Claro, te ayudo con eso.")).verdadero();
+    esperar(sinLoQueNoPuedeDecir("")).igual("");
+    esperar(sinLoQueNoPuedeDecir(null)).igual("");
   });
 });
 

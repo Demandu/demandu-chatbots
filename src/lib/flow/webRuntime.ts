@@ -12,6 +12,8 @@ import {
 } from "@/lib/tienda/paraElBot";
 import type { MensajeChat } from "@/lib/tienda/conversacionDePedido";
 import { esElReciboDeUnPedido } from "@/lib/tienda/pedidoQueLlega";
+import { historialParaLaIA } from "@/lib/ai/historial";
+import { sinLoQueNoPuedeDecir } from "@/lib/ai/loQueNoPuedeDecir";
 import type { CarritoChat } from "@/lib/tienda/pedirPorChat";
 
 /**
@@ -330,16 +332,23 @@ async function aplicarEtiquetas(ctx: Ctx, node: DemanduNode) {
 
 async function recentHistory(ctx: Ctx): Promise<{ role: "user" | "assistant"; content: string }[]> {
   try {
+    // ── SE PIDE `sender`, Y NO ES UN DETALLE ───────────────────────────────
+    //
+    // Aquí se pedía solo `direction`, y todo lo saliente se marcaba
+    // `assistant`. En WhatsApp eso hizo que la IA le escribiera «¡Pago
+    // recibido!» a una clienta que no había pagado: tenía delante los avisos
+    // automáticos del pedido anterior marcados como palabras suyas, y continuó
+    // el patrón.
+    //
+    // Este motor tenía el mismo aplastado. Va arreglado aunque hoy los pedidos
+    // solo entren por WhatsApp: arreglar la mitad de un fallo es como vuelve.
     const { data } = await ctx.admin
       .from("messages")
-      .select("direction, body")
+      .select("direction, sender, body")
       .eq("conversation_id", ctx.conversationId)
       .order("created_at", { ascending: false })
-      .limit(6);
-    return ((data ?? []) as any[])
-      .reverse()
-      .filter((m) => m.body)
-      .map((m) => ({ role: m.direction === "inbound" ? ("user" as const) : ("assistant" as const), content: m.body }));
+      .limit(8);
+    return historialParaLaIA(((data ?? []) as any[]).reverse());
   } catch {
     return [];
   }
@@ -399,7 +408,18 @@ async function responderDuda(ctx: Ctx, agente?: any): Promise<string | null> {
       // vigilaba; ahora hay una.
       agente,
     });
-    const limpio = (respuesta ?? "").trim();
+    /* ── LA ÚLTIMA PUERTA: NO AFIRMA QUE HAY DINERO ─────────────────────────
+     *
+     * Sobre TODO lo que escriba el modelo, no solo sobre el caso del recibo.
+     * Un pago es un hecho que vive en una fila de la base; el sistema de avisos
+     * la mira antes de hablar y la IA no puede mirarla.
+     *
+     * Si de la respuesta solo quedaba una afirmación de dinero, se devuelve
+     * `null` y el motor sigue con su comportamiento de siempre — que es
+     * exactamente lo correcto: lo único que iba a decir era algo que no le
+     * consta.
+     * ───────────────────────────────────────────────────────────────────── */
+    const limpio = sinLoQueNoPuedeDecir(respuesta ?? "").trim();
     if (!limpio) return null;
     // Si la IA devolvió su mensaje de respaldo, es que no supo: no aporta.
     const respaldo = (settings.fallback ?? "").trim();

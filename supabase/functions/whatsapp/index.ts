@@ -1699,6 +1699,97 @@ function esElReciboDeUnPedido(texto: string | null | undefined): boolean {
   return /(^|\n)\s*C[o\u00f3]digo:\s*[A-Z0-9]{6,20}\s*$/im.test(t);
 }
 
+/**
+ * QUÉ DE LA CONVERSACIÓN VE LA IA, Y COMO QUÉ.
+ *
+ * COPIA DELIBERADA de `historialParaLaIA` en `src/lib/ai/historial.ts` — Deno no
+ * puede importar del proyecto. Una regla estática compara las dos.
+ *
+ *   contact -> user        es el cliente
+ *   bot     -> assistant   son SUS palabras de antes
+ *   system  -> SE TIRA     son los avisos de la tienda; tenerlos como propios
+ *                          es lo que le hizo escribir «¡Pago recibido!»
+ *   agent   -> user CON MARCA  no se tira (se rompería el hilo) pero no es su voz
+ *   otro    -> SE TIRA     un remitente desconocido no se vuelve el modelo por descarte
+ */
+const MARCA_AGENTE = "[un compañero del equipo escribió]";
+
+function historialParaLaIA(mensajes: any[] | null | undefined): any[] {
+  const turnos: any[] = [];
+  for (const m of mensajes ?? []) {
+    const texto = String(m?.body ?? "").trim();
+    if (!texto) continue;
+    const quien = String(m?.sender ?? "").trim().toLowerCase();
+    if (String(m?.direction ?? "").trim().toLowerCase() === "inbound") {
+      turnos.push({ role: "user", content: texto });
+      continue;
+    }
+    if (quien === "bot") { turnos.push({ role: "assistant", content: texto }); continue; }
+    if (quien === "agent") { turnos.push({ role: "user", content: MARCA_AGENTE + ": " + texto }); continue; }
+    // `system` y cualquier otro: fuera.
+  }
+
+  // AL TIRAR LOS AVISOS, el historial puede quedar empezando por el modelo o
+  // con dos turnos seguidos del mismo lado. La API pide que empiece el usuario.
+  // Sin esto, el arreglo rompería justo en las conversaciones con MÁS avisos —
+  // las de los clientes que más compran.
+  let i = 0;
+  while (i < turnos.length && turnos[i].role === "assistant") i++;
+  const juntos: any[] = [];
+  for (const t of turnos.slice(i)) {
+    const ultimo = juntos[juntos.length - 1];
+    if (ultimo && ultimo.role === t.role) ultimo.content = ultimo.content + "\n" + t.content;
+    else juntos.push({ ...t });
+  }
+  return juntos;
+}
+
+/**
+ * LA IA NO AFIRMA HECHOS SOBRE EL DINERO NI SOBRE EL PEDIDO.
+ *
+ * COPIA DELIBERADA de `sinLoQueNoPuedeDecir` en `src/lib/ai/loQueNoPuedeDecir.ts`
+ * — Deno no puede importar del proyecto. Una regla estática compara las dos.
+ *
+ * El 8 sep 2026 una clienta leyó «¡Pago recibido! Tu pedido #18 quedó
+ * confirmado por $1.00» de un pedido que nadie había pagado.
+ *
+ * No se puede garantizar que un modelo no se equivoque. Lo que SÍ se puede
+ * garantizar es de qué NO habla. Y «pago» a secas no se prohíbe: el cliente
+ * pregunta «¿cómo pago?» y el bot tiene que poder contestar.
+ */
+const NO_PUEDE_AFIRMAR: RegExp[] = [
+  /pago\s+(recibid|confirmad|acreditad|registrad|aprobad|procesad)\w*/i,
+  /(recibimos|confirmamos|acreditamos|registramos)\s+(tu|su|el)\s+pago/i,
+  /pago\s+(ya\s+)?(fue|est[aá]|qued[oó]|ha\s+sido)\s+(recibid|confirmad|acreditad|registrad|aprobad|procesad)\w*/i,
+  /\b(ya|qued[oó]|est[aá]|fue)\s+(est[aá]\s+)?pagad[oa]\b/i,
+  /\bya\s+(pagaste|pag[oó]|pagaron)\b/i,
+  /qued[oó]\s+confirmad[oa]\s+por\s*\$?\s*\d/i,
+  /tu\s+pedido\s+#?\d*\s*(ya\s+)?(se\s+est[aá]\s+preparando|est[aá]\s+en\s+camino|fue\s+entregado|qued[oó]\s+cancelad)/i,
+  /\b(tu|su)\s+pedido\s+(ya\s+)?(sali[oó]|va\s+en\s+camino|lleg[oó])\b/i,
+  /(el\s+)?mensajero\s+(ya\s+)?(va|sali[oó]|est[aá]\s+en\s+camino|lleg[oó])/i,
+];
+
+function afirmaAlgoQueNoSabe(frase: string | null | undefined): boolean {
+  const t = String(frase ?? "");
+  if (!t.trim()) return false;
+  return NO_PUEDE_AFIRMAR.some((r) => r.test(t));
+}
+
+function sinLoQueNoPuedeDecir(texto: string | null | undefined): string {
+  const t = String(texto ?? "");
+  if (!t.trim()) return "";
+  return t
+    .split(/\n/)
+    .map((linea: string) => {
+      const frases = linea.match(/[^.!?]+[.!?]*/g) ?? [linea];
+      return frases.filter((f: string) => !afirmaAlgoQueNoSabe(f)).join("").trim();
+    })
+    .filter((linea: string, i: number, todas: string[]) => linea !== "" || (i > 0 && todas[i - 1] !== ""))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string) {
   /* ── EL BOT NO OPINA SOBRE NUESTRO PROPIO RECIBO ──────────────────────────
    *
@@ -1792,15 +1883,28 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
     "- Escribe en texto plano. Nada de markdown: sin **negritas**, sin # títulos, sin viñetas con guiones.",
   ].join("\n");
 
-  // Últimos mensajes, para que la IA tenga hilo
+  /* ── EL HILO, PERO SABIENDO QUIÉN HABLÓ ───────────────────────────────────
+   *
+   * Aquí se pedía `direction, body` y TODO lo saliente se marcaba `assistant`.
+   * El 8 sep 2026, a las 02:46, eso hizo que la IA le escribiera a una clienta:
+   *
+   *     «¡Pago recibido! Tu pedido #18 quedó confirmado por $1.00.
+   *      Tu pedido #18 ya se está preparando.»
+   *
+   * No se había pagado nada. Los seis mensajes anteriores incluían los avisos
+   * automáticos del pedido #17 —«¡Pago recibido!», «ya se está preparando»—
+   * marcados como palabras SUYAS. Llegó el #18 y continuó el patrón.
+   *
+   * No se lo inventó: se copió a sí misma, porque le enseñamos a suplantar a la
+   * plataforma. `sender` es lo que distingue la voz del sistema de la del chat,
+   * y no se estaba mirando.
+   * ─────────────────────────────────────────────────────────────────────── */
   let history: any[] = [];
   try {
     const { data } = await ctx.db.from("messages")
-      .select("direction, body").eq("conversation_id", ctx.convId)
-      .order("created_at", { ascending: false }).limit(6);
-    history = (data ?? []).reverse()
-      .filter((m: any) => m.body)
-      .map((m: any) => ({ role: m.direction === "inbound" ? "user" : "assistant", content: m.body }));
+      .select("direction, sender, body").eq("conversation_id", ctx.convId)
+      .order("created_at", { ascending: false }).limit(8);
+    history = historialParaLaIA((data ?? []).reverse());
   } catch { /* sin historial */ }
 
   // ── LAS HERRAMIENTAS ──────────────────────────────────────────────────────
@@ -1854,7 +1958,23 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
       // sea el modelo no tiene una herramienta, la escribe como texto — y el
       // cliente recibe «/agendar_cita hora: 9:00 AM…». Ver `sinMarcadores` en
       // `src/lib/ai/acciones.ts`; esta es su copia deliberada.
-      const texto = sinMarcadores(bloques.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n"));
+      /* ── LA ÚLTIMA PUERTA: NO AFIRMA QUE HAY DINERO ────────────────────────
+       *
+       * Va aquí, sobre TODO lo que escriba el modelo, y no solo sobre el caso
+       * del recibo. Las otras dos defensas —no contestar al recibo, no darle
+       * los avisos como palabras suyas— son buenas y las dos son evitables:
+       * basta con que mañana haya una tercera forma de llamar al modelo.
+       *
+       * Un pago es un hecho que vive en una fila de la base. El sistema de
+       * avisos la mira antes de hablar; la IA no puede mirarla. Así que no le
+       * corresponde afirmarlo, lo haya escrito por lo que lo haya escrito.
+       *
+       * SE CORTA LA FRASE, NO EL MENSAJE: «Ya pagaste. ¿Te lo mando a la misma
+       * dirección?» pierde la primera mitad y conserva la segunda.
+       * ─────────────────────────────────────────────────────────────────── */
+      const texto = sinLoQueNoPuedeDecir(
+        sinMarcadores(bloques.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n")),
+      );
 
       // Cada vuelta cuesta. Se cobra por vuelta, no por respuesta: si no, un
       // agente que llama tres herramientas costaría el triple y se facturaría
