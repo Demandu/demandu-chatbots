@@ -77,6 +77,42 @@ begin
   perform set_config('role','postgres', true);
   r := r || E'\n 8. Ver el consumo de otro cliente .............. ' || case when n=0 then 'OK(vacio)' else 'FUGA' end;
 
+  -- ── 8a-8d. buscar_conocimiento no se puede llamar por el de otro ──────
+  --
+  -- Es `security definer`, o sea que el RLS no la vigila: el candado de
+  -- auth_org_ids es lo unico que hay. Y devuelve lo que el cliente cargo para
+  -- que su bot sepa contestar — sus precios y sus guiones, su producto.
+  --
+  -- 8a es el ataque: una cuenta cualquiera pidiendo el conocimiento de otro.
+  --    Comprobado contra la base ANTES de poner el candado: devolvia 1. Esta
+  --    prueba se ha visto roja, que es la unica forma de saber que sirve.
+  -- 8b comprueba que el candado no rompio lo bueno.
+  -- 8c es como entran los dos motores (llave de servicio, sin auth.uid()): si
+  --    el candado los cortara, el bot dejaria de saber contestar a todo el mundo.
+  perform set_config('role','authenticated', true);
+  perform set_config('request.jwt.claims', json_build_object('sub', usr_a, 'role','authenticated')::text, true);
+
+  begin
+    select count(*) into n from buscar_conocimiento(org_b, bot_b, 'precio', 5);
+    v := 'FUGA(devolvio '||n||')';
+  exception when others then v := 'OK(lo corto)'; end;
+  r := r || E'\n 8a. Sesion de A pidiendo el RAG de B ........... ' || v;
+
+  begin
+    select count(*) into n from buscar_conocimiento(org_a, bot_a, 'precio', 5);
+    v := case when n=1 then 'OK' else 'FALLO(devolvio '||n||')' end;
+  exception when others then v := 'FALLO(corto lo suyo)'; end;
+  r := r || E'\n 8b. Sesion de A pidiendo LO SUYO (debe ir) ..... ' || v;
+
+  perform set_config('role','postgres', true);
+  perform set_config('request.jwt.claims','', true);
+
+  begin
+    select count(*) into n from buscar_conocimiento(org_b, bot_b, 'precio', 5);
+    v := case when n=1 then 'OK' else 'FALLO(devolvio '||n||')' end;
+  exception when others then v := 'FALLO(corto al motor)'; end;
+  r := r || E'\n 8c. El motor (sin sesion) SI puede buscar ...... ' || v;
+
   -- ── 9-10. Que se le cobra al cliente ──────────────────────────────────
   insert into contacts (org_id, name, phone, channel) values (org_a,'ZZ lead','5210000000009','whatsapp') returning id into cont;
   insert into conversations (org_id, contact_id, bot_id, channel, status) values (org_a, cont, bot_a,'whatsapp','open') returning id into conv;

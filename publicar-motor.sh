@@ -52,6 +52,37 @@ if [ -n "${SUPABASE_ACCESS_TOKEN:-}" ]; then
   fi
 fi
 
+# ── NO SE PUBLICA UN MOTOR SIN MIRARLO ───────────────────────────────────────
+#
+# Este es el único código de la plataforma que se publicaba a ciegas:
+# `supabase/functions/` no entra en el `tsc` del proyecto y no lo importa
+# ninguna prueba. El 8 de septiembre de 2026 estuve a un `git push` de subir un
+# motor con dos constantes del mismo nombre — un error de sintaxis que deja la
+# función sin cargar y a TODOS los clientes sin bot a la vez.
+#
+# `revisar-motor.sh` falla solo por lo NUEVO: lo que ya arrastra el motor está
+# apuntado en `errores-conocidos.txt`. Así protege desde el primer día sin
+# obligar a arreglar veinte cosas antes de poder publicar.
+if [ "${1:-}" != "--sin-revisar" ]; then
+  ./revisar-motor.sh
+  REVISION=$?
+  if [ $REVISION -ne 0 ]; then
+    echo ""
+    # SE DISTINGUE «ESTÁ MAL» DE «NO PUDE MIRARLO». Bloquear por un problema de
+    # red sin decir que fue eso es cómo se aprende a saltarse la revisión.
+    if [ $REVISION -eq 2 ]; then
+      echo "🛑 No publico porque no se pudo revisar el motor (no porque esté mal)."
+    else
+      echo "🛑 No publico: la revisión encontró algo. Está arriba."
+    fi
+    echo ""
+    echo "   Si sabes lo que haces y hace falta publicar igual:"
+    echo "      ./publicar-motor.sh --sin-revisar"
+    exit 1
+  fi
+  echo ""
+fi
+
 echo "⬆️  Publicando el motor de WhatsApp en Supabase…"
 
 # --no-verify-jwt NO ES UN DESCUIDO: quien llama es Meta, que no tiene sesión de

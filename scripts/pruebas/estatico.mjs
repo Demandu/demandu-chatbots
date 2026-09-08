@@ -8491,6 +8491,44 @@ describe("No se le piden a una tabla columnas que no existen", () => {
   });
 });
 
+describe("El motor no usa lo que puede ser nulo", () => {
+  const WA = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+
+  test("EL CONTACTO Y LA CONVERSACIÓN SE COMPRUEBAN ANTES DE USARSE", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // `.single()` devuelve nulo si la consulta falla; `.maybeSingle()` devuelve
+    // nulo cuando no hay fila —para eso existe— y `nuevaConversacion()` devuelve
+    // nulo si el `insert` falla. Después se usaban `contact.id` y `conv.id`
+    // diecinueve veces sin comprobar: un nulo reventaba el webhook entero.
+    //
+    // No es teoría. Ese mismo `insert` estuvo UN DÍA ENTERO fallando en
+    // silencio, tumbado por un disparador de la base, y nadie se enteró.
+    //
+    // Lo encontró `deno check` la primera vez que se le pasó un compilador a
+    // este archivo, el 8 sep 2026. Llevaba meses ahí.
+    // ─────────────────────────────────────────────────────────────────────────
+    for (const cual of ["contact", "conv"]) {
+      esperar(new RegExp(`if \\(!${cual}\\)[\\s\\S]{0,220}json\\(\\{ ok: false \\}, 500\\)`).test(WA)).verdadero(
+        `desapareció la comprobación de «${cual}»: un nulo vuelve a tumbar el webhook`,
+      );
+    }
+  });
+
+  test("y se pide REINTENTO, no se traga el mensaje", () => {
+    // Un 200 le dice a Meta «recibido, no insistas» y el mensaje del cliente se
+    // pierde para siempre. Cuando la culpa es nuestra —la base falló— lo que
+    // toca es un 500: Meta reintenta y el cliente no se queda sin respuesta.
+    //
+    // Es lo contrario de lo que hace el webhook cuando el número no es de
+    // ningún cliente: ahí un 200 es correcto, porque insistir no arreglaría nada.
+    const i = WA.indexOf("no pude crear ni encontrar el contacto");
+    esperar(i > 0).verdadero("no encontré el aviso del contacto");
+    esperar(/json\(\{ ok: false \}, 500\)/.test(WA.slice(i, i + 200))).verdadero(
+      "un fallo de la base contesta 200 y Meta no reintenta: el mensaje del cliente se pierde",
+    );
+  });
+});
+
 describe("El motor de Deno no tiene nombres repetidos", () => {
   test("NADA SE DECLARA DOS VECES EN EL MISMO ARCHIVO", () => {
     // ─────────────────────────────────────────────────────────────────────────

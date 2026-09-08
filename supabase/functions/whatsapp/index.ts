@@ -3067,7 +3067,13 @@ async function etiquetar(ctx: any, node: any) {
     const { data: filas } = ids.length
       ? await ctx.db.from("tags").select("id, name").in("id", ids).eq("org_id", ctx.orgId)
       : { data: [] };
-    const nombre = new Map((filas ?? []).map((t: any) => [t.id, t.name]));
+    // SE TIPA EL MAPA. Sin los tipos, TypeScript deduce que de aquí sale `{}` y
+    // `actuales.delete(n)` —que espera un texto— deja de tener sentido. Es de
+    // los avisos que llevaban meses ahí sin que nadie los viera, porque este
+    // archivo no lo compilaba nadie.
+    const nombre = new Map<string, string>(
+      (filas ?? []).map((t: any) => [String(t.id), String(t.name ?? "")]),
+    );
 
     const { data: contacto } = await ctx.db
       .from("contacts").select("id, tags").eq("org_id", ctx.orgId)
@@ -5847,8 +5853,25 @@ Deno.serve(async (req: Request) => {
           { onConflict: "org_id,channel,external_id" },
         )
         .select("id, name, created_at").single();
+
+      /* ── SIN CONTACTO NO SE PUEDE SEGUIR, Y SE PIDE QUE LO REINTENTEN ───────
+       *
+       * `.single()` devuelve nulo si la consulta falla. A partir de aquí se usa
+       * `contact.id` una docena de veces, así que un nulo reventaba el webhook
+       * con un 500 sin decir por qué — y Meta reintentaba a ciegas.
+       *
+       * SE DEVUELVE 500 A PROPÓSITO, que es lo contrario de lo que hace el
+       * webhook cuando el número no es de ningún cliente (ahí va un 200 para
+       * que Meta no insista). Aquí la culpa es NUESTRA y el mensaje del cliente
+       * es real: que Meta lo reintente es exactamente lo que queremos.
+       * ──────────────────────────────────────────────────────────────────── */
+      if (!contact) {
+        console.error("[wa] no pude crear ni encontrar el contacto de", from);
+        return json({ ok: false }, 500);
+      }
+
       // Si todavía no tiene nombre propio, estrenamos con el de WhatsApp.
-      if (contact && !contact.name && name) {
+      if (!contact.name && name) {
         await db.from("contacts").update({ name }).eq("id", contact.id);
       }
 
@@ -5925,6 +5948,22 @@ Deno.serve(async (req: Request) => {
 
       if (!conv || conv.status === "closed") {
         conv = await nuevaConversacion();
+      }
+
+      /* ── Y SI TAMPOCO SE PUDO CREAR ────────────────────────────────────────
+       *
+       * `nuevaConversacion` devuelve `ins.data`, que es nulo si el `insert`
+       * falla. De aquí en adelante se usa `conv.id` quince veces: un nulo
+       * reventaba el webhook entero.
+       *
+       * No es teoría. El comentario de tres líneas más abajo cuenta que ese
+       * mismo `insert` estuvo UN DÍA ENTERO fallando en silencio, tumbado por
+       * un disparador de la base, sin que nadie se enterara. Si vuelve a pasar,
+       * ahora se sabe: 500, Meta reintenta, y queda en el registro.
+       * ──────────────────────────────────────────────────────────────────── */
+      if (!conv) {
+        console.error("[wa] no pude crear ni encontrar la conversación de", from);
+        return json({ ok: false }, 500);
       }
       // ── SI ESTO FALLA, QUE SE SEPA ────────────────────────────────────
       // Este `insert` estuvo un día entero fallando en silencio —lo tumbaba un
