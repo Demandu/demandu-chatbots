@@ -10,11 +10,13 @@ import { TiendaNav, esPestana } from "@/components/tienda/TiendaNav";
 import { Productos, type Producto } from "@/components/tienda/Productos";
 import { EditorDiseno } from "@/components/tienda/EditorDiseno";
 import { Cobros } from "@/components/tienda/Cobros";
+import { Envios } from "@/components/tienda/Envios";
 import { Direccion } from "@/components/tienda/Direccion";
 import { EncargadoDePedidos } from "@/components/tienda/EncargadoDePedidos";
 import { AvisosAlCliente } from "@/components/tienda/AvisosAlCliente";
 import { PlantillasDeAviso } from "@/components/tienda/PlantillasDeAviso";
 import { estadoDeLasPlantillas } from "@/lib/tienda/altaDePlantillas";
+import { tieneSecretoDeYappy, credencialesDeAsap } from "@/lib/tienda/secretosGuardados";
 import { PanelDeVentas } from "@/components/tienda/PanelDeVentas";
 import { Pedidos, type PedidoEnLista } from "@/components/tienda/Pedidos";
 import {
@@ -22,6 +24,8 @@ import {
   guardarProductos,
   vaciarCatalogo,
   guardarCobros,
+  guardarEnvios,
+  enviarAlMensajero,
   cambiarEstadoPedido,
   probarYappy,
   cambiarDireccion,
@@ -85,17 +89,40 @@ export default async function TiendaDetallePage({
       .maybeSingle(),
   ]);
 
-  const { count: conSecreto } = await sb
-    .from("tienda_cobros")
-    .select("id", { count: "exact", head: true })
-    .eq("tienda_id", params.id)
-    .eq("proveedor", "yappy")
-    .neq("secreto", "");
+  // ── ESTO SE PREGUNTA CON LA LLAVE DE SERVICIO, Y NO ES UN CAPRICHO ────────
+  //
+  // Antes se preguntaba con la sesión del usuario, filtrando por `secreto`. Esa
+  // columna NO se le puede leer a `authenticated` —es el punto de la migración
+  // 0092— y Postgres no distingue leer de filtrar: las dos piden permiso. La
+  // consulta devolvía «permission denied», el error se ignoraba, el contador se
+  // quedaba en nulo, y salía SIEMPRE «no hay secreto».
+  //
+  // Resultado: `paws-at-home`, con su Yappy validado y cobrando de verdad, veía
+  // todos los días «Esta tienda todavía no puede recibir pedidos». Una alarma
+  // falsa enseña a ignorar el aviso — y ese aviso es el que tiene que avisar el
+  // día que falte algo de verdad.
+  //
+  // `secretosGuardados` pregunta con la llave de servicio y devuelve booleanos:
+  // el secreto no entra aquí y no puede viajar al navegador.
+  const admin = createAdminClient();
+  const [conSecreto, llavesDeAsap, envios] = await Promise.all([
+    tieneSecretoDeYappy(admin, params.id),
+    credencialesDeAsap(admin, params.id),
+    sb
+      .from("tienda_envios")
+      .select(
+        "activo,ambiente,telefono,origen_direccion,origen_lat,origen_long,origen_nombre,origen_telefono,origen_nota,vehiculo",
+      )
+      .eq("tienda_id", params.id)
+      .eq("proveedor", "asap")
+      .maybeSingle()
+      .then((r) => r.data as any),
+  ]);
 
   // EL COBRO ENTRA EN «¿PUEDE VENDER?». Aquí se cobra antes de procesar el
   // pedido, siempre por Yappy: una tienda publicada sin Yappy recoge pedidos
   // que nadie puede cobrar — se ve perfecta y es el fallo más caro de todos.
-  const cobraConYappy = Boolean(cobros?.activo) && Boolean(cobros?.comercio) && (conSecreto ?? 0) > 0;
+  const cobraConYappy = Boolean(cobros?.activo) && Boolean(cobros?.comercio) && conSecreto;
   const falta = loQueFaltaParaVender(configConNombre, cobraConYappy);
 
   // Los pedidos, con sus líneas de una sola consulta: uno por pedido serían
@@ -104,7 +131,7 @@ export default async function TiendaDetallePage({
     activa === "pedidos"
       ? await sb
           .from("pedidos")
-          .select("id,numero,estado,pago,pago_iniciado_en,pago_referencia,total,created_at,respuestas,conversacion_id,pedido_lineas(nombre,cantidad,precio,elegidas,nota,orden)")
+          .select("id,numero,estado,pago,pago_iniciado_en,pago_referencia,total,created_at,respuestas,conversacion_id,envio_id,envio_estado,envio_error,entrega_lat,entrega_long,pedido_lineas(nombre,cantidad,precio,elegidas,nota,orden)")
           .eq("tienda_id", params.id)
           .order("created_at", { ascending: false })
           .limit(200)
@@ -126,6 +153,13 @@ export default async function TiendaDetallePage({
     created_at: String(p.created_at),
     respuestas: (p.respuestas ?? []) as PedidoEnLista["respuestas"],
     conversacion_id: (p.conversacion_id as string) ?? null,
+    envio_id: (p.envio_id as string) ?? null,
+    envio_estado: (p.envio_estado as string) ?? null,
+    envio_error: (p.envio_error as string) ?? null,
+    // NULO SI FALTA, NO CERO. `Number(null)` es 0, y (0,0) es un punto real en
+    // el Atlántico: un pedido sin ubicación diría tenerla y saldría la moto.
+    entrega_lat: p.entrega_lat == null ? null : Number(p.entrega_lat),
+    entrega_long: p.entrega_long == null ? null : Number(p.entrega_long),
     lineas: ((p.pedido_lineas ?? []) as Record<string, unknown>[])
       .sort((a, b) => Number(a.orden) - Number(b.orden))
       .map((l) => ({
@@ -261,6 +295,8 @@ export default async function TiendaDetallePage({
               pedidos={pedidos}
               moneda={config.moneda}
               cambiarEstado={cambiarEstadoPedido}
+              enviaConAsap={Boolean(envios?.activo)}
+              alMensajero={enviarAlMensajero}
             />
           )}
 
@@ -297,13 +333,35 @@ export default async function TiendaDetallePage({
             <Cobros
               tiendaId={params.id}
               comercio={cobros?.comercio ?? ""}
-              tieneSecreto={(conSecreto ?? 0) > 0}
+              tieneSecreto={conSecreto}
               activo={Boolean(cobros?.activo)}
               ambiente={cobros?.ambiente === "produccion" ? "produccion" : "prueba"}
               dominio={cobros?.dominio || `https://${DOMINIO_TIENDAS}`}
               validadoEn={cobros?.validado_en ?? null}
               accion={guardarCobros}
               probar={probarYappy}
+            />
+          )}
+
+          {activa === "envios" && (
+            <Envios
+              tiendaId={params.id}
+              config={{
+                activo: Boolean(envios?.activo),
+                ambiente: envios?.ambiente === "produccion" ? "produccion" : "prueba",
+                telefono: envios?.telefono ?? "",
+                origen_direccion: envios?.origen_direccion ?? "",
+                origen_lat: envios?.origen_lat == null ? "" : String(envios.origen_lat),
+                origen_long: envios?.origen_long == null ? "" : String(envios.origen_long),
+                origen_nombre: envios?.origen_nombre ?? "",
+                origen_telefono: envios?.origen_telefono ?? "",
+                origen_nota: envios?.origen_nota ?? "",
+                vehiculo: envios?.vehiculo ?? "bike",
+              }}
+              tieneLlave={llavesDeAsap.llave}
+              tieneToken={llavesDeAsap.token}
+              tieneSecreto={llavesDeAsap.secreto}
+              accion={guardarEnvios}
             />
           )}
         </div>

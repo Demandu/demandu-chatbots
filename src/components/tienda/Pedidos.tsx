@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import Link from "next/link";
-import { ChevronRight, MessageSquare } from "lucide-react";
+import { ChevronRight, MessageSquare, Bike } from "lucide-react";
 import { comoDinero } from "@/lib/tienda/variedades";
 import { estadoDelCobro, VENTANA_COBRO_MIN } from "@/lib/tienda/cobro";
 import type { Estado } from "@/app/(dashboard)/tienda/[id]/actions";
@@ -37,6 +37,13 @@ export type PedidoEnLista = {
   respuestas: { id: string; etiqueta: string; valor: string }[];
   /** La conversación con la que se ató, si el cliente ya escribió. */
   conversacion_id: string | null;
+  /** Si ya está con el mensajero. Con esto puesto NO se vuelve a mandar. */
+  envio_id: string | null;
+  envio_estado: string | null;
+  envio_error: string | null;
+  /** Sin las dos, ASAP rechaza el pedido: no acepta direcciones escritas. */
+  entrega_lat: number | null;
+  entrega_long: number | null;
   lineas: { nombre: string; cantidad: number; precio: number; elegidas: { grupo: string; texto: string }[]; nota: string | null }[];
 };
 
@@ -119,6 +126,27 @@ function Avanzar({ titulo }: { titulo: string }) {
 }
 
 /**
+ * El botón de mandar al mensajero.
+ *
+ * SE DESHABILITA MIENTRAS VA, y eso aquí no es cosmética: sin `pending`, dos
+ * clics rápidos mandan dos peticiones. El servidor las para —la base es quien
+ * decide—, pero pararlas antes ahorra una llamada a ASAP y un susto.
+ */
+function AlMensajero() {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      className="mt-2 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-white transition disabled:opacity-50"
+      style={{ backgroundColor: "#e0397f" }}
+      disabled={pending}
+      title="Le pide un mensajero a ASAP con la dirección de este pedido."
+    >
+      <Bike className="h-3 w-3" /> {pending ? "Pidiendo…" : "Al mensajero"}
+    </button>
+  );
+}
+
+/**
  * Los pedidos, en columnas por estado.
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -135,13 +163,19 @@ export function Pedidos({
   pedidos,
   moneda,
   cambiarEstado,
+  enviaConAsap,
+  alMensajero,
 }: {
   tiendaId: string;
   pedidos: PedidoEnLista[];
   moneda: string;
   cambiarEstado: (e: Estado, fd: FormData) => Promise<Estado>;
+  /** Si la tienda tiene los envíos activados. Sin esto, el botón no existe. */
+  enviaConAsap: boolean;
+  alMensajero: (e: Estado, fd: FormData) => Promise<Estado>;
 }) {
   const [estado, enviar] = useFormState(cambiarEstado, { ok: false, mensaje: "" });
+  const [envio, mandar] = useFormState(alMensajero, { ok: false, mensaje: "" });
   const [verCancelados, setVerCancelados] = useState(false);
 
   const cancelados = pedidos.filter((p) => p.estado === "cancelado");
@@ -189,6 +223,13 @@ export function Pedidos({
         >
           {estado.mensaje}
         </p>
+      )}
+
+      {/* EL MENSAJE DEL ENVÍO VA APARTE Y NO SE PIERDE. Cuando ASAP rechaza,
+          su motivo es lo único que dice qué arreglar — y es largo. Mezclarlo
+          con el de mover pedidos haría que uno tapara al otro. */}
+      {envio.mensaje && (
+        <p className={`mb-3 text-sm ${envio.ok ? "text-emerald-400" : "text-danger"}`}>{envio.mensaje}</p>
       )}
 
       <div className="grid gap-3 lg:grid-cols-5">
@@ -295,6 +336,44 @@ export function Pedidos({
                         />
                       </form>
                     ) : null}
+                    {/* ── AL MENSAJERO ──────────────────────────────────────
+                        SOLO EN «PREPARANDO», y solo si está cobrado. Es el
+                        momento en que el paquete existe: mandarlo antes sería
+                        una moto esperando en la puerta de una cocina.
+
+                        SI YA SALIÓ, NO HAY BOTÓN — hay un número. Dos clics
+                        serían dos motos y dos cobros, y aunque la comprobación
+                        de verdad está en el servidor, enseñar un botón que va a
+                        fallar es enseñar a pulsarlo.
+
+                        SIN COORDENADAS TAMPOCO HAY BOTÓN, y se dice por qué.
+                        ASAP no acepta «PH Pijao, apto 12B»: exige el punto. Y
+                        eso no lo puede arreglar el negocio — tiene que pedirle
+                        la ubicación al cliente. */}
+                    {enviaConAsap && p.estado === "preparando" && pagado(p) && (
+                      p.envio_id ? (
+                        <span
+                          className="mt-2 inline-flex items-center gap-1 rounded-lg bg-suave-2 px-2 py-1 text-[11px] font-bold text-ink-2"
+                          title={`Envío ${p.envio_id}`}
+                        >
+                          <Bike className="h-3 w-3" /> Con el mensajero
+                        </span>
+                      ) : p.entrega_lat == null || p.entrega_long == null ? (
+                        <span
+                          className="mt-2 inline-flex items-center gap-1 rounded-lg border border-dashed px-2 py-1 text-[11px] font-bold text-ink-3"
+                          title="ASAP necesita el punto exacto, no la dirección escrita. Pídele al cliente que mande su ubicación por WhatsApp."
+                        >
+                          <Bike className="h-3 w-3" /> Falta la ubicación
+                        </span>
+                      ) : (
+                        <form action={mandar}>
+                          <input type="hidden" name="tienda_id" value={tiendaId} />
+                          <input type="hidden" name="pedido_id" value={p.id} />
+                          <AlMensajero />
+                        </form>
+                      )
+                    )}
+
                     {p.estado !== "entregado" && (
                       <form action={enviar}>
                         <input type="hidden" name="tienda_id" value={tiendaId} />

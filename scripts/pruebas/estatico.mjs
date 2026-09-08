@@ -1014,7 +1014,25 @@ describe("Puerta de agenda del motor", () => {
           // y la llave de servicio para lo que habla con Meta— y mirar solo el
           // archivo entero acusaba consultas que ya estaban bien.
           const antes = t.slice(Math.max(0, i - 140), i);
-          if (/createAdminClient\(\)[\s\S]{0,10}$|\badmin[\s\S]{0,3}$/.test(antes)) continue;
+          // ── SOLO ESPACIOS EN MEDIO, PERO LOS QUE HAGA FALTA ───────────────
+          // Antes se permitían 3 caracteres cualesquiera. Eso bastaba para
+          // `admin.from(` en una línea, y dejaba ciega la regla en cuanto el
+          // formateador partía la línea:
+          //
+          //     admin
+          //       .from("tienda_envios")
+          //
+          // Son siete caracteres de hueco, y la consulta —que usaba la llave de
+          // servicio— salía acusada. Una regla que acusa en falso es una regla
+          // que alguien acaba desactivando, y ésta protege los secretos de los
+          // clientes.
+          //
+          // `\s*` NO la afloja: sigue exigiendo que el cliente sea `admin` o
+          // `createAdminClient()` y que entre él y el `.from(` no haya NADA más
+          // que espacios. Lo que se admite ahora es la forma del código, no una
+          // consulta distinta.
+          // El corte cae en `from(`, así que el punto va incluido en `antes`.
+          if (/createAdminClient\(\)\s*\.?$|\badmin\s*\.?$/.test(antes)) continue;
 
           const sel = consulta.match(/\.select\(\s*"([^"]*)"/);
           if (!sel) continue; // `select(CONSTANTE)`: se revisa donde se define
@@ -7962,6 +7980,215 @@ describe("Dónde escucha un flujo se configura en UN solo sitio", () => {
   test("y se dice dónde se cambian de verdad", () => {
     esperar(/\/respuestas`/.test(BARRA) || /\/respuestas"/.test(BARRA)).verdadero(
       "el editor ya no lleva a la pantalla donde sí se configura",
+    );
+  });
+});
+
+describe("Mandar un pedido al mensajero", () => {
+  const CLIENTE = sinComentarios(fs.readFileSync(path.join(SRC, "lib/tienda/asapCliente.ts"), "utf8"));
+  const ACCIONES = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"),
+  );
+  const TABLERO = sinComentarios(fs.readFileSync(path.join(SRC, "components/tienda/Pedidos.tsx"), "utf8"));
+  /**
+   * El cuerpo de UNA función, no del archivo desde ella hasta el final.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * ESTO LO ENSEÑÓ UN MUTANTE QUE SOBREVIVIÓ. Recortando hasta el final del
+   * archivo, «¿comprueba `tiendaDelUsuario`?» y «¿usa la llave de servicio?»
+   * salían que SÍ aunque se borraran de esta función: las cumplía cualquiera
+   * de las de más abajo.
+   *
+   * Eran las dos reglas de aislamiento entre clientes — las que impiden que un
+   * negocio saque una moto a cuenta de otro— y estaban pasando por casualidad.
+   * Una regla que no puede fallar no está probando nada.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  function cuerpoDe(texto, nombre) {
+    const i = texto.indexOf(`export async function ${nombre}`);
+    if (i < 0) return "";
+    // Se corta en la SIGUIENTE declaración de primer nivel. Vale tanto
+    // `export ...` como un comentario de bloque pegado al margen.
+    const resto = texto.slice(i + 10);
+    const j = resto.search(/\n(export |\/\*\*)/);
+    return j < 0 ? resto : resto.slice(0, j);
+  }
+
+  const enviar = cuerpoDe(ACCIONES, "enviarAlMensajero");
+  const guardar = cuerpoDe(ACCIONES, "guardarEnvios");
+
+  test("la prueba mira UNA función, no el archivo entero", () => {
+    // Guardián de las reglas de abajo: si `cuerpoDe` dejara de acotar, todas
+    // ellas volverían a pasar por casualidad y nadie se enteraría.
+    esperar(enviar.length > 200).verdadero("no encontré la función de enviar al mensajero");
+    esperar(enviar.includes("guardarEnvios")).falso(
+      "el recorte se lleva por delante la función siguiente: las reglas de abajo pasarían solas",
+    );
+    esperar(guardar.length > 200).verdadero("no encontré la función de guardar envíos");
+    esperar(guardar.includes("enviarAlMensajero")).falso("el recorte de guardarEnvios tampoco acota");
+  });
+
+  test("DOS CLICS NO PUEDEN SER DOS MOTOS", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Es la regla más cara de todas las de esta pantalla. Una conexión lenta,
+    // dos pestañas abiertas o un dedo nervioso llegan al servidor como dos
+    // peticiones idénticas, y ninguna sabe de la otra. El resultado son dos
+    // mensajeros en la puerta de una panadería y dos cobros al negocio.
+    //
+    // QUIEN DECIDE ES LA BASE. El botón deshabilitado ayuda y no basta: no
+    // existe para un formulario armado a mano ni para dos pestañas.
+    // ─────────────────────────────────────────────────────────────────────────
+    const trozo = CLIENTE.slice(CLIENTE.indexOf("export async function mandarAlMensajero"));
+    esperar(/from\("pedidos"\)[\s\S]{0,200}select\([^)]*envio_id/.test(trozo)).verdadero(
+      "ya no se le pregunta a la base si el pedido salió: dos clics serían dos motos",
+    );
+    esperar(/envio_id[\s\S]{0,120}no se manda dos veces/i.test(trozo)).verdadero(
+      "desapareció la parada por envío ya existente",
+    );
+    // Y la comprobación va ANTES de llamar a ASAP, no después.
+    const iComprobar = trozo.indexOf("envio_id ?? \"\"");
+    const iLlamar = trozo.indexOf('llamar(v.config, "order"');
+    esperar(iComprobar >= 0 && iLlamar > iComprobar).verdadero(
+      "se llama a ASAP antes de comprobar si ya se había mandado",
+    );
+  });
+
+  test("EL IDENTIFICADOR SE APUNTA ANTES DE TOCAR EL PEDIDO", () => {
+    // ASAP da el `delivery_id` UNA VEZ. Si solo se guardara en `pedidos` y ese
+    // `update` fallara, la moto estaría pedida y nosotros sin forma de seguirla
+    // ni cancelarla. La bitácora es de solo añadir: escribiendo ahí la
+    // respuesta cruda primero, el número es recuperable pase lo que pase.
+    const trozo = CLIENTE.slice(CLIENTE.indexOf("export async function mandarAlMensajero"));
+    const iBitacora = trozo.indexOf('"envio_respuesta"');
+    const iGuardar = trozo.indexOf("envio_proveedor");
+    esperar(iBitacora >= 0).verdadero("ya no se apunta la respuesta cruda de ASAP");
+    esperar(iGuardar > iBitacora).verdadero(
+      "se guarda en el pedido antes de apuntar la respuesta: si ese update falla, el envío queda huérfano",
+    );
+  });
+
+  test("un tope de tiempo NO se cuenta como «no salió»", () => {
+    // Es el caso peor: ASAP pudo recibir la orden y tardar en contestar. Decir
+    // «no se pudo» invita a pulsar otra vez, y esa vez sí salen dos motos.
+    const trozo = CLIENTE.slice(CLIENTE.indexOf("export async function mandarAlMensajero"));
+    esperar(/NO vuelvas a pulsar/i.test(trozo)).verdadero(
+      "un tiempo agotado se cuenta como fallo limpio: el siguiente clic saca la segunda moto",
+    );
+  });
+
+  test("no se manda el pedido de otra tienda", () => {
+    esperar(enviar.includes("tiendaDelUsuario")).verdadero("no se comprueba que la tienda sea suya");
+    // Y las consultas van acotadas por tienda además de por id.
+    esperar((enviar.match(/\.eq\("tienda_id", tiendaId\)/g) ?? []).length >= 2).verdadero(
+      "una consulta del envío no está acotada a la tienda: un id ajeno sacaría una moto para otro negocio",
+    );
+  });
+
+  test("no se manda lo que no está cobrado", () => {
+    esperar(/pago !== "pagado"/.test(enviar)).verdadero(
+      "se puede mandar un envío de un pedido que nadie pagó, y el envío cuesta dinero",
+    );
+  });
+
+  test("SIN COORDENADAS NO SE MANDA, y se dice por qué", () => {
+    // ASAP no acepta «PH Pijao, apto 12B»: exige cuatro números. Y no se pueden
+    // adivinar — en Panamá una coordenada inventada manda la moto a otro barrio
+    // sin error, sin aviso y con el negocio pagando el viaje.
+    const trozo = CLIENTE.slice(CLIENTE.indexOf("export async function mandarAlMensajero"));
+    esperar(trozo.includes("loQueFaltaParaMandar")).verdadero(
+      "ya no se comprueba qué falta antes de llamar a ASAP",
+    );
+    esperar(trozo.indexOf("loQueFaltaParaMandar") < trozo.indexOf('llamar(v.config, "order"')).verdadero(
+      "se llama a ASAP antes de comprobar que están los datos",
+    );
+    // Y el tablero tampoco ofrece el botón sin punto.
+    esperar(/entrega_lat == null \|\| p\.entrega_long == null/.test(TABLERO)).verdadero(
+      "el tablero ofrece mandar al mensajero sin ubicación: el negocio pulsa y ASAP lo rechaza",
+    );
+  });
+
+  test("LAS LLAVES DE ASAP LAS LEE EL SERVIDOR, NUNCA LA SESIÓN", () => {
+    // `api_key`, `user_token` y `shared_secret` no se le pueden leer a
+    // `authenticated` — es el punto de la migración 0109. Pedirlas con la
+    // sesión no devuelve un error visible: devuelve «permission denied» que
+    // alguien se traga, y el envío falla diciendo que faltan credenciales que
+    // sí están guardadas.
+    const conSesion = ACCIONES.split("createAdminClient()");
+    esperar(/createAdminClient\(\)/.test(enviar)).verdadero(
+      "las llaves de ASAP se piden con la sesión del usuario, que no puede leerlas",
+    );
+    // Y no viajan al navegador: el tablero no las conoce.
+    esperar(/api_key|shared_secret|user_token/.test(TABLERO)).falso(
+      "una llave de ASAP llegó al componente del navegador",
+    );
+  });
+
+  test("el código que ve ASAP es el número del pedido", () => {
+    // Es lo que vuelve como `external_order_id` en sus avisos, y lo que permite
+    // casar un webhook con un pedido sin depender de su identificador.
+    esperar(/codigo:\s*String\(pedido\.numero/.test(enviar)).verdadero(
+      "el pedido va a ASAP sin nuestro número: sus avisos no se podrán casar con nada",
+    );
+  });
+});
+
+describe("Los secretos no se preguntan con la sesión del usuario", () => {
+  test("NADIE VUELVE A FILTRAR POR UNA COLUMNA QUE NO PUEDE LEER", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // EL FALLO QUE ESTA REGLA IMPIDE ESTUVO VIVO Y NADIE LO VEÍA.
+    //
+    // La pantalla de la tienda preguntaba «¿hay secreto de Yappy?» filtrando
+    // por `secreto` con la sesión del usuario. Esa columna no se le puede leer
+    // a `authenticated`, y Postgres no distingue leer de filtrar: las dos
+    // piden permiso. La consulta devolvía «permission denied», el error se
+    // ignoraba, y salía siempre «no hay secreto».
+    //
+    // Resultado: `paws-at-home`, con Yappy validado y cobrando de verdad, veía
+    // todos los días «Esta tienda todavía no puede recibir pedidos». Una alarma
+    // falsa enseña a ignorar el aviso — y ese aviso es el que tiene que avisar
+    // el día que falte algo de verdad.
+    //
+    // ── POR QUÉ ESTA REGLA Y NO LA DE «NINGÚN SECRETO SE PIDE CON LA SESIÓN»
+    //
+    // Aquella mira los `select`. Ésta mira los FILTROS, y por eso el fallo
+    // sobrevivió: `.neq("secreto", "")` no pide la columna en el `select`, así
+    // que pasaba limpio. Pero Postgres necesita permiso igual para filtrar.
+    // Dos formas de tocar la misma columna, dos reglas.
+    // ─────────────────────────────────────────────────────────────────────────
+    const SECRETAS = ["secreto", "api_key", "user_token", "shared_secret"];
+    const culpables = [];
+
+    for (const f of ARCHIVOS) {
+      if (f.ruta.endsWith("lib/tienda/secretosGuardados.ts")) continue; // Es quien lo hace bien.
+      const texto = sinComentarios(f.texto);
+      // Solo importan los archivos que usan la sesión y NO la llave de servicio.
+      if (!texto.includes("createClient()")) continue;
+      if (texto.includes("createAdminClient()")) continue;
+      for (const col of SECRETAS) {
+        if (new RegExp(`\\.(neq|eq|not|filter)\\(\\s*["']${col}["']`).test(texto)) {
+          culpables.push(`${f.ruta} (${col})`);
+        }
+        if (new RegExp(`select\\(\\s*["'][^"']*\\b${col}\\b`).test(texto)) {
+          culpables.push(`${f.ruta} (select ${col})`);
+        }
+      }
+    }
+
+    esperar(culpables.join(", ")).igual(
+      "",
+      "se pregunta por una columna de secreto con la sesión del usuario: Postgres la deniega y el error se traga",
+    );
+  });
+
+  test("y lo que sale de ahí son booleanos, no secretos", () => {
+    const g = sinComentarios(fs.readFileSync(path.join(SRC, "lib/tienda/secretosGuardados.ts"), "utf8"));
+    esperar(g.includes('import "server-only"')).verdadero(
+      "el archivo que lee secretos se podría importar desde el navegador",
+    );
+    // Devuelve `boolean`, nunca el valor.
+    esperar(/Promise<boolean>/.test(g)).verdadero("dejó de devolver un sí/no");
+    esperar(/return\s+\{[^}]*llave:\s*hay\(/.test(g)).verdadero(
+      "las credenciales de ASAP dejaron de devolverse como booleanos",
     );
   });
 });

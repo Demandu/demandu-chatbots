@@ -10,6 +10,10 @@ import { DOMINIO_TIENDAS, aDireccion, direccionValida, enlaceLegible } from "@/l
 import { esAmbiente, validarComercio } from "@/lib/tienda/yappy";
 import { avisarDelPedido } from "@/lib/tienda/avisar";
 import { momentoDelEstado, sanearAvisos, MOMENTOS, MAX_AVISO } from "@/lib/tienda/avisos";
+import { vehiculoValido, type ConfigEnvio } from "@/lib/tienda/asap";
+import { mandarAlMensajero } from "@/lib/tienda/asapCliente";
+import { credencialesDeAsap } from "@/lib/tienda/secretosGuardados";
+import { anotarComoYo } from "@/lib/bitacora";
 
 const s = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 
@@ -782,6 +786,239 @@ export async function guardarCobros(_e: Estado, fd: FormData): Promise<Estado> {
       ? "Cobros con Yappy activados. Pulsa «Probar conexión» antes de vender."
       : "Datos guardados. Yappy está desactivado: los pedidos llegan sin pago en línea.",
   };
+}
+
+/* ── Los envíos ────────────────────────────────────────────────────────────── */
+
+/**
+ * Guardar la cuenta de ASAP de una tienda.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TRES SECRETOS EN BLANCO NO BORRAN LOS QUE HAY. Es la misma regla que Yappy y
+ * por el mismo motivo, multiplicada por tres: la pantalla no los enseña —no se
+ * puede mostrar lo que no se debe filtrar— así que quien entra a corregir el
+ * teléfono del local guardaría el formulario con los tres campos vacíos. Si eso
+ * borrara, se quedaría sin repartos, sin aviso y sin ninguna pista de por qué.
+ *
+ * ── ACTIVAR EXIGE TENERLO TODO, Y SE DICE QUÉ FALTA ───────────────────────
+ *
+ * Se puede guardar a medias mientras se consiguen las llaves. Lo que no se
+ * puede es ACTIVAR a medias: un botón «Enviar al mensajero» que aparece y
+ * siempre falla es peor que un botón que todavía no está.
+ *
+ * ── LAS COORDENADAS SE COMPRUEBAN AQUÍ, NO SOLO EN LA PANTALLA ────────────
+ *
+ * La pantalla es una comodidad; esto es la puerta. Y una latitud de 91 o una
+ * longitud escrita con coma decimal no dan error en ASAP: mandan la moto a
+ * cualquier sitio, o a ninguno.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function guardarEnvios(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  const activo = fd.get("activo") === "on";
+  const apiKey = s(fd.get("api_key"));
+  const userToken = s(fd.get("user_token"));
+  const sharedSecret = s(fd.get("shared_secret"));
+
+  const lat = s(fd.get("origen_lat"));
+  const long = s(fd.get("origen_long"));
+
+  // Se admite la coma decimal porque es como la escribe media Latinoamérica, y
+  // rechazarla sin explicar por qué sería una trampa. Se normaliza al guardar.
+  const numero = (v: string): number | null => {
+    const n = Number(v.replace(",", ".").trim());
+    return v.trim() !== "" && Number.isFinite(n) ? n : null;
+  };
+  const latN = numero(lat);
+  const longN = numero(long);
+
+  if (lat.trim() && latN === null) return { ok: false, mensaje: "La latitud no es un número." };
+  if (long.trim() && longN === null) return { ok: false, mensaje: "La longitud no es un número." };
+  if (latN !== null && (latN < -90 || latN > 90)) {
+    return { ok: false, mensaje: "La latitud tiene que estar entre -90 y 90. ¿Están cambiadas de sitio?" };
+  }
+  if (longN !== null && (longN < -180 || longN > 180)) {
+    return { ok: false, mensaje: "La longitud tiene que estar entre -180 y 180. ¿Están cambiadas de sitio?" };
+  }
+
+  const sb = createClient();
+  const { data: existe } = await sb
+    .from("tienda_envios")
+    .select("id")
+    .eq("tienda_id", tiendaId)
+    .eq("proveedor", "asap")
+    .maybeSingle();
+
+  // ── LO QUE FALTA PARA PODER ACTIVAR ───────────────────────────────────────
+  //
+  // Los secretos se comprueban contra la BASE y no contra el formulario: quien
+  // los guardó ayer no va a volver a pegarlos hoy para poder activar.
+  if (activo) {
+    const guardadas = existe
+      ? await credencialesDeAsap(createAdminClient(), tiendaId)
+      : { llave: false, token: false, secreto: false };
+
+    const falta: string[] = [];
+    if (!apiKey && !guardadas.llave) falta.push("la API key");
+    if (!userToken && !guardadas.token) falta.push("el user token");
+    if (!sharedSecret && !guardadas.secreto) falta.push("el shared secret");
+    if (!s(fd.get("telefono"))) falta.push("el teléfono de la cuenta");
+    if (!s(fd.get("origen_direccion"))) falta.push("la dirección del local");
+    if (latN === null || longN === null) falta.push("el punto del local en el mapa");
+
+    if (falta.length > 0) {
+      return {
+        ok: false,
+        mensaje: `Para activar los envíos falta ${falta.join(", ")}. Puedes guardar sin activar mientras lo consigues.`,
+      };
+    }
+  }
+
+  const fila: Record<string, unknown> = {
+    org_id: t.org_id,
+    tienda_id: tiendaId,
+    proveedor: "asap",
+    activo,
+    ambiente: esAmbiente(s(fd.get("ambiente"))),
+    telefono: s(fd.get("telefono")),
+    origen_direccion: s(fd.get("origen_direccion")),
+    origen_lat: latN,
+    origen_long: longN,
+    origen_nombre: s(fd.get("origen_nombre")),
+    origen_telefono: s(fd.get("origen_telefono")),
+    origen_nota: s(fd.get("origen_nota")),
+    vehiculo: vehiculoValido(s(fd.get("vehiculo"))),
+    updated_at: new Date().toISOString(),
+  };
+  // Ver la cabecera: en blanco NO borra.
+  if (apiKey) fila.api_key = apiKey;
+  if (userToken) fila.user_token = userToken;
+  if (sharedSecret) fila.shared_secret = sharedSecret;
+
+  const { error } = existe
+    ? await sb.from("tienda_envios").update(fila).eq("id", existe.id)
+    : await sb.from("tienda_envios").insert({
+        ...fila,
+        api_key: apiKey || "",
+        user_token: userToken || "",
+        shared_secret: sharedSecret || "",
+      });
+
+  if (error) return { ok: false, mensaje: "No se pudieron guardar los datos de envío." };
+
+  await anotarComoYo({
+    orgId: t.org_id,
+    accion: activo ? "activó los envíos con ASAP" : "guardó los datos de envío",
+    // NUNCA LAS LLAVES EN LA BITÁCORA. Solo si se tocaron.
+    detalle: { tienda: t.slug, cambio_llaves: Boolean(apiKey || userToken || sharedSecret) },
+  });
+
+  revalidatePath(`/tienda/${tiendaId}`);
+  return {
+    ok: true,
+    mensaje: activo
+      ? "Envíos con ASAP activados. Ya puedes mandar pedidos al mensajero desde el tablero."
+      : "Datos guardados. Los envíos están desactivados: el botón de enviar no aparece.",
+  };
+}
+
+/**
+ * Mandar un pedido al mensajero.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DOS CLICS NO PUEDEN SER DOS MOTOS.
+ *
+ * Es la regla que gobierna esta función entera. Una conexión lenta, dos
+ * pestañas abiertas o un dedo nervioso llegan aquí como dos peticiones
+ * idénticas, y la pantalla no sabe nada de la otra. Por eso quien comprueba que
+ * el pedido no salió ya es la BASE, dentro de `mandarAlMensajero`, y no este
+ * formulario ni el botón deshabilitado.
+ *
+ * ── LAS LLAVES LAS LEE EL SERVIDOR, NO LA SESIÓN ──────────────────────────
+ *
+ * `api_key`, `user_token` y `shared_secret` no se le pueden leer a
+ * `authenticated`: es el punto de la migración 0109. Se traen con la llave de
+ * servicio, se usan aquí dentro, y no salen de esta función.
+ *
+ * ── Y NO SE MANDA EL PEDIDO DE OTRA TIENDA ────────────────────────────────
+ *
+ * `tiendaDelUsuario` comprueba que la tienda es suya, y la consulta del pedido
+ * va acotada además por `tienda_id`. Un identificador de pedido ajeno pegado en
+ * el formulario no encuentra nada, en vez de sacarle una moto a otro negocio.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function enviarAlMensajero(_e: Estado, fd: FormData): Promise<Estado> {
+  const tiendaId = s(fd.get("tienda_id"));
+  const t = await tiendaDelUsuario(tiendaId);
+  if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
+
+  const pedidoId = s(fd.get("pedido_id"));
+  if (!pedidoId) return { ok: false, mensaje: "No sé qué pedido mandar." };
+
+  const admin = createAdminClient();
+
+  const [{ data: config }, { data: pedido }] = await Promise.all([
+    admin
+      .from("tienda_envios")
+      .select(
+        "activo,ambiente,api_key,user_token,shared_secret,telefono,origen_direccion,origen_lat,origen_long,origen_nombre,origen_telefono,origen_nota,vehiculo",
+      )
+      .eq("tienda_id", tiendaId)
+      .eq("proveedor", "asap")
+      .maybeSingle(),
+    admin
+      .from("pedidos")
+      .select(
+        "id,numero,pago,estado,entrega_direccion,entrega_lat,entrega_long,entrega_nota,cliente_nombre,cliente_telefono",
+      )
+      .eq("id", pedidoId)
+      .eq("tienda_id", tiendaId)
+      .maybeSingle(),
+  ]);
+
+  if (!pedido) return { ok: false, mensaje: "Ese pedido no es de esta tienda." };
+  if (!config?.activo) {
+    return { ok: false, mensaje: "Los envíos con ASAP no están activados. Se activan en la pestaña Envíos." };
+  }
+
+  // NO SE MANDA LO QUE NO ESTÁ COBRADO. Misma regla que avanzar el pedido, y
+  // aquí pesa más: mandar la moto cuesta dinero de verdad.
+  if (pedido.pago !== "pagado") {
+    return { ok: false, mensaje: "Este pedido todavía no está cobrado. No se manda un envío que nadie ha pagado." };
+  }
+
+  const r = await mandarAlMensajero(admin, {
+    pedidoId,
+    tiendaId,
+    config: config as ConfigEnvio,
+    pedido: {
+      // EL CÓDIGO QUE VE ASAP ES EL NÚMERO DEL PEDIDO. Es lo que vuelve en el
+      // `external_order_id` de sus avisos, y lo que permite casar un webhook
+      // con un pedido sin depender de haber guardado bien su identificador.
+      codigo: String(pedido.numero ?? ""),
+      entrega_direccion: pedido.entrega_direccion,
+      entrega_lat: pedido.entrega_lat,
+      entrega_long: pedido.entrega_long,
+      entrega_nota: pedido.entrega_nota,
+      cliente_nombre: pedido.cliente_nombre,
+      cliente_telefono: pedido.cliente_telefono,
+    },
+  });
+
+  revalidatePath(`/tienda/${tiendaId}`);
+
+  if (!r.ok) return { ok: false, mensaje: r.error };
+
+  await anotarComoYo({
+    orgId: t.org_id,
+    accion: "mandó un pedido al mensajero",
+    detalle: { tienda: t.slug, pedido: pedido.numero, envio_id: r.envioId },
+  });
+
+  return { ok: true, mensaje: `Pedido #${pedido.numero} enviado al mensajero. Envío ${r.envioId}.` };
 }
 
 /**

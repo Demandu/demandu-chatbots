@@ -21,6 +21,9 @@ export const PESTANAS = [
   { clave: "productos", titulo: "Productos" },
   { clave: "diseno", titulo: "Diseño" },
   { clave: "cobros", titulo: "Cobros" },
+  // ENVÍOS VA DESPUÉS DE COBROS y no antes: no se reparte lo que no se ha
+  // cobrado, así que ése es el orden en que se monta una tienda.
+  { clave: "envios", titulo: "Envíos" },
 ] as const;
 
 export type ClavePestana = (typeof PESTANAS)[number]["clave"];
