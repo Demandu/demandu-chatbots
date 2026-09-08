@@ -1673,7 +1673,50 @@ function sinMarcadores(texto: string | null | undefined): string {
   return limpio.replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/**
+ * ¿Es este mensaje el recibo de un pedido que escribimos NOSOTROS?
+ *
+ * COPIA DELIBERADA de `esElReciboDeUnPedido` en `src/lib/tienda/pedidoQueLlega.ts`
+ * — Deno no puede importar del proyecto. Una regla estática compara las dos.
+ *
+ * ── LO QUE PASÓ EL 8 SEP 2026 ─────────────────────────────────────────────
+ *
+ *   02:15:20  entrante  «*Pedido #17* *Pedido — Paws at Home* …»
+ *   02:15:24  del bot   «Veo que el pedido #17 aparece duplicado…»
+ *
+ * No había duplicado: solo existía un #17. El modelo leyó dos líneas seguidas
+ * que empiezan por «Pedido» y dedujo que eran dos. Pero el fallo no es que se
+ * equivocara — es que llegó a opinar sobre un recibo que redactamos nosotros y
+ * que el cliente solo reenvía.
+ *
+ * SE EXIGEN LAS DOS MARCAS. Callar a un cliente de verdad es peor que dejar
+ * las cosas como hoy: si el mensaje viene editado y falta una, contesta.
+ */
+function esElReciboDeUnPedido(texto: string | null | undefined): boolean {
+  const t = String(texto ?? "");
+  if (!t) return false;
+  if (!/(^|\n)\s*\*Pedido #\d+\*/.test(t)) return false;
+  return /(^|\n)\s*C[o\u00f3]digo:\s*[A-Z0-9]{6,20}\s*$/im.test(t);
+}
+
 async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string) {
+  /* ── EL BOT NO OPINA SOBRE NUESTRO PROPIO RECIBO ──────────────────────────
+   *
+   * EL GUARDIÁN VA AQUÍ DENTRO Y NO EN QUIEN LLAMA. Hay dos sitios que piden
+   * respuesta a la IA —el nodo de IA del flujo y el respaldo cuando nada
+   * encaja— y mañana puede haber un tercero. Puesto en la puerta, ninguno se
+   * lo puede saltar por olvido.
+   *
+   * Devolver cadena vacía es lo que hace que no salga nada: el motor no manda
+   * mensajes vacíos. La tienda ya avisa al cliente con SU texto cuando el
+   * pedido cambia de estado; un «¡recibido!» del bot sería lo mismo dicho dos
+   * veces con dos voces distintas.
+   * ─────────────────────────────────────────────────────────────────────── */
+  if (esElReciboDeUnPedido(pregunta)) {
+    console.log(`[ia] no contesto: es el recibo de un pedido nuestro (org ${ctx.orgId})`);
+    return "";
+  }
+
   const ai = { ...AI_DEFAULTS, ...(ctx.aiSettings ?? {}) };
   if (promptDelNodo) ai.persona = promptDelNodo;
 

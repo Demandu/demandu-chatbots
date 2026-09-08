@@ -8296,4 +8296,199 @@ describe("La llave de Google no sale del servidor", () => {
   });
 });
 
+describe("El bot no opina sobre el recibo de un pedido", () => {
+  const WA = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+  const WEB = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+  const PURO = fs.readFileSync(path.join(SRC, "lib/tienda/pedidoQueLlega.ts"), "utf8");
+
+  test("EL GUARDIÁN VA EN LA PUERTA, NO EN QUIEN LLAMA", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Hay DOS sitios que le piden respuesta a la IA en WhatsApp —el nodo de IA
+    // del flujo y el respaldo cuando nada encaja— y mañana puede haber un
+    // tercero. Si la comprobación viviera en cada uno, el tercero nacería sin
+    // ella y nadie se enteraría hasta que el bot volviera a opinar sobre un
+    // pedido delante de un cliente.
+    //
+    // Puesto dentro de `responderConIA`, ninguna llamada se lo puede saltar.
+    // ─────────────────────────────────────────────────────────────────────────
+    const limpio = sinComentarios(WA);
+    const i = limpio.indexOf("async function responderConIA");
+    esperar(i > 0).verdadero("no encontré responderConIA");
+    const cuerpo = limpio.slice(i, i + 900);
+    esperar(/if \(esElReciboDeUnPedido\(pregunta\)\)/.test(cuerpo)).verdadero(
+      "el guardián ya no está dentro de responderConIA: una llamada nueva nacería sin él",
+    );
+    // Y antes de gastar una llamada al modelo, no después.
+    esperar(cuerpo.indexOf("esElReciboDeUnPedido") < cuerpo.indexOf("AI_DEFAULTS")).verdadero(
+      "se prepara la llamada a la IA antes de comprobar si es nuestro propio recibo",
+    );
+  });
+
+  test("los DOS motores lo comprueban, no solo WhatsApp", () => {
+    // Pedir por el chat es cosa de WhatsApp hoy. El día que lo sea de
+    // Instagram, este motor ya tiene que estar tapado: arreglar la mitad de un
+    // fallo y olvidar la otra es como vuelve seis meses después.
+    esperar(/esElReciboDeUnPedido\(ctx\.lastUserText\)/.test(WEB)).verdadero(
+      "el motor web puede volver a contestarle a un recibo de pedido",
+    );
+  });
+
+  test("LAS DOS COPIAS DE LA REGLA DICEN LO MISMO", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Deno no puede importar del proyecto, así que la función vive dos veces.
+    // Es la misma situación que `sinMarcadores`, y el peligro es el mismo: que
+    // alguien afine una y se olvide de la otra. Entonces WhatsApp se calla y el
+    // widget contesta, o al revés — y eso es peor que el fallo original, porque
+    // solo pasa en un canal y nadie lo reproduce.
+    //
+    // Se comparan las DOS marcas que definen la regla, no el texto entero:
+    // exigir que los archivos sean idénticos obligaría a copiar comentarios.
+    // ─────────────────────────────────────────────────────────────────────────
+    const marcas = [
+      /\\\*Pedido #\\d\+\\\*/,        // la cabecera, escapada en el regex
+      /C\[o.{0,8}\]digo:/,            // la línea del código, con y sin tilde
+      /\[A-Z0-9\]\{6,20\}/,           // la forma del código
+    ];
+    for (const m of marcas) {
+      esperar(m.test(WA)).verdadero(`al motor de WhatsApp le falta la marca ${m}`);
+      esperar(m.test(PURO)).verdadero(`al módulo puro le falta la marca ${m}`);
+    }
+
+    // Y las dos exigen LAS DOS marcas, no una. Es lo que impide callar a un
+    // cliente que escriba «Código: 12345» por su cuenta.
+    // ── SE ANCLA EN LA COMPROBACIÓN, NO EN EL NOMBRE DE LA FUNCIÓN ──────
+    //
+    // Dos intentos fallidos me enseñaron dónde mirar. Primero anclé en la
+    // primera aparición del nombre: en el motor de Deno esa aparición está
+    // DENTRO del comentario «COPIA DELIBERADA de esElReciboDeUnPedido», así que
+    // la ventana empezaba en la prosa. Luego anclé en la declaración: el módulo
+    // puro parte la lógica en dos —`esElReciboDeUnPedido` delega en
+    // `codigoDelRecibo`— y las marcas viven en la segunda.
+    //
+    // Lo que de verdad hay que comprobar no es dónde está el código sino que
+    // LAS DOS MARCAS SE EXIJAN JUNTAS, en una misma decisión. Así que se busca
+    // la primera y se pide la segunda cerca, sea cual sea la función que las
+    // contenga. Las dos formas de escribirlo son válidas; lo que no lo es es
+    // conformarse con una marca.
+    for (const [nombre, texto] of [["WhatsApp", WA], ["el módulo puro", PURO]]) {
+      const i = texto.search(/\\\*Pedido #/);
+      esperar(i > 0).verdadero(`${nombre} ya no busca la cabecera del pedido`);
+      const cerca = texto.slice(i, i + 400);
+      esperar(/C\[o.{0,8}\]digo:/.test(cerca)).verdadero(
+        `${nombre} dejó de exigir las dos marcas juntas: se callaría ante un cliente de verdad`,
+      );
+    }
+  });
+
+  test("callarse NO es mandar un mensaje vacío", () => {
+    // El motor no manda mensajes vacíos, y de eso depende que esto se note como
+    // «no dijo nada» y no como un globo en blanco en el chat del cliente.
+    const limpio = sinComentarios(WA);
+    const i = limpio.indexOf("if (esElReciboDeUnPedido(pregunta))");
+    esperar(/return "";/.test(limpio.slice(i, i + 200))).verdadero(
+      "el guardián devuelve algo que no es cadena vacía: podría salir un mensaje",
+    );
+  });
+});
+
+describe("No se le piden a una tabla columnas que no existen", () => {
+  /* ───────────────────────────────────────────────────────────────────────────
+   * ESTA REGLA NACE DE UN FALLO CONCRETO, EL 8 DE SEPTIEMBRE DE 2026.
+   *
+   * La acción de mandar un pedido al mensajero pedía `cliente_nombre` y
+   * `cliente_telefono` a la tabla `pedidos`. NO EXISTEN: las escribí desde la
+   * forma del TIPO `PedidoParaEnviar` sin comprobar la tabla.
+   *
+   * Lo que vio el negocio no fue un error de columna. PostgREST rechaza la
+   * consulta entera, `data` vuelve nulo, y el código de al lado decía «Ese
+   * pedido no es de esta tienda». Un dueño mirando su propio pedido, en su
+   * propia tienda, leyendo que no era suyo — y yéndose a revisar permisos.
+   *
+   * TypeScript no lo atrapa: las consultas de Supabase devuelven `any`. Estas
+   * columnas solo existen en la base, así que la única forma de comprobarlas
+   * antes de que las vea un cliente es leer las migraciones.
+   * ───────────────────────────────────────────────────────────────────────── */
+
+  /** Las columnas que las migraciones crean para una tabla. */
+  function columnasDe(tabla) {
+    const dir = path.join(RAIZ, "supabase/migrations");
+    const cols = new Set();
+    for (const f of fs.readdirSync(dir).sort()) {
+      const sql = fs.readFileSync(path.join(dir, f), "utf8");
+
+      // `create table … ( … )`
+      const crea = new RegExp(`create table[^;]*?\\b${tabla}\\s*\\(([\\s\\S]*?)\\n\\);`, "gi");
+      let m;
+      while ((m = crea.exec(sql))) {
+        for (const linea of m[1].split("\n")) {
+          const c = linea.trim().match(/^([a-z_][a-z0-9_]*)\s+[a-z]/i);
+          // Se saltan las restricciones de tabla, que empiezan por palabras
+          // reservadas y no son columnas.
+          if (c && !/^(primary|foreign|unique|check|constraint|exclude)$/i.test(c[1])) cols.add(c[1]);
+        }
+      }
+
+      // `alter table … add column [if not exists] X tipo`
+      const alt = new RegExp(
+        `alter table[^;]*?\\b${tabla}\\b([\\s\\S]*?);`, "gi",
+      );
+      while ((m = alt.exec(sql))) {
+        for (const a of m[1].matchAll(/add column\s+(?:if not exists\s+)?([a-z_][a-z0-9_]*)/gi)) {
+          cols.add(a[1]);
+        }
+      }
+    }
+    return cols;
+  }
+
+  test("LAS COLUMNAS QUE PIDE «AL MENSAJERO» EXISTEN DE VERDAD", () => {
+    const reales = columnasDe("pedidos");
+    esperar(reales.size > 15).verdadero(
+      `solo encontré ${reales.size} columnas de pedidos: el lector de migraciones dejó de funcionar y esta regla no probaría nada`,
+    );
+    // Guardián del guardián: si estas dos dejaran de encontrarse, el lector
+    // está roto y todo lo de abajo pasaría por casualidad.
+    for (const c of ["numero", "entrega_lat"]) {
+      esperar(reales.has(c)).verdadero(`el lector de migraciones no encontró «${c}»`);
+    }
+
+    const acc = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"),
+    );
+    const i = acc.indexOf("export async function enviarAlMensajero");
+    const cuerpo = acc.slice(i, i + 2000);
+
+    const sel = cuerpo.match(/from\("pedidos"\)[\s\S]{0,200}?\.select\(\s*"([^"]+)"/);
+    esperar(!!sel).verdadero("no encontré la consulta a pedidos");
+
+    const pedidas = sel[1].split(",").map((c) => c.trim()).filter(Boolean);
+    const inventadas = pedidas.filter((c) => !reales.has(c));
+    esperar(inventadas.join(", ")).igual(
+      "",
+      "se le piden a `pedidos` columnas que no existen: la consulta falla entera y el mensaje dirá otra cosa",
+    );
+  });
+
+  test("UN FALLO DE CONSULTA NO SE CUENTA COMO «NO EXISTE»", () => {
+    // Es la mitad que convirtió mi error en una hora perdida. `!data` es cierto
+    // tanto si el pedido no es de esa tienda como si la consulta reventó, y las
+    // dos cosas mandan a sitios opuestos: una a revisar permisos, la otra a
+    // revisar el código.
+    const acc = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/tienda/[id]/actions.ts"), "utf8"),
+    );
+    const i = acc.indexOf("export async function enviarAlMensajero");
+    const cuerpo = acc.slice(i, i + 2200);
+
+    esperar(/error:\s*errPedido/.test(cuerpo)).verdadero(
+      "ya no se recoge el error de la consulta del pedido",
+    );
+    const iErr = cuerpo.indexOf("if (errPedido)");
+    const iNo = cuerpo.indexOf("if (!pedido)");
+    esperar(iErr > 0 && iNo > iErr).verdadero(
+      "se dice «ese pedido no es de esta tienda» antes de mirar si la consulta falló",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

@@ -98,8 +98,7 @@ import { leerConfig, CONFIG_POR_DEFECTO, colorValido, soloDigitos, loQueFaltaPar
 import {
   comoRespuesta, leerUbicacion, esEnlaceAcortado, porQueNoSirve, enlaceDeMapa,
   precisionDudosa, comoSeLeeLaPrecision, preguntaDeUbicacion,
-  ubicacionDeLasRespuestas, direccionDeLasRespuestas, hayQuePedirLaUbicacion,
-} from "../../src/lib/tienda/ubicacion.ts";
+  ubicacionDeLasRespuestas, direccionDeLasRespuestas, hayQuePedirLaUbicacion, nombreDeLasRespuestas, telefonoDeLasRespuestas,} from "../../src/lib/tienda/ubicacion.ts";
 import {
   aQuePedidoVa, ubicacionDelMensaje, VENTANA_UBICACION_HORAS,
 } from "../../src/lib/tienda/ubicacionQueLlega.ts";
@@ -111,6 +110,7 @@ import {
   LETRAS_MINIMAS, ESPERA_MS, MAX_POR_BUSQUEDA, valeLaPenaBuscar, nuevaBusqueda,
   cuerpoDeSugerencias, leerSugerencias, leerPunto, CAMPOS_DEL_PUNTO,
 } from "../../src/lib/lugares/google.ts";
+import { esElReciboDeUnPedido, codigoDelRecibo } from "../../src/lib/tienda/pedidoQueLlega.ts";
 import { REMITENTE } from "../../src/lib/correo/enviar.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
@@ -6770,6 +6770,164 @@ describe("Buscar una dirección sin que la factura se dispare", () => {
      * dirección vacía. Guardar las coordenadas sin la dirección daría un pedido
      * que parece completo y que se cae al mandarlo. */
     esperar(leerPunto({ location: { latitude: 8.98, longitude: -79.51 } })).igual(null);
+  });
+});
+
+describe("El bot no opina sobre nuestro propio recibo", () => {
+  /* El mensaje REAL del pedido #17, tal y como llegó el 8 sep 2026 a las
+   * 02:15:20. Cuatro segundos después el bot contestó «Veo que el pedido #17
+   * aparece duplicado…». No había duplicado: solo existía un #17. */
+  const RECIBO_17 = [
+    "*Pedido #17*",
+    "*Pedido — Paws at Home*",
+    "",
+    "• 1 × NutriSource Perro adulto - Henry — $1.00",
+    "   Variedades: 5 lbs.",
+    "   Variedades 2: Pollo",
+    "",
+    "*Total: $1.00*",
+    "",
+    "Nombre completo: Victoria Molina",
+    "Teléfono: 62171875",
+    "Nombre de PH: PH Bayfront",
+    "Número Interior:: 102",
+    "Calle:: Av Baloba",
+    "Ubicación: https://www.google.com/maps/search/?api=1&query=8.9761502,-79.5212692",
+    "",
+    "Dale clic para pagar con Yappy: https://store.demandu.tech/paws-at-home/pagar/V66YW3EUD5A8",
+    "",
+    "Código: V66YW3EUD5A8",
+  ].join("\n");
+
+  test("EL MENSAJE QUE HIZO HABLAR AL BOT SE RECONOCE", () => {
+    esperar(esElReciboDeUnPedido(RECIBO_17)).verdadero(
+      "el recibo del pedido #17 volvería a llegarle a la IA",
+    );
+    esperar(codigoDelRecibo(RECIBO_17)).igual("V66YW3EUD5A8");
+  });
+
+  test("UN CLIENTE DE VERDAD NO SE QUEDA SIN RESPUESTA", () => {
+    /* ─────────────────────────────────────────────────────────────────────────
+     * LOS DOS ERRORES NO CUESTAN LO MISMO, Y POR ESO SE EXIGEN DOS MARCAS.
+     *
+     * Equivocarse hacia el «sí» CALLA a alguien de verdad: escribe, no recibe
+     * nada, y no sabe por qué. Una venta perdida en silencio.
+     *
+     * Equivocarse hacia el «no» deja las cosas como estaban: el bot contesta al
+     * recibo. Malo, pero visible.
+     * ───────────────────────────────────────────────────────────────────────── */
+    const personas = [
+      "Hola, quiero hacer un pedido",
+      "mi código es 12345",
+      "Código: ABC123",                       // la marca del código, sin cabecera
+      "*Pedido #17*",                          // la cabecera, sin código
+      "Me llegó el pedido #17 y falta algo",
+      "codigo",
+      "",
+      "Oye, ¿me cambias el sabor del pedido?",
+    ];
+    for (const p of personas) {
+      esperar(esElReciboDeUnPedido(p)).falso(`se callaría ante un cliente que escribe: «${p}»`);
+    }
+  });
+
+  test("si el cliente edita el mensaje, se vuelve al comportamiento de hoy", () => {
+    /* WhatsApp deja editar el texto antes de mandarlo. Si rompe una de las dos
+     * marcas, contestamos como hasta ahora — nunca nos callamos por si acaso. */
+    esperar(esElReciboDeUnPedido(RECIBO_17.replace("*Pedido #17*", "Pedido 17"))).falso();
+    esperar(esElReciboDeUnPedido(RECIBO_17.replace("Código: V66YW3EUD5A8", ""))).falso();
+  });
+
+  test("el código tiene que ir SOLO en su renglón", () => {
+    /* Un código en medio de una frase lo escribe una persona, no nuestro
+     * formato: «te paso el Código: ABC123 por si acaso». */
+    const enMedio = "*Pedido #1*\nTe paso el Código: ABC123 por si acaso, gracias";
+    esperar(esElReciboDeUnPedido(enMedio)).falso("un código dentro de una frase pasó por recibo");
+  });
+
+  test("vale con o sin tilde, y en cualquier pedido", () => {
+    const base = "*Pedido #204*\n*Pedido — Panadería*\n\nCodigo: ZZ99AA11BB22";
+    esperar(codigoDelRecibo(base)).igual("ZZ99AA11BB22");
+    esperar(codigoDelRecibo("*Pedido #1*\n\nCódigo: abc123def456")).igual("ABC123DEF456");
+  });
+});
+
+describe("Quién recibe el pedido, sacado del formulario", () => {
+  /* El formulario REAL de paws-at-home, que es el que rompió la suposición de
+   * que existiría un campo llamado «dirección». */
+  const PREGUNTAS = [
+    { id: "nombre_completo", etiqueta: "Nombre completo", tipo: "texto" },
+    { id: "telefono", etiqueta: "Teléfono", tipo: "telefono" },
+    { id: "nombre_de_ph", etiqueta: "Nombre de PH", tipo: "texto" },
+    { id: "numero_interior", etiqueta: "Número Interior:", tipo: "texto" },
+    { id: "calle", etiqueta: "Calle:", tipo: "texto" },
+    { id: "ubicacion", etiqueta: "Ubicación", tipo: "ubicacion" },
+  ];
+  const RESPUESTAS = [
+    { id: "nombre_completo", valor: "Victoria Molina", etiqueta: "Nombre completo" },
+    { id: "telefono", valor: "62171875", etiqueta: "Teléfono" },
+    { id: "nombre_de_ph", valor: "PH Bayfront", etiqueta: "Nombre de PH" },
+    { id: "numero_interior", valor: "102", etiqueta: "Número Interior:" },
+    { id: "calle", valor: "Av Baloba", etiqueta: "Calle:" },
+    { id: "ubicacion", valor: "8.9761502,-79.5212692", etiqueta: "Ubicación" },
+  ];
+
+  test("EL NOMBRE Y EL TELÉFONO NO SON COLUMNAS, SON RESPUESTAS", () => {
+    /* ─────────────────────────────────────────────────────────────────────────
+     * El 8 sep 2026 escribí la acción de mandar al mensajero pidiéndole a
+     * `pedidos` dos columnas que me inventé: `cliente_nombre` y
+     * `cliente_telefono`. La consulta fallaba entera y el negocio leía «Ese
+     * pedido no es de esta tienda» — buscando un problema de permisos que no
+     * existía. Escribí la acción mirando el TIPO en vez de la tabla.
+     * ───────────────────────────────────────────────────────────────────────── */
+    esperar(nombreDeLasRespuestas(PREGUNTAS, RESPUESTAS)).igual("Victoria Molina");
+    esperar(telefonoDeLasRespuestas(PREGUNTAS, RESPUESTAS)).igual("62171875");
+  });
+
+  test("«Nombre de PH» NO es el nombre de quien recibe", () => {
+    /* Es la MISMA regla que usa la dirección para excluir el nombre: la
+     * PRIMERA pregunta con «nombre» que no sea lista. Si las dos discreparan,
+     * el nombre acabaría dentro de la dirección y fuera de su propio campo. */
+    esperar(nombreDeLasRespuestas(PREGUNTAS, RESPUESTAS)).noContiene?.("PH");
+    esperar(nombreDeLasRespuestas(PREGUNTAS, RESPUESTAS).includes("PH")).falso(
+      "se coló «Nombre de PH» como nombre del cliente",
+    );
+    /* Y la dirección sigue llevándoselo, que es su sitio. */
+    esperar(direccionDeLasRespuestas(PREGUNTAS, RESPUESTAS)).contiene("PH Bayfront");
+    esperar(direccionDeLasRespuestas(PREGUNTAS, RESPUESTAS).includes("Victoria")).falso(
+      "el nombre del cliente se coló dentro de la dirección",
+    );
+  });
+
+  test("el teléfono se encuentra aunque se llame de otra forma", () => {
+    /* «Celular», «WhatsApp» y «Móvil» son como lo llama medio mundo. Sin
+     * teléfono no se manda el pedido —lo exige `loQueFaltaParaMandar`— y eso
+     * está bien: el mensajero que no encuentra el portal tiene que poder
+     * llamar. Lo que no vale es no encontrarlo estando puesto. */
+    for (const etiqueta of ["Celular", "WhatsApp", "Móvil", "Numero de telefono"]) {
+      const p = [{ id: "n", etiqueta: "Nombre", tipo: "texto" }, { id: "t", etiqueta, tipo: "texto" }];
+      const r = [{ id: "n", valor: "Ana" }, { id: "t", valor: "62170000" }];
+      esperar(telefonoDeLasRespuestas(p, r)).igual("62170000", `no encontró el teléfono en «${etiqueta}»`);
+    }
+  });
+
+  test("el tipo manda sobre la etiqueta", () => {
+    /* Un formulario con un campo de tipo «telefono» mal etiquetado sigue siendo
+     * el teléfono. Y uno etiquetado «Teléfono de contacto de la oficina» que no
+     * es de tipo teléfono, también — pero el marcado gana. */
+    const p = [
+      { id: "a", etiqueta: "Teléfono de la oficina", tipo: "texto" },
+      { id: "b", etiqueta: "Cómo te contactamos", tipo: "telefono" },
+    ];
+    const r = [{ id: "a", valor: "3000000" }, { id: "b", valor: "62171875" }];
+    esperar(telefonoDeLasRespuestas(p, r)).igual("62171875");
+  });
+
+  test("sin nada, cadena vacía y no un «undefined»", () => {
+    esperar(nombreDeLasRespuestas(null, null)).igual("");
+    esperar(telefonoDeLasRespuestas(null, null)).igual("");
+    esperar(nombreDeLasRespuestas([], [])).igual("");
+    esperar(telefonoDeLasRespuestas(PREGUNTAS, [])).igual("");
   });
 });
 

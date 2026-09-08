@@ -351,3 +351,70 @@ export function hayQuePedirLaUbicacion(v: {
   if (ubicacionDe(v?.lat, v?.long)) return false;
   return v?.enviosActivos === true || !!preguntaDeUbicacion(v?.preguntas);
 }
+
+/* ── Quién recibe el pedido ─────────────────────────────────────────────────
+ *
+ * ASAP quiere un nombre y un teléfono para la entrega. Ninguno de los dos vive
+ * en una columna: viven en las respuestas del formulario, que cada negocio
+ * configura como quiere. Se sacan aquí, en funciones puras, por la misma razón
+ * que la dirección — y porque el 8 de septiembre de 2026 escribí la acción de
+ * mandar al mensajero pidiéndole a `pedidos` dos columnas inventadas,
+ * `cliente_nombre` y `cliente_telefono`, que no existen.
+ *
+ * La consulta fallaba entera, `data` volvía nulo, y el negocio leía «Ese pedido
+ * no es de esta tienda» — un mensaje que le mandaba a buscar un problema de
+ * permisos que no existía. Escribí la acción mirando la forma del TIPO en vez
+ * de mirar la tabla. Es el mismo error que con el `delivery_id` de ASAP, dos
+ * veces en la misma noche.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * El nombre de quien recibe.
+ *
+ * LA PRIMERA PREGUNTA QUE LLEVA «NOMBRE» Y NO ES UNA LISTA. Es exactamente la
+ * misma regla que ya usaba `direccionDeLasRespuestas` para EXCLUIR el nombre de
+ * la dirección; escrita una sola vez, las dos no pueden discrepar.
+ *
+ * Por eso «Nombre de PH» no cuenta: no es la primera. Y si se cambiara la regla
+ * aquí sin cambiarla allí, el nombre acabaría dentro de la dirección y a la vez
+ * fuera del campo del nombre.
+ */
+export function nombreDeLasRespuestas(
+  preguntas: PreguntaMinima[] | null | undefined,
+  respuestas: RespuestaGuardada[] | null | undefined,
+): string {
+  const sinTilde = (t: string) =>
+    t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const p = (preguntas ?? []).find(
+    (x) => x?.tipo !== "lista" && sinTilde(String(x?.etiqueta ?? "")).includes("nombre"),
+  );
+  if (!p) return "";
+  return String((respuestas ?? []).find((x) => String(x?.id ?? "") === p.id)?.valor ?? "").trim();
+}
+
+/**
+ * El teléfono de quien recibe.
+ *
+ * SE BUSCA POR TIPO PRIMERO. El catálogo tiene un tipo «telefono» y quien lo
+ * usa deja el campo bien marcado; buscar solo por la etiqueta fallaría con
+ * «Celular», «WhatsApp» o «Móvil», que es como lo llama medio mundo.
+ *
+ * SIN ÉL NO SE MANDA EL PEDIDO — `loQueFaltaParaMandar` lo exige — y eso es lo
+ * correcto: el mensajero que no encuentra el portal necesita poder llamar.
+ */
+export function telefonoDeLasRespuestas(
+  preguntas: PreguntaMinima[] | null | undefined,
+  respuestas: RespuestaGuardada[] | null | undefined,
+): string {
+  const lista = preguntas ?? [];
+  const valorDe = (id: string) =>
+    String((respuestas ?? []).find((x) => String(x?.id ?? "") === id)?.valor ?? "").trim();
+
+  const porTipo = lista.find((p) => p?.tipo === "telefono");
+  if (porTipo && valorDe(porTipo.id)) return valorDe(porTipo.id);
+
+  const porNombre = lista.find((p) =>
+    /tel[eé]fono|celular|whatsapp|m[oó]vil|movil/i.test(String(p?.etiqueta ?? "")),
+  );
+  return porNombre ? valorDe(porNombre.id) : "";
+}

@@ -11,6 +11,7 @@ import {
   type TiendaDelBot, type ProductoDelBot, type PedidoDelBot,
 } from "@/lib/tienda/paraElBot";
 import type { MensajeChat } from "@/lib/tienda/conversacionDePedido";
+import { esElReciboDeUnPedido } from "@/lib/tienda/pedidoQueLlega";
 import type { CarritoChat } from "@/lib/tienda/pedirPorChat";
 
 /**
@@ -351,6 +352,20 @@ async function recentHistory(ctx: Ctx): Promise<{ role: "user" | "assistant"; co
  * mensajes de "no sé" seguidos.
  */
 async function responderDuda(ctx: Ctx, agente?: any): Promise<string | null> {
+  /* ── EL BOT NO OPINA SOBRE NUESTRO PROPIO RECIBO ──────────────────────────
+   *
+   * El mismo guardián que en el motor de WhatsApp, y por el mismo motivo: el
+   * texto del pedido lo redactamos nosotros, el cliente solo lo reenvía. En
+   * WhatsApp costó una respuesta del bot inventándose un pedido duplicado
+   * delante de una clienta que acababa de pagar.
+   *
+   * VA AQUÍ AUNQUE HOY NO PASE POR AQUÍ NINGÚN PEDIDO. Pedir por el chat es
+   * cosa de WhatsApp de momento; el día que lo sea de Instagram, este motor ya
+   * estará tapado. Poner la regla en un solo motor es cómo se arregla la mitad
+   * de un fallo y se olvida la otra.
+   * ─────────────────────────────────────────────────────────────────────── */
+  if (esElReciboDeUnPedido(ctx.lastUserText)) return null;
+
   const settings: AiSettings = { ...(ctx.aiSettings ?? {}) };
   try {
     const respuesta = await aiAnswer({

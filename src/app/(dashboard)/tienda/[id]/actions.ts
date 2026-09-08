@@ -11,6 +11,7 @@ import { esAmbiente, validarComercio } from "@/lib/tienda/yappy";
 import { avisarDelPedido } from "@/lib/tienda/avisar";
 import { momentoDelEstado, sanearAvisos, MOMENTOS, MAX_AVISO } from "@/lib/tienda/avisos";
 import { vehiculoValido, type ConfigEnvio } from "@/lib/tienda/asap";
+import { nombreDeLasRespuestas, telefonoDeLasRespuestas } from "@/lib/tienda/ubicacion";
 import { mandarAlMensajero } from "@/lib/tienda/asapCliente";
 import { credencialesDeAsap } from "@/lib/tienda/secretosGuardados";
 import { anotarComoYo } from "@/lib/bitacora";
@@ -960,7 +961,7 @@ export async function enviarAlMensajero(_e: Estado, fd: FormData): Promise<Estad
 
   const admin = createAdminClient();
 
-  const [{ data: config }, { data: pedido }] = await Promise.all([
+  const [{ data: config }, { data: pedido, error: errPedido }] = await Promise.all([
     admin
       .from("tienda_envios")
       .select(
@@ -971,14 +972,30 @@ export async function enviarAlMensajero(_e: Estado, fd: FormData): Promise<Estad
       .maybeSingle(),
     admin
       .from("pedidos")
-      .select(
-        "id,numero,pago,estado,entrega_direccion,entrega_lat,entrega_long,entrega_nota,cliente_nombre,cliente_telefono",
-      )
+      // ── LAS COLUMNAS SE MIRARON EN LA TABLA, NO EN EL TIPO ────────────────
+      //
+      // Aquí pedía `cliente_nombre` y `cliente_telefono`. NO EXISTEN: los
+      // escribí desde la forma de `PedidoParaEnviar` sin comprobar `pedidos`.
+      // La consulta fallaba entera, `data` volvía nulo, y el negocio leía «Ese
+      // pedido no es de esta tienda» — buscando un problema de permisos que no
+      // había. El nombre y el teléfono viven en `respuestas`, que cada negocio
+      // configura a su manera.
+      .select("id,numero,pago,estado,entrega_direccion,entrega_lat,entrega_long,entrega_nota,respuestas")
       .eq("id", pedidoId)
       .eq("tienda_id", tiendaId)
       .maybeSingle(),
   ]);
 
+  // ── «NO LO ENCUENTRO» Y «NO PUDE PREGUNTAR» NO SON LO MISMO ──────────────
+  //
+  // Juntarlos en un solo mensaje es lo que convirtió un error mío en una hora
+  // perdida: el negocio leyó que el pedido no era suyo —siéndolo— y se fue a
+  // revisar permisos. Un fallo de la consulta se dice como fallo de la
+  // consulta, con lo que dijo la base.
+  if (errPedido) {
+    console.error("[asap] no pude leer el pedido:", errPedido.message);
+    return { ok: false, mensaje: `No pude leer el pedido: ${errPedido.message}` };
+  }
   if (!pedido) return { ok: false, mensaje: "Ese pedido no es de esta tienda." };
   if (!config?.activo) {
     return { ok: false, mensaje: "Los envíos con ASAP no están activados. Se activan en la pestaña Envíos." };
@@ -989,6 +1006,11 @@ export async function enviarAlMensajero(_e: Estado, fd: FormData): Promise<Estad
   if (pedido.pago !== "pagado") {
     return { ok: false, mensaje: "Este pedido todavía no está cobrado. No se manda un envío que nadie ha pagado." };
   }
+
+  // Las preguntas viven en la configuración de la tienda; las respuestas, en el
+  // pedido. Hacen falta las dos para saber cuál de las respuestas es el nombre.
+  const preguntas = leerConfig(t.config).preguntas;
+  const respuestas = (pedido.respuestas ?? []) as any[];
 
   const r = await mandarAlMensajero(admin, {
     pedidoId,
@@ -1003,8 +1025,11 @@ export async function enviarAlMensajero(_e: Estado, fd: FormData): Promise<Estad
       entrega_lat: pedido.entrega_lat,
       entrega_long: pedido.entrega_long,
       entrega_nota: pedido.entrega_nota,
-      cliente_nombre: pedido.cliente_nombre,
-      cliente_telefono: pedido.cliente_telefono,
+      // De las RESPUESTAS del formulario, con las mismas reglas que usa el
+      // texto del pedido: la primera pregunta con «nombre» que no sea lista, y
+      // el campo de tipo teléfono (o «Celular», «WhatsApp», «Móvil»…).
+      cliente_nombre: nombreDeLasRespuestas(preguntas, respuestas),
+      cliente_telefono: telefonoDeLasRespuestas(preguntas, respuestas),
     },
   });
 
