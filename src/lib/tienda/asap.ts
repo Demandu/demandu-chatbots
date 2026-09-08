@@ -307,6 +307,19 @@ export function cuerpoDeOrden(c: ConfigEnvio, p: PedidoParaEnviar): Record<strin
 export function leerDeliveryId(respuesta: unknown): string {
   const r = (respuesta ?? {}) as Record<string, any>;
   const candidatos = [
+    // ── LA PRIMERA ES LA REAL, COMPROBADA CONTRA SU API EL 7 SEP 2026 ──────
+    //
+    // `{"status":true,"result":{"delivery_id":2818877}}`. Las otras eran
+    // suposiciones mías leyendo el resto de sus rutas, y NINGUNA acertó: sin
+    // esta línea el pedido se creaba de verdad, `leerDeliveryId` devolvía
+    // cadena vacía, y la plataforma lo daba por fallido — con la moto ya
+    // pedida y nosotros sin el identificador para seguirla ni cancelarla.
+    //
+    // Las demás se quedan porque no estorban y porque su documentación no
+    // promete una forma única. Pero el orden importa: la comprobada va primera.
+    r.result?.delivery_id,
+    r.result?.deliveryId,
+    r.result?.id,
     r.delivery_id,
     r.deliveryId,
     r.id,
@@ -321,6 +334,26 @@ export function leerDeliveryId(respuesta: unknown): string {
     if (s && s !== "0") return s;
   }
   return "";
+}
+
+/**
+ * ¿ASAP aceptó el pedido?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NO BASTA CON EL CÓDIGO HTTP. Su respuesta buena trae `"status": true`, y eso
+ * significa que existe una mala con `"status": false` — y nada garantiza que
+ * venga con un código HTTP de error. Un `200` con `status:false` y sin
+ * identificador se leería como «salió bien» si solo se mirara el 200.
+ *
+ * SE EXIGEN LAS DOS COSAS: que no diga que no, y que haya identificador. Sin
+ * identificador no hay pedido que seguir aunque ASAP jure que lo aceptó, así
+ * que a efectos nuestros no salió.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function loAcepto(respuesta: unknown): boolean {
+  const r = (respuesta ?? {}) as Record<string, any>;
+  if (r.status === false || r.success === false) return false;
+  return leerDeliveryId(respuesta) !== "";
 }
 
 /**

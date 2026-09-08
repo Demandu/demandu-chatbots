@@ -62,7 +62,7 @@ import {
 import {
   API_ASAP, esAmbienteEnvio, VEHICULOS, vehiculoValido, latitud, longitud,
   ubicacionDe, telefonoAsap, instrucciones, loQueFaltaParaMandar, cuerpoDeOrden,
-  leerDeliveryId, motivoDelFallo, ESTADOS_ASAP, estadoDeCodigo, envioTerminado,
+  leerDeliveryId, loAcepto, motivoDelFallo, ESTADOS_ASAP, estadoDeCodigo, envioTerminado,
   estadoDelPedido, estadoDeAviso, estadoDeAvisoConEstado,
 } from "../../src/lib/tienda/asap.ts";
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
@@ -5594,9 +5594,32 @@ describe("ASAP · envío del pedido", () => {
     for (const v of VEHICULOS) esperar(vehiculoValido(v.valor)).igual(v.valor);
   });
 
+  test("LA RESPUESTA DE VERDAD DE ASAP, LA QUE MANDÓ EL 7 SEP 2026", () => {
+    /* ─────────────────────────────────────────────────────────────────────────
+     * ESTA ES LA PRUEBA QUE NO TENÍAMOS, Y COSTÓ UN PEDIDO REAL DESCUBRIRLA.
+     *
+     * `leerDeliveryId` miraba en `delivery_id`, `data.delivery_id` y
+     * `order.delivery_id` — tres formas que deduje leyendo el resto de sus
+     * rutas. La de verdad es una cuarta:
+     *
+     *     {"status":true,"result":{"delivery_id":2818877}}
+     *
+     * Sin esta línea el pedido se creaba, ASAP contestaba 200, y nosotros lo
+     * dábamos por fallido: la moto pedida y nosotros sin identificador para
+     * seguirla ni cancelarla. El peor de los dos errores posibles.
+     *
+     * SE COPIA LA RESPUESTA LITERAL, no una versión limpia. El día que alguien
+     * «simplifique» esta función, esto es lo que se lo impide.
+     * ───────────────────────────────────────────────────────────────────────── */
+    const REAL = { status: true, result: { delivery_id: 2818877 } };
+    esperar(leerDeliveryId(REAL)).igual("2818877");
+    esperar(loAcepto(REAL)).verdadero("dimos por fallido un pedido que ASAP aceptó");
+  });
+
   test("el delivery_id se encuentra lo llamen como lo llamen", () => {
     /* Lo dan UNA VEZ. Si no se guarda ahí mismo, el envío ya está en la calle
      * y no hay forma de seguirlo, cancelarlo ni rastrearlo. */
+    esperar(leerDeliveryId({ result: { delivery_id: 2818877 } })).igual("2818877");
     esperar(leerDeliveryId({ delivery_id: 23949 })).igual("23949");
     esperar(leerDeliveryId({ data: { delivery_id: "23949" } })).igual("23949");
     esperar(leerDeliveryId({ order: { id: 23949 } })).igual("23949");
@@ -5604,6 +5627,23 @@ describe("ASAP · envío del pedido", () => {
     esperar(leerDeliveryId(null)).igual("");
     /* Un cero no es un identificador: es el campo vacío de su base. */
     esperar(leerDeliveryId({ delivery_id: 0 })).igual("");
+    esperar(leerDeliveryId({ result: { delivery_id: 0 } })).igual("");
+  });
+
+  test("UN 200 CON «status: false» NO ES UN PEDIDO ACEPTADO", () => {
+    /* Su respuesta buena trae `"status": true`. Que exista ese campo significa
+     * que existe la respuesta con `false` — y nada garantiza que venga con un
+     * código HTTP de error. Mirar solo el 200 sería dar por bueno un pedido que
+     * ASAP rechazó, y el cliente esperando una moto que nadie pidió. */
+    esperar(loAcepto({ status: false, result: { delivery_id: 2818877 } })).falso(
+      "ASAP dijo que no y lo dimos por bueno",
+    );
+    esperar(loAcepto({ success: false, delivery_id: 99 })).falso();
+
+    /* Y al revés: sin identificador no hay pedido que seguir, jure lo que jure. */
+    esperar(loAcepto({ status: true })).falso("sin identificador no hay nada que seguir");
+    esperar(loAcepto({ status: true, result: {} })).falso();
+    esperar(loAcepto(null)).falso();
   });
 
   test("el motivo del fallo se enseña tal cual, no se traduce a «hubo un error»", () => {
