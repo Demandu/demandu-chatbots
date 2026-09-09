@@ -55,7 +55,30 @@ export async function GET(req: Request) {
 
     const expiry = new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000).toISOString();
 
-    await supabase.from("integrations").upsert(
+    /* ── SE GUARDA CON LA LLAVE DE SERVICIO, Y SE MIRA SI GUARDÓ ────────────
+     *
+     * 9 SEP 2026. La pantalla dijo «✅ Google Calendar se conectó
+     * correctamente» y la fila NO estaba en la base. Tres veces seguidas. El
+     * calendario quedó desconectado y el dueño reconectando en bucle sin
+     * entender nada.
+     *
+     * La causa era esta línea: `await supabase.from(...).upsert(...)` SIN
+     * capturar `error`. PostgREST devolvía el fallo, nadie lo leía, y el código
+     * seguía derecho hasta el `?connected=1`. Un error convertido en una
+     * mentira, en la pantalla donde más caro sale: quien se fía deja de tener
+     * agenda y no se entera.
+     *
+     * DOS CAMBIOS, Y LOS DOS HACEN FALTA:
+     *
+     * 1. Se escribe con el cliente ADMIN. Aquí se guardan `access_token` y
+     *    `refresh_token`, que son secretos: escribirlos con la sesión del
+     *    usuario nunca fue lo correcto, y además metía el RLS de por medio en
+     *    un guardado que el propio servidor está autorizando.
+     *
+     * 2. SE MIRA EL ERROR. Si no guardó, no se dice que sí. Se vuelve con el
+     *    motivo y queda apuntado en `conexiones_fallidas` para poder verlo
+     *    después, que es lo que hoy no existía. */
+    const { error: errGuardar } = await createAdminClient().from("integrations").upsert(
       {
         org_id: orgId,
         provider: "google_calendar",
@@ -69,6 +92,23 @@ export async function GET(req: Request) {
       },
       { onConflict: "org_id,provider" }
     );
+
+    if (errGuardar) {
+      console.error("[google callback] no se guardó la conexión:", errGuardar);
+      try {
+        await createAdminClient().from("conexiones_fallidas").insert({
+          org_id: orgId,
+          canal: "google_calendar",
+          paso: "guardar_conexion",
+          // El mensaje de Postgres, nunca los tokens.
+          detalle: String(errGuardar.message ?? errGuardar).slice(0, 500),
+        });
+      } catch { /* apuntar el fallo no puede provocar otro */ }
+      return NextResponse.redirect(
+        `${settings}?error=${encodeURIComponent("No se pudo guardar la conexión: " + (errGuardar.message ?? "error al escribir"))}`,
+      );
+    }
+    void supabase;
 
     // CONECTAR ES ENCENDER. Los dos datos que hace falta pedirle a la persona
     // para que la cita salga completa quedan creados aquí: sin ellos la cita

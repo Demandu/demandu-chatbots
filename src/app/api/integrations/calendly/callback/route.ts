@@ -90,7 +90,7 @@ export async function GET(req: Request) {
     });
 
     const sb = createAdminClient();
-    await sb.from("integrations").upsert(
+    const { error: errGuardar } = await sb.from("integrations").upsert(
       {
         org_id: orgId,
         provider: "calendly",
@@ -124,6 +124,25 @@ export async function GET(req: Request) {
       },
       { onConflict: "org_id,provider" },
     );
+
+    /* SE MIRA SI GUARDÓ. El 9 sep 2026 el callback de Google dijo «se conectó
+     * correctamente» tres veces con la fila sin escribir, porque nadie leía el
+     * error de su upsert. Aquí faltaba igual: la única diferencia era que este
+     * sí usaba la llave de servicio y por eso no había fallado todavía. */
+    if (errGuardar) {
+      console.error("[calendly callback] no se guardó la conexión:", errGuardar);
+      try {
+        await sb.from("conexiones_fallidas").insert({
+          org_id: orgId,
+          canal: "calendly",
+          paso: "guardar_conexion",
+          detalle: String(errGuardar.message ?? errGuardar).slice(0, 500),
+        });
+      } catch { /* apuntar el fallo no puede provocar otro */ }
+      return NextResponse.redirect(
+        `${ajustes}?error=${encodeURIComponent("No se pudo guardar la conexión: " + (errGuardar.message ?? "error al escribir"))}`,
+      );
+    }
 
     // Igual que con Google: los dos datos que hace falta pedirle a la persona
     // para que la cita salga completa quedan creados. Sin correo no hay

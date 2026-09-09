@@ -8898,4 +8898,46 @@ describe("Conectar la agenda manda la plantilla del recordatorio", () => {
   });
 });
 
+
+describe("Conectar algo nunca dice «listo» sin haber guardado", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // 9 SEP 2026. La pantalla dijo «✅ Google Calendar se conectó correctamente»
+  // TRES VECES y la fila nunca llegó a la base. El `upsert` no capturaba su
+  // error: PostgREST lo devolvía, nadie lo leía, y el código seguía derecho
+  // hasta el `?connected=1`.
+  //
+  // El dueño se quedó sin agenda, reconectando en bucle, con la plataforma
+  // felicitándole cada vez. Es el peor sitio donde poner un error convertido
+  // en una mentira: el que se fía deja de tener el servicio y no se entera.
+  // ─────────────────────────────────────────────────────────────────────────
+  const CALLBACKS = [
+    "app/api/integrations/google/callback/route.ts",
+    "app/api/integrations/calendly/callback/route.ts",
+  ];
+
+  for (const rel of CALLBACKS) {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, rel), "utf8"));
+
+    test(`${rel.split("/")[3]}: MIRA si guardó antes de decir que sí`, () => {
+      esperar(/const \{[^}]*\berror\b[^}]*\}\s*=\s*await[\s\S]{0,200}?\.upsert\(/.test(t)).verdadero(
+        `${rel} guarda la conexión sin capturar el error: puede decir «conectado» sin haber escrito nada`,
+      );
+      esperar(/if \(errGuardar\)[\s\S]{0,400}?return NextResponse\.redirect/.test(t)).verdadero(
+        `${rel} captura el error pero sigue adelante igual: da lo mismo capturarlo`,
+      );
+    });
+
+    test(`${rel.split("/")[3]}: los tokens se escriben con la llave de servicio`, () => {
+      // Aquí se guardan `access_token` y `refresh_token`. Con la sesión del
+      // usuario de por medio, el RLS decide sobre un guardado que el propio
+      // servidor ya autorizó — y ese fue justo el fallo de Google.
+      const i = t.indexOf('.from("integrations")');
+      const antes = t.slice(Math.max(0, i - 200), i);
+      esperar(/createAdminClient\(\)|\bsb\b|\badmin\b/.test(antes)).verdadero(
+        `${rel} guarda los tokens con el cliente de la sesión y no con la llave de servicio`,
+      );
+    });
+  }
+});
+
 process.exit(await correrPruebas());
