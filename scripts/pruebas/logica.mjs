@@ -141,6 +141,12 @@ import { htmlToText, cerrarEtiquetasAbiertas } from "../../src/lib/ai/fromUrl.ts
 import { correoParaLaCita, pareceUnCorreo } from "../../src/lib/ai/correoDeLaCita.ts";
 import { agendaDelNegocio, cuantasAgendoLana } from "../../src/lib/agenda/vista.ts";
 import { mesEnCuadricula, diaEnZona, mesVecino } from "../../src/lib/agenda/mes.ts";
+import { queQuisoDecir, cuandoEnPalabras, BOTON_CONFIRMA, BOTON_CAMBIA } from "../../src/lib/agenda/recordatorio.ts";
+import { RECORDATORIO_CITA, PARA_LA_AGENDA } from "../../src/lib/whatsapp/plantillasDeLaCasa.ts";
+import {
+  revisar as revisarPlantilla, hayGraves as plantillaGrave,
+  aComponentesDeMeta, cuantasVariables,
+} from "../../src/lib/whatsapp/plantillas.ts";
 
 // ─── Atajos del chatbot (0 = reiniciar, 1 = persona) ────────────────────────
 describe("Atajos del chatbot", () => {
@@ -7252,6 +7258,113 @@ describe("El mes en cuadrícula", () => {
   test("las flechas cruzan bien el año", () => {
     esperar(JSON.stringify(mesVecino(2026, 1, -1))).igual('{"anio":2025,"mes":12}');
     esperar(JSON.stringify(mesVecino(2026, 12, 1))).igual('{"anio":2027,"mes":1}');
+  });
+});
+
+
+// ─── La respuesta al recordatorio ────────────────────────────────────────────
+describe("Qué contestó al recordatorio de su cita", () => {
+  test("los botones de la plantilla, exactos", () => {
+    esperar(queQuisoDecir(BOTON_CONFIRMA)).igual("confirma");
+    esperar(queQuisoDecir(BOTON_CAMBIA)).igual("cambia");
+  });
+
+  test("CAMBIAR GANA SIEMPRE, aunque lleve un «sí» dentro", () => {
+    // «Sí, pero necesito cambiarla» tiene las dos señales. Si ganara el «sí»,
+    // la cita quedaría en pie y alguien esperaría en la puerta.
+    esperar(queQuisoDecir("Si, pero necesito cambiarla")).igual("cambia");
+    esperar(queQuisoDecir("si pero no puedo")).igual("cambia");
+  });
+
+  test("la gente escribe en vez de tocar el botón", () => {
+    for (const t of ["si", "Sí", "claro", "dale", "listo", "ahí estaré", "confirmado", "ok"]) {
+      esperar(queQuisoDecir(t)).igual("confirma", `no entendió «${t}» como confirmación`);
+    }
+    for (const t of ["no puedo", "necesito cambiarla", "cancelar", "otro día", "quiero mover la cita"]) {
+      esperar(queQuisoDecir(t)).igual("cambia", `no entendió «${t}» como cambio`);
+    }
+  });
+
+  test("UN PÁRRAFO NO ES UNA RESPUESTA A UN BOTÓN", () => {
+    // Quien escribe largo está contando algo y merece el bot entero, no esta regla.
+    esperar(queQuisoDecir(
+      "hola buenas tardes queria preguntar si el precio incluye el traslado o va aparte",
+    )).igual(null);
+  });
+
+  test("lo que no es respuesta devuelve null y sigue su camino", () => {
+    for (const t of ["", null, undefined, "cuanto cuesta", "hola", "gracias"]) {
+      esperar(queQuisoDecir(t)).igual(null, `se tragó «${t}» como respuesta al recordatorio`);
+    }
+  });
+
+  test("la fecha se dice en la zona del negocio", () => {
+    // 15:00 UTC son las 10:00 en Panamá. Decirle otra hora a quien tiene la cita
+    // es peor que no mandar recordatorio.
+    const t = cuandoEnPalabras("2026-09-10T15:00:00Z", "America/Panama");
+    esperar(t.includes("10:00")).verdadero(`dijo «${t}», que no está en la zona del negocio`);
+    esperar(t.includes("jueves")).verdadero(`no dijo el día: «${t}»`);
+  });
+
+  test("una fecha rota no revienta el envío", () => {
+    esperar(cuandoEnPalabras("mañana", "UTC")).igual("");
+  });
+});
+
+
+// ─── La plantilla del recordatorio ───────────────────────────────────────────
+describe("La plantilla del recordatorio la aceptaría Meta", () => {
+  test("PASA EL MISMO VALIDADOR QUE LAS DEL CLIENTE", () => {
+    // Un rechazo de Meta cuesta hasta 24 horas y casi nunca dice por qué. Esta
+    // prueba lo dice ahora: si alguien edita el texto y lo deja mal, se ve aquí.
+    const avisos = revisarPlantilla(RECORDATORIO_CITA);
+    esperar(plantillaGrave(avisos)).falso(
+      "Meta rechazaría la plantilla del recordatorio: " +
+      avisos.filter((a) => a.grave).map((a) => `${a.campo}: ${a.texto}`).join(" · "),
+    );
+  });
+
+  test("es de UTILIDAD, no de promoción", () => {
+    // Promoción cuesta unas seis veces más y se la pueden desactivar al negocio.
+    esperar(RECORDATORIO_CITA.categoria).igual("UTILITY");
+  });
+
+  test("hay un ejemplo por variable, y en orden", () => {
+    // Meta exige un ejemplo por hueco. Si faltan, rechaza sin decir cuál.
+    esperar(RECORDATORIO_CITA.ejemplos.length).igual(
+      cuantasVariables(RECORDATORIO_CITA.cuerpo),
+      "el número de ejemplos no cuadra con el de variables: rechazo seguro",
+    );
+  });
+
+  test("LOS BOTONES DICEN EXACTAMENTE LO QUE LA PLATAFORMA ESPERA", () => {
+    // Meta devuelve el texto del botón tal cual y `recordatorio.ts` lo compara.
+    // Una tilde de más aquí y la confirmación no se apunta nunca.
+    const textos = RECORDATORIO_CITA.botones.map((b) => b.texto);
+    esperar(textos.join("|")).igual(`${BOTON_CONFIRMA}|${BOTON_CAMBIA}`);
+    esperar(RECORDATORIO_CITA.botones.every((b) => b.tipo === "QUICK_REPLY")).verdadero(
+      "un botón dejó de ser de respuesta rápida: no devolvería texto al tocarlo",
+    );
+  });
+
+  test("y lo que se toca vuelve entendido", () => {
+    // El círculo completo: lo que Meta manda de vuelta al tocar el botón es lo
+    // que `queQuisoDecir` tiene que reconocer.
+    for (const b of RECORDATORIO_CITA.botones) {
+      esperar(queQuisoDecir(b.texto) !== null).verdadero(
+        `si alguien toca «${b.texto}», la plataforma no entiende la respuesta`,
+      );
+    }
+  });
+
+  test("se traduce al JSON de Meta sin reventar", () => {
+    const c = aComponentesDeMeta(RECORDATORIO_CITA);
+    esperar(Array.isArray(c)).verdadero();
+    esperar(JSON.stringify(c).includes(BOTON_CONFIRMA)).verdadero("los botones no llegaron al JSON");
+  });
+
+  test("la agenda declara qué plantillas necesita", () => {
+    esperar(PARA_LA_AGENDA.length > 0).verdadero("conectar la agenda no pediría ninguna plantilla");
   });
 });
 

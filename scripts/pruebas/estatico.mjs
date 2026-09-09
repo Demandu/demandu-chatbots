@@ -8859,4 +8859,43 @@ describe("Una consulta que no mira su error convierte un fallo en una mentira", 
   });
 });
 
+
+describe("Conectar la agenda manda la plantilla del recordatorio", () => {
+  // El recordatorio solo sale con una plantilla aprobada en la cuenta de Meta
+  // DEL NEGOCIO, y aprobarla tarda hasta un día. Si no se manda al conectar, el
+  // cliente descubre que le falta el día que quiere usarla.
+  //
+  // Y tiene que hacerlo CADA camino que conecta una agenda: si solo lo hiciera
+  // Google, quien use Calendly se queda sin recordatorios y sin saber por qué.
+  const CAMINOS = [
+    "app/api/integrations/google/callback/route.ts",
+    "app/api/integrations/calendly/callback/route.ts",
+  ];
+
+  test("LOS DOS CAMINOS LA MANDAN", () => {
+    for (const rel of CAMINOS) {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, rel), "utf8"));
+      esperar(/asegurarPlantillas\(/.test(t)).verdadero(
+        `${rel} conecta una agenda y no manda la plantilla del recordatorio`,
+      );
+      esperar(/PARA_LA_AGENDA/.test(t)).verdadero(
+        `${rel} no usa la lista de plantillas de la agenda: mandaría otra cosa`,
+      );
+    }
+  });
+
+  test("y NO puede bloquear la conexión", () => {
+    // Un cliente que no puede conectar su Google porque una plantilla no salió
+    // tendría un fallo incomprensible en el sitio equivocado.
+    for (const rel of CAMINOS) {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, rel), "utf8"));
+      const i = t.indexOf("asegurarPlantillas(");
+      const antes = t.slice(Math.max(0, i - 300), i);
+      esperar(/try\s*\{/.test(antes)).verdadero(
+        `en ${rel} el envío de la plantilla no está protegido: un fallo de Meta impediría conectar la agenda`,
+      );
+    }
+  });
+});
+
 process.exit(await correrPruebas());

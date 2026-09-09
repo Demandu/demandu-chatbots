@@ -1,4 +1,6 @@
 import { asegurarAtributosDeAgenda } from "@/lib/agendaAtributos";
+import { asegurarPlantillas } from "@/lib/whatsapp/mandarDeLaCasa";
+import { PARA_LA_AGENDA } from "@/lib/whatsapp/plantillasDeLaCasa";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
@@ -72,6 +74,27 @@ export async function GET(req: Request) {
     // para que la cita salga completa quedan creados aquí: sin ellos la cita
     // se crea sin invitación y nadie se entera. Ver `agendaAtributos.ts`.
     await asegurarAtributosDeAgenda(orgId);
+
+    /* ── Y LA PLANTILLA DEL RECORDATORIO SE MANDA SOLA ──────────────────────
+     *
+     * El recordatorio de una cita solo sale con una plantilla aprobada en la
+     * cuenta de Meta DEL NEGOCIO, y aprobarla tarda hasta un día. Pedirle a un
+     * dentista que entre al Administrador de WhatsApp y la escriba con la
+     * categoría correcta y dos botones de texto exacto es pedirle que no use la
+     * función.
+     *
+     * Se manda aquí, al conectar la agenda: cuando quiera usar el recordatorio,
+     * ya estará aprobada.
+     *
+     * NO PUEDE BLOQUEAR LA CONEXIÓN. Si Meta no contesta o todavía no hay
+     * WhatsApp conectado, la agenda queda conectada igual — que es lo que la
+     * persona vino a hacer. Solo se apunta. */
+    try {
+      const r = await asegurarPlantillas(createAdminClient(), orgId, PARA_LA_AGENDA);
+      console.log("[agenda] plantillas de la casa:", JSON.stringify(r));
+    } catch (e: any) {
+      console.error("[agenda] no se pudieron mandar las plantillas:", e?.message ?? e);
+    }
 
     // Y se vuelve a donde estaba. Quien conectó su calendario desde la pantalla
     // de su asistente quiere seguir configurando su asistente, no aterrizar en

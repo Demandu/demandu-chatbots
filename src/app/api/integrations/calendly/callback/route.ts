@@ -1,4 +1,6 @@
 import { asegurarAtributosDeAgenda } from "@/lib/agendaAtributos";
+import { asegurarPlantillas } from "@/lib/whatsapp/mandarDeLaCasa";
+import { PARA_LA_AGENDA } from "@/lib/whatsapp/plantillasDeLaCasa";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -127,6 +129,18 @@ export async function GET(req: Request) {
     // para que la cita salga completa quedan creados. Sin correo no hay
     // invitación, y Calendly ADEMÁS la rechaza sin él.
     await asegurarAtributosDeAgenda(orgId);
+
+    /* La plantilla del recordatorio se manda sola, igual que al conectar
+     * Google. Conectar una agenda es lo que enciende la función, y venga por
+     * donde venga tiene que dejar lo mismo listo — si solo lo hiciera un
+     * camino, quien use Calendly se quedaría sin recordatorios y sin saber por
+     * qué. NO puede bloquear la conexión. Ver `mandarDeLaCasa.ts`. */
+    try {
+      const r = await asegurarPlantillas(createAdminClient(), orgId, PARA_LA_AGENDA);
+      console.log("[agenda] plantillas de la casa:", JSON.stringify(r));
+    } catch (e: any) {
+      console.error("[agenda] no se pudieron mandar las plantillas:", e?.message ?? e);
+    }
 
     return NextResponse.redirect(`${ajustes}?ok=calendly`);
   } catch (e: any) {
