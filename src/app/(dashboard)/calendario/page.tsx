@@ -6,6 +6,7 @@ import { cuantasAgendoLana } from "@/lib/agenda/vista";
 import { mesEnCuadricula, mesVecino, diaEnZona } from "@/lib/agenda/mes";
 import { guardarCalendariosVisibles } from "./acciones";
 import { mandarRecordatorio } from "./recordar";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
 
@@ -231,9 +232,14 @@ export default async function CalendarioPage({ searchParams }: { searchParams: {
                       ) : (
                         <form action={mandarRecordatorio} className="flex-none">
                           <input type="hidden" name="cita_id" value={c.citaId} />
-                          <button className="btn-soft px-3 py-1 text-xs">
+                          {/* SE DESACTIVA AL PULSAR, por lo mismo que el de
+                              difusiones (ver 0117): dos pulsaciones seguidas
+                              leen las dos `recordatorio_enviado_at` en nulo
+                              —se apunta DESPUÉS de que Meta confirme— y le
+                              llegan dos recordatorios a la misma persona. */}
+                          <SubmitButton className="btn-soft px-3 py-1 text-xs" pendingText="Enviando…">
                             Pedir confirmación
-                          </button>
+                          </SubmitButton>
                         </form>
                       )}
                     </li>

@@ -8,6 +8,9 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
+import {
+  esChoqueDeUnico, esRepetidaPorTiempo, VENTANA_SEGUNDOS,
+} from "../../src/lib/campanas/repetida.ts";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
 import {
@@ -7365,6 +7368,68 @@ describe("La plantilla del recordatorio la aceptaría Meta", () => {
 
   test("la agenda declara qué plantillas necesita", () => {
     esperar(PARA_LA_AGENDA.length > 0).verdadero("conectar la agenda no pediría ninguna plantilla");
+  });
+});
+
+
+describe("una difusión no se manda dos veces (0117)", () => {
+  test("el choque contra el índice único se reconoce por código", () => {
+    esperar(esChoqueDeUnico({ code: "23505" })).verdadero();
+    esperar(esChoqueDeUnico({ code: "23505", message: "duplicate key value" })).verdadero();
+  });
+
+  test("y también por el texto, porque el código no siempre llega", () => {
+    esperar(esChoqueDeUnico({ message: 'duplicate key value violates unique constraint' })).verdadero();
+    esperar(esChoqueDeUnico({ message: "campaigns_idem_unico" })).verdadero();
+  });
+
+  test("cualquier otro error NO se toma por duplicado", () => {
+    // Esto es lo que separa «ya estaba» de «no se pudo escribir». Confundirlos
+    // llevaría a la persona a una campaña que no existe y daría el envío por
+    // hecho sin haberlo hecho.
+    esperar(esChoqueDeUnico({ code: "23503", message: "foreign key" })).falso();
+    esperar(esChoqueDeUnico({ code: "42501", message: "permission denied" })).falso();
+    esperar(esChoqueDeUnico(null)).falso();
+    esperar(esChoqueDeUnico("23505")).falso();
+    esperar(esChoqueDeUnico(undefined)).falso();
+  });
+
+  test("los dos casos reales caen dentro de la ventana", () => {
+    // 9 sep: 1,5 s. 2 sep: 8,4 s. Si la ventana no los cubre, no arregla nada.
+    const ahora = Date.parse("2026-09-09T19:31:46.971Z");
+    esperar(esRepetidaPorTiempo("2026-09-09T19:31:45.471Z", ahora)).verdadero(
+      "el doble clic de 1,5 s se colaría otra vez",
+    );
+    esperar(esRepetidaPorTiempo("2026-09-02T22:54:38.978Z", Date.parse("2026-09-02T22:54:46.906Z"))).verdadero(
+      "el doble envío de 8,4 s se colaría otra vez",
+    );
+  });
+
+  test("pasada la ventana, repetir a propósito sigue valiendo", () => {
+    const ahora = Date.parse("2026-09-09T19:31:46.971Z");
+    esperar(esRepetidaPorTiempo("2026-09-09T19:30:00.000Z", ahora)).falso(
+      "una difusión repetida a conciencia quedaría bloqueada",
+    );
+  });
+
+  test("una fecha ilegible no bloquea un envío", () => {
+    // Ante la duda se manda: no mandar es un fallo que nadie ve.
+    esperar(esRepetidaPorTiempo(null, Date.now())).falso();
+    esperar(esRepetidaPorTiempo("", Date.now())).falso();
+    esperar(esRepetidaPorTiempo("ayer", Date.now())).falso();
+  });
+
+  test("un reloj adelantado tampoco bloquea", () => {
+    const ahora = Date.parse("2026-09-09T19:00:00.000Z");
+    esperar(esRepetidaPorTiempo("2026-09-09T19:00:30.000Z", ahora)).falso();
+  });
+
+  test("el borde de la ventana es exacto", () => {
+    const ahora = Date.parse("2026-09-09T19:31:46.971Z");
+    const justo = new Date(ahora - VENTANA_SEGUNDOS * 1000).toISOString();
+    const unPocoMas = new Date(ahora - VENTANA_SEGUNDOS * 1000 - 1).toISOString();
+    esperar(esRepetidaPorTiempo(justo, ahora)).verdadero();
+    esperar(esRepetidaPorTiempo(unPocoMas, ahora)).falso();
   });
 });
 

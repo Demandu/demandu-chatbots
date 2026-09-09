@@ -4,6 +4,7 @@ import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
 import { createClient } from "@/lib/supabase/server";
 import { sendCampaign } from "../../../campaigns/actions";
+import { SubmitButton } from "@/components/SubmitButton";
 import { channelOf } from "@/lib/channels";
 import { Send } from "lucide-react";
 
@@ -90,6 +91,12 @@ export default async function BotBroadcastsPage({
               <h3 className="mb-3 font-display text-lg font-semibold text-ink">Nuevo envío</h3>
               <form action={sendCampaign} className="space-y-3">
                 <input type="hidden" name="bot_id" value={bot.id} />
+                {/* EL IDENTIFICADOR DE ESTE FORMULARIO. Nace aquí, al pintar la
+                    pantalla, y viaja con cada pulsación. Dos pulsaciones traen
+                    el mismo valor y la segunda no puede crear otra campaña.
+                    Recargar da uno nuevo: repetir a propósito sigue valiendo.
+                    Ver la migración 0117. */}
+                <input type="hidden" name="idem" value={crypto.randomUUID()} />
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-ink-2">Nombre</label>
                   <input name="name" required className="input-l" placeholder="Promo de mayo" />
@@ -116,9 +123,18 @@ export default async function BotBroadcastsPage({
                     placeholder="Vacío = todos los contactos de WhatsApp"
                   />
                 </div>
-                <button className="btn-primary w-full" disabled={!connected || !approved.length}>
+                {/* SE DESACTIVA AL PULSAR. La acción tarda varios segundos
+                    —canal, token, plantilla, audiencia, cola— y con el botón
+                    vivo la gente vuelve a pulsar. Así fue como salieron dos
+                    difusiones idénticas el 9 de septiembre. Esto es lo que
+                    quita la causa; el candado está en la base (0117). */}
+                <SubmitButton
+                  className="btn-primary w-full"
+                  pendingText="Encolando…"
+                  disabled={!connected || !approved.length}
+                >
                   <Send className="h-4 w-4" /> Enviar difusión
-                </button>
+                </SubmitButton>
               </form>
             </div>
           </div>

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
+import { esChoqueDeUnico, esRepetidaPorTiempo } from "@/lib/campanas/repetida";
 
 const GRAPH = "https://graph.facebook.com/v20.0";
 /**
@@ -134,6 +135,8 @@ export async function sendCampaign(formData: FormData) {
   const templateId = String(formData.get("template_id") ?? "");
   const name = String(formData.get("name") ?? "").trim() || "Difusión";
   const tag = String(formData.get("tag") ?? "").trim();
+  // El identificador del formulario. Ver `repetida.ts` y la migración 0117.
+  const idem = String(formData.get("idem") ?? "").trim() || null;
   if (!botId) return;
 
   const ch = await getChannel(supabase, botId);
@@ -164,7 +167,59 @@ export async function sendCampaign(formData: FormData) {
 
   if (!audience.length) redirect(`/bots/${botId}/broadcasts?error=sin_audiencia`);
 
-  const { data: campaign } = await supabase
+  /* ── AQUÍ SE CORTA EL ENVÍO DOBLE ────────────────────────────────────────
+   *
+   * 9 SEP 2026. Un doble clic creó DOS campañas idénticas con 1,5 segundos de
+   * diferencia y los dos contactos recibieron el mismo mensaje dos veces. El 2
+   * de septiembre había pasado igual con seis. Ver la migración 0117.
+   *
+   * Lo que lo permitía era que aquí no había nada que preguntara «¿esto ya lo
+   * mandé?». El botón tampoco se desactivaba, pero desactivarlo es del
+   * navegador, y el navegador no protege de una recarga ni de dos pestañas.
+   *
+   * El candado es el índice único `(org_id, idem)`: el segundo intento del
+   * MISMO formulario no puede entrar. No se avisa de nada — se lleva a la
+   * campaña que ya existe, que es lo que la persona quería ver. */
+  if (idem) {
+    const { data: yaEsta, error: errYaEsta } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("idem", idem)
+      .maybeSingle();
+    // Si esta consulta falla NO se para: el índice único de abajo sigue en pie
+    // y es el que de verdad corta. Parar aquí convertiría un fallo de lectura
+    // en una difusión que no sale.
+    if (errYaEsta) console.error("[difusión] no se pudo mirar si ya existía:", errYaEsta.message);
+    if (yaEsta) redirect(`/campaigns/${(yaEsta as any).id}`);
+  } else {
+    /* SIN IDENTIFICADOR —una pestaña abierta desde antes de este cambio— queda
+     * la red de seguridad: una campaña igual creada hace nada es la misma. */
+    const { data: parecidas, error: errParecidas } = await supabase
+      .from("campaigns")
+      .select("id, created_at")
+      .eq("org_id", orgId)
+      .eq("bot_id", botId)
+      .eq("name", name)
+      .eq("template_name", (tpl as any).name)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    /* AQUÍ SÍ SE PARA, y es lo contrario de lo de arriba a propósito: sin
+     * `idem` no hay índice único detrás, así que esta consulta es el único
+     * candado. Si no se puede mirar, no se sabe si es la segunda vez — y
+     * mandar dos veces cuesta dinero y quema el número. Recargar la pantalla
+     * da un `idem` y el envío vuelve a estar protegido de verdad. */
+    if (errParecidas) {
+      console.error("[difusión] no se pudo comprobar si era repetida:", errParecidas.message);
+      redirect(`/bots/${botId}/broadcasts?error=${encodeURIComponent("No se pudo comprobar si esta difusión ya se mandó. Recarga la pantalla y vuelve a intentarlo.")}`);
+    }
+    const ultima = (parecidas ?? [])[0] as any;
+    if (ultima && esRepetidaPorTiempo(ultima.created_at, Date.now())) {
+      redirect(`/campaigns/${ultima.id}`);
+    }
+  }
+
+  const { data: campaign, error: errCampaign } = await supabase
     .from("campaigns")
     .insert({
       org_id: orgId,
@@ -174,9 +229,36 @@ export async function sendCampaign(formData: FormData) {
       template_language: (tpl as any).language,
       status: "encolada",
       audience_count: audience.length,
+      idem,
     })
     .select("id")
     .single();
+
+  /* DOS PULSACIONES A LA VEZ LLEGAN AQUÍ LAS DOS. La comprobación de arriba no
+   * basta cuando las dos corren a la vez: las dos miran, las dos no encuentran
+   * nada, y las dos insertan. Solo una entra —el índice único— y la otra
+   * termina en este `if`, que es el único punto donde el candado es de verdad
+   * infalible. */
+  if (errCampaign && esChoqueDeUnico(errCampaign) && idem) {
+    const { data: laQueEntro, error: errBuscar } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("idem", idem)
+      .maybeSingle();
+    if (errBuscar) console.error("[difusión] choque de único y no pude ver cuál entró:", errBuscar.message);
+    if (laQueEntro) redirect(`/campaigns/${(laQueEntro as any).id}`);
+    /* Si no se encuentra, se sigue hacia abajo y se enseña el error de verdad.
+     * Lo que NO se hace es inventarse un «ya estaba» y llevar a ningún sitio:
+     * el candado cortó algo y hay que poder ver qué. */
+  }
+
+  // Un fallo al escribir la campaña se dice. Antes se caía al mismo sitio que
+  // «no hay campaña» y quedaba un «no_campaign» mudo.
+  if (errCampaign) {
+    console.error("[difusión] no se pudo crear la campaña:", errCampaign);
+    redirect(`/bots/${botId}/broadcasts?error=${encodeURIComponent(errCampaign.message ?? "no_campaign")}`);
+  }
   if (!campaign) redirect(`/bots/${botId}/broadcasts?error=no_campaign`);
 
   // POR TROZOS: mil filas en un solo `insert` es una petición enorme que puede

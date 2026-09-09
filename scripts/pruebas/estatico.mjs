@@ -8940,4 +8940,106 @@ describe("Conectar algo nunca dice «listo» sin haber guardado", () => {
   }
 });
 
+
+describe("Lo que gasta dinero no se puede pulsar dos veces", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // 9 SEP 2026. Un doble clic en «Enviar difusión» creó DOS campañas idénticas
+  // con 1,5 segundos de diferencia, y los dos contactos recibieron la misma
+  // plantilla dos veces. El 2 de septiembre había pasado igual con seis
+  // contactos y 8,4 segundos, y nadie lo vio.
+  //
+  // Cada duplicado es una conversación que Meta COBRA. Y lo caro no es el
+  // dinero: recibir dos veces el mismo mensaje es lo que hace que alguien
+  // bloquee el número, y un bloqueo le baja la calidad al número entero — a
+  // TODOS los mensajes del negocio, no solo a esa campaña.
+  //
+  // ── LOS DOS CANDADOS, Y POR QUÉ HACEN FALTA LOS DOS ────────────────────
+  //
+  // El botón que se desactiva quita la CAUSA, pero vive en el navegador: no
+  // protege de una recarga, de dos pestañas ni de un reintento de la red.
+  // El índice único de la migración 0117 es el que no se puede saltar.
+  //
+  // Esta regla mira los dos. Si algún día alguien vuelve a poner un `<button>`
+  // pelado en este formulario, o le quita el `idem`, esto se pone rojo.
+  // ─────────────────────────────────────────────────────────────────────────
+  const FORM = path.join(SRC, "app/(dashboard)/bots/[id]/broadcasts/page.tsx");
+  const ACCION = path.join(SRC, "app/(dashboard)/campaigns/actions.ts");
+
+  /* LAS PANTALLAS QUE MANDAN MENSAJES DE PAGO. Cada una de estas pulsaciones
+   * cuesta dinero en Meta y llega al teléfono de una persona, así que ninguna
+   * puede quedar viva mientras su acción corre.
+   *
+   * El recordatorio de cita está aquí por lo mismo aunque tenga su propia
+   * comprobación: `recordatorio_enviado_at` se apunta DESPUÉS de que Meta
+   * confirme, así que dos pulsaciones a la vez lo leen las dos en nulo y las
+   * dos mandan. */
+  const QUE_GASTAN = [
+    { que: "difusión", archivo: "app/(dashboard)/bots/[id]/broadcasts/page.tsx", accion: "sendCampaign" },
+    { que: "recordatorio", archivo: "app/(dashboard)/calendario/page.tsx", accion: "mandarRecordatorio" },
+  ];
+
+  for (const { que, archivo, accion } of QUE_GASTAN) {
+    test(`${que}: su formulario NO lleva un botón pelado`, () => {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, archivo), "utf8"));
+
+      // Se mira SOLO dentro de su formulario. Prohibir `<button>` en toda la
+      // pantalla daría rojo por la flecha de cambiar de mes, que no manda nada
+      // ni cuesta nada — y una regla que da rojo por lo que no importa acaba
+      // desactivada.
+      const i = t.indexOf(`action={${accion}}`);
+      esperar(i >= 0).verdadero(
+        `${archivo} ya no tiene un formulario que llame a ${accion}: esta regla dejó de mirar nada`,
+      );
+      const fin = t.indexOf("</form>", i);
+      const formulario = t.slice(i, fin >= 0 ? fin : i + 800);
+
+      esperar(/<button[\s>]/.test(formulario)).falso(
+        `el formulario de ${que} tiene un <button> normal: se puede pulsar dos veces mientras la acción corre, y cada pulsación manda un mensaje que Meta cobra`,
+      );
+      esperar(/<SubmitButton/.test(formulario)).verdadero(
+        `el formulario de ${que} no usa SubmitButton, que es lo que lo desactiva al pulsar`,
+      );
+    });
+  }
+
+  test("y manda su identificador, que es lo que el candado compara", () => {
+    const t = sinComentarios(fs.readFileSync(FORM, "utf8"));
+    esperar(/name="idem"/.test(t)).verdadero(
+      "el formulario no manda `idem`: sin él el índice único de 0117 no puede cortar nada",
+    );
+  });
+
+  test("la acción recoge el `idem` y lo escribe en la campaña", () => {
+    const t = sinComentarios(fs.readFileSync(ACCION, "utf8"));
+    esperar(/formData\.get\("idem"\)/.test(t)).verdadero(
+      "sendCampaign no lee `idem`: el formulario lo manda y nadie lo mira",
+    );
+    // Se mira DENTRO del objeto que se inserta. Buscar «idem» cerca de un
+    // `.insert(` daba verde con solo tenerlo en un `.eq("idem", …)` de más
+    // arriba: la regla pasaba sin que el dato llegara nunca a la fila.
+    esperar(/\.from\("campaigns"\)\s*\.insert\(\{[^}]*\bidem\b/.test(t)).verdadero(
+      "sendCampaign no guarda `idem` en la campaña: el índice único nunca llega a chocar",
+    );
+  });
+
+  test("y sabe qué hacer cuando el candado corta", () => {
+    const t = sinComentarios(fs.readFileSync(ACCION, "utf8"));
+    esperar(/esChoqueDeUnico\(/.test(t)).verdadero(
+      "sendCampaign no distingue «ya estaba» de «no se pudo escribir»: el segundo clic acabaría en un error",
+    );
+  });
+
+  test("el candado existe en la base, que es donde no se puede saltar", () => {
+    const dir = path.join(RAIZ, "supabase/migrations");
+    const todo = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      .join("\n");
+    esperar(/create unique index[\s\S]{0,120}campaigns[\s\S]{0,120}idem/i.test(todo)).verdadero(
+      "no hay índice único sobre (org_id, idem) en campaigns: el navegador sería el único candado",
+    );
+  });
+});
+
 process.exit(await correrPruebas());
