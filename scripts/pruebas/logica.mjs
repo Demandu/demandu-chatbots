@@ -140,6 +140,7 @@ import { pareceUnaPregunta, decidirDesvio, puenteDeVuelta, esAfirmacion } from "
 import { htmlToText, cerrarEtiquetasAbiertas } from "../../src/lib/ai/fromUrl.ts";
 import { correoParaLaCita, pareceUnCorreo } from "../../src/lib/ai/correoDeLaCita.ts";
 import { agendaDelNegocio, cuantasAgendoLana } from "../../src/lib/agenda/vista.ts";
+import { mesEnCuadricula, diaEnZona, mesVecino } from "../../src/lib/agenda/mes.ts";
 
 // ─── Atajos del chatbot (0 = reiniciar, 1 = persona) ────────────────────────
 describe("Atajos del chatbot", () => {
@@ -7191,6 +7192,66 @@ describe("La agenda enseña TODO y dice quién agendó cada cita", () => {
 
   test("sin nada, lista vacía y no una llamada rota", () => {
     esperar(agendaDelNegocio(null, null).length).igual(0);
+  });
+});
+
+
+// ─── El mes en cuadrícula ────────────────────────────────────────────────────
+describe("El mes en cuadrícula", () => {
+  const c = (inicio) => ({ inicio });
+
+  test("empieza en LUNES y salen semanas completas", () => {
+    // Septiembre de 2026 empieza en martes: la primera celda debe ser el lunes 31.
+    const g = mesEnCuadricula(2026, 9, [], "America/Panama");
+    esperar(g[0].dia).igual("2026-08-31", "la cuadrícula no empieza en lunes");
+    esperar(g.length % 7).igual(0, "hay semanas incompletas: la pantalla saltaría");
+    esperar(g[0].delMes).falso("el relleno del mes anterior se marcó como del mes");
+  });
+
+  test("un mes que empieza en domingo también cuadra", () => {
+    // Febrero de 2026 empieza en domingo: el caso que rompe las cuadrículas.
+    const g = mesEnCuadricula(2026, 2, [], "America/Panama");
+    esperar(g[0].dia).igual("2026-01-26");
+    esperar(g.length % 7).igual(0);
+    esperar(g.some((x) => x.dia === "2026-02-28" && x.delMes)).verdadero("se perdió el último día del mes");
+  });
+
+  test("EL DÍA SE SACA EN LA ZONA DEL NEGOCIO", () => {
+    // 20:00 en Panamá son las 01:00 UTC del día siguiente. Con `toISOString()`
+    // media agenda de la tarde saldría un día corrida.
+    const g = mesEnCuadricula(2026, 9, [c("2026-09-15T01:00:00Z")], "America/Panama");
+    const dia14 = g.find((x) => x.dia === "2026-09-14");
+    esperar(dia14.citas.length).igual(1, "la cita de la tarde se fue al día siguiente");
+  });
+
+  test("cada cita cae en su día y salen ordenadas por hora", () => {
+    const g = mesEnCuadricula(2026, 9, [
+      c("2026-09-10T20:00:00Z"), c("2026-09-10T14:00:00Z"), c("2026-09-11T14:00:00Z"),
+    ], "UTC");
+    const d10 = g.find((x) => x.dia === "2026-09-10");
+    esperar(d10.citas.map((x) => x.inicio).join("|")).igual(
+      "2026-09-10T14:00:00Z|2026-09-10T20:00:00Z", "no ordenó las citas del día",
+    );
+    esperar(g.find((x) => x.dia === "2026-09-11").citas.length).igual(1);
+  });
+
+  test("una cita de otro mes NO se cuela en la primera celda", () => {
+    const g = mesEnCuadricula(2026, 9, [c("2026-12-01T14:00:00Z")], "UTC");
+    esperar(g.reduce((n, x) => n + x.citas.length, 0)).igual(0, "coló una cita que no es de este mes");
+  });
+
+  test("una zona inválida no revienta la pantalla", () => {
+    esperar(diaEnZona("2026-09-10T14:00:00Z", "No/Existe")).igual("2026-09-10");
+  });
+
+  test("sin fecha o con basura, no hay día", () => {
+    esperar(diaEnZona(null, "UTC")).igual(null);
+    esperar(diaEnZona("mañana", "UTC")).igual(null);
+  });
+
+  test("las flechas cruzan bien el año", () => {
+    esperar(JSON.stringify(mesVecino(2026, 1, -1))).igual('{"anio":2025,"mes":12}');
+    esperar(JSON.stringify(mesVecino(2026, 12, 1))).igual('{"anio":2027,"mes":1}');
   });
 });
 
