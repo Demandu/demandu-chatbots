@@ -63,25 +63,41 @@ export function VistaTelefono({ b }: { b: Borrador }) {
         Así lo verá tu cliente
       </p>
 
-      {/* El teléfono */}
-      <div className="mx-auto w-[300px] rounded-[2.2rem] border-[10px] border-[#111] bg-[#111] shadow-2xl">
-        {/* Barra de WhatsApp */}
-        <div className="flex items-center gap-2 rounded-t-[1.4rem] bg-[#075e54] px-3 py-2.5 text-white">
-          <div className="grid h-7 w-7 place-items-center rounded-full bg-white/25 text-[11px] font-bold">
-            {(b.nombre || "N").slice(0, 1).toUpperCase()}
+      {/* ── EL TELÉFONO ──────────────────────────────────────────────────────
+          Es un iPhone a propósito y no una caja gris. Quien escribe una
+          plantilla está decidiendo qué va a leer una persona en su teléfono, y
+          el tamaño real es la mitad de la información: un texto que aquí se ve
+          cómodo y en un móvil ocupa cinco líneas se escribe distinto.
+
+          El marco lleva isla dinámica y barra inferior porque son las dos cosas
+          que hacen que el ojo lo lea como «un teléfono» y no como «un recuadro».
+          Ancho 360: es el de un iPhone moderno en puntos, así que lo que quepa
+          en una línea aquí, cabe allí. */}
+      <div className="mx-auto w-[360px] rounded-[3rem] border-[12px] border-[#0b0b0d] bg-[#0b0b0d] shadow-[0_25px_60px_-15px_rgba(0,0,0,.55)] ring-1 ring-black/20">
+        {/* La isla dinámica, encima de la barra de WhatsApp */}
+        <div className="relative rounded-t-[2.2rem] bg-[#075e54]">
+          <div className="flex justify-center pt-2">
+            <div className="h-[22px] w-[92px] rounded-full bg-[#0b0b0d]" />
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-[12px] font-semibold leading-tight">Tu negocio</p>
-            <p className="text-[10px] leading-tight text-white/70">en línea</p>
+
+          {/* Barra de WhatsApp */}
+          <div className="flex items-center gap-2.5 px-3.5 pb-3 pt-2 text-white">
+            <div className="grid h-9 w-9 place-items-center rounded-full bg-white/25 text-[13px] font-bold">
+              {(b.nombre || "N").slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-[14px] font-semibold leading-tight">Tu negocio</p>
+              <p className="text-[11px] leading-tight text-white/70">en línea</p>
+            </div>
           </div>
         </div>
 
         {/* Conversación */}
         <div
-          className="min-h-[320px] rounded-b-[1.4rem] px-3 py-4"
+          className="min-h-[440px] px-3.5 py-4"
           style={{ backgroundColor: FONDO_CHAT, backgroundImage: "radial-gradient(rgba(0,0,0,.035) 1px, transparent 1px)", backgroundSize: "14px 14px" }}
         >
-          <div className="max-w-[240px] overflow-hidden rounded-lg rounded-tl-none shadow-sm" style={{ backgroundColor: BURBUJA }}>
+          <div className="max-w-[280px] overflow-hidden rounded-lg rounded-tl-none shadow-sm" style={{ backgroundColor: BURBUJA }}>
             {/* Encabezado */}
             {b.encabezado === "TEXT" && encTexto.trim() && (
               <p className="px-2.5 pt-2 text-[13px] font-bold leading-snug text-[#111b21]">{encTexto}</p>
@@ -132,11 +148,18 @@ export function VistaTelefono({ b }: { b: Borrador }) {
               </div>
             )}
           </div>
+
+          {/* La barra de inicio. Va DENTRO del área del chat y no debajo del
+              marco: en un iPhone se dibuja encima del contenido, y ponerla
+              fuera deja una franja blanca que delata que es un dibujo. */}
+          <div className="flex justify-center pb-1.5 pt-4">
+            <div className="h-[5px] w-[120px] rounded-full bg-black/25" />
+          </div>
         </div>
       </div>
 
       {escondidos > 0 && (
-        <p className="mx-auto mt-2 max-w-[280px] text-center text-[11px] leading-snug text-ink-3">
+        <p className="mx-auto mt-3 max-w-[320px] text-center text-[11px] leading-snug text-ink-3">
           Con más de 3 botones, WhatsApp esconde el resto detrás de «Ver todas las opciones».
         </p>
       )}

@@ -300,9 +300,49 @@ export function InboxClient({
     return () => clearInterval(t);
   }, [loadConvos, loadMessages, selId]);
 
+  /* ── EL SCROLL NO TE ARRANCA DE DONDE ESTÁS LEYENDO ──────────────────────
+   *
+   * Antes esto bajaba al final CADA VEZ que cambiaba `messages`, y `messages`
+   * cambia sola cada 6 segundos por el refresco. Resultado: subías a leer el
+   * historial y a los pocos segundos el chat te devolvía al final. Con un
+   * cliente esperando respuesta, es de las cosas que más molestan de una
+   * bandeja — y no había forma de leer una conversación larga.
+   *
+   * Ahora se baja solo si YA ESTABAS ABAJO. Quien está al final quiere ver lo
+   * que llega; quien subió está leyendo, y moverle la pantalla es quitarle lo
+   * que estaba mirando.
+   *
+   * Al ABRIR otra conversación sí se baja siempre, y de golpe: es un chat
+   * nuevo, lo último es lo que importa, y con `smooth` se ve un barrido raro
+   * de arriba abajo cada vez que eliges a alguien.
+   *
+   * El margen es de 120 píxeles y no cero: nadie deja el scroll clavado al
+   * final exacto, y con cero la mitad de las veces no bajaría cuando debe. */
+  const pegadoAbajo = useRef(true);
+  const ultimaConversacion = useRef<string | null>(null);
+
+  const miraSiEstaAbajo = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    pegadoAbajo.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }, []);
+
   useEffect(() => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+    const el = bodyRef.current;
+    if (!el) return;
+
+    const cambioDeChat = ultimaConversacion.current !== selId;
+    ultimaConversacion.current = selId;
+
+    if (cambioDeChat) {
+      pegadoAbajo.current = true;
+      el.scrollTo({ top: el.scrollHeight });
+      return;
+    }
+    if (pegadoAbajo.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+  }, [messages, selId]);
 
   // Al cambiar de conversación se limpia lo traducido (son otros mensajes)
   useEffect(() => setTraducciones({}), [selId]);
@@ -994,6 +1034,9 @@ export function InboxClient({
           {/* Mensajes (estilo WhatsApp Web · paleta Demandu) */}
           <div
             ref={bodyRef}
+            // Apunta si estás al final. De eso depende que el refresco de cada
+            // 6 segundos te devuelva abajo o te deje leyendo donde estabas.
+            onScroll={miraSiEstaAbajo}
             className="relative flex flex-1 flex-col gap-1.5 overflow-y-auto px-[8%] py-4"
             style={{ backgroundColor: paleta.canvas, backgroundImage: paleta.doodle }}
             // Arrastrar un archivo sobre la conversación lo envía. Es el gesto
