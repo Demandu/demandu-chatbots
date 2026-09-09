@@ -12,6 +12,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 
+import { escanear, leerLineaBase } from "./consultasSinMirar.mjs";
+
 const RAIZ = path.resolve(import.meta.dirname, "../..");
 const SRC = path.join(RAIZ, "src");
 
@@ -8787,6 +8789,72 @@ describe("La IA no puede afirmar que hay dinero", () => {
     esperar(enWa.join("\n")).igual(
       enPuro.join("\n"),
       "las dos copias del filtro NO dicen lo mismo: un canal se protege y el otro no",
+    );
+  });
+});
+
+
+describe("Una cita sin correo no llega al calendario", () => {
+  // El 9 sep 2026 se agendó una cita sin invitado: apareció en el calendario del
+  // negocio y no le llegó nada a la persona, ni la invitación ni —al cancelar—
+  // el aviso. `sendUpdates=all` ya estaba bien puesto; no había a quién avisar.
+  //
+  // El módulo puro tiene sus pruebas, pero eso no basta: lo que se rompió fue el
+  // CABLE. Volver a poner `correoInvitado: args?.correo || undefined` deja el
+  // módulo intacto y la cita otra vez sin invitado.
+  const H = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8"));
+  const i = H.indexOf('case "agendar_cita"');
+  const caso = i < 0 ? "" : H.slice(i, H.indexOf('case "', i + 20));
+
+  test("el candado está CABLEADO, no solo escrito", () => {
+    esperar(caso.length > 200).verdadero("no encontré el caso `agendar_cita`: la regla de abajo no acota nada");
+    esperar(/correoParaLaCita\(/.test(caso)).verdadero(
+      "`agendar_cita` ya no decide el correo con `correoParaLaCita`",
+    );
+    esperar(/if \(!elCorreo\.ok\) return/.test(caso)).verdadero(
+      "no se corta cuando falta el correo: la cita se crea sin invitado y nadie se entera",
+    );
+    esperar(/correoInvitado: elCorreo\.correo/.test(caso)).verdadero(
+      "lo que se manda al calendario ya no es el correo comprobado",
+    );
+    esperar(/correoInvitado:\s*args\?\.correo/.test(caso)).falso(
+      "volvió el correo crudo del modelo: sin él la cita se agenda igual, sin invitado",
+    );
+  });
+});
+
+
+describe("Una consulta que no mira su error convierte un fallo en una mentira", () => {
+  // `data: null` significa DOS cosas: «no hay nada» y «la consulta falló». Quien
+  // no mira `error` no puede distinguirlas, y acaba diciéndole al cliente «no
+  // está configurado» cuando lo que pasó es que la base dijo que no.
+  //
+  // Pasó tres veces esta semana. Ver `consultasSinMirar.mjs`.
+  const BASE = path.join(RAIZ, "scripts/pruebas/consultas-sin-mirar-el-error.txt");
+  const { porArchivo, miran, noMiran } = escanear(RAIZ);
+  const apuntado = leerLineaBase(BASE);
+
+  test("el detector distingue las dos formas", () => {
+    // GUARDIÁN. Si la expresión dejara de casar, encontraría cero de las dos y
+    // la regla de abajo pasaría siempre, en silencio. Es exactamente cómo una
+    // puerta se queda ciega.
+    esperar(miran > 20).verdadero(`solo vi ${miran} consultas que SÍ miran el error: el detector está roto`);
+    esperar(noMiran > 0).verdadero("no vi ni una sin mirar el error: el detector está roto o ya no hay ninguna");
+    esperar(apuntado !== null).verdadero(
+      "falta la línea base. Córrela con: node scripts/apuntar-consultas.mjs",
+    );
+  });
+
+  test("NINGUNA CONSULTA NUEVA SE SALTA SU ERROR", () => {
+    const peores = [];
+    for (const [ruta, ahora] of porArchivo) {
+      const antes = apuntado?.get(ruta) ?? 0;
+      if (ahora > antes) peores.push(`${ruta}: ${antes} → ${ahora}`);
+    }
+    esperar(peores.join("\n")).igual(
+      "",
+      "hay consultas nuevas que no capturan su error. Escribe `const { data, error } = ...` y " +
+      "distingue «no hay nada» de «falló la consulta»:\n" + peores.join("\n"),
     );
   });
 });

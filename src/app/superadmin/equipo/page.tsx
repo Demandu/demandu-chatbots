@@ -396,19 +396,37 @@ export default async function EquipoPage({
                                 {c.estado_cobro !== "activa" && ` · ${c.estado_cobro}`}
                               </span>
                             </span>
-                            <form action={comisionDeCliente} className="flex flex-none items-center gap-1">
-                              <input type="hidden" name="org_id" value={c.id} />
-                              <input
-                                name="pct"
-                                defaultValue={c.comision_pct ?? ""}
-                                placeholder={String(efectivo)}
-                                inputMode="decimal"
-                                title="Comisión pactada para este cliente. Vacío = la del vendedor o la escala."
-                                className="input-l w-14 px-1.5 py-0.5 text-center text-[11px]"
-                              />
-                              <span className="text-[11px] text-ink-3">%</span>
-                              <button className="btn-soft px-1.5 py-0.5 text-[11px]">ok</button>
-                            </form>
+                            <div className="flex flex-none items-center gap-1">
+                              <form action={comisionDeCliente} className="flex items-center gap-1">
+                                <input type="hidden" name="org_id" value={c.id} />
+                                <input
+                                  name="pct"
+                                  defaultValue={c.comision_pct ?? ""}
+                                  placeholder={String(efectivo)}
+                                  inputMode="decimal"
+                                  title="Comisión pactada para este cliente. Vacío = la del vendedor o la escala."
+                                  className="input-l w-14 px-1.5 py-0.5 text-center text-[11px]"
+                                />
+                                <span className="text-[11px] text-ink-3">%</span>
+                                <button className="btn-soft px-1.5 py-0.5 text-[11px]">ok</button>
+                              </form>
+                              {/* QUITARLO DE LA CARTERA.
+                                  `asignarCliente` sin miembro pone `atendido_por` en null — ya lo
+                                  hacía y lo apunta en la bitácora; lo único que faltaba era el botón.
+                                  El cliente NO se borra: vuelve a la lista de «sin asignar» y se le
+                                  puede dar a otro. Su comisión pactada se queda guardada, así que
+                                  reasignarlo no obliga a volver a escribirla. */}
+                              <form action={asignarCliente}>
+                                <input type="hidden" name="org_id" value={c.id} />
+                                <input type="hidden" name="miembro_id" value="" />
+                                <button
+                                  title={`Quitar a ${c.name} de su cartera. El cliente no se borra: queda sin vendedor asignado.`}
+                                  className="btn-soft px-1.5 py-0.5 text-[11px] text-ink-3 hover:text-ink"
+                                >
+                                  quitar
+                                </button>
+                              </form>
+                            </div>
                           </li>
                         );
                       })}

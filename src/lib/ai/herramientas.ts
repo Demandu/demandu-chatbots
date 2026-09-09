@@ -12,6 +12,7 @@ import {
 import { zonaDelTelefono } from "@/lib/zonaHoraria";
 import { emitir } from "@/lib/salidas";
 import { prometioUnaPersona } from "@/lib/ai/promesas";
+import { correoParaLaCita } from "@/lib/ai/correoDeLaCita";
 import {
   tiendaDelBot, enlaceDelBot, productosQueSePuedenOfrecer, precioDelBot,
   comoVaElPedido, pedidoDelQueHablar,
@@ -290,13 +291,20 @@ export async function armarHerramientas(
       name: "agendar_cita",
       description:
         "Reserva una cita. El `inicio` DEBE ser uno de los que devolvió ver_horarios, copiado tal cual. " +
-        "No la llames sin haber confirmado la hora con la persona.",
+        "No la llames sin haber confirmado la hora con la persona. " +
+        "HACE FALTA SU CORREO: sin él no le llega la invitación y la cita queda solo en el calendario " +
+        "del negocio. Si no lo sabes, pregúntaselo antes de llamar a esta herramienta.",
       input_schema: {
         type: "object",
         properties: {
           inicio: { type: "string", description: "La fecha y hora exacta que devolvió ver_horarios." },
           nombre: { type: "string", description: "Nombre de quien reserva, si lo sabes." },
-          correo: { type: "string", description: "Su correo, si lo sabes. Le llega la invitación." },
+          correo: {
+            type: "string",
+            description:
+              "Su correo, para mandarle la invitación. Si ya te lo dio antes en esta conversación, " +
+              "repítelo aquí. Si no lo tienes, pídeselo primero: sin correo la cita no se crea.",
+          },
         },
         required: ["inicio"],
       },
@@ -686,12 +694,27 @@ export async function ejecutarHerramienta(
         const quien = await fichaDeLaConversacion(ctx);
         const nombreDeLaCita = String(args?.nombre ?? ctx.vars?.nombre ?? "cliente");
 
+        /* ── SIN CORREO NO SE AGENDA ──────────────────────────────────────
+         *
+         * El 9 sep 2026 se agendó una cita sin invitado: apareció en el
+         * calendario y no le llegó nada a nadie, ni la invitación ni —al
+         * cancelarla— el aviso de cancelación. Hubo que ponerlo a mano.
+         *
+         * Antes esto era `args?.correo || undefined`: si el modelo no lo
+         * traía, se agendaba igual. Agendar y no avisar es peor que no
+         * agendar. Ver `correoDeLaCita.ts`. */
+        const elCorreo = correoParaLaCita({
+          loDijoAhora: args?.correo,
+          enSuFicha: quien?.email ?? ctx.vars?.correo,
+        });
+        if (!elCorreo.ok) return elCorreo.motivo;
+
         const r = await agendar(ctx.orgId, {
           inicioISO: inicio,
           durationMin: 30,
           titulo: `Cita con ${nombreDeLaCita}`,
           descripcion: "Cita agendada por el agente de IA.",
-          correoInvitado: args?.correo || undefined,
+          correoInvitado: elCorreo.correo,
           // DE QUIÉN ES. Sin esto la cita se crea pero queda huérfana, y
           // después no se puede mover ni cancelar por chat: es exactamente el
           // agujero que dejaba a la IA sin saber «cuál cita».
@@ -700,6 +723,20 @@ export async function ejecutarHerramienta(
           nombreInvitado: nombreDeLaCita,
         });
         if (!r.ok) return `No se pudo agendar: ${r.error}. Ofrece otra hora.`;
+
+        /* SE GUARDA EN SU FICHA SI NO ESTABA. Así no se lo volvemos a pedir la
+         * próxima vez, y —más importante— si mueve o cancela la cita más
+         * adelante, Google tiene a quién avisar. Best-effort: la cita ya está
+         * hecha y un fallo aquí no puede deshacerla. */
+        if (elCorreo.de === "lo dijo ahora" && quien?.id && !quien?.email) {
+          try {
+            await ctx.admin
+              .from("contacts")
+              .update({ email: elCorreo.correo })
+              .eq("id", quien.id)
+              .eq("org_id", ctx.orgId);
+          } catch { /* la cita ya está creada; esto no la deshace */ }
+        }
 
         /* ── SE CONFIRMA EN EL MISMO RELOJ EN QUE SE OFRECIÓ ──────────────
          *

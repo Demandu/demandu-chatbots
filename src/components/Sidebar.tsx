@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Crown,
-  Store, Clock,
+  Store, Clock, CalendarDays,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
@@ -46,6 +46,16 @@ const CUANDO_HAY = [
   { href: "/inbox/programados", label: "En espera", icon: Clock },
 ];
 
+/**
+ * Calendario. Mismo criterio que «En espera»: solo existe cuando sirve de algo.
+ *
+ * Sin una agenda conectada, esta pantalla no puede enseñar nada — y una opción
+ * que siempre lleva a «conecta tu agenda» se aprende a ignorar, incluido el día
+ * que ya la conectaste. Lo decide el marco (servidor), que es quien sabe si hay
+ * conexión; el menú solo pinta.
+ */
+const CON_AGENDA = { href: "/calendario", label: "Calendario", icon: CalendarDays };
+
 const CONFIG = [
   { href: "/settings", label: "Configuración", icon: Settings },
   { href: "/analytics", label: "Resultados", icon: BarChart3 },
@@ -71,9 +81,12 @@ function corto(n: number): string {
 export function Sidebar({
   plan,
   esDelEquipo = false,
+  tieneAgenda = false,
 }: {
   plan?: ResumenDePlan | null;
   esDelEquipo?: boolean;
+  /** Hay Google Calendar o Calendly conectado. Lo calcula el marco. */
+  tieneAgenda?: boolean;
 }) {
   const pathname = usePathname();
   // Gente esperando a que alguien del equipo le conteste. Va aquí y no solo en
@@ -89,7 +102,7 @@ export function Sidebar({
   // otra encendía dos opciones a la vez y el menú dejaba de decirte dónde
   // estás. Se queda aunque ahora mismo ninguna opción anide dentro de otra:
   // la próxima que se añada lo volvería a romper.
-  const TODAS = [...MAIN, ...CUANDO_HAY, ...CONFIG].map((i) => i.href);
+  const TODAS = [...MAIN, ...CUANDO_HAY, CON_AGENDA, ...CONFIG].map((i) => i.href);
 
   const Item = ({ href, label, icon: Icon }: (typeof MAIN)[number]) => {
     const encaja = (h: string) => pathname === h || pathname.startsWith(h + "/");
@@ -132,6 +145,9 @@ export function Sidebar({
       {MAIN.map((i) => (
         <Item key={i.href} {...i} />
       ))}
+
+      {/* SOLO CON AGENDA CONECTADA. Sin ella la pantalla no puede enseñar nada. */}
+      {tieneAgenda && <Item key={CON_AGENDA.href} {...CON_AGENDA} />}
 
       {/* SOLO SI HAY ALGO. Con cero esperando, esta opción no existe. */}
       {esperando > 0 &&

@@ -138,6 +138,8 @@ import {
 } from "../../src/lib/analytics.ts";
 import { pareceUnaPregunta, decidirDesvio, puenteDeVuelta, esAfirmacion } from "../../src/lib/flow/desvio.ts";
 import { htmlToText, cerrarEtiquetasAbiertas } from "../../src/lib/ai/fromUrl.ts";
+import { correoParaLaCita, pareceUnCorreo } from "../../src/lib/ai/correoDeLaCita.ts";
+import { agendaDelNegocio, cuantasAgendoLana } from "../../src/lib/agenda/vista.ts";
 
 // ─── Atajos del chatbot (0 = reiniciar, 1 = persona) ────────────────────────
 describe("Atajos del chatbot", () => {
@@ -7083,6 +7085,112 @@ describe("La IA no puede afirmar que hay dinero", () => {
     esperar(quedaAlgoQueDecir("Claro, te ayudo con eso.")).verdadero();
     esperar(sinLoQueNoPuedeDecir("")).igual("");
     esperar(sinLoQueNoPuedeDecir(null)).igual("");
+  });
+});
+
+// ─── Sin correo no se agenda ─────────────────────────────────────────────────
+describe("Una cita sin correo no se agenda", () => {
+  test("si lo dijo ahora, ese manda", () => {
+    const r = correoParaLaCita({ loDijoAhora: "Henma@Gmail.com", enSuFicha: "viejo@x.com" });
+    esperar(r.ok).verdadero("no aceptó un correo válido");
+    esperar(r.correo).igual("henma@gmail.com", "no lo normalizó a minúsculas");
+    esperar(r.de).igual("lo dijo ahora");
+  });
+
+  test("si no dijo nada, se usa el de su ficha", () => {
+    const r = correoParaLaCita({ enSuFicha: "ya@estaba.com" });
+    esperar(r.ok).verdadero("no usó el correo que ya estaba guardado");
+    esperar(r.de).igual("ya estaba en su ficha");
+  });
+
+  test("SIN NINGUNO NO SE AGENDA, y se dice qué pedir", () => {
+    // Es el fallo del 9 sep 2026: la cita se creó sin invitado y nadie recibió
+    // ni la invitación ni la cancelación.
+    const r = correoParaLaCita({});
+    esperar(r.ok).falso("agendó sin correo: la invitación no le llega a nadie");
+    esperar(r.motivo.includes("NO agendes")).verdadero("no le dice al modelo que se pare");
+  });
+
+  test("un correo con mala pinta NO cuela, y no se cae al de la ficha", () => {
+    // El modelo puede pasar «no tiene» o el nombre de la persona. Google acepta
+    // basura sin quejarse y la invitación se pierde.
+    for (const malo of ["no tiene", "el mismo de antes", "henma", "henma@", "@gmail.com", "a b@c.com", "henma@gmail"]) {
+      const r = correoParaLaCita({ loDijoAhora: malo, enSuFicha: "buena@x.com" });
+      esperar(r.ok).falso(`coló «${malo}» como correo`);
+    }
+  });
+
+  test("los correos normales sí pasan", () => {
+    for (const bueno of ["a@b.co", "nombre.apellido@empresa.com.pa", "x+etiqueta@gmail.com"]) {
+      esperar(pareceUnCorreo(bueno)).verdadero(`rechazó «${bueno}», que es válido`);
+    }
+  });
+});
+
+
+// ─── La agenda del negocio ───────────────────────────────────────────────────
+describe("La agenda enseña TODO y dice quién agendó cada cita", () => {
+  const ev = (id, inicio, extra = {}) => ({
+    id, titulo: "Cita", inicio, fin: null, todoElDia: false, enlace: "", cancelado: false, ...extra,
+  });
+  const cita = (evento_id, extra = {}) => ({
+    evento_id, contact_id: "c1", conversation_id: "v1", nombre: "Henma",
+    correo: "henma@x.com", estado: "agendada", ...extra,
+  });
+
+  test("lo que agendó Lana se distingue de lo que puso el dueño", () => {
+    const v = agendaDelNegocio(
+      [ev("g1", "2026-09-10T15:00:00Z"), ev("g2", "2026-09-10T17:00:00Z")],
+      [cita("g1")],
+    );
+    esperar(v.length).igual(2, "se perdió un evento del calendario");
+    esperar(v[0].quien).igual("lana");
+    esperar(v[1].quien).igual("el negocio", "una cita que la plataforma no agendó se atribuyó a la IA");
+    esperar(cuantasAgendoLana(v)).igual(1);
+  });
+
+  test("SE PARTE DE GOOGLE: una cita borrada del calendario ya no existe", () => {
+    // `citas` no se sincroniza. Partiendo de ella, la pantalla enseñaría
+    // reuniones canceladas desde Google y el equipo se presentaría a ellas.
+    const v = agendaDelNegocio([], [cita("g1")]);
+    esperar(v.length).igual(0, "enseñó una cita que ya no está en el calendario");
+  });
+
+  test("un evento cancelado no es una cita", () => {
+    const v = agendaDelNegocio([ev("g1", "2026-09-10T15:00:00Z", { cancelado: true })], []);
+    esperar(v.length).igual(0, "dejó pasar un evento cancelado");
+  });
+
+  test("se cruza por identificador, NO por hora", () => {
+    // Mover una cita le cambia la hora y no el id. Cruzando por hora, moverla
+    // la convertiría en dos: la de la IA y una del negocio.
+    const v = agendaDelNegocio([ev("g1", "2026-09-11T20:00:00Z")], [cita("g1")]);
+    esperar(v.length).igual(1);
+    esperar(v[0].quien).igual("lana", "al mover la cita dejó de reconocerse como suya");
+  });
+
+  test("se avisa de la cita que se agendó sin correo", () => {
+    // Es el fallo del 9 sep: la cita existe y nadie recibió invitación.
+    const v = agendaDelNegocio([ev("g1", "2026-09-10T15:00:00Z")], [cita("g1", { correo: null })]);
+    esperar(v[0].sinInvitacion).verdadero("no señaló la cita sin invitación");
+  });
+
+  test("una cita cancelada por chat deja de ser suya, no desaparece", () => {
+    const v = agendaDelNegocio([ev("g1", "2026-09-10T15:00:00Z")], [cita("g1", { estado: "cancelada" })]);
+    esperar(v.length).igual(1, "borró un evento que Google todavía tiene");
+    esperar(v[0].quien).igual("el negocio");
+  });
+
+  test("salen ordenadas por hora, y sin hora no se pintan", () => {
+    const v = agendaDelNegocio(
+      [ev("b", "2026-09-12T10:00:00Z"), ev("sin", null), ev("a", "2026-09-10T10:00:00Z")],
+      [],
+    );
+    esperar(v.map((x) => x.id).join(",")).igual("a,b", "no ordenó por hora o coló uno sin hora");
+  });
+
+  test("sin nada, lista vacía y no una llamada rota", () => {
+    esperar(agendaDelNegocio(null, null).length).igual(0);
   });
 });
 

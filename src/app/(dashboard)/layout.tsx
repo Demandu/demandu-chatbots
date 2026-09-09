@@ -127,11 +127,34 @@ export default async function DashboardLayout({ children }: { children: React.Re
     plan = null;
   }
 
+  /* ── ¿HAY AGENDA CONECTADA? ────────────────────────────────────────────────
+   *
+   * Decide si el menú enseña «Calendario». Se mira la FILA de la integración y
+   * no si el token sirve: comprobar el token costaría un viaje a Google en cada
+   * carga de cualquier pantalla, y el precio de equivocarse es distinto en cada
+   * dirección. Con la conexión rota, enseñar la opción lleva a una pantalla que
+   * explica cómo arreglarla; esconderla deja al negocio sin saber por dónde.
+   *
+   * Un fallo aquí NO puede tumbar el marco entero: se cae a «no hay agenda»,
+   * que solo cuesta una opción de menos en el menú.
+   */
+  let tieneAgenda = false;
+  try {
+    const { data, error } = await createClient()
+      .from("integrations")
+      .select("provider")
+      .in("provider", ["google_calendar", "calendly"])
+      .limit(1);
+    tieneAgenda = !error && (data ?? []).length > 0;
+  } catch {
+    tieneAgenda = false;
+  }
+
   return (
     <div className="flex min-h-dvh flex-col">
       {soporte && <AvisoDeSoporte negocio={soporte.negocio} hasta={soporte.hasta} />}
       <div className="min-h-0 flex-1">
-        <Shell sidebar={<Sidebar plan={plan} esDelEquipo={esDelEquipo} />}>{children}</Shell>
+        <Shell sidebar={<Sidebar plan={plan} esDelEquipo={esDelEquipo} tieneAgenda={tieneAgenda} />}>{children}</Shell>
       </div>
     </div>
   );

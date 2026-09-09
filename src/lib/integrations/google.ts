@@ -185,6 +185,68 @@ export async function freeBusy(
   return (j.calendars?.[calendarId]?.busy ?? []) as BusyInterval[];
 }
 
+export interface EventoDeGoogle {
+  id: string;
+  titulo: string;
+  inicio: string | null;
+  fin: string | null;
+  todoElDia: boolean;
+  enlace: string;
+  invitados: string[];
+  cancelado: boolean;
+}
+
+/**
+ * Los eventos de un calendario entre dos fechas.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ES LA ÚNICA FORMA DE ENSEÑAR LA AGENDA DE VERDAD. La tabla `citas` no es una
+ * copia del calendario a propósito: solo sabe de las citas que agendó la
+ * plataforma. Lo que el negocio ya tenía puesto a mano vive únicamente aquí.
+ *
+ * `singleEvents: true` expande las series repetidas en sus ocurrencias. Sin eso,
+ * una reunión semanal aparece UNA vez —el día que se creó— y la pantalla miente
+ * sobre lo que hay mañana.
+ *
+ * Un fallo aquí NO revienta la pantalla: se devuelve lista vacía y quien llama
+ * decide qué contar. Pero no se confunde con «no tienes nada»: se devuelve
+ * `null`, que significa «no se pudo mirar». Es la misma distinción que costó
+ * tres pantallas mintiéndole a un cliente esta semana.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function listarEventos(
+  accessToken: string,
+  calendarId: string,
+  desdeISO: string,
+  hastaISO: string,
+): Promise<EventoDeGoogle[] | null> {
+  const url =
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events` +
+    `?timeMin=${encodeURIComponent(desdeISO)}&timeMax=${encodeURIComponent(hastaISO)}` +
+    `&singleEvents=true&orderBy=startTime&maxResults=250`;
+
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return ((j.items ?? []) as any[]).map((e) => ({
+      id: String(e?.id ?? ""),
+      titulo: String(e?.summary ?? "(sin título)"),
+      // Un evento de todo el día trae `date` en vez de `dateTime`.
+      inicio: e?.start?.dateTime ?? e?.start?.date ?? null,
+      fin: e?.end?.dateTime ?? e?.end?.date ?? null,
+      todoElDia: !e?.start?.dateTime,
+      enlace: String(e?.htmlLink ?? ""),
+      invitados: ((e?.attendees ?? []) as any[])
+        .map((a) => String(a?.email ?? ""))
+        .filter(Boolean),
+      cancelado: e?.status === "cancelled",
+    }));
+  } catch {
+    return null;
+  }
+}
+
 export async function createCalendarEvent(
   accessToken: string,
   calendarId: string,
