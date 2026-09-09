@@ -1,0 +1,114 @@
+diff --git a/src/app/api/movil/pedido/route.ts b/src/app/api/movil/pedido/route.ts
+new file mode 100644
+index 0000000..af487d5
+--- /dev/null
++++ b/src/app/api/movil/pedido/route.ts
+@@ -0,0 +1,43 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { cambiarEstadoPedido } from "@/app/(dashboard)/tienda/[id]/actions";
++
++export const dynamic = "force-dynamic";
++
++/**
++ * Mover un pedido desde la app del teléfono.
++ *
++ * NO REPITE LA LÓGICA DEL PANEL: llama a la misma acción que usa la pantalla
++ * de la tienda (`cambiarEstadoPedido`), que valida que el pedido esté cobrado,
++ * apunta el evento y le avisa al cliente por WhatsApp. Si el día de mañana
++ * cambia una regla ahí, la app la hereda sola.
++ *
++ * Entra con el token de la app en `Authorization: Bearer …` (ver
++ * `lib/supabase/server.ts`). Cuerpo: { tienda_id, pedido_id, estado }.
++ * `estado` puede ser uno de los pasos del pedido o "cobrado_por_fuera".
++ */
++export async function POST(req: Request) {
++  const sb = createClient();
++  const {
++    data: { user },
++  } = await sb.auth.getUser();
++  if (!user) return NextResponse.json({ ok: false, mensaje: "Inicia sesión." }, { status: 401 });
++
++  const b = (await req.json().catch(() => ({}))) as {
++    tienda_id?: string;
++    pedido_id?: string;
++    estado?: string;
++  };
++
++  if (!b.tienda_id || !b.pedido_id || !b.estado) {
++    return NextResponse.json({ ok: false, mensaje: "Faltan datos del pedido." }, { status: 400 });
++  }
++
++  const fd = new FormData();
++  fd.set("tienda_id", String(b.tienda_id));
++  fd.set("pedido_id", String(b.pedido_id));
++  fd.set("estado", String(b.estado));
++
++  const r = await cambiarEstadoPedido({ ok: true, mensaje: "" } as any, fd);
++  return NextResponse.json(r, { status: r.ok ? 200 : 400 });
++}
+diff --git a/src/lib/supabase/server.ts b/src/lib/supabase/server.ts
+index 12b5562..d9384d7 100644
+--- a/src/lib/supabase/server.ts
++++ b/src/lib/supabase/server.ts
+@@ -1,8 +1,24 @@
+ import { createServerClient } from "@supabase/ssr";
+-import { cookies } from "next/headers";
++import { createClient as createSupabaseClient } from "@supabase/supabase-js";
++import { cookies, headers } from "next/headers";
+ 
+-/** Supabase client for Server Components, Route Handlers and Server Actions. */
++/**
++ * Supabase client for Server Components, Route Handlers and Server Actions.
++ *
++ * ── LA APP MÓVIL ENTRA POR AQUÍ TAMBIÉN ──────────────────────────────────────
++ *
++ * El navegador manda su sesión en cookies. La app del iPhone no tiene cookies:
++ * manda el token de Supabase en la cabecera `Authorization: Bearer …`. Si esa
++ * cabecera viene, se arma un cliente con ese token —RLS y `auth.getUser()`
++ * funcionan igual que con la cookie— y las rutas existentes (`/api/canales/
++ * enviar`, etc.) no tienen que cambiar nada.
++ *
++ * Sin la cabecera, todo sigue exactamente como antes.
++ */
+ export function createClient() {
++  const token = tokenDeLaCabecera();
++  if (token) return clienteConToken(token);
++
+   const cookieStore = cookies();
+ 
+   return createServerClient(
+@@ -27,3 +43,33 @@ export function createClient() {
+     }
+   );
+ }
++
++function tokenDeLaCabecera(): string | null {
++  try {
++    const auth = headers().get("authorization") ?? "";
++    const m = /^Bearer\s+(.+)$/i.exec(auth.trim());
++    return m ? m[1].trim() : null;
++  } catch {
++    // Fuera de una petición (por ejemplo, en generación estática) no hay cabeceras.
++    return null;
++  }
++}
++
++function clienteConToken(token: string) {
++  const sb = createSupabaseClient(
++    process.env.NEXT_PUBLIC_SUPABASE_URL!,
++    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
++    {
++      global: { headers: { Authorization: `Bearer ${token}` } },
++      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
++    }
++  );
++
++  // `auth.getUser()` sin argumento busca una sesión guardada, y aquí no hay
++  // ninguna: se le pasa el token explícitamente para que lo verifique contra
++  // Supabase. Las rutas siguen llamando `getUser()` a secas.
++  const original = sb.auth.getUser.bind(sb.auth);
++  (sb.auth as any).getUser = (jwt?: string) => original(jwt ?? token);
++
++  return sb as unknown as ReturnType<typeof createServerClient>;
++}

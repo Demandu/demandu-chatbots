@@ -67,7 +67,7 @@ export async function cargarAgenda(
 
   const { data: filas, error: errCitas } = await admin
     .from("citas")
-    .select("evento_id, calendario, contact_id, conversation_id, nombre, correo, estado")
+    .select("id, evento_id, calendario, contact_id, conversation_id, nombre, correo, estado, recordatorio_enviado_at, respuesta")
     .eq("org_id", orgId)
     .gte("inicio", desde.toISOString())
     .lte("inicio", hasta.toISOString());

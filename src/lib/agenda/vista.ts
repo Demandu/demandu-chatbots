@@ -40,12 +40,15 @@ export type EventoCrudo = {
 };
 
 export type CitaCruda = {
+  id?: string | null;
   evento_id: string;
   contact_id: string | null;
   conversation_id: string | null;
   nombre: string | null;
   correo: string | null;
   estado: string | null;
+  recordatorio_enviado_at?: string | null;
+  respuesta?: string | null;
 };
 
 export type CitaEnLaVista = {
@@ -63,6 +66,13 @@ export type CitaEnLaVista = {
   correo: string | null;
   /** Se agendó por chat pero se quedó sin correo: no le llegó invitación. */
   sinInvitacion: boolean;
+  /** El id de la fila en `citas`. Solo lo tienen las que agendó la plataforma:
+   *  es lo único con lo que se puede pedir «recuérdasela a esta persona». */
+  citaId: string | null;
+  /** Ya se le mandó el recordatorio. Evita mandar dos. */
+  recordada: boolean;
+  /** Qué contestó: «confirma», «cambia», o nada todavía. */
+  respuesta: string | null;
 };
 
 /**
@@ -120,6 +130,9 @@ export function agendaDelNegocio(
       // Solo tiene sentido decirlo de las que agendó la plataforma: de las que
       // puso el dueño a mano, él ya sabe a quién invitó.
       sinInvitacion: !!suya && !String(suya.correo ?? "").trim(),
+      citaId: suya?.id ?? null,
+      recordada: !!suya?.recordatorio_enviado_at,
+      respuesta: suya?.respuesta ?? null,
     });
   }
 

@@ -5,6 +5,7 @@ import { cargarAgenda } from "@/lib/agenda/cargar";
 import { cuantasAgendoLana } from "@/lib/agenda/vista";
 import { mesEnCuadricula, mesVecino, diaEnZona } from "@/lib/agenda/mes";
 import { guardarCalendariosVisibles } from "./acciones";
+import { mandarRecordatorio } from "./recordar";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,17 @@ export default async function CalendarioPage({ searchParams }: { searchParams: {
   const delMes = agenda.citas.filter((c) => (diaEnZona(c.inicio, agenda.zona) ?? "").startsWith(
     `${anio}-${String(mes).padStart(2, "0")}`,
   ));
+
+  /* Las que vienen y a las que se les puede escribir. `citaId` solo lo tienen
+   * las que agendó la plataforma: de las que el dueño puso a mano no hay
+   * contacto ni teléfono, así que el botón no tendría a quién mandar nada.
+   * Catorce días: más allá, un recordatorio se olvida antes de la cita. */
+  const ahora = Date.now();
+  const proximas = agenda.citas.filter(
+    (c) => c.citaId
+      && new Date(c.inicio).getTime() > ahora
+      && new Date(c.inicio).getTime() < ahora + 14 * 86400000,
+  );
 
   return (
     <>
@@ -172,6 +184,63 @@ export default async function CalendarioPage({ searchParams }: { searchParams: {
               </span>
               <span>⚠ Se agendó sin correo, así que no se envió invitación</span>
             </p>
+
+            {/* ── LAS QUE VIENEN, CON SU RECORDATORIO ─────────────────────────
+                El botón no cabe en la cuadrícula —una celda de mes no admite
+                más—, y meterlo ahí obligaría a apretar todo. Va en una lista
+                aparte con solo las próximas: recordar una cita de dentro de tres
+                semanas no sirve de nada.
+
+                SOLO SALEN LAS QUE AGENDÓ LA PLATAFORMA. De las que el dueño puso
+                a mano no sabemos a quién escribirle: no hay contacto, no hay
+                teléfono. Enseñar el botón y que falle sería peor que no tenerlo. */}
+            {proximas.length > 0 && (
+              <div className="mt-8">
+                <h3 className="mb-1 font-display text-lg font-bold text-ink">Recordatorios</h3>
+                <p className="mb-3 text-sm text-ink-2">
+                  Manda un mensaje de WhatsApp para que te confirmen. Uno por cita.
+                </p>
+                <ul className="space-y-2">
+                  {proximas.map((c: any) => (
+                    <li
+                      key={c.citaId}
+                      className="flex flex-wrap items-center gap-3 rounded-xl border border-linea bg-tarjeta p-3"
+                    >
+                      <span className="w-44 flex-none text-sm text-ink-2">
+                        {new Date(c.inicio).toLocaleString("es-MX", {
+                          weekday: "short", day: "numeric", month: "short",
+                          hour: "numeric", minute: "2-digit", timeZone: agenda.zona,
+                        })}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                        {c.nombre || c.titulo}
+                      </span>
+
+                      {c.respuesta === "confirma" ? (
+                        <span className="flex-none rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-600">
+                          Confirmó
+                        </span>
+                      ) : c.respuesta === "cambia" ? (
+                        <span className="flex-none rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-amber-600">
+                          Quiere cambiarla
+                        </span>
+                      ) : c.recordada ? (
+                        <span className="flex-none rounded-full bg-suave px-2.5 py-0.5 text-[11px] text-ink-3">
+                          Enviado · sin respuesta
+                        </span>
+                      ) : (
+                        <form action={mandarRecordatorio} className="flex-none">
+                          <input type="hidden" name="cita_id" value={c.citaId} />
+                          <button className="btn-soft px-3 py-1 text-xs">
+                            Pedir confirmación
+                          </button>
+                        </form>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* ── QUÉ CALENDARIOS SE VEN ──────────────────────────────────────
                 Un calendario de trabajo lleva médicos, colegios y cumpleaños.
