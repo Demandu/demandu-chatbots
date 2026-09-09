@@ -8653,16 +8653,93 @@ describe("La IA no puede afirmar que hay dinero", () => {
   const WA = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
   const WEB = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
   const PURO = fs.readFileSync(path.join(SRC, "lib/ai/loQueNoPuedeDecir.ts"), "utf8");
+  const ANSWER = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8"));
+  // El chequeo de la pantalla de estado. Llama a la API para ver si la llave
+  // sirve, no para conversar. Ver la prueba que lo mantiene honesto, abajo.
+  const SOLO_COMPRUEBA_LA_LLAVE = "src/lib/estado/servicios.ts";
 
-  test("EL FILTRO SE APLICA A TODO LO QUE ESCRIBE EL MODELO", () => {
-    // No solo al caso del recibo. Las otras dos defensas son evitables —basta
-    // una tercera forma de llamar al modelo— y ésta es la que queda.
+  test("EL FILTRO ESTÁ EN LA PUERTA, NO EN CADA LLAMANTE", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ESTA REGLA ESTABA HUECA Y DABA UN CANAL POR PROTEGIDO QUE NO LO ESTABA.
+    //
+    // Buscaba `sinLoQueNoPuedeDecir(respuesta` en TODO `webRuntime.ts`. Lo
+    // encontraba —en el desvío, línea 422— y declaraba el motor entero cubierto.
+    // Pero el bloque «Respuesta con IA» de un flujo (línea 1089) mandaba el
+    // texto del modelo SIN FILTRAR, igual que los comentarios de Instagram y la
+    // prueba del panel. Tres de los cuatro caminos, en verde.
+    //
+    // Ahora el filtro vive DENTRO de `aiAnswer`, que es la puerta única, y esto
+    // vigila la puerta. Lo que la cierra de verdad es la última aserción: si lo
+    // que habla con la API se exporta, se puede llamar por fuera.
+    // ─────────────────────────────────────────────────────────────────────────
+    const i = ANSWER.indexOf("export async function aiAnswer");
+    esperar(i > 0).verdadero("no encontré la puerta `aiAnswer` en answer.ts");
+    const puerta = ANSWER.slice(i, ANSWER.indexOf("\n}", i) + 2);
+
+    // Guardián del recorte: si esto se llevara medio archivo, la aserción de
+    // abajo pasaría por casualidad. Es el fallo que ya se pagó dos veces.
+    esperar(puerta.length < 400).verdadero(
+      "el recorte de `aiAnswer` se llevó más que la función: la regla de abajo ya no acota nada",
+    );
+
+    esperar(/sinLoQueNoPuedeDecir\(/.test(puerta)).verdadero(
+      "`aiAnswer` ya no filtra: el widget web, Instagram y la prueba del panel pueden volver a afirmar un pago",
+    );
+
+    esperar(/\basync function pensarRespuesta/.test(ANSWER)).verdadero(
+      "no encontré `pensarRespuesta`: si `aiAnswer` volvió a hacer el trabajo, el filtro dejó de ser una puerta",
+    );
+    esperar(/\bexport\s+(async\s+)?function\s+pensarRespuesta/.test(ANSWER)).falso(
+      "`pensarRespuesta` se exportó: se puede llamar al modelo saltándose el filtro del dinero",
+    );
+  });
+
+  test("EL MOTOR DE WHATSAPP TAMBIÉN FILTRA", () => {
+    // Es un archivo aparte, con su copia deliberada. No comparte nada con lo
+    // de arriba, así que se vigila por separado.
     const wa = sinComentarios(WA);
     esperar(/const texto = sinLoQueNoPuedeDecir\(/.test(wa)).verdadero(
       "el texto de la IA de WhatsApp ya no pasa por el filtro del dinero",
     );
-    esperar(/sinLoQueNoPuedeDecir\(respuesta/.test(WEB)).verdadero(
-      "el texto de la IA del motor web ya no pasa por el filtro del dinero",
+  });
+
+  test("NINGÚN LLAMANTE SE SALTA LA PUERTA", () => {
+    // Si mañana alguien vuelve a llamar a la API desde otro archivo, este bot
+    // vuelve a poder decir «pago recibido». Solo `answer.ts` habla con el
+    // modelo; los demás piden por `aiAnswer`.
+    const sospechosos = ARCHIVOS
+      .filter((a) => !a.ruta.endsWith("lib/ai/answer.ts"))
+      .filter((a) => a.ruta !== SOLO_COMPRUEBA_LA_LLAVE)
+      .filter((a) => /api\.anthropic\.com/.test(sinComentarios(a.texto)))
+      .map((a) => a.ruta);
+    esperar(sospechosos.join(", ")).igual(
+      "",
+      "hay otro archivo llamando a la API de IA por su cuenta: ese camino no pasa por el filtro del dinero",
+    );
+  });
+
+  test("y el único exento NO lee lo que escribe el modelo", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // `servicios.ts` llama a la API a propósito: es la pantalla de estado, y
+    // comprueba que la llave sirva de verdad —un token, «hola»— en vez de
+    // suponerlo. Por eso está fuera de la regla de arriba.
+    //
+    // PERO UNA EXENCIÓN A SECAS ES UNA LISTA BLANCA, y una lista blanca es
+    // cómo una regla deja de poder fallar. La exención vale MIENTRAS ese
+    // archivo solo mire si la petición salió bien. El día que lea el texto del
+    // modelo, ese texto puede acabar en una pantalla sin pasar por el filtro, y
+    // esto se pone rojo.
+    // ─────────────────────────────────────────────────────────────────────────
+    const a = ARCHIVOS.find((x) => x.ruta === SOLO_COMPRUEBA_LA_LLAVE);
+    esperar(!!a).verdadero(
+      `la exención apunta a ${SOLO_COMPRUEBA_LA_LLAVE} y ese archivo ya no existe: revisa la regla de arriba`,
+    );
+    const t = sinComentarios(a?.texto ?? "");
+    esperar(/max_tokens:\s*1\b/.test(t)).verdadero(
+      "el chequeo de la llave dejó de pedir un solo token: ya no es un ping, es una generación",
+    );
+    esperar(/\.content\b/.test(t)).falso(
+      "el chequeo de la llave empezó a leer el texto del modelo: o pasa por el filtro, o deja de estar exento",
     );
   });
 
@@ -8682,19 +8759,34 @@ describe("La IA no puede afirmar que hay dinero", () => {
     }
   });
 
-  test("las dos copias del filtro dicen lo mismo", () => {
-    // Se comparan los patrones, no el archivo: exigir textos idénticos
-    // obligaría a copiar comentarios.
+  test("las dos copias del filtro dicen LO MISMO, no «lo mismo de largo»", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // ESTA REGLA CONTABA PATRONES. Nueve cualesquiera igualaban a nueve.
+    //
+    // El mutante que sobrevivía: cambiar `/pago\s+(recibid|confirmad|…)/i` por
+    // `/zzz/i` en la copia de Deno. Siguen siendo nueve, todo verde, y WhatsApp
+    // vuelve a poder escribir «¡Pago recibido!» — que es literalmente lo que
+    // pasó el 8 de septiembre de 2026.
+    //
+    // Ahora se comparan los patrones EN SÍ. Se les quita el espacio en blanco
+    // porque las dos copias se indentan distinto, y se ordenan porque el orden
+    // dentro de la lista no cambia lo que filtran. Cualquier otra diferencia
+    // pone esto en rojo.
+    // ─────────────────────────────────────────────────────────────────────────
     const patrones = (t) => {
       const i = t.indexOf("NO_PUEDE_AFIRMAR");
-      return (t.slice(i, t.indexOf("];", i)).match(/\/[^\n]*\/i/g) ?? []).length;
+      return (t.slice(i, t.indexOf("];", i)).match(/\/[^\n]*\/i/g) ?? [])
+        .map((s) => s.replace(/\s+/g, ""))
+        .sort();
     };
     const enWa = patrones(WA);
     const enPuro = patrones(PURO);
-    esperar(enPuro >= 8).verdadero(`el módulo puro se quedó con ${enPuro} patrones: el lector falla o se borraron`);
-    esperar(enWa).igual(
-      enPuro,
-      "las dos copias del filtro tienen distinto número de reglas: un canal se protege y el otro no",
+    esperar(enPuro.length >= 8).verdadero(
+      `el módulo puro se quedó con ${enPuro.length} patrones: o el lector falla o se borraron`,
+    );
+    esperar(enWa.join("\n")).igual(
+      enPuro.join("\n"),
+      "las dos copias del filtro NO dicen lo mismo: un canal se protege y el otro no",
     );
   });
 });

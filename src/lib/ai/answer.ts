@@ -12,6 +12,7 @@
 import { embedQuery } from "./ingest";
 import { armarHerramientas, ejecutarHerramienta, cumplirLoPrometido, type ContextoAgente } from "./herramientas";
 import { sinMarcadores } from "./acciones";
+import { sinLoQueNoPuedeDecir } from "./loQueNoPuedeDecir";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -156,7 +157,46 @@ function buildSystem(ai: Required<AiSettings>, knowledge: { title: string; conte
  * Genera la respuesta. Devuelve el texto que el bot debe enviar.
  * Nunca lanza excepción.
  */
-export async function aiAnswer(opts: {
+/**
+ * LA ÚLTIMA PUERTA, Y ESTÁ AQUÍ DENTRO A PROPÓSITO.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `sinLoQueNoPuedeDecir` impide que el modelo afirme que hay dinero o que un
+ * pedido cambió de estado. Estaba puesta en UN llamante —el desvío del widget—
+ * y por eso no cubría los otros tres:
+ *
+ *   webRuntime.ts:1089   el bloque «Respuesta con IA» de un flujo (widget web
+ *                        e Instagram privado). SIN FILTRO.
+ *   webhooks/instagram    los comentarios públicos.        SIN FILTRO.
+ *   api/ai/probar         la prueba del panel.             SIN FILTRO.
+ *
+ * Y lo peor no era el envío: el texto sin filtrar se GUARDABA como `sender:
+ * "bot"`, así que al día siguiente volvía al historial como palabras legítimas
+ * del modelo y se imitaba a sí mismo. El fallo se degradaba solo.
+ *
+ * Un guardián que vive en quien llama solo protege a quien se acordó de
+ * llamarlo. Puesto aquí, cubre los cuatro caminos de golpe y cubre también el
+ * quinto que alguien añada mañana sin leer esto.
+ *
+ * Es la misma lección que el motor de WhatsApp ya había aprendido: allí la
+ * misma función sirve al bloque de IA y al respaldo, y por eso nunca tuvo esta
+ * divergencia.
+ *
+ * SE ENVUELVE LA FUNCIÓN ENTERA Y NO SE FILTRA EN CADA `return`. `pensarRespuesta`
+ * tiene cinco salidas distintas; filtrar en cada una es volver al mismo problema
+ * un nivel más abajo, y el sexto `return` que se añada volvería a escaparse.
+ *
+ * Devolver «» cuando no queda nada es correcto y los tres llamantes ya lo
+ * manejan: `push` descarta el mensaje vacío, el desvío devuelve `null` y el
+ * comentario de Instagram no se publica. Callarse es el lado barato: lo único
+ * que iba a decir era algo que no le consta.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function aiAnswer(opts: Parameters<typeof pensarRespuesta>[0]): Promise<string> {
+  return sinLoQueNoPuedeDecir(await pensarRespuesta(opts));
+}
+
+async function pensarRespuesta(opts: {
   admin: any;
   botId: string;
   orgId: string;

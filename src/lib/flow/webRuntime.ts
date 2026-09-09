@@ -13,7 +13,6 @@ import {
 import type { MensajeChat } from "@/lib/tienda/conversacionDePedido";
 import { esElReciboDeUnPedido } from "@/lib/tienda/pedidoQueLlega";
 import { historialParaLaIA } from "@/lib/ai/historial";
-import { sinLoQueNoPuedeDecir } from "@/lib/ai/loQueNoPuedeDecir";
 import type { CarritoChat } from "@/lib/tienda/pedirPorChat";
 
 /**
@@ -408,18 +407,23 @@ async function responderDuda(ctx: Ctx, agente?: any): Promise<string | null> {
       // vigilaba; ahora hay una.
       agente,
     });
-    /* ── LA ÚLTIMA PUERTA: NO AFIRMA QUE HAY DINERO ─────────────────────────
+    /* ── LA ÚLTIMA PUERTA YA NO ESTÁ AQUÍ: ESTÁ DENTRO DE `aiAnswer` ────────
      *
-     * Sobre TODO lo que escriba el modelo, no solo sobre el caso del recibo.
-     * Un pago es un hecho que vive en una fila de la base; el sistema de avisos
-     * la mira antes de hablar y la IA no puede mirarla.
+     * `sinLoQueNoPuedeDecir` estaba en esta línea, y por eso protegía SOLO este
+     * camino. El bloque «Respuesta con IA» de un flujo (más abajo, en este mismo
+     * archivo), los comentarios de Instagram y la prueba del panel llamaban a
+     * `aiAnswer` sin filtrar nada.
      *
-     * Si de la respuesta solo quedaba una afirmación de dinero, se devuelve
-     * `null` y el motor sigue con su comportamiento de siempre — que es
-     * exactamente lo correcto: lo único que iba a decir era algo que no le
+     * Ahora el filtro vive en `aiAnswer`, que es la puerta única de los cuatro.
+     * Aquí NO se vuelve a llamar a propósito: dos sitios que filtran es un sitio
+     * que se puede quedar atrás.
+     *
+     * Lo que sí sigue aquí es qué hacer con una respuesta vacía. Si el filtro se
+     * llevó todo, se devuelve `null` y el motor sigue con su comportamiento de
+     * siempre — que es lo correcto: lo único que iba a decir era algo que no le
      * consta.
      * ───────────────────────────────────────────────────────────────────── */
-    const limpio = sinLoQueNoPuedeDecir(respuesta ?? "").trim();
+    const limpio = (respuesta ?? "").trim();
     if (!limpio) return null;
     // Si la IA devolvió su mensaje de respaldo, es que no supo: no aporta.
     const respaldo = (settings.fallback ?? "").trim();
