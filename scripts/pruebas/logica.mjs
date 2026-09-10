@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
+import { queHacerConLaAsignacion } from "../../src/lib/avisoDeAsignacion.ts";
 import {
   esChoqueDeUnico, esRepetidaPorTiempo, VENTANA_SEGUNDOS,
 } from "../../src/lib/campanas/repetida.ts";
@@ -7430,6 +7431,93 @@ describe("una difusión no se manda dos veces (0117)", () => {
     const unPocoMas = new Date(ahora - VENTANA_SEGUNDOS * 1000 - 1).toISOString();
     esperar(esRepetidaPorTiempo(justo, ahora)).verdadero();
     esperar(esRepetidaPorTiempo(unPocoMas, ahora)).falso();
+  });
+});
+
+
+describe("«te asignaron un chat» (0118)", () => {
+  const AHORA = Date.parse("2026-09-09T20:00:00.000Z");
+  const ANTES = Date.parse("2026-09-09T19:00:00.000Z");
+  const YO = "user-alex";
+  const OTRO = "user-darwin";
+
+  test("la primera vuelta solo toma la foto", () => {
+    // Abrir la plataforma no puede sacar un aviso por un chat que uno tiene
+    // desde el martes. El primer aviso que sobra es el que hace que se apaguen
+    // todos los demás.
+    const r = queHacerConLaAsignacion(
+      { assigned_at: "2026-09-09T19:00:00.000Z", asignada_por: OTRO }, YO, null,
+    );
+    esperar(r.avisar).falso("avisaría de una conversación que ya tenía");
+    esperar(r.marca).igual(ANTES);
+  });
+
+  test("me la pasa otra persona → avisa", () => {
+    const r = queHacerConLaAsignacion(
+      { assigned_at: "2026-09-09T20:00:00.000Z", asignada_por: OTRO }, YO, ANTES,
+    );
+    esperar(r.avisar).verdadero("no avisa cuando alguien te pasa un chat, que es justo lo que se pidió");
+    esperar(r.marca).igual(AHORA);
+  });
+
+  test("la reparte la plataforma (sin nadie detrás) → avisa igual", () => {
+    // El reparto automático y la cola corren con la llave de servicio, donde no
+    // hay usuario. Ese es el caso que MÁS hay que avisar: nadie se lo dijo.
+    const r = queHacerConLaAsignacion(
+      { assigned_at: "2026-09-09T20:00:00.000Z", asignada_por: null }, YO, ANTES,
+    );
+    esperar(r.avisar).verdadero("el reparto automático dejaría el chat sin avisar a nadie");
+  });
+
+  test("me la asigno yo mismo → NO avisa, pero sí se apunta", () => {
+    // Un aviso que salta por lo que uno mismo acaba de hacer es la forma más
+    // rápida de que la gente apague los avisos.
+    const r = queHacerConLaAsignacion(
+      { assigned_at: "2026-09-09T20:00:00.000Z", asignada_por: YO }, YO, ANTES,
+    );
+    esperar(r.avisar).falso("avisa de tu propio clic");
+    esperar(r.marca).igual(AHORA, "no apuntar la marca haría saltar el aviso en la vuelta siguiente");
+  });
+
+  test("la misma de siempre no vuelve a avisar", () => {
+    const r = queHacerConLaAsignacion(
+      { assigned_at: "2026-09-09T19:00:00.000Z", asignada_por: OTRO }, YO, ANTES,
+    );
+    esperar(r.avisar).falso("avisaría cada 8 segundos del mismo chat");
+    esperar(r.marca).igual(ANTES);
+  });
+
+  test("una anterior a la ya vista tampoco avisa", () => {
+    const r = queHacerConLaAsignacion(
+      { assigned_at: "2026-09-09T18:00:00.000Z", asignada_por: OTRO }, YO, ANTES,
+    );
+    esperar(r.avisar).falso();
+    esperar(r.marca).igual(ANTES, "retroceder la marca haría repetir avisos ya dados");
+  });
+
+  test("sin nada asignado no se toca la marca", () => {
+    esperar(queHacerConLaAsignacion(null, YO, ANTES).avisar).falso();
+    esperar(queHacerConLaAsignacion(null, YO, ANTES).marca).igual(ANTES);
+    esperar(queHacerConLaAsignacion({ assigned_at: null }, YO, null).marca).igual(null);
+    esperar(queHacerConLaAsignacion({ assigned_at: "cuando sea" }, YO, ANTES).avisar).falso();
+  });
+
+  test("sin saber quién soy, se avisa igual", () => {
+    // Es más honesto avisar de más que callarse un chat que te acaban de pasar.
+    const r = queHacerConLaAsignacion(
+      { assigned_at: "2026-09-09T20:00:00.000Z", asignada_por: OTRO }, null, ANTES,
+    );
+    esperar(r.avisar).verdadero();
+  });
+
+  test("sin saber quién soy Y sin nadie detrás, TAMBIÉN se avisa", () => {
+    // Los dos nulos. Comparándolos a secas, «nadie» sería igual a «yo» y el
+    // reparto automático se quedaría mudo justo cuando no se pudo averiguar
+    // quién está mirando — que es cuando menos se puede suponer nada.
+    const r = queHacerConLaAsignacion(
+      { assigned_at: "2026-09-09T20:00:00.000Z", asignada_por: null }, null, ANTES,
+    );
+    esperar(r.avisar).verdadero("«nadie» se confundió con «yo» y el aviso no salió");
   });
 });
 

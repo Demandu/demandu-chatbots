@@ -9042,4 +9042,69 @@ describe("Lo que gasta dinero no se puede pulsar dos veces", () => {
   });
 });
 
+
+describe("A quien le asignan un chat, se entera", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // 9 SEP 2026. «Cuando yo se lo asigno manualmente debería recibir su
+  // notificación… si no, no se entera.» No la recibía: la plataforma solo
+  // miraba mensajes nuevos y solicitudes de persona. Que a alguien le pusieran
+  // una conversación encima no avisaba a nadie, ni con la pestaña abierta.
+  //
+  // ── POR QUÉ ESTA REGLA MIRA EL TRIGGER Y NO LA BANDEJA ─────────────────
+  //
+  // El responsable se cambia desde CUATRO sitios: la bandeja, el reparto
+  // automático, la regla por etiqueta y la cola de reintentos. La fecha la
+  // escribe un trigger (0118) para que los cuatro avisen igual. Si algún día
+  // alguien mueve eso a la pantalla, tres de los cuatro dejarán de avisar en
+  // silencio — que es justo lo que llevaba meses pasando con `assigned_at`.
+  // ─────────────────────────────────────────────────────────────────────────
+  const dir = path.join(RAIZ, "supabase/migrations");
+  const sql = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+    .join("\n");
+
+  /* SE MIRA DENTRO DE ESTA FUNCIÓN Y NO EN TODAS LAS MIGRACIONES. Buscando en
+   * el montón, `is distinct from old.assignee_member_id` daba verde por una
+   * línea de la 0013 que habla de oportunidades: la regla pasaba con el trigger
+   * roto. Un candado que se conforma con encontrar el texto en cualquier sitio
+   * no es un candado. */
+  const iFn = sql.indexOf("function public.conversacion_marca_asignacion()");
+  const cuerpo = iFn >= 0 ? sql.slice(iFn, sql.indexOf("$$;", iFn) + 3) : "";
+
+  test("la fecha de asignación la pone la base, no una pantalla", () => {
+    esperar(/create trigger conversations_zz_asignacion/i.test(sql)).verdadero(
+      "no existe el trigger que marca cuándo se asignó: solo avisaría el camino que se acuerde de escribirlo",
+    );
+    esperar(cuerpo.length > 0).verdadero(
+      "no existe la función `conversacion_marca_asignacion`: el trigger no tendría qué ejecutar",
+    );
+    esperar(/assignee_member_id is distinct from old\.assignee_member_id/i.test(cuerpo)).verdadero(
+      "el trigger no compara el responsable anterior: refrescaría la fecha en cualquier cambio y el aviso saltaría en bucle",
+    );
+  });
+
+  test("y se guarda QUIÉN la asignó", () => {
+    esperar(/asignada_por\s*:=\s*auth\.uid\(\)/i.test(cuerpo)).verdadero(
+      "no se guarda quién asignó: quien se pase un chat a sí mismo se llevará un aviso de su propio clic",
+    );
+  });
+
+  test("el vigilante pregunta por ese chat y decide con la función probada", () => {
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/notifications/NotificationsWatcher.tsx"), "utf8"),
+    );
+    esperar(/queHacerConLaAsignacion\(/.test(t)).verdadero(
+      "el vigilante no usa la decisión probada: el aviso de asignación no existiría o estaría sin probar",
+    );
+    esperar(/asignada_por/.test(t)).verdadero(
+      "el vigilante no pide `asignada_por`: no puede distinguir tu propio clic de que te pasen un chat",
+    );
+    esperar(/eq\("assignee_member_id", miMemberId\)/.test(t)).verdadero(
+      "el vigilante no filtra por quién es: avisaría de asignaciones de otros",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

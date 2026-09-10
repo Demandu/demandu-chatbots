@@ -8,6 +8,7 @@ import {
 } from "@/lib/notifications";
 import { lanzarAviso } from "./Toasts";
 import { anunciarPendientes, anunciarEsperando } from "@/lib/pendientes";
+import { queHacerConLaAsignacion } from "@/lib/avisoDeAsignacion";
 
 /**
  * Vigila mensajes nuevos en toda la plataforma (no solo en la Bandeja) y avisa
@@ -20,10 +21,13 @@ export function NotificationsWatcher() {
   const [prefs, setPrefs] = useState<PrefsAviso>(leerPrefs);
   const visto = useRef<number | null>(null); // último `last_message_at` conocido
   const vistoHandoff = useRef<number | null>(null); // última solicitud de persona
+  const vistoAsignada = useRef<number | null>(null); // último chat que me pasaron
   const tituloOriginal = useRef<string>("");
   // Quién soy dentro del equipo, para "avisarme solo de las mías".
   // `undefined` = todavía no se sabe; `null` = no soy un agente del equipo.
   const [miMemberId, setMiMemberId] = useState<string | null | undefined>(undefined);
+  // Y quién soy como usuario, para no avisarme de lo que me asigné yo mismo.
+  const [miUserId, setMiUserId] = useState<string | null>(null);
 
   useEffect(() => {
     let vivo = true;
@@ -32,6 +36,7 @@ export function NotificationsWatcher() {
         const sb = createClient();
         const { data: { user } } = await sb.auth.getUser();
         if (!user) { if (vivo) setMiMemberId(null); return; }
+        if (vivo) setMiUserId(user.id);
         const { data } = await sb
           .from("team_members")
           .select("id")
@@ -122,6 +127,54 @@ export function NotificationsWatcher() {
       }
     }
 
+    /* ── «TE PASARON UN CHAT» ────────────────────────────────────────────────
+     *
+     * 9 SEP 2026. Asignar una conversación a alguien no avisaba a nadie, ni con
+     * la pestaña abierta: la plataforma solo miraba mensajes nuevos y
+     * solicitudes de persona. Quien recibía un chat se enteraba si por
+     * casualidad miraba la bandeja.
+     *
+     * La fecha y el quién los escribe un trigger (migración 0118), no esta
+     * pantalla: el responsable se cambia desde la bandeja, desde el reparto
+     * automático, desde la regla por etiqueta y desde la cola de reintentos, y
+     * los cuatro tienen que avisar igual. */
+    if (miMemberId) {
+      const { data: mias, error: errMias } = await sb
+        .from("conversations")
+        .select("id, assigned_at, asignada_por, contact:contacts(name,wa_name)")
+        .eq("assignee_member_id", miMemberId)
+        .not("assigned_at", "is", null)
+        .order("assigned_at", { ascending: false })
+        .limit(1);
+
+      /* SI NO SE PUEDE PREGUNTAR, NO SE TOCA LA MARCA y se deja para la vuelta
+       * siguiente. Tratar el fallo como «no tienes nada asignado» es lo que no
+       * se puede hacer: son cosas distintas, y confundirlas se come el aviso.
+       * Lo demás del vigilante sigue funcionando — un fallo aquí no puede
+       * apagar los avisos de mensajes nuevos. */
+      if (errMias) {
+        console.error("[avisos] no pude mirar si me asignaron algo:", errMias.message);
+      } else {
+        const ultimaMia = ((mias as any[]) ?? [])[0] ?? null;
+        const { avisar, marca } = queHacerConLaAsignacion(ultimaMia, miUserId, vistoAsignada.current);
+        vistoAsignada.current = marca;
+
+        // El aviso de que te pasan un chat NO depende de «solo las mías»: por
+        // definición es tuya, y es la que te acaban de poner encima.
+        if (avisar && debeAvisar(prefs)) {
+          const dequien = ultimaMia.contact?.name || ultimaMia.contact?.wa_name || "un cliente";
+          const cuerpo = `Te pasaron la conversación de ${dequien}.`;
+          if (prefs.sonido) reproducirTono(prefs.tono, prefs.volumen);
+          if (prefs.enApp) {
+            lanzarAviso({ titulo: "📥 Te asignaron un chat", cuerpo, href: `/inbox?c=${ultimaMia.id}` });
+          }
+          if (prefs.escritorio && document.visibilityState !== "visible") {
+            avisoEscritorio("Te asignaron un chat", cuerpo, () => router.push(`/inbox?c=${ultimaMia.id}`));
+          }
+        }
+      }
+    }
+
     const filas = (data as any[]) ?? [];
     const pendientes = filas.reduce((n, c) => n + (Number(c.unread) || 0), 0);
 
@@ -179,7 +232,7 @@ export function NotificationsWatcher() {
     if (prefs.escritorio && document.visibilityState !== "visible") {
       avisoEscritorio(quien, adelanto, () => router.push(`/inbox?c=${ultima.id}`));
     }
-  }, [prefs, router, miMemberId]);
+  }, [prefs, router, miMemberId, miUserId]);
 
   useEffect(() => {
     revisar();
