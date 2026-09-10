@@ -9107,4 +9107,97 @@ describe("A quien le asignan un chat, se entera", () => {
   });
 });
 
+
+describe("La respuesta al recordatorio la leen los dos motores igual", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // La plantilla del recordatorio lleva dos botones y llega por WhatsApp, así
+  // que quien tiene que entender la respuesta es el motor de Deno. Pero la
+  // regla se escribió y se probó en el módulo puro, que no puede importarse
+  // desde Deno: vive dos veces.
+  //
+  // Es la misma situación que `opcionesDeHorario` y `sinMarcadores`, y el
+  // peligro es el mismo: que alguien añada «ahí nos vemos» a una copia y no a
+  // la otra. Entonces la Bandeja diría que la persona confirmó y el calendario
+  // no — o al revés — y nadie sabría cuál de las dos miente.
+  //
+  // NO SE COMPARA EL ARCHIVO ENTERO: se comparan las piezas que SON la regla.
+  // Exigir que los dos ficheros sean idénticos obligaría a copiar comentarios.
+  // ─────────────────────────────────────────────────────────────────────────
+  const WA_R = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const PURO_R = sinComentarios(fs.readFileSync(path.join(SRC, "lib/agenda/recordatorio.ts"), "utf8"));
+
+  const trozoFn = (texto, nombre) => {
+    const m = new RegExp(`function ${nombre}\\([\\s\\S]*?\\n\\}`).exec(texto);
+    return m ? m[0].replace(/\s+/g, " ").trim() : null;
+  };
+  const trozoConst = (texto, nombre) => {
+    const m = new RegExp(`const ${nombre} = \\[[\\s\\S]*?\\n\\];`).exec(texto);
+    return m ? m[0].replace(/\s+/g, " ").trim() : null;
+  };
+
+  test("las funciones de la regla dicen LO MISMO en los dos motores", () => {
+    for (const f of ["pelado", "queQuisoDecir"]) {
+      const a = trozoFn(PURO_R, f);
+      const b = trozoFn(WA_R, f);
+      esperar(a && b).verdadero(`falta ${f} en uno de los dos motores`);
+      esperar(b).igual(a, `las dos copias de ${f} se separaron`);
+    }
+  });
+
+  test("y las listas de palabras también", () => {
+    // Aquí es donde se toca de verdad: alguien añade «ahí nos vemos» porque un
+    // cliente lo escribió, y lo añade solo en el sitio que tenía abierto.
+    for (const c of ["CAMBIA", "CONFIRMA"]) {
+      const a = trozoConst(PURO_R, c);
+      const b = trozoConst(WA_R, c);
+      esperar(a && b).verdadero(`falta la lista ${c} en uno de los dos motores`);
+      esperar(b).igual(a, `las dos copias de ${c} se separaron`);
+    }
+  });
+
+  test("los botones dicen exactamente lo mismo en los dos sitios", () => {
+    // Estos textos viven aprobados en la cuenta de Meta de cada cliente.
+    // Cambiarlos aquí no cambia la plantilla: solo hace que deje de entenderse.
+    for (const linea of ['BOTON_CONFIRMA = "Confirmo"', 'BOTON_CAMBIA = "Necesito cambiarla"']) {
+      esperar(WA_R.includes(linea)).verdadero(`al motor de WhatsApp le falta ${linea}`);
+      esperar(PURO_R.includes(linea)).verdadero(`al módulo puro le falta ${linea}`);
+    }
+  });
+
+  test("el motor la apunta con el mensaje que entra, y no corta el mensaje", () => {
+    esperar(/apuntarRespuestaDeCita\(\s*db, cfg\.org_id, contact\.id/.test(WA_R)).verdadero(
+      "el motor no apunta la respuesta al recordatorio: la persona toca el botón y no se guarda nada",
+    );
+    /* El `return` de más: apuntar la respuesta no puede dejar sin contestar a
+     * quien acaba de tocar un botón.
+     *
+     * SE BUSCA `await apuntarRespuestaDeCita(`, con el `await`. Buscando solo
+     * el nombre, el primer resultado era la DECLARACIÓN de la función —está
+     * antes en el archivo— y la regla acababa mirando su cuerpo en vez de la
+     * llamada: daba verde con un `return` metido justo debajo. */
+    const j = WA_R.indexOf("await apuntarRespuestaDeCita(");
+    esperar(j > 0).verdadero("no se encuentra la llamada, solo la declaración");
+    esperar(/return json/.test(WA_R.slice(j, j + 400))).falso(
+      "el motor corta el mensaje al apuntar la respuesta: quien toca «Confirmo» se queda sin contestación",
+    );
+  });
+
+  test("no se pisa una respuesta ya dada", () => {
+    // Dos mensajes seguidos —«si» y luego «mejor la cambio»— llegan casi a la
+    // vez. Sin este filtro gana el que llegue segundo al UPDATE, que no es
+    // necesariamente el que la persona mandó después.
+    /* SE MIRA DESDE EL `.update(`, NO EN TODA LA FUNCIÓN. La consulta de más
+     * arriba también lleva `.is("respondio_at", null)` —para no buscar citas ya
+     * contestadas— así que mirando la función entera la regla daba verde con el
+     * candado del UPDATE quitado. El filtro que importa es el del UPDATE: es el
+     * único que decide quién gana cuando llegan dos mensajes a la vez. */
+    const i = WA_R.indexOf('.update({ respondio_at:');
+    esperar(i > 0).verdadero("el motor ya no apunta la respuesta con un update, revisa esta prueba");
+    const elUpdate = WA_R.slice(i, i + 400);
+    esperar(/\.is\("respondio_at", null\)/.test(elUpdate)).verdadero(
+      "el motor pisa una respuesta ya apuntada",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

@@ -4038,6 +4038,136 @@ async function mandarEstadoDePedido(ctx: any, node: any): Promise<string | undef
  * que queda cuando el dato se pierde por el camino.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/* ════════════════════════════════════════════════════════════════════════════
+ * QUÉ CONTESTÓ LA PERSONA AL RECORDATORIO DE SU CITA.
+ *
+ * COPIA DELIBERADA de `src/lib/agenda/recordatorio.ts`. Deno no puede importar
+ * del proyecto, así que la regla vive dos veces. Hay una regla estática que
+ * compara las dos palabra por palabra: afinar una y olvidar la otra es lo que
+ * haría que WhatsApp entendiera «ahí estaré» y la plataforma no, o al revés —
+ * y eso es peor que el fallo original, porque solo pasa en un canal.
+ *
+ * ── LA RESPUESTA LA LEE ESTO, NO LA IA ──────────────────────────────────────
+ *
+ * Si una cita queda confirmada porque un modelo interpretó «ahí estaré», el
+ * negocio se organiza sobre una interpretación. Aquí se decide con reglas que
+ * se pueden leer, probar y discutir. La IA conversa; los hechos los afirma el
+ * sistema mirando la base.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+type Respuesta = "confirma" | "cambia";
+
+const BOTON_CONFIRMA = "Confirmo";
+
+const BOTON_CAMBIA = "Necesito cambiarla";
+
+function pelado(t: string): string {
+  return String(t ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const CAMBIA = [
+  /\bnecesito cambiarla\b/,
+  /\b(cambiar|cambio|mover|reagendar|posponer|aplazar)\b/,
+  /\b(cancelar|cancelo|anular|no voy|no podre|no puedo|no me queda|no llego)\b/,
+  /\botro (dia|horario|momento)\b/,
+];
+
+const CONFIRMA = [
+  /^confirmo$/,
+  /\bconfirm(o|ado|ada|amos)\b/,
+  /^(si|si señor|si claro|claro|dale|listo|perfecto|de acuerdo|va|ok|okey|okay)$/,
+  /^(ahi|alli) (estare|nos vemos)$/,
+  /\bahi estare\b/,
+  /\bcuenta conmigo\b/,
+  /\bnos vemos\b/,
+];
+
+function queQuisoDecir(texto: string | null | undefined): Respuesta | null {
+  const t = pelado(texto);
+  if (!t) return null;
+
+  // UN MENSAJE LARGO NO ES UNA RESPUESTA A UN BOTÓN. Quien escribe un párrafo
+  // está contando algo, y merece que lo lea el bot entero y no esta regla.
+  if (t.split(" ").length > 8) return null;
+
+  if (CAMBIA.some((r) => r.test(t))) return "cambia";
+  if (CONFIRMA.some((r) => r.test(t))) return "confirma";
+  return null;
+}
+
+/**
+ * APUNTA LA RESPUESTA AL RECORDATORIO, SI ES QUE LO ES.
+ *
+ * ── NO CORTA EL MENSAJE, Y ESO ES A PROPÓSITO ───────────────────────────────
+ *
+ * Devuelve lo que entendió, pero el mensaje sigue su camino normal: flujo,
+ * agente o IA. Alguien que escribe «Confirmo» merece que le contesten, no que
+ * la plataforma se lo guarde y se calle.
+ *
+ * ── UNA SOLA CITA, Y LA MÁS CERCANA ─────────────────────────────────────────
+ *
+ * Se busca entre las que TIENEN recordatorio mandado y todavía no han
+ * contestado. Sin ese filtro, un «ok» cualquiera marcaría como confirmada una
+ * cita de la que nunca se le preguntó nada.
+ *
+ * NUNCA LANZA. Esto corre en mitad del webhook: si reventara, el cliente se
+ * quedaría sin respuesta por no haber podido apuntar un dato.
+ */
+async function apuntarRespuestaDeCita(
+  db: any, orgId: string, contactId: string, texto: string,
+): Promise<Respuesta | null> {
+  try {
+    const dijo = queQuisoDecir(texto);
+    if (!dijo) return null;
+
+    // El recordatorio se manda como mucho unos días antes. Mirar más atrás
+    // haría que un «ok» de hoy contestara a un recordatorio de hace un mes.
+    const desde = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+
+    const { data: cita, error } = await db
+      .from("citas")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("contact_id", contactId)
+      .not("recordatorio_enviado_at", "is", null)
+      .is("respondio_at", null)
+      .neq("estado", "cancelada")
+      .gte("recordatorio_enviado_at", desde)
+      .order("inicio", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    // «No se pudo mirar» no es «no hay cita»: se dice, y no se apunta nada.
+    if (error) { console.error("[recordatorio] no pude buscar la cita:", error.message); return null; }
+    if (!cita) return null;
+
+    const { error: errGuardar } = await db
+      .from("citas")
+      .update({ respondio_at: new Date().toISOString(), respuesta: dijo })
+      .eq("id", cita.id)
+      .eq("org_id", orgId)
+      // NADIE MÁS PUEDE HABERLA CONTESTADO MIENTRAS TANTO. Dos mensajes
+      // seguidos —«si» y luego «bueno, mejor la cambio»— llegan casi a la vez;
+      // sin esto el segundo pisaría al primero o al revés, según quién gane.
+      .is("respondio_at", null);
+
+    if (errGuardar) {
+      console.error("[recordatorio] no pude apuntar la respuesta:", errGuardar.message);
+      return null;
+    }
+    return dijo;
+  } catch (e) {
+    console.error("[recordatorio] fallo apuntando la respuesta:", e);
+    return null;
+  }
+}
+
 function puntoDelMensaje(location: any): { texto: string; enlace: string; nombre: string } | null {
   const lat = Number(location?.latitude);
   const long = Number(location?.longitude);
@@ -5873,6 +6003,23 @@ Deno.serve(async (req: Request) => {
       // Si todavía no tiene nombre propio, estrenamos con el de WhatsApp.
       if (!contact.name && name) {
         await db.from("contacts").update({ name }).eq("id", contact.id);
+      }
+
+      /* ── ¿ESTO CONTESTA AL RECORDATORIO DE UNA CITA? ─────────────────────
+       *
+       * Va AQUÍ, antes del flujo, y no dentro de ningún bloque: la persona
+       * puede contestar «Confirmo» con la conversación en manos de un agente,
+       * con el chatbot cambiado, o cuando el flujo que agendó ya no existe. La
+       * respuesta es suya, no un paso de un chatbot — igual que el permiso de
+       * llamada de más arriba.
+       *
+       * Y NO CORTA EL MENSAJE: se apunta y el mensaje sigue su camino. Quien
+       * toca un botón espera que le contesten. */
+      const respuestaDeCita = await apuntarRespuestaDeCita(
+        db, cfg.org_id, contact.id, visible ?? text ?? "",
+      );
+      if (respuestaDeCita) {
+        console.log(`[recordatorio] ${from} → ${respuestaDeCita}`);
       }
 
       // ¿Es la primera vez que esta persona escribe? El `upsert` no dice si
