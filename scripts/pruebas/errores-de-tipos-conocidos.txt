@@ -1,0 +1,9 @@
+src/components/builder/DemanduNodeCard.tsx: TS2352: Conversion of type 'Record<string, unknown>' to type 'DemanduNodeData' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+src/lib/supabase/middleware.ts: TS7006: Parameter 'cookiesToSet' implicitly has an 'any' type.
+src/lib/supabase/middleware.ts: TS7031: Binding element 'name' implicitly has an 'any' type.
+src/lib/supabase/middleware.ts: TS7031: Binding element 'options' implicitly has an 'any' type.
+src/lib/supabase/middleware.ts: TS7031: Binding element 'value' implicitly has an 'any' type.
+src/lib/supabase/server.ts: TS7006: Parameter 'cookiesToSet' implicitly has an 'any' type.
+src/lib/supabase/server.ts: TS7031: Binding element 'name' implicitly has an 'any' type.
+src/lib/supabase/server.ts: TS7031: Binding element 'options' implicitly has an 'any' type.
+src/lib/supabase/server.ts: TS7031: Binding element 'value' implicitly has an 'any' type.

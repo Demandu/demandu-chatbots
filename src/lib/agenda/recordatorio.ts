@@ -35,7 +35,7 @@ export const BOTON_CONFIRMA = "Confirmo";
 export const BOTON_CAMBIA = "Necesito cambiarla";
 
 /** Se quitan tildes y signos para que «sí», «si» y «SI!» sean lo mismo. */
-function pelado(t: string): string {
+function pelado(t: string | null | undefined): string {
   return String(t ?? "")
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")

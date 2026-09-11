@@ -4061,7 +4061,7 @@ const BOTON_CONFIRMA = "Confirmo";
 
 const BOTON_CAMBIA = "Necesito cambiarla";
 
-function pelado(t: string): string {
+function pelado(t: string | null | undefined): string {
   return String(t ?? "")
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
