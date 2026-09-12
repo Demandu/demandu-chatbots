@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
+import { queMesaLeDoy, comoLoDigo, sePuedenJuntar, capacidadDe, MAX_MESAS_JUNTAS } from "../../src/lib/reservas/asignar.ts";
 import { queHacerConLaAsignacion } from "../../src/lib/avisoDeAsignacion.ts";
 import {
   esChoqueDeUnico, esRepetidaPorTiempo, VENTANA_SEGUNDOS,
@@ -7518,6 +7519,144 @@ describe("«te asignaron un chat» (0118)", () => {
       { assigned_at: "2026-09-09T20:00:00.000Z", asignada_por: null }, null, ANTES,
     );
     esperar(r.avisar).verdadero("«nadie» se confundió con «yo» y el aviso no salió");
+  });
+});
+
+describe("Reservas: qué mesa le toca a este grupo", () => {
+  const salon = () => ([
+    { id: "m2a", nombre: "Mesa 1", capacidad: 2, unibles: ["m2b"] },
+    { id: "m2b", nombre: "Mesa 2", capacidad: 2, unibles: ["m2a", "m4a"] },
+    { id: "m4a", nombre: "Mesa 3", capacidad: 4, unibles: ["m2b"] },
+    { id: "m4b", nombre: "Mesa 4", capacidad: 4, unibles: [] },
+    { id: "m8",  nombre: "Mesa 5", capacidad: 8, unibles: [] },
+  ]);
+
+  test("dos personas NO se llevan la mesa de ocho", () => {
+    // Es el error que más dinero cuesta: regalar la única mesa donde cabía el
+    // grupo que llama diez minutos después.
+    const r = queMesaLeDoy({ mesas: salon(), personas: 2 });
+    esperar(r.ok).verdadero();
+    esperar(r.mesas.length).igual(1);
+    esperar(r.mesas[0].capacidad).igual(2, "le dio una mesa más grande de la que necesitaba");
+    esperar(r.sobran).igual(0);
+  });
+
+  test("cuatro personas van a una de cuatro, no a dos de dos juntas", () => {
+    const r = queMesaLeDoy({ mesas: salon(), personas: 4 });
+    esperar(r.ok).verdadero();
+    esperar(r.mesas.length).igual(1, "partió al grupo habiendo una mesa entera");
+    esperar(r.mesas[0].capacidad).igual(4);
+  });
+
+  test("si la justa está ocupada, junta las que se pueden juntar", () => {
+    const r = queMesaLeDoy({ mesas: salon(), personas: 4, ocupadas: ["m4a", "m4b", "m8"] });
+    esperar(r.ok).verdadero();
+    esperar(r.mesas.length).igual(2);
+    esperar(r.capacidad).igual(4);
+  });
+
+  test("NO junta mesas que el dueño no marcó como unibles", () => {
+    // Sumar 6 no basta: juntarlas significaría mover muebles que nadie autorizó.
+    const mesas = [
+      { id: "m4b", nombre: "Mesa 4", capacidad: 4, unibles: [] },
+      { id: "m2a", nombre: "Mesa 1", capacidad: 2, unibles: [] },
+    ];
+    const r = queMesaLeDoy({ mesas, personas: 6 });
+    esperar(r.ok).falso("juntó dos mesas que nadie autorizó a juntar");
+    esperar(r.motivo).igual("no_caben");
+  });
+
+  test("una unión marcada por un solo lado NO vale", () => {
+    // Dato a medias: alguien editó el mapa y se quedó a mitad.
+    const mesas = [
+      { id: "a", nombre: "A", capacidad: 2, unibles: ["b"] },
+      { id: "b", nombre: "B", capacidad: 2, unibles: [] },
+    ];
+    esperar(queMesaLeDoy({ mesas, personas: 4 }).ok).falso("aceptó una unión a medias");
+    esperar(sePuedenJuntar(mesas)).falso();
+  });
+
+  test("«todo ocupado» y «no caben» son cosas DISTINTAS", () => {
+    // Se contestan distinto por WhatsApp, así que no pueden compartir motivo.
+    const todo = queMesaLeDoy({ mesas: salon(), personas: 2, ocupadas: ["m2a","m2b","m4a","m4b","m8"] });
+    esperar(todo.ok).falso();
+    esperar(todo.motivo).igual("todo_ocupado");
+
+    const no = queMesaLeDoy({ mesas: salon(), personas: 10, ocupadas: ["m8"] });
+    esperar(no.ok).falso();
+    esperar(no.motivo).igual("no_caben");
+  });
+
+  test("un grupo demasiado grande NO lo decide sola", () => {
+    const r = queMesaLeDoy({ mesas: salon(), personas: 20 });
+    esperar(r.ok).falso();
+    esperar(r.motivo).igual("grupo_demasiado_grande");
+    esperar(comoLoDigo("grupo_demasiado_grande", 20).includes("NO confirmes")).verdadero(
+      "el texto no le prohíbe a Lana confirmar un grupo que no decidió ella",
+    );
+  });
+
+  test("sin mesas configuradas no se inventa una reserva", () => {
+    esperar(queMesaLeDoy({ mesas: [], personas: 2 }).motivo).igual("sin_mesas");
+    esperar(queMesaLeDoy({ mesas: null, personas: 2 }).motivo).igual("sin_mesas");
+    esperar(comoLoDigo("sin_mesas", 2).includes("NO confirmes")).verdadero();
+  });
+
+  test("una mesa inactiva no existe para el cálculo", () => {
+    const mesas = [{ id: "x", nombre: "Rota", capacidad: 8, unibles: [], activa: false }];
+    esperar(queMesaLeDoy({ mesas, personas: 2 }).motivo).igual("sin_mesas");
+  });
+
+  test("cero o basura como número de personas se pregunta, no se adivina", () => {
+    for (const n of [0, -3, NaN, undefined]) {
+      const r = queMesaLeDoy({ mesas: salon(), personas: n });
+      esperar(r.ok).falso(`aceptó ${String(n)} personas`);
+      esperar(r.motivo).igual("personas_invalidas");
+    }
+  });
+
+  test("no junta más mesas de las permitidas de una vez", () => {
+    const ids = ["a", "b", "c", "d"];
+    const mesas = ids.map((id) => ({
+      id, nombre: id.toUpperCase(), capacidad: 2, unibles: ids.filter((o) => o !== id),
+    }));
+    esperar(queMesaLeDoy({ mesas, personas: 8, maxJuntas: 3 }).ok).falso(
+      "juntó cuatro mesas cuando el tope son tres",
+    );
+    esperar(queMesaLeDoy({ mesas, personas: 6, maxJuntas: 3 }).ok).verdadero(
+      "no supo juntar tres mesas estando permitido",
+    );
+  });
+
+  test("con los mismos datos SIEMPRE contesta lo mismo", () => {
+    // Sin desempate estable, la respuesta cambiaría según el orden en que la
+    // base devolvió las filas — y un fallo que solo pasa a veces no se arregla.
+    const a = { id: "z", nombre: "Zeta", capacidad: 4, unibles: [] };
+    const b = { id: "a", nombre: "Alfa", capacidad: 4, unibles: [] };
+    esperar(queMesaLeDoy({ mesas: [a, b], personas: 4 }).mesas[0].id)
+      .igual(queMesaLeDoy({ mesas: [b, a], personas: 4 }).mesas[0].id,
+             "el orden de la lista cambió la respuesta");
+  });
+
+  test("una mesa ocupada no se da por libre", () => {
+    esperar(queMesaLeDoy({ mesas: salon(), personas: 8, ocupadas: ["m8"] }).ok).falso(
+      "entregó una mesa que ya estaba reservada",
+    );
+  });
+
+  test("cada motivo dice algo distinto y accionable", () => {
+    const vistos = new Set();
+    for (const m of ["sin_mesas","personas_invalidas","todo_ocupado","no_caben","grupo_demasiado_grande"]) {
+      const t = comoLoDigo(m, 4);
+      esperar(t.length > 15).verdadero(`el motivo ${m} no explica nada`);
+      esperar(vistos.has(t)).falso(`el motivo ${m} repite el texto de otro`);
+      vistos.add(t);
+    }
+  });
+
+  test("el tope de mesas juntas es un número de verdad", () => {
+    esperar(MAX_MESAS_JUNTAS >= 2 && MAX_MESAS_JUNTAS <= 4).verdadero();
+    esperar(capacidadDe(salon())).igual(20);
   });
 });
 
