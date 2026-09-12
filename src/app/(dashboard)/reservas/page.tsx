@@ -44,7 +44,9 @@ export default async function Reservas({
     return (
       <>
         {cabecera}
-        <div className="p-5"><p className="text-sm text-ink-3">No pude identificar tu cuenta.</p></div>
+        <div className="min-h-0 flex-1 overflow-auto bg-canvas p-4 text-ink sm:p-6 lg:p-8">
+          <p className="text-sm text-ink-3">No pude identificar tu cuenta.</p>
+        </div>
       </>
     );
   }
@@ -101,7 +103,13 @@ export default async function Reservas({
   return (
     <>
       {cabecera}
-      <div className="space-y-5 p-5">
+      {/* ── EL CONTENEDOR QUE HACE SCROLL ──────────────────────────────────
+          El marco es `h-[100dvh] overflow-hidden`, así que CADA pantalla pone
+          el suyo. Sin esto la página se corta por abajo y no hay forma de
+          llegar a lo que sigue — pasó aquí con «Cómo trabaja Lana».
+          `min-h-0` no es decorativo: sin él, un hijo flex se niega a encoger
+          por debajo de su contenido y `overflow-auto` no llega a activarse. */}
+      <div className="min-h-0 flex-1 space-y-5 overflow-auto bg-canvas p-4 pb-[env(safe-area-inset-bottom)] text-ink sm:p-6 lg:p-8">
         <div>
           <h2 className="font-display text-xl font-semibold text-ink">Reservas</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-2">

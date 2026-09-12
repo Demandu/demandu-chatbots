@@ -9200,4 +9200,87 @@ describe("La respuesta al recordatorio la leen los dos motores igual", () => {
   });
 });
 
+
+describe("Una pantalla del panel que no hace scroll se corta por abajo", () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // 12 SEP 2026. En Reservas no se podía bajar: «Cómo trabaja Lana» quedaba
+  // cortado al fondo y no había forma de llegar.
+  //
+  // La causa: el marco es `h-[100dvh] overflow-hidden`, así que CADA pantalla
+  // tiene que poner su propio contenedor con scroll. Se me olvidó, y el
+  // resultado es de los peores que hay — no parece roto, parece que la
+  // plataforma no tiene esa opción.
+  //
+  // `min-h-0` va con `overflow-auto` y no es decorativo: sin él un hijo flex se
+  // niega a encoger por debajo de su contenido y `overflow-auto` no llega a
+  // activarse nunca.
+  //
+  // ── LAS TRES QUE NO LLEVAN SCROLL, Y POR QUÉ ───────────────────────────
+  //
+  // Se nombran una a una en vez de guardarlas en una lista genérica: así, el
+  // día que alguien añada una cuarta, tiene que escribir aquí por qué.
+  // ─────────────────────────────────────────────────────────────────────────
+  const A_PROPOSITO = {
+    "bots/[id]/flows/[flowId]/page.tsx": "el constructor de flujos ocupa la pantalla entera y hace su propio zoom",
+    "crm/page.tsx": "el tablero del embudo se mueve a lo ancho, columna por columna",
+    "inbox/page.tsx": "la Bandeja son tres paneles y cada uno hace scroll por su cuenta",
+  };
+
+  const PANEL = path.join(SRC, "app/(dashboard)");
+
+  const pantallas = [];
+  const recorrer = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) recorrer(p);
+      else if (e.name === "page.tsx") pantallas.push(p);
+    }
+  };
+  recorrer(PANEL);
+
+  test("hay pantallas que mirar (si no, esta regla está ciega)", () => {
+    esperar(pantallas.length > 15).verdadero(
+      `solo encontré ${pantallas.length} pantallas: cambió la forma del proyecto y esta regla dejó de mirar`,
+    );
+  });
+
+  test("TODA pantalla con Topbar puede hacer scroll", () => {
+    const sinScroll = [];
+    for (const p of pantallas) {
+      const t = fs.readFileSync(p, "utf8");
+      if (!/<Topbar/.test(t)) continue;
+      const rel = p.slice(PANEL.length + 1);
+      if (A_PROPOSITO[rel]) continue;
+      /* LAS DOS CLASES, EN EL MISMO `className`. Buscarlas sueltas por el
+       * archivo daba verde con `min-h-0` en un sitio y `overflow-auto` en otro
+       * —dos contenedores distintos, ninguno que haga scroll—. Lo comprobé
+       * mutando esta misma regla y sobrevivió.
+       *
+       * LO QUE ESTA REGLA NO PUEDE SABER: cuál de los contenedores es el
+       * principal. Una pantalla cuyo ÚNICO contenedor con scroll esté en la
+       * rama de error pasaría igual. Para eso haría falta entender el JSX, y
+       * una regla que se pasa de lista se vuelve frágil y acaba desactivada.
+       * Atrapa el fallo real —una pantalla sin ningún contenedor con scroll—
+       * que es el que ocurrió. */
+      const conLasDos = [...t.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)]
+        .map((m) => m[1] ?? m[2] ?? "")
+        .some((c) => c.includes("min-h-0") && c.includes("overflow-auto"));
+      if (!conLasDos) sinScroll.push(rel);
+    }
+    esperar(sinScroll.join(", ")).igual(
+      "",
+      "estas pantallas se cortan por abajo y no se puede bajar: les falta `min-h-0 flex-1 overflow-auto`",
+    );
+  });
+
+  test("las excepciones siguen existiendo", () => {
+    // Una excepción a un archivo borrado es una regla que se relajó sola.
+    for (const rel of Object.keys(A_PROPOSITO)) {
+      esperar(fs.existsSync(path.join(PANEL, rel))).verdadero(
+        `${rel} ya no existe: quita su excepción en vez de dejarla ahí`,
+      );
+    }
+  });
+});
+
 process.exit(await correrPruebas());
