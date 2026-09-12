@@ -9328,4 +9328,104 @@ describe("Google: se pide exactamente lo declarado en la consola", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * UN SECRETO NO SE GUARDA CON LA SESIÓN DE QUIEN LO PEGA
+ *
+ * La migración 0092 cerró la LECTURA de las columnas de secreto por columna.
+ * La 0120 cerró la ESCRITURA, que era la mitad que faltaba: no hace falta leer
+ * un secreto para hacer daño con él —basta con sobrescribir el de Yappy por uno
+ * propio y falsificarle a la tienda un «pagado» que nadie pagó—.
+ *
+ * Esa migración deja dos sitios obligados a comportarse: los únicos que
+ * guardaban un secreto con la sesión del usuario. Si alguien les devuelve el
+ * cliente de sesión, el guardado falla en producción y aquí no se enteraría
+ * nadie; si alguien les quita la comprobación de permiso, vuelve el agujero
+ * entero sin que falle nada.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Un secreto no se guarda con la sesión de quien lo pega", () => {
+  const MIGRA = path.join(RAIZ, "supabase", "migrations");
+  const TABLAS = ["whatsapp_channels", "instagram_channels", "integrations", "salidas", "tienda_cobros"];
+
+  /** El cuerpo de una función exportada, hasta el siguiente `export`. */
+  const cuerpoDe = (ruta, nombre) => {
+    const a = ARCHIVOS.find((x) => x.ruta === ruta);
+    if (!a) return null;
+    const i = a.texto.indexOf(`export async function ${nombre}(`);
+    if (i < 0) return null;
+    const j = a.texto.indexOf("\nexport ", i + 10);
+    return a.texto.slice(i, j < 0 ? a.texto.length : j);
+  };
+
+  const GUARDAN_SECRETO = [
+    ["src/app/(dashboard)/tienda/[id]/actions.ts", "guardarCobros", "conexiones"],
+    ["src/app/(dashboard)/settings/actions.ts", "saveWhatsappChannel", "conexiones"],
+  ];
+
+  test("las dos funciones siguen existiendo", () => {
+    // Si las renombraron, las pruebas de abajo no revisarían nada.
+    for (const [ruta, nombre] of GUARDAN_SECRETO) {
+      esperar(!!cuerpoDe(ruta, nombre)).verdadero(`no encontré ${nombre} en ${ruta}`);
+    }
+  });
+
+  test("comprueban el permiso antes de guardar", () => {
+    for (const [ruta, nombre, permiso] of GUARDAN_SECRETO) {
+      const c = cuerpoDe(ruta, nombre) ?? "";
+      esperar(c.includes(`permisos.has("${permiso}")`)).verdadero(
+        `${nombre} guarda un secreto sin comprobar el permiso de ${permiso}`,
+      );
+    }
+  });
+
+  test("escriben con la llave de servicio, no con la sesión", () => {
+    for (const [ruta, nombre] of GUARDAN_SECRETO) {
+      const c = sinComentarios(cuerpoDe(ruta, nombre) ?? "");
+      esperar(c.includes("createAdminClient()")).verdadero(
+        `${nombre} escribe con la sesión del usuario: la columna del secreto ya no lo acepta (migración 0120)`,
+      );
+      esperar(c.includes("createClient()")).falso(
+        `${nombre} vuelve a usar el cliente de sesión: el guardado fallaría en producción`,
+      );
+    }
+  });
+
+  test("la migración que cierra la escritura sigue puesta", () => {
+    const f = fs.readdirSync(MIGRA).find((n) => n.startsWith("0120_"));
+    esperar(!!f).verdadero("falta la migración 0120: sin ella las columnas de secreto aceptan escritura");
+    const t = fs.readFileSync(path.join(MIGRA, f), "utf8");
+    for (const tabla of TABLAS) {
+      esperar(new RegExp(`revoke insert, update on public\\.${tabla} from authenticated, anon`).test(t)).verdadero(
+        `0120 no cierra la escritura de ${tabla}`,
+      );
+    }
+    // Conceder la columna del secreto otra vez sería deshacerlo sin darse cuenta.
+    for (const secreto of ["access_token", "refresh_token", "secreto", "firma"]) {
+      esperar(new RegExp(`grant[\\s\\S]{0,400}\\b${secreto}\\b`).test(t)).falso(
+        `0120 vuelve a conceder ${secreto}: eso deshace la migración entera`,
+      );
+    }
+  });
+
+  test("las políticas le dicen a auth_puede de qué cuenta hablan", () => {
+    const f = fs.readdirSync(MIGRA).find((n) => n.startsWith("0121_"));
+    esperar(!!f).verdadero("falta la migración 0121");
+    const t = fs.readFileSync(path.join(MIGRA, f), "utf8");
+    esperar(t.includes("auth_puede(p_permiso text, p_org_id uuid)")).verdadero(
+      "0121 ya no define la versión que recibe la organización",
+    );
+    /* Una llamada de UN argumento dentro de esta migración es una política que
+     * se quedó adivinando la cuenta — que es justo el fallo que cerró. */
+    // Sin los comentarios: la migración EXPLICA el fallo citando la llamada
+    // vieja, y citar no es llamar. Buscar en el texto crudo daba rojo por la
+    // propia explicación de por qué el rojo ya no debería existir.
+    const sql = t.replace(/^\s*--.*$/gm, "");
+    const deUnArgumento = [...sql.matchAll(/auth_puede\('([a-z]+)'\)/g)].map((m) => m[1]);
+    esperar(deUnArgumento.join(", ")).igual(
+      "",
+      "hay llamadas a auth_puede sin organización en la migración que las quitó",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

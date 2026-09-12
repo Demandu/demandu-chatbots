@@ -557,13 +557,31 @@ export async function disconnectIntegration(formData: FormData) {
 }
 
 // ── WhatsApp Cloud API ───────────────────────────────────────────────────────
+/**
+ * ── UN TOKEN NO SE GUARDA CON LA SESIÓN DEL QUE LO PEGA ────────────────────
+ *
+ * Dos cosas cambiaron aquí y las dos son la misma idea.
+ *
+ * 1. SE COMPRUEBA EL PERMISO. Antes no se comprobaba ninguno: bastaba con ser
+ *    miembro de la cuenta. Un agente —contratado para contestar chats— podía
+ *    cambiar el token de Meta del negocio y dejarlo sin WhatsApp.
+ *
+ * 2. SE ESCRIBE CON LA LLAVE DE SERVICIO. `whatsapp_channels.access_token` ya
+ *    no acepta escritura de una sesión de usuario (migración 0120), igual que
+ *    no aceptaba lectura desde la 0092. El alcance no cambia —`orgId` salió de
+ *    su propia sesión y el permiso se acaba de comprobar— pero la columna deja
+ *    de estar al alcance de un `update` suelto desde el navegador.
+ */
 export async function saveWhatsappChannel(formData: FormData) {
   const orgId = await getCurrentOrgId();
   if (!orgId) return;
+  const { misPermisos } = await import("@/lib/permisos-server");
+  const { permisos } = await misPermisos();
+  if (!permisos.has("conexiones")) return;
   const phone_number_id = s(formData.get("phone_number_id"));
   const access_token = s(formData.get("access_token"));
   if (!phone_number_id || !access_token) return;
-  await createClient().from("whatsapp_channels").upsert(
+  const { error } = await createAdminClient().from("whatsapp_channels").upsert(
     {
       org_id: orgId,
       phone_number_id,
@@ -575,6 +593,10 @@ export async function saveWhatsappChannel(formData: FormData) {
     },
     { onConflict: "org_id" }
   );
+  // Guardar y no mirar si guardó es cómo la pantalla acaba diciendo
+  // «conectado» sobre una fila que no existe. Esta acción no tiene por dónde
+  // contestar, así que al menos queda escrito y no se pierde en silencio.
+  if (error) console.error("[whatsapp] no se pudo guardar el canal:", error.message);
   revalidatePath("/settings/integrations");
 }
 

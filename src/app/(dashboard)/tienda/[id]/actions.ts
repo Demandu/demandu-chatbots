@@ -737,6 +737,21 @@ export async function guardarCobros(_e: Estado, fd: FormData): Promise<Estado> {
   const t = await tiendaDelUsuario(tiendaId);
   if (!t) return { ok: false, mensaje: "Esa tienda no es tuya o ya no existe." };
 
+  /* ── LAS CREDENCIALES DE COBRO NO SON TAREA DE QUIEN ATIENDE LOS CHATS ───
+   *
+   * Aquí solo se comprobaba que la tienda fuera de tu cuenta. Cualquier
+   * miembro —un agente, un coordinador— podía cambiar el secreto de comercio
+   * de Yappy por uno que él eligiera, y con ese secreto falsificarle a la
+   * tienda un aviso de «pagado» que nadie pagó. No hacía falta ni leerlo.
+   *
+   * `conexiones` es el mismo permiso que ya protege las llaves de API y las
+   * hojas de cálculo: dueño, administrador y desarrollador. */
+  const { misPermisos } = await import("@/lib/permisos-server");
+  const { permisos } = await misPermisos();
+  if (!permisos.has("conexiones")) {
+    return { ok: false, mensaje: "No tienes permiso para cambiar los datos de cobro." };
+  }
+
   const comercio = s(fd.get("yappy_comercio"));
   const secreto = s(fd.get("yappy_secreto"));
   const activo = fd.get("yappy_activo") === "on";
@@ -751,7 +766,11 @@ export async function guardarCobros(_e: Estado, fd: FormData): Promise<Estado> {
     return { ok: false, mensaje: "Para cobrar con Yappy hace falta tu número de comercio." };
   }
 
-  const sb = createClient();
+  /* La escritura va con la llave de servicio: `tienda_cobros.secreto` ya no
+   * acepta `update` de una sesión de usuario (migración 0120), igual que no
+   * aceptaba `select` desde la 0092. El alcance no cambia —`tiendaDelUsuario`
+   * ya comprobó que la tienda es suya y el permiso se acaba de comprobar. */
+  const sb = createAdminClient();
   const { data: existe } = await sb
     .from("tienda_cobros")
     .select("id")

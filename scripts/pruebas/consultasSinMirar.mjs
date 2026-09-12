@@ -46,7 +46,13 @@ import path from "node:path";
  * cabe es otra sentencia entera, así que no se enganchan dos consultas
  * distintas.
  */
-const CONSULTA = /const\s*\{([^}]*)\}\s*=\s*await\s+([\s\S]{0,400}?)\.from\(\s*["`]([a-zA-Z_0-9]+)["`]/g;
+/* El hueco NO puede contener un `;`: sin eso, `const { permisos } = await
+ * misPermisos();` se enganchaba con el `.from(` de la SIGUIENTE sentencia y
+ * contaba como una consulta ciega que no existe. Y al tragarse tramos largos
+ * ESCONDÍA consultas ciegas de verdad, que quedaban dentro de la coincidencia.
+ * Un falso positivo en una regla de deuda es peor que un hueco: enseña a subir
+ * el número sin mirar. */
+const CONSULTA = /const\s*\{([^}]*)\}\s*=\s*await\s+([^;]{0,400}?)\.from\(\s*["`]([a-zA-Z_0-9]+)["`]/g;
 
 const sinComentarios = (t) =>
   t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
