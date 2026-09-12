@@ -68,7 +68,10 @@ export function buildAuthUrl(req: Request, state: string): string {
     response_type: "code",
     scope: GOOGLE_SCOPES,
     access_type: "offline",
-    include_granted_scopes: "true",
+    // SIN `include_granted_scopes`. Con él, Google mezcla en el token nuevo
+    // todo lo que esa cuenta concedió ANTES a esta app — y así el viejo
+    // `auth/calendar` (control total) reaparecía en cada reconexión aunque ya
+    // no se pidiera. El token tiene que traer exactamente lo que se pidió.
     prompt: "consent",
     state,
   });
@@ -100,6 +103,22 @@ export async function exchangeCode(req: Request, code: string): Promise<GoogleTo
   return res.json();
 }
 
+/**
+ * Un refresco que Google rechazó A PROPÓSITO, no por un fallo pasajero.
+ *
+ * `invalid_grant` es lo que devuelve Google cuando el refresh token ya no vale:
+ * el cliente quitó la app desde su cuenta de Google, cambió la contraseña con
+ * sesiones revocadas, la cuenta se cerró, o el token nació en modo Testing y
+ * caducó a los 7 días. Ninguno de esos se arregla reintentando: SOLO se arregla
+ * volviendo a conectar. Por eso es la única causa que se distingue.
+ */
+export class ConexionRevocada extends Error {
+  readonly codigo = "invalid_grant" as const;
+  constructor(detalle: string) {
+    super(`Google revocó la conexión (invalid_grant): ${detalle}`);
+  }
+}
+
 /** Refresca el access_token usando el refresh_token guardado. */
 export async function refreshAccessToken(refreshToken: string): Promise<GoogleTokens> {
   const res = await fetch(TOKEN_URL, {
@@ -112,8 +131,110 @@ export async function refreshAccessToken(refreshToken: string): Promise<GoogleTo
       grant_type: "refresh_token",
     }),
   });
-  if (!res.ok) throw new Error(`token refresh failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const cuerpo = await res.text().catch(() => "");
+    // Google contesta 400 con `{"error":"invalid_grant"}`. Se mira el texto y
+    // no el JSON parseado para que un cuerpo raro no tumbe la detección.
+    if (res.status === 400 && /invalid_grant/.test(cuerpo)) throw new ConexionRevocada(cuerpo.slice(0, 200));
+    throw new Error(`token refresh failed: ${res.status} ${cuerpo}`);
+  }
   return res.json();
+}
+
+/** Lo que queda apuntado en `integrations.data.rota` cuando Google revocó. */
+export interface ConexionRota {
+  desde: string;
+  motivo: "invalid_grant";
+  /** Cuándo se le avisó al dueño; null si el correo no salió. */
+  avisado_at: string | null;
+}
+
+/**
+ * Deja apuntado que la conexión murió y avisa al dueño — UNA sola vez.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ANTES, UNA CONEXIÓN REVOCADA NO SE NOTABA EN NINGÚN SITIO. El refresco
+ * fallaba, se devolvía el access_token viejo (ya caducado), Google contestaba
+ * 401 a todo, y el bot le decía al cliente final «hay un problema técnico con
+ * esa hora». La pantalla de Integraciones seguía diciendo «Conectado». El
+ * negocio se enteraba cuando un cliente se quejaba de que ya no podía agendar,
+ * días después, y buscaba el fallo en el flujo.
+ *
+ * Ahora:
+ *  1. Se apunta `data.rota` con la fecha. La pantalla de Integraciones lo
+ *     enseña y pide reconectar. `getValidAccessTokenForOrg` devuelve null, así
+ *     que el motor deja de ofrecer citas en vez de prometerlas y fallar.
+ *  2. Se manda UN correo al dueño (`organizations.contacto_email`). Uno: el
+ *     motor puede pedir el token veinte veces en una tarde, y veinte correos
+ *     iguales son la forma más rápida de que dejen de leerlos.
+ *  3. Al reconectar, el callback reescribe `data` entero y la marca desaparece
+ *     sola. No hay nada que «limpiar».
+ *
+ * La marca se escribe con una condición (`data->rota` nulo) para que dos
+ * peticiones a la vez no manden dos correos. Si el correo no sale, la marca
+ * queda igual — que la pantalla lo diga es lo importante; el correo es el
+ * extra.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function marcarConexionRota(orgId: string): Promise<void> {
+  const sb = createAdminClient();
+  const { data: fila, error: errFila } = await sb
+    .from("integrations")
+    .select("id, data, account_email")
+    .eq("org_id", orgId)
+    .eq("provider", "google_calendar")
+    .maybeSingle();
+  // «No se pudo leer» no es «no hay conexión»: sin fila no hay nada que marcar,
+  // pero un error se dice, porque significa que la rotura va a pasar en silencio.
+  if (errFila) { console.error("[google] no pude leer la conexión para marcarla rota:", errFila.message); return; }
+  if (!fila) return;
+  const datos = (fila.data as Record<string, unknown> | null) ?? {};
+  if (datos.rota) return; // ya está apuntado y avisado
+
+  const rota: ConexionRota = { desde: new Date().toISOString(), motivo: "invalid_grant", avisado_at: null };
+  // Solo gana quien encuentre la marca vacía: es lo que evita el correo doble.
+  const { data: marcada, error: errMarca } = await sb
+    .from("integrations")
+    .update({ data: { ...datos, rota }, updated_at: new Date().toISOString() })
+    .eq("id", fila.id)
+    .is("data->rota", null)
+    .select("id");
+  if (errMarca) { console.error("[google] no pude marcar la conexión como rota:", errMarca.message); return; }
+  if (!marcada?.length) return; // otra petición llegó primero y ya avisó
+
+  try {
+    const { data: org, error: errOrg } = await sb
+      .from("organizations")
+      .select("name, contacto_email, contacto_nombre")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (errOrg) { console.error("[google] conexión marcada como rota, pero no pude leer a quién avisar:", errOrg.message); return; }
+    const para = String(org?.contacto_email ?? "").trim();
+    if (!para) return;
+
+    const { enviarYApuntar } = await import("@/lib/correo/enviar");
+    const { correoDeConexionRota } = await import("@/lib/correo/plantillas");
+    const r = await enviarYApuntar(sb, {
+      para,
+      correo: correoDeConexionRota({
+        nombre: org?.contacto_nombre ?? null,
+        negocio: org?.name ?? null,
+        cuentaGoogle: fila.account_email ?? null,
+      }),
+      etiqueta: "google_rota",
+      orgId,
+    });
+    if (r.ok) {
+      const { error: errAviso } = await sb
+        .from("integrations")
+        .update({ data: { ...datos, rota: { ...rota, avisado_at: new Date().toISOString() } } })
+        .eq("id", fila.id);
+      // El correo ya salió; si no se pudo apuntar, no se reintenta (sería mandarlo dos veces).
+      if (errAviso) console.error("[google] avisé pero no pude apuntar el aviso:", errAviso.message);
+    }
+  } catch (e) {
+    console.error("[google] la conexión quedó marcada como rota pero no pude avisar:", e);
+  }
 }
 
 export async function fetchUserEmail(accessToken: string): Promise<string | null> {
@@ -163,7 +284,7 @@ export async function getValidAccessTokenForOrg(supabase: any, orgId: string): P
   const sb = createAdminClient();
   const { data } = await sb
     .from("integrations")
-    .select("access_token, refresh_token, token_expiry")
+    .select("access_token, refresh_token, token_expiry, data")
     .eq("org_id", orgId)
     .eq("provider", "google_calendar")
     .maybeSingle();
@@ -175,6 +296,10 @@ export async function getValidAccessTokenForOrg(supabase: any, orgId: string): P
 
   // Refrescar
   if (!data.refresh_token) return (data.access_token as string) ?? null;
+  // Si ya está apuntada como rota no se vuelve a intentar: Google va a decir
+  // lo mismo, y cada intento es un viaje inútil en medio de una conversación.
+  if ((data as any).data?.rota) return null;
+
   try {
     const t = await refreshAccessToken(data.refresh_token as string);
     const newExpiry = new Date(Date.now() + (t.expires_in ?? 3600) * 1000).toISOString();
@@ -187,7 +312,16 @@ export async function getValidAccessTokenForOrg(supabase: any, orgId: string): P
       .eq("org_id", orgId)
       .eq("provider", "google_calendar");
     return t.access_token;
-  } catch {
+  } catch (e) {
+    // REVOCADA: se apunta, se avisa, y se devuelve null. Devolver el token
+    // viejo aquí es lo que hacía que el fallo se viera como «problema técnico
+    // con esa hora» en vez de como lo que es: hay que reconectar.
+    if (e instanceof ConexionRevocada) {
+      await marcarConexionRota(orgId).catch((err) => console.error("[google] no pude marcar la conexión rota:", err));
+      return null;
+    }
+    // Un fallo pasajero (red, Google caído un momento): el token viejo puede
+    // servir todavía unos segundos, y la siguiente petición vuelve a intentar.
     return (data.access_token as string) ?? null;
   }
 }

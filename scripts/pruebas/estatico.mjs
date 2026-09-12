@@ -9319,6 +9319,32 @@ describe("Google: se pide exactamente lo declarado en la consola", () => {
     );
   });
 
+  test("no se arrastran permisos concedidos antes", () => {
+    // `include_granted_scopes` mezcla en el token nuevo lo que la cuenta
+    // concedió antes: el viejo `auth/calendar` volvía en cada reconexión.
+    esperar(/include_granted_scopes/.test(g)).falso(
+      "buildAuthUrl vuelve a pedir include_granted_scopes: el control total del calendario reaparece al reconectar",
+    );
+  });
+
+  test("una conexión revocada se apunta, se avisa y deja de usarse", () => {
+    // Antes el refresco fallido devolvía el token viejo (caducado) y el bot
+    // decía «problema técnico con esa hora» mientras Integraciones decía
+    // «Conectado». Nadie se enteraba hasta que un cliente se quejaba.
+    esperar(/invalid_grant/.test(g)).verdadero("google.ts ya no distingue invalid_grant de un fallo pasajero");
+    esperar(/class ConexionRevocada/.test(g)).verdadero("desapareció ConexionRevocada");
+    esperar(/marcarConexionRota\(orgId\)/.test(g)).verdadero("al revocarse ya no se marca la conexión como rota");
+    esperar(/\.is\("data->rota",\s*null\)/.test(g)).verdadero(
+      "la marca de rota se escribe sin condición: dos peticiones a la vez mandarían dos correos",
+    );
+    // La pantalla tiene que decirlo: un aviso solo por correo se pierde.
+    const pagina = sinComentarios(fs.readFileSync(path.join(SRC, "app/(dashboard)/settings/integrations/page.tsx"), "utf8"));
+    esperar(/data\?\.rota/.test(pagina)).verdadero("Integraciones no enseña que la conexión de Google está rota");
+    // Y el correo existe.
+    const plantillas = sinComentarios(fs.readFileSync(path.join(SRC, "lib/correo/plantillas.ts"), "utf8"));
+    esperar(/export function correoDeConexionRota/.test(plantillas)).verdadero("falta la plantilla del correo de conexión rota");
+  });
+
   test("el selector solo ofrece calendarios propios", () => {
     // `events.owned` no alcanza a los compartidos: ofrecerlos es ofrecer un
     // calendario donde agendar va a fallar.
@@ -9424,6 +9450,77 @@ describe("Un secreto no se guarda con la sesión de quien lo pega", () => {
     esperar(deUnArgumento.join(", ")).igual(
       "",
       "hay llamadas a auth_puede sin organización en la migración que las quitó",
+    );
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * NO NACE UN TERCER MOTOR DE FLUJOS
+ *
+ * Había tres: el de WhatsApp en Deno (49 tipos de bloque), el de Node que
+ * atiende la web e Instagram (29) y uno más dentro de `Webchat.tsx`, el del
+ * botón «Probar flujo» (7). Cada bloque nuevo había que escribirlo tres veces
+ * o la vista previa mentía — y mintió: el bloque de IA tenía la respuesta
+ * escrita a mano en el archivo, igual para todos los clientes.
+ *
+ * El tercero se borró. Esta regla existe porque volver a meterlo es fácil y
+ * parece inofensivo: alguien quiere que la prueba vaya más rápida, mete un
+ * `switch (node.type)` en el navegador, y el mismo agujero está de vuelta sin
+ * que falle nada.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("No nace un tercer motor de flujos", () => {
+  const TELEFONO = ARCHIVOS.find((a) => a.ruta === "src/components/Webchat.tsx");
+  const PUERTA = ARCHIVOS.find((a) => a.ruta === "src/app/api/flujo/probar/route.ts");
+  const BANDEJA = ARCHIVOS.find((a) => a.ruta === "src/app/(dashboard)/inbox/page.tsx");
+
+  test("los tres archivos siguen ahí", () => {
+    esperar(!!TELEFONO).verdadero("falta src/components/Webchat.tsx");
+    esperar(!!PUERTA).verdadero("falta la puerta /api/flujo/probar");
+    esperar(!!BANDEJA).verdadero("falta la pantalla de la Bandeja");
+  });
+
+  test("el teléfono no interpreta bloques: se los pide al servidor", () => {
+    const t = sinComentarios(TELEFONO?.texto ?? "");
+    esperar(t.includes("/api/flujo/probar")).verdadero(
+      "el teléfono ya no llama al motor real: la prueba dejó de probar el producto",
+    );
+    /* Un `case "<tipo de bloque>"` aquí dentro ES el tercer motor naciendo. */
+    const bloques = [...t.matchAll(/case\s+"(message|media|buttons|question|ai|condition|delay|tienda|reserva|agenda|human|end|start|redirect)"/g)]
+      .map((m) => m[1]);
+    esperar([...new Set(bloques)].join(", ")).igual(
+      "",
+      "vuelve a haber un intérprete de flujos en el navegador",
+    );
+  });
+
+  test("probar no es una conversación con un cliente", () => {
+    const t = sinComentarios(PUERTA?.texto ?? "");
+    esperar(/guardarEnBandeja:\s*false/.test(t)).verdadero(
+      "la prueba guardaría los mensajes en la Bandeja y gastaría del plan del cliente",
+    );
+    esperar(/esPrueba:\s*true/.test(t)).verdadero(
+      "la prueba entraría en Resultados como un recorrido real",
+    );
+    esperar(/prueba:\s*true/.test(t)).verdadero(
+      "la conversación de prueba no se marca: acabaría en la Bandeja como un lead",
+    );
+  });
+
+  test("la puerta comprueba de quién es el flujo", () => {
+    const t = sinComentarios(PUERTA?.texto ?? "");
+    esperar(t.includes("bot.org_id !== orgId")).verdadero(
+      "cualquiera con sesión podría probar el flujo de otra cuenta sabiendo su identificador",
+    );
+    esperar(t.includes('permisos.has("chatbots")')).verdadero(
+      "cualquier miembro dispararía la IA del negocio desde su panel",
+    );
+  });
+
+  test("la Bandeja deja fuera las pruebas", () => {
+    const t = sinComentarios(BANDEJA?.texto ?? "");
+    esperar(/\.eq\("prueba",\s*false\)/.test(t)).verdadero(
+      "las conversaciones de prueba vuelven a salir en la Bandeja como si fueran clientes",
     );
   });
 });

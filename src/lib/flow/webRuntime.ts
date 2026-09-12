@@ -1252,6 +1252,18 @@ export async function runWebFlow(opts: {
    */
   guardarEnBandeja?: boolean;
   /**
+   * ── ESTO ES EL BOTÓN «PROBAR FLUJO», NO UN CLIENTE ────────────────────
+   *
+   * Lo único que cambia: NO se abre ni se cierra recorrido en la analítica.
+   * Un dueño probando su propio flujo veinte veces dejaría veinte recorridos
+   * en Resultados y sus embudos dirían que el flujo se abandona siempre.
+   *
+   * NO toca nada más del motor a propósito: si la prueba corriera por otro
+   * camino, dejaría de probar lo que de verdad pasa. Quien llama pasa también
+   * `guardarEnBandeja: false`, y con eso la prueba no gasta del plan.
+   */
+  esPrueba?: boolean;
+  /**
    * La tienda con la que trabaja el agente de este bot.
    *
    * Viene resuelta desde fuera —quien carga el bot ya sabe su agente— para no
@@ -1303,7 +1315,7 @@ export async function runWebFlow(opts: {
   // Analítica: el recorrido que venía abierto de turnos anteriores.
   let runId: string | null = (opts.flowState?.run_id as string) ?? null;
   const abrirNuevo = () =>
-    abrirRecorrido(opts.admin, {
+    opts.esPrueba ? Promise.resolve(null) : abrirRecorrido(opts.admin, {
       orgId: opts.orgId,
       conversationId: opts.conversationId,
       botId: opts.botId,
@@ -1344,13 +1356,13 @@ export async function runWebFlow(opts: {
       })
       .eq("id", opts.conversationId);
     // Analítica: el recorrido termina aquí, se lo lleva una persona.
-    await cerrarRecorrido(opts.admin, runId, "agente");
+    if (!opts.esPrueba) await cerrarRecorrido(opts.admin, runId, "agente");
     runId = null;
   } else if (atajo === "reset") {
     push(ctx, atajos.reset.reply);
     // Analítica: se cierra el recorrido anterior y empieza uno nuevo, para no
     // contar como "un recorrido larguísimo" lo que en realidad fueron dos.
-    await cerrarRecorrido(opts.admin, runId, "reiniciado");
+    if (!opts.esPrueba) await cerrarRecorrido(opts.admin, runId, "reiniciado");
     runId = null;
   }
 
@@ -1570,7 +1582,7 @@ export async function runWebFlow(opts: {
   // Sin bloque "Cerrar el flujo" pero habiendo llegado al final del gráfico
   // también cuenta como completado: el lead sí recorrió el flujo entero.
   if (runId && nextAwait === null && atajo !== "agent") {
-    await cerrarRecorrido(opts.admin, runId, ctx.finMotivo ?? "completado", ctx.pasos, ctx.ultimoNodo);
+    if (!opts.esPrueba) await cerrarRecorrido(opts.admin, runId, ctx.finMotivo ?? "completado", ctx.pasos, ctx.ultimoNodo);
     runId = null;
   } else if (runId) {
     await avanzarRecorrido(opts.admin, runId, ctx.pasos, ctx.ultimoNodo);

@@ -21,6 +21,9 @@ export default async function InboxPage() {
           "state:conversation_states(id,name,color), " +
           "member:team_members(id,name)"
       )
+      // Las que creó «Probar flujo» no son clientes: son el dueño probando su
+      // propio chatbot. Verlas aquí es ver un lead que no existe.
+      .eq("prueba", false)
       .order("last_message_at", { ascending: false }),
     sb.from("team_members").select("id,name").order("name"),
     sb.from("conversation_states").select("id,name,color").order("sort"),

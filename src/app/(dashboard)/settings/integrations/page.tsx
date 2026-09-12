@@ -144,7 +144,9 @@ export default async function IntegrationsPage({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h3 className="font-display text-base font-semibold text-ink">Google Calendar</h3>
-              {google ? (
+              {google && google.data?.rota ? (
+                <span className="rounded-full bg-danger/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-danger">Desconectado por Google</span>
+              ) : google ? (
                 <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-exito">Conectado</span>
               ) : (
                 <span className="rounded-full bg-suave px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-3">Sin conectar</span>
@@ -160,6 +162,32 @@ export default async function IntegrationsPage({
                   Cuenta: <b className="text-ink">{google.account_email ?? "—"}</b>
                   {calendars.length > 0 && <> · {calendars.length} calendario(s) disponibles</>}
                 </p>
+
+                {/* ── SI GOOGLE REVOCÓ, SE DICE AQUÍ Y SE PIDE RECONECTAR ──
+                    `data.rota` la escribe `marcarConexionRota` cuando el
+                    refresco devuelve invalid_grant. Hasta que se reconecte el
+                    bot no ofrece citas, así que esta es la pantalla donde el
+                    dueño tiene que ver POR QUÉ. El botón lleva directo al
+                    OAuth: reconectar reescribe `data` y la marca desaparece. */}
+                {google.data?.rota && (
+                  <div className="mt-2 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-ink-2">
+                    <p>
+                      ⚠️ Google dejó de permitir el acceso a este calendario
+                      {google.data.rota.desde && (
+                        <> desde el {new Date(String(google.data.rota.desde)).toLocaleDateString("es-MX", { day: "numeric", month: "long" })}</>
+                      )}
+                      . Suele pasar al cambiar la contraseña de Google o quitar el acceso desde la cuenta.
+                      <b> Mientras tanto el chatbot no ofrece citas.</b>
+                    </p>
+                    <a
+                      href="/api/integrations/google/start"
+                      className="mt-2 inline-flex items-center gap-2 rounded-xl bg-demandu-gradient px-4 py-2 text-xs font-semibold text-white"
+                    >
+                      Reconectar Google Calendar
+                    </a>
+                  </div>
+                )}
+
                 <form action={disconnectIntegration} className="mt-3">
                   <input type="hidden" name="provider" value="google_calendar" />
                   <button className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-2 text-xs font-semibold text-danger transition hover:bg-danger/20">

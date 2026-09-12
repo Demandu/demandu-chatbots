@@ -259,11 +259,6 @@ function BuilderInner({
     [setNodes]
   );
 
-  const liveFlow: Flow = useMemo(
-    () => ({ ...flow, nodes: nodes as unknown as Flow["nodes"], edges: edges as unknown as Flow["edges"] }),
-    [flow, nodes, edges]
-  );
-
   // ── Autoguardado (debounce) — persiste nodos, aristas y la vista ─────────────
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const scheduleSave = useCallback(() => {
@@ -327,9 +322,11 @@ function BuilderInner({
           </button>
           <button
             onClick={() => setShowPreview((s) => !s)}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white"
+            disabled={save === "saving"}
+            title={save === "saving" ? "Guardando tus cambios…" : "Probar esta conversación"}
+            className="rounded-xl px-3 py-2 text-xs font-medium text-muted transition hover:bg-surface-raised hover:text-white disabled:opacity-50"
           >
-            ▶ Probar flujo
+            ▶ {save === "saving" ? "Guardando…" : "Probar flujo"}
           </button>
           <div className="hidden items-center gap-1.5 px-3 py-1.5 text-xs text-muted sm:flex">
             <span className={`h-2 w-2 rounded-full ${status.dot}`} />
@@ -386,7 +383,9 @@ function BuilderInner({
             >
               <X className="h-4 w-4" />
             </button>
-            <Webchat flow={liveFlow} autostart />
+            {/* Se le pasa el IDENTIFICADOR, no el gráfico: la prueba corre en el
+                servidor con el motor de verdad, que lee el flujo guardado. */}
+            <Webchat flowId={flowId ?? undefined} autostart />
           </div>
         )}
       </div>

@@ -356,3 +356,59 @@ export function loQueFaltaParaEscribir(v: { para?: string | null; asunto?: strin
   if (!String(v?.mensaje ?? "").trim()) falta.push("el mensaje");
   return falta;
 }
+
+/* ── Google Calendar se desconectó solo ────────────────────────────────────── */
+
+/**
+ * El aviso de que la conexión con Google dejó de valer.
+ *
+ * Sale UNA vez, desde `marcarConexionRota` en `integrations/google.ts`, cuando
+ * Google contesta `invalid_grant` al refrescar: el negocio quitó la app desde
+ * su cuenta de Google, cambió la contraseña, o el permiso caducó. Hasta que
+ * reconecte, el chatbot NO ofrece citas — mejor eso que ofrecerlas y fallar.
+ *
+ * Dice qué pasó, qué consecuencia tiene y qué hacer, en ese orden, y el botón
+ * lleva directo a la pantalla donde se arregla. No dice «error» ni «token»:
+ * quien lo lee es el dueño de una tienda, no quien programó esto.
+ */
+export function correoDeConexionRota(v: {
+  nombre?: string | null;
+  negocio?: string | null;
+  cuentaGoogle?: string | null;
+}): Correo {
+  const panel = `${(process.env.NEXT_PUBLIC_SITE_URL ?? "https://platform.demandu.tech").replace(/\/+$/, "")}/settings/integrations`;
+  const negocio = String(v.negocio ?? "").trim();
+  const cuenta = String(v.cuentaGoogle ?? "").trim();
+
+  const asunto = negocio
+    ? `Tu Google Calendar se desconectó de ${negocio}`
+    : "Tu Google Calendar se desconectó de Demandu";
+
+  const parrafos = [
+    `${saludo(v.nombre)}`,
+    cuenta
+      ? `Google dejó de permitir que Demandu use el calendario de *${cuenta}*. Suele pasar cuando se cambia la contraseña de Google, se quita el acceso de Demandu desde la cuenta, o el permiso caducó.`
+      : "Google dejó de permitir que Demandu use tu calendario. Suele pasar cuando se cambia la contraseña de Google, se quita el acceso de Demandu desde la cuenta, o el permiso caducó.",
+    "Mientras tanto, *tu chatbot no puede ofrecer ni agendar citas*. Las citas que ya estaban en tu calendario no se tocan.",
+    "Para volver a activarlo, entra a Integraciones y pulsa «Conectar Google Calendar». Tarda menos de un minuto.",
+  ];
+  const cuerpo = parrafos.join("\n\n");
+
+  const texto = [
+    cuerpo.replace(/\*([^*\n]+)\*/g, "$1"),
+    "",
+    `Reconectar: ${panel}`,
+    "",
+    "Demandu · demandu.tech",
+  ].join("\n");
+
+  return {
+    asunto,
+    html: armazon({
+      titulo: "Tu calendario se desconectó",
+      cuerpo: cuerpoEnHtml(cuerpo),
+      boton: { texto: "Reconectar Google Calendar", url: panel },
+    }),
+    texto,
+  };
+}
