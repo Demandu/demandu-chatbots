@@ -9,6 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { queMesaLeDoy, comoLoDigo, sePuedenJuntar, capacidadDe, MAX_MESAS_JUNTAS } from "../../src/lib/reservas/asignar.ts";
+import { conUnibles, parNormalizado, acomodar, sePisan, lasQueSePisan, nombreLibre, aforoDelSalon, REJILLA, LIENZO } from "../../src/lib/reservas/mapa.ts";
 import { queHacerConLaAsignacion } from "../../src/lib/avisoDeAsignacion.ts";
 import {
   esChoqueDeUnico, esRepetidaPorTiempo, VENTANA_SEGUNDOS,
@@ -7657,6 +7658,119 @@ describe("Reservas: qué mesa le toca a este grupo", () => {
   test("el tope de mesas juntas es un número de verdad", () => {
     esperar(MAX_MESAS_JUNTAS >= 2 && MAX_MESAS_JUNTAS <= 4).verdadero();
     esperar(capacidadDe(salon())).igual(20);
+  });
+});
+
+describe("Reservas: el mapa del salón", () => {
+  test("UNA fila en la base se lee como unión POR LOS DOS LADOS", () => {
+    // Es la razón de existir de `conUnibles`. La base guarda un par con el id
+    // menor primero; leído tal cual, `asignar` vería todas las uniones a medias
+    // y no juntaría nunca nada — con el mapa viéndose perfecto.
+    const mesas = [
+      { id: "b", nombre: "Mesa 2", capacidad: 2, x: 0, y: 0, ancho: 60, alto: 60 },
+      { id: "a", nombre: "Mesa 1", capacidad: 2, x: 100, y: 0, ancho: 60, alto: 60 },
+    ];
+    const listas = conUnibles(mesas, [{ mesa_a: "a", mesa_b: "b" }]);
+    const a = listas.find((m) => m.id === "a");
+    const b = listas.find((m) => m.id === "b");
+    esperar(a.unibles).igual(["b"]);
+    esperar(b.unibles).igual(["a"], "la unión quedó marcada por un solo lado");
+    // Y la prueba de fuego: la lógica de asignación TIENE que juntarlas.
+    esperar(queMesaLeDoy({ mesas: listas, personas: 4 }).ok).verdadero(
+      "con las uniones bien leídas, un grupo de 4 sigue sin caber",
+    );
+  });
+
+  test("un par que apunta a una mesa borrada se ignora", () => {
+    // Si no, `asignar` contaría una mesa que ya no está en el salón.
+    const mesas = [{ id: "a", nombre: "Mesa 1", capacidad: 2, x: 0, y: 0, ancho: 60, alto: 60 }];
+    const listas = conUnibles(mesas, [{ mesa_a: "a", mesa_b: "fantasma" }]);
+    esperar(listas[0].unibles).igual([]);
+  });
+
+  test("el par se guarda siempre en el mismo orden", () => {
+    // Sin esto, unir 1-2 y luego 2-1 crearía dos filas para la misma unión.
+    esperar(parNormalizado("z", "a")).igual({ mesa_a: "a", mesa_b: "z" });
+    esperar(parNormalizado("a", "z")).igual({ mesa_a: "a", mesa_b: "z" });
+  });
+
+  test("una mesa no se une consigo misma", () => {
+    esperar(parNormalizado("a", "a")).igual(null);
+    esperar(parNormalizado("a", "")).igual(null);
+    esperar(parNormalizado("", "")).igual(null);
+  });
+
+  test("una mesa arrastrada fuera del plano se recorta, no desaparece", () => {
+    // Que desaparezca es la peor respuesta: el dueño cree que la borró.
+    const r = acomodar({ x: 99999, y: -500, ancho: 80, alto: 80 });
+    esperar(r.x <= LIENZO.ancho - r.ancho).verdadero();
+    esperar(r.y).igual(0);
+    esperar(r.x >= 0).verdadero();
+  });
+
+  test("todo queda pegado a la rejilla", () => {
+    const r = acomodar({ x: 123, y: 47, ancho: 83, alto: 76 });
+    for (const n of [r.x, r.y, r.ancho, r.alto]) esperar(n % REJILLA).igual(0);
+  });
+
+  test("una mesa nunca queda tan chica que no se pueda agarrar", () => {
+    const r = acomodar({ x: 10, y: 10, ancho: 1, alto: 0 });
+    esperar(r.ancho >= REJILLA * 2).verdadero();
+    esperar(r.alto >= REJILLA * 2).verdadero();
+  });
+
+  test("se detecta cuándo dos mesas se pisan", () => {
+    const a = { x: 100, y: 100, ancho: 100, alto: 100 };
+    esperar(sePisan(a, { x: 150, y: 150, ancho: 100, alto: 100 })).verdadero();
+    esperar(sePisan(a, { x: 400, y: 400, ancho: 10, alto: 10 })).falso();
+
+    /* PEGADAS NO ES ENCIMA, y hay que probar LOS CUATRO LADOS. Con un solo lado
+     * la prueba pasa aunque la comparación del lado contrario esté mal: la otra
+     * condición tapa el fallo. Se comprueban los cuatro por separado. */
+    esperar(sePisan(a, { x: 200, y: 100, ancho: 100, alto: 100 })).falso("pegada a la derecha");
+    esperar(sePisan(a, { x: 0,   y: 100, ancho: 100, alto: 100 })).falso("pegada a la izquierda");
+    esperar(sePisan(a, { x: 100, y: 200, ancho: 100, alto: 100 })).falso("pegada abajo");
+    esperar(sePisan(a, { x: 100, y: 0,   ancho: 100, alto: 100 })).falso("pegada arriba");
+
+    // Y separadas por cada lado, que es lo que distingue «no se tocan» de una
+    // comparación que siempre da verdadero.
+    esperar(sePisan(a, { x: -200, y: 100, ancho: 100, alto: 100 })).falso("lejos por la izquierda");
+    esperar(sePisan(a, { x: 100, y: -200, ancho: 100, alto: 100 })).falso("lejos por arriba");
+  });
+
+  test("las que se pisan se marcan las DOS", () => {
+    const mesas = [
+      { id: "a", nombre: "A", capacidad: 2, x: 0, y: 0, ancho: 100, alto: 100 },
+      { id: "b", nombre: "B", capacidad: 2, x: 50, y: 50, ancho: 100, alto: 100 },
+      { id: "c", nombre: "C", capacidad: 2, x: 500, y: 500, ancho: 50, alto: 50 },
+    ];
+    const malas = lasQueSePisan(mesas);
+    esperar(malas.has("a")).verdadero();
+    esperar(malas.has("b")).verdadero();
+    esperar(malas.has("c")).falso("marcó una mesa que no toca a nadie");
+  });
+
+  test("una mesa desactivada no se cuenta como estorbo ni como aforo", () => {
+    const mesas = [
+      { id: "a", nombre: "A", capacidad: 4, x: 0, y: 0, ancho: 100, alto: 100 },
+      { id: "b", nombre: "B", capacidad: 4, x: 0, y: 0, ancho: 100, alto: 100, activa: false },
+    ];
+    esperar(lasQueSePisan(mesas).size).igual(0);
+    esperar(aforoDelSalon(mesas)).igual(4);
+  });
+
+  test("el nombre propuesto NUNCA choca con uno que ya existe", () => {
+    // La base tiene `unique (org_id, nombre)`. Proponer uno repetido haría que
+    // el guardado fallara y el dueño viera un error en vez de una mesa.
+    const mesas = [{ nombre: "Mesa 1" }, { nombre: "mesa 2" }, { nombre: "Mesa 4" }];
+    esperar(nombreLibre(mesas)).igual("Mesa 3");
+    esperar(nombreLibre([])).igual("Mesa 1");
+    esperar(nombreLibre(null)).igual("Mesa 1");
+  });
+
+  test("el aforo suma lo que de verdad hay", () => {
+    esperar(aforoDelSalon([{ capacidad: 4 }, { capacidad: 2 }, { capacidad: 0 }])).igual(6);
+    esperar(aforoDelSalon(null)).igual(0);
   });
 });
 

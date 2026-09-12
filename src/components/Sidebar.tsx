@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home, MessagesSquare, Users, Settings, BarChart3, Sparkles, Bot, KanbanSquare, Crown,
-  Store, Clock, CalendarDays,
+  Store, Clock, CalendarDays, UtensilsCrossed,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,9 @@ const MAIN = [
   // es un sitio donde se trabaja todos los días —cargar productos, agotar,
   // cambiar precios— igual que la Bandeja o el Embudo.
   { href: "/tienda", label: "Tienda", icon: Store },
+  // Reservas: mismo criterio que la Tienda. No es una configuración — es donde
+  // el restaurante mira su salón todos los días.
+  { href: "/reservas", label: "Reservas", icon: UtensilsCrossed },
 ];
 
 /**
