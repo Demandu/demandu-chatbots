@@ -375,7 +375,7 @@ function BuilderInner({
         </ReactFlow>
 
         {showPreview && (
-          <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-[420px] flex-col items-center justify-center border-l border-linea bg-white/95 p-4 backdrop-blur sm:p-6">
+          <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-[420px] flex-col items-center justify-start gap-3 overflow-auto border-l border-linea bg-white/95 p-4 pt-12 backdrop-blur sm:p-6 sm:pt-12">
             <button
               onClick={() => setShowPreview(false)}
               aria-label="Cerrar prueba"

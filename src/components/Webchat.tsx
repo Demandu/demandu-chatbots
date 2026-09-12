@@ -150,13 +150,23 @@ export function Webchat({ flowId, autostart = false }: { flowId?: string; autost
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autostart]);
 
-  const ultimo = [...msgs].reverse().find((m) => m.kind === "in") as
-    | Extract<Msg, { kind: "in" }>
-    | undefined;
+  /* ── LOS BOTONES VAN DEBAJO DE SU PROPIO MENSAJE ─────────────────────
+   *
+   * Estaban debajo del ÚLTIMO mensaje entrante, y con el motor de verdad eso
+   * los hacía desaparecer: el motor manda después de las opciones su aviso de
+   * atajos («Escribe 0 para volver al inicio»), así que el último mensaje ya
+   * no era el de los botones y no se pintaba ninguno.
+   *
+   * Siguen visibles después de contestar —como en WhatsApp— pero apagados:
+   * borrarlos dejaría la conversación sin memoria de lo que se ofreció, y
+   * dejarlos vivos permitiría contestar dos veces la misma pregunta. */
+  const ultimaRespuesta = msgs.reduce((n, m, i) => (m.kind === "out" ? i : n), -1);
 
   return (
     <div className="flex w-full flex-col items-center gap-3.5">
-      <div className="flex h-[min(720px,78vh)] w-full max-w-[360px] flex-col overflow-hidden rounded-[38px] border-[10px] border-[#05070a] bg-[#0b141a] shadow-2xl">
+      {/* Bajó de 78vh a 66vh: con los botones y la nota de abajo, el marco se
+          salía del panel y la cabecera del teléfono quedaba cortada. */}
+      <div className="flex h-[min(640px,66vh)] w-full max-w-[360px] flex-col overflow-hidden rounded-[38px] border-[10px] border-[#05070a] bg-[#0b141a] shadow-2xl">
         <div className="flex flex-none items-center gap-2.5 bg-[#202c33] px-3.5 py-3">
           <ChevronLeft className="h-5 w-5 text-[#aebac1]" />
           <div className="grid h-10 w-10 place-items-center rounded-full bg-tarjeta p-1.5">
@@ -212,25 +222,25 @@ export function Webchat({ flowId, autostart = false }: { flowId?: string; autost
                     <span dangerouslySetInnerHTML={{ __html: renderText(m.text) }} />
                   )}
                   <span className="ml-2 align-bottom text-[10px] text-white/50">{m.time}</span>
+                  {!mio && m.buttons?.length ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.buttons.map((b) => (
+                        <button
+                          key={b.id}
+                          onClick={() => pulsar(b)}
+                          disabled={ocupado || i < ultimaRespuesta}
+                          className="rounded-lg border border-[#2a3942] bg-[#0b141a] px-3 py-1.5 text-xs text-[#53bdeb] disabled:opacity-40"
+                        >
+                          {b.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             );
           })}
 
-          {ultimo?.buttons?.length ? (
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {ultimo.buttons.map((b) => (
-                <button
-                  key={b.id}
-                  onClick={() => pulsar(b)}
-                  disabled={ocupado}
-                  className="rounded-lg border border-[#2a3942] bg-[#202c33] px-3 py-1.5 text-xs text-[#53bdeb] disabled:opacity-50"
-                >
-                  {b.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
 
         <div className="flex flex-none items-center gap-2 bg-[#202c33] px-2.5 py-2.5">
