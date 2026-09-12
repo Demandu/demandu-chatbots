@@ -268,12 +268,15 @@ export function MapaDelSalon({
           onMouseUp={alSoltar}
           onMouseLeave={alSoltar}
           onClick={(e) => { if (e.target === e.currentTarget) setElegida(null); }}
-          className="relative overflow-auto rounded-2xl border border-linea bg-suave-2"
+          /* EL PLANO VA EN BLANCO. En gris las mesas —que también son claras— se
+             confundían con el fondo y no se leía nada. Blanco con una rejilla
+             tenue es papel milimetrado: se ve dónde está cada cosa. */
+          className="relative overflow-auto rounded-2xl border border-linea bg-white"
           style={{
             width: "100%",
             height: 560,
             backgroundImage:
-              `linear-gradient(#e3e6f0 1px, transparent 1px), linear-gradient(90deg, #e3e6f0 1px, transparent 1px)`,
+              `linear-gradient(#eceef5 1px, transparent 1px), linear-gradient(90deg, #eceef5 1px, transparent 1px)`,
             backgroundSize: `${REJILLA * 4}px ${REJILLA * 4}px`,
           }}
         >
@@ -291,12 +294,14 @@ export function MapaDelSalon({
                     "absolute grid cursor-grab select-none place-items-center border-2 text-center shadow-sm transition-colors",
                     m.forma === "redonda" ? "rounded-full" : "rounded-lg",
                     !activa
-                      ? "border-dashed border-linea-2 bg-white/60 text-ink-3"
+                      ? "border-dashed border-linea-2 bg-white text-ink-3"
                       : pisa
                         ? "border-[#e07a6a] bg-[#fdecec] text-[#c0392b]"
                         : seleccionada
                           ? "border-[#6E42FF] bg-[#efe9ff] text-ink"
-                          : "border-linea-2 bg-white text-ink",
+                          // Sobre un plano blanco, una mesa blanca no se ve. Cuerpo
+                          // gris claro y borde firme: se distingue el mueble del suelo.
+                          : "border-[#c9cee0] bg-[#f6f7fb] text-ink",
                   ].join(" ")}
                   style={{ left: m.x, top: m.y, width: m.ancho, height: m.alto }}
                 >

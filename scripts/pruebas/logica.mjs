@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
+import { enMinutos, horaEnPalabras, diaDeLaSemana, cuandoEmpieza, yaPaso, turnosDelDia, confirmaSola, nombreDelTurno, diasEnPalabras } from "../../src/lib/reservas/turnos.ts";
 import { queMesaLeDoy, comoLoDigo, sePuedenJuntar, capacidadDe, MAX_MESAS_JUNTAS } from "../../src/lib/reservas/asignar.ts";
 import { conUnibles, parNormalizado, acomodar, sePisan, lasQueSePisan, nombreLibre, aforoDelSalon, tandaDeMesas, tamanoPorCapacidad, REJILLA, LIENZO } from "../../src/lib/reservas/mapa.ts";
 import { queHacerConLaAsignacion } from "../../src/lib/avisoDeAsignacion.ts";
@@ -7867,6 +7868,135 @@ describe("Reservas: añadir muchas mesas de un golpe", () => {
     for (const m of tandaDeMesas({ cuantas: 10, capacidad: 6 })) {
       for (const n of [m.x, m.y, m.ancho, m.alto]) esperar(n % REJILLA).igual(0);
     }
+  });
+});
+
+describe("Reservas: los turnos del salón", () => {
+  const PA = "America/Panama"; // UTC-5 todo el año
+  const MX = "America/Mexico_City";
+
+  const T = (id, hora, dias, extra = {}) => ({ id, nombre: id, hora, dias, ...extra });
+
+  test("la hora se lee como la diría una persona", () => {
+    esperar(horaEnPalabras("19:00")).igual("7:00 p.m.");
+    esperar(horaEnPalabras("19:30:00")).igual("7:30 p.m.");
+    esperar(horaEnPalabras("09:05")).igual("9:05 a.m.");
+    esperar(horaEnPalabras("00:00")).igual("12:00 a.m.");
+    esperar(horaEnPalabras("12:00")).igual("12:00 p.m.");
+    esperar(horaEnPalabras("cualquier cosa")).igual("");
+  });
+
+  test("una hora imposible no se acepta", () => {
+    esperar(enMinutos("25:00")).igual(null);
+    esperar(enMinutos("19:99")).igual(null);
+    esperar(enMinutos("")).igual(null);
+    esperar(enMinutos(null)).igual(null);
+  });
+
+  test("el día de la semana es el DEL RESTAURANTE, no el del servidor", () => {
+    // 2026-09-15 es martes. En UTC una fecha sin hora es medianoche, y para
+    // cualquier país al oeste de Greenwich eso sería el LUNES.
+    esperar(diaDeLaSemana("2026-09-15", PA)).igual(2, "un restaurante en Panamá vería el día anterior");
+    esperar(diaDeLaSemana("2026-09-15", "UTC")).igual(2);
+    esperar(diaDeLaSemana("2026-09-13", PA)).igual(0, "domingo");
+    esperar(diaDeLaSemana("no es fecha", PA)).igual(null);
+  });
+
+  test("un turno de las 7pm en Panamá empieza a medianoche UTC", () => {
+    const d = cuandoEmpieza("2026-09-15", "19:00", PA);
+    esperar(d.toISOString()).igual("2026-09-16T00:00:00.000Z");
+  });
+
+  test("NO se ofrece un turno que ya pasó", () => {
+    // Ofrecer el de las 7 a las 9 de la noche hace que alguien llegue a un
+    // restaurante donde no lo esperan.
+    const nueveDeLaNoche = Date.parse("2026-09-16T02:00:00Z"); // 9pm en Panamá
+    esperar(yaPaso("2026-09-15", "19:00", PA, nueveDeLaNoche)).verdadero();
+    esperar(yaPaso("2026-09-15", "21:30", PA, nueveDeLaNoche)).falso("descartó uno que aún no llegaba");
+  });
+
+  test("si no se puede calcular la hora, NO se descarta el turno", () => {
+    // Quedarse sin turnos por no saber la hora es peor que ofrecer uno de más:
+    // el restaurante lo ve y lo corrige. Un error silencioso, no.
+    esperar(yaPaso("2026-09-15", "basura", PA, Date.now())).falso();
+    esperar(yaPaso("no es fecha", "19:00", PA, Date.now())).falso();
+  });
+
+  test("solo salen los turnos de ESE día de la semana", () => {
+    const turnos = [
+      T("Solo martes", "19:00", [2]),
+      T("Fin de semana", "20:00", [5, 6]),
+      T("Todos", "21:00", [0, 1, 2, 3, 4, 5, 6]),
+    ];
+    const mañana = Date.parse("2026-09-15T14:00:00Z"); // 9am en Panamá, martes
+    const salen = turnosDelDia(turnos, "2026-09-15", PA, mañana).map((t) => t.nombre);
+    esperar(salen).igual(["Solo martes", "Todos"]);
+  });
+
+  test("un turno SIN días marcados no existe ningún día", () => {
+    // Tratar la lista vacía como «todos» haría que un turno a medio configurar
+    // empezara a aceptar reservas el día que alguien desmarcara el último día.
+    const mañana = Date.parse("2026-09-15T14:00:00Z");
+    esperar(turnosDelDia([T("Roto", "19:00", [])], "2026-09-15", PA, mañana).length).igual(0);
+    esperar(turnosDelDia([T("Roto", "19:00", null)], "2026-09-15", PA, mañana).length).igual(0);
+  });
+
+  test("a media noche ya NO se ofrece el turno de las 7", () => {
+    /* Esto se probaba con `yaPaso` a solas, y por eso una prueba pasaba con el
+     * filtro QUITADO de `turnosDelDia`: la lista que usaban las demás pruebas
+     * era de la mañana, cuando todavía no había pasado nada. Un candado que
+     * solo se prueba fuera de donde vive no está probado. */
+    const nueveDeLaNoche = Date.parse("2026-09-16T02:00:00Z"); // 9pm en Panamá
+    const turnos = [T("Primero", "19:00", [2]), T("Segundo", "21:30", [2])];
+    const salen = turnosDelDia(turnos, "2026-09-15", PA, nueveDeLaNoche).map((t) => t.nombre);
+    esperar(salen).igual(["Segundo"], "ofreció un turno que ya había empezado");
+  });
+
+  test("un turno apagado no se ofrece", () => {
+    const mañana = Date.parse("2026-09-15T14:00:00Z");
+    const t = [T("Apagado", "19:00", [2], { activo: false }), T("Vivo", "20:00", [2])];
+    esperar(turnosDelDia(t, "2026-09-15", PA, mañana).map((x) => x.nombre)).igual(["Vivo"]);
+  });
+
+  test("salen ordenados por hora, que es como los lee una persona", () => {
+    const mañana = Date.parse("2026-09-15T14:00:00Z");
+    const t = [T("Tarde", "21:30", [2]), T("Temprano", "19:00", [2]), T("Medio", "20:00", [2])];
+    esperar(turnosDelDia(t, "2026-09-15", PA, mañana).map((x) => x.nombre))
+      .igual(["Temprano", "Medio", "Tarde"]);
+  });
+
+  test("una fecha ilegible no devuelve turnos inventados", () => {
+    esperar(turnosDelDia([T("A", "19:00", [1,2,3])], "mañana", PA).length).igual(0);
+  });
+
+  test("ANTE LA DUDA, un turno NO confirma solo", () => {
+    // Que una reserva espere a que alguien la mire es un retraso. Que se
+    // confirme sola una que no cabía es un grupo de pie en la puerta.
+    esperar(confirmaSola({ confirma_sola: true })).verdadero();
+    esperar(confirmaSola({ confirma_sola: false })).falso();
+    esperar(confirmaSola({})).falso("un turno sin configurar confirmó solo");
+    esperar(confirmaSola(null)).falso();
+    esperar(confirmaSola({ confirma_sola: "si" })).falso("un texto se tomó por un sí");
+  });
+
+  test("el turno se nombra con su hora", () => {
+    esperar(nombreDelTurno({ nombre: "Primer turno", hora: "19:00" })).igual("Primer turno · 7:00 p.m.");
+    esperar(nombreDelTurno({ nombre: "", hora: "21:30" })).igual("9:30 p.m.");
+  });
+
+  test("los días se leen en palabras", () => {
+    esperar(diasEnPalabras([1, 2, 3, 4, 5, 6, 0])).igual("todos los días");
+    esperar(diasEnPalabras([5, 6])).igual("vie, sáb");
+    esperar(diasEnPalabras([])).igual("ningún día");
+    esperar(diasEnPalabras([2, 2, 2])).igual("mar", "repitió un día");
+    esperar(diasEnPalabras([9, -1])).igual("ningún día", "aceptó un día que no existe");
+  });
+
+  test("México y Panamá no dan el mismo instante", () => {
+    // Prueba de que la zona se usa de verdad y no es decorado.
+    const pa = cuandoEmpieza("2026-09-15", "19:00", PA).getTime();
+    const mx = cuandoEmpieza("2026-09-15", "19:00", MX).getTime();
+    esperar(pa !== mx).verdadero("las dos zonas dieron la misma hora");
   });
 });
 

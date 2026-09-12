@@ -339,3 +339,212 @@ export async function guardarUniones(formData: FormData): Promise<Resultado> {
 
   return { ok: true };
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * LOS TURNOS Y LOS AJUSTES.
+ *
+ * El salón sin turnos es un dibujo: no hay «a qué hora» donde meter a nadie.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+export type Turno = {
+  id: string; nombre: string; hora: string; dias: number[];
+  duracion_min: number; confirma_sola: boolean; activo: boolean; orden: number;
+};
+
+const COL_TURNO = "id, nombre, hora, dias, duracion_min, confirma_sola, activo, orden";
+
+export type ResultadoConTurnos =
+  | { ok: true; turnos: Turno[] }
+  | { ok: false; error: string };
+
+/** Los días marcados en el formulario. 0 = domingo. */
+function diasDelFormulario(formData: FormData): number[] {
+  return [...new Set(
+    formData.getAll("dias")
+      .map((v) => Number(String(v ?? "").trim()))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6),
+  )].sort();
+}
+
+/** "19:00" o "7:00 PM" → "19:00". `null` si no se entiende. */
+function horaValida(v: string): string | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(v ?? "").trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+/**
+ * Lo que comprueban por igual crear y editar.
+ *
+ * ── UN TURNO SIN DÍAS NO SE GUARDA ────────────────────────────────────────
+ *
+ * La lógica trata «ningún día marcado» como «este turno no existe ningún día»,
+ * a propósito. Pero dejar GUARDARLO así es distinto: el dueño vería su turno en
+ * la lista, con su hora, y ninguna reserva entraría nunca por él. Un turno que
+ * se ve y no funciona es peor que uno que no se pudo guardar.
+ */
+function revisarTurno(formData: FormData):
+  | { ok: true; nombre: string; hora: string; dias: number[]; duracion: number; confirmaSola: boolean; activo: boolean }
+  | { ok: false; error: string } {
+  const nombre = texto(formData.get("nombre"));
+  if (!nombre) return { ok: false, error: "El turno necesita un nombre. Por ejemplo: «Primer turno»." };
+
+  const hora = horaValida(texto(formData.get("hora")));
+  if (!hora) return { ok: false, error: "Pon una hora válida, como 19:00." };
+
+  const dias = diasDelFormulario(formData);
+  if (!dias.length) return { ok: false, error: "Marca al menos un día, o este turno no aceptaría reservas nunca." };
+
+  const duracion = Math.round(numero(formData.get("duracion_min")) || 120);
+  if (!Number.isFinite(duracion) || duracion < 15 || duracion > 480) {
+    return { ok: false, error: "La duración tiene que estar entre 15 minutos y 8 horas." };
+  }
+
+  return {
+    ok: true, nombre, hora, dias, duracion,
+    confirmaSola: texto(formData.get("confirma_sola")) === "si",
+    activo: texto(formData.get("activo")) === "si",
+  };
+}
+
+export async function crearTurno(formData: FormData): Promise<ResultadoConTurnos> {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return { ok: false, error: "No pude identificar tu cuenta." };
+
+  const v = revisarTurno(formData);
+  if (!v.ok) return v;
+
+  const { data, error } = await createAdminClient()
+    .from("reservas_turnos")
+    .insert({
+      org_id: orgId,
+      nombre: v.nombre, hora: v.hora, dias: v.dias,
+      duracion_min: v.duracion, confirma_sola: v.confirmaSola, activo: v.activo,
+    })
+    .select(COL_TURNO);
+
+  if (error) {
+    console.error("[turnos] no se pudo crear:", error.message);
+    if ((error as any).code === "23505") {
+      return { ok: false, error: `Ya tienes un turno llamado «${v.nombre}».` };
+    }
+    return { ok: false, error: "No se pudo guardar el turno." };
+  }
+  return { ok: true, turnos: (data ?? []) as unknown as Turno[] };
+}
+
+export async function editarTurno(formData: FormData): Promise<ResultadoConTurnos> {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return { ok: false, error: "No pude identificar tu cuenta." };
+
+  const id = texto(formData.get("id"));
+  if (!id) return { ok: false, error: "Falta el turno." };
+
+  const v = revisarTurno(formData);
+  if (!v.ok) return v;
+
+  const { data, error } = await createAdminClient()
+    .from("reservas_turnos")
+    .update({
+      nombre: v.nombre, hora: v.hora, dias: v.dias,
+      duracion_min: v.duracion, confirma_sola: v.confirmaSola, activo: v.activo,
+    })
+    .eq("id", id)
+    .eq("org_id", orgId)
+    .select(COL_TURNO);
+
+  if (error) {
+    console.error("[turnos] no se pudo editar:", error.message);
+    if ((error as any).code === "23505") {
+      return { ok: false, error: `Ya tienes un turno llamado «${v.nombre}».` };
+    }
+    return { ok: false, error: "No se pudo guardar el cambio." };
+  }
+  return { ok: true, turnos: (data ?? []) as unknown as Turno[] };
+}
+
+/**
+ * Borra un turno.
+ *
+ * NO SE BORRA SI TIENE RESERVAS POR DELANTE — y aquí la base ya ayuda:
+ * `reservas.turno_id` tiene `on delete restrict`, así que aunque este código
+ * fallara, Postgres se niega. Esta comprobación existe para dar un motivo que
+ * se entienda en vez de un error de llave foránea.
+ */
+export async function borrarTurno(formData: FormData): Promise<Resultado> {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return { ok: false, error: "No pude identificar tu cuenta." };
+
+  const id = texto(formData.get("id"));
+  if (!id) return { ok: false, error: "Falta el turno." };
+
+  const admin = createAdminClient();
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const { count, error: errMirar } = await admin
+    .from("reservas")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("turno_id", id)
+    .gte("fecha", hoy);
+
+  if (errMirar) {
+    console.error("[turnos] no pude mirar si tiene reservas:", errMirar.message);
+    return { ok: false, error: "No pude comprobar si ese turno tiene reservas. No lo borré." };
+  }
+  if ((count ?? 0) > 0) {
+    return {
+      ok: false,
+      error: `Ese turno tiene ${count} reserva(s) por delante. Apágalo en vez de borrarlo: las reservas que ya hay siguen en pie y no entran nuevas.`,
+    };
+  }
+
+  const { error } = await admin.from("reservas_turnos").delete().eq("id", id).eq("org_id", orgId);
+  if (error) {
+    console.error("[turnos] no se pudo borrar:", error.message);
+    return { ok: false, error: "No se pudo borrar el turno." };
+  }
+  return { ok: true };
+}
+
+/** Los ajustes del complemento: recordatorio, grupo grande, mesas juntas. */
+export async function guardarAjustes(formData: FormData): Promise<Resultado> {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return { ok: false, error: "No pude identificar tu cuenta." };
+
+  const horas = Math.round(numero(formData.get("recordatorio_horas")) || 24);
+  if (!Number.isFinite(horas) || horas < 1 || horas > 72) {
+    return { ok: false, error: "El recordatorio puede salir entre 1 y 72 horas antes." };
+  }
+  const grupoGrande = Math.round(numero(formData.get("grupo_grande")) || 12);
+  if (!Number.isFinite(grupoGrande) || grupoGrande < 2 || grupoGrande > 100) {
+    return { ok: false, error: "El tope de grupo grande tiene que estar entre 2 y 100." };
+  }
+  const juntas = Math.round(numero(formData.get("max_mesas_juntas")) || 3);
+  if (!Number.isFinite(juntas) || juntas < 1 || juntas > 4) {
+    return { ok: false, error: "Se pueden juntar entre 1 y 4 mesas." };
+  }
+
+  const { error } = await createAdminClient()
+    .from("reservas_ajustes")
+    .upsert(
+      {
+        org_id: orgId,
+        recordatorio_horas: horas,
+        recordatorio_activo: texto(formData.get("recordatorio_activo")) === "si",
+        grupo_grande: grupoGrande,
+        max_mesas_juntas: juntas,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "org_id" },
+    );
+
+  if (error) {
+    console.error("[reservas] no se pudieron guardar los ajustes:", error.message);
+    return { ok: false, error: "No se pudieron guardar los ajustes." };
+  }
+  return { ok: true };
+}
