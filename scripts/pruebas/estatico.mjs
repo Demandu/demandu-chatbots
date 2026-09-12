@@ -9283,4 +9283,49 @@ describe("Una pantalla del panel que no hace scroll se corta por abajo", () => {
   });
 });
 
+describe("Google: se pide exactamente lo declarado en la consola", () => {
+  // Google verifica lo que el código PIDE, no lo que la consola DICE. El 12 de
+  // septiembre de 2026 el código pedía `auth/calendar` (control total) y la
+  // consola declaraba tres permisos acotados: cada cliente veía «app no
+  // verificada» y gastaba uno de los 100 cupos. Esta lista es la de Data
+  // Access del proyecto `demandu-plataforma`; si cambia allí, cambia aquí.
+  const DECLARADOS = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/calendar.events.freebusy",
+    "https://www.googleapis.com/auth/calendar.events.owned",
+  ];
+  const g = sinComentarios(fs.readFileSync(path.join(SRC, "lib/integrations/google.ts"), "utf8"));
+  const bloque = (g.match(/GOOGLE_SCOPES\s*=\s*\[([\s\S]*?)\]/) ?? [])[1] ?? "";
+  const pedidos = [...bloque.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+  test("la lista de permisos existe y no está vacía", () => {
+    esperar(pedidos.length > 0).verdadero("no se encontró GOOGLE_SCOPES en google.ts");
+  });
+
+  test("ningún permiso pedido falta en la consola", () => {
+    const deMas = pedidos.filter((p) => !DECLARADOS.includes(p));
+    esperar(deMas.join(", ")).igual(
+      "",
+      "estos permisos se piden pero no están declarados en Google Cloud → pantalla de «app no verificada» y cupo de 100 usuarios",
+    );
+  });
+
+  test("no se vuelve a pedir control total del calendario", () => {
+    esperar(pedidos.includes("https://www.googleapis.com/auth/calendar")).falso(
+      "`auth/calendar` volvió: es lo que rompió la verificación",
+    );
+  });
+
+  test("el selector solo ofrece calendarios propios", () => {
+    // `events.owned` no alcanza a los compartidos: ofrecerlos es ofrecer un
+    // calendario donde agendar va a fallar.
+    esperar(/accessRole\s*===\s*"writer"/.test(g)).falso(
+      "fetchCalendars vuelve a ofrecer calendarios compartidos, que events.owned no puede tocar",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

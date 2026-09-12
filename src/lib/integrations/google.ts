@@ -4,10 +4,32 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * El Client ID/Secret viven en variables de entorno (Netlify), nunca en el código.
  */
 
+/*
+ * ── LOS PERMISOS TIENEN QUE SER EXACTAMENTE LOS DECLARADOS EN GOOGLE CLOUD ──
+ *
+ * Google Auth Platform → Data Access del proyecto `demandu-plataforma` declara:
+ *   userinfo.email · openid · drive.file · calendar.calendarlist.readonly ·
+ *   calendar.events.freebusy · calendar.events.owned (sensible)
+ *
+ * Google verifica lo que el código PIDE, no lo que la consola DICE. Hasta el 12
+ * de septiembre de 2026 aquí se pedía `auth/calendar` (control total), que no
+ * estaba declarado: cada cliente veía «Google no ha verificado esta app»,
+ * gastaba uno de los 100 cupos del proyecto, y la verificación se habría
+ * rechazado. Si un día hace falta un permiso nuevo, PRIMERO se declara en la
+ * consola y se manda a verificar; DESPUÉS se pide aquí.
+ *
+ * Los tres de calendario cubren todo lo que hace la plataforma: la lista de
+ * calendarios (calendarlist.readonly), los huecos libres (events.freebusy) y
+ * leer, crear, mover y cancelar citas (events.owned). `events.owned` solo
+ * alcanza a los calendarios de los que el cliente es DUEÑO — que es
+ * exactamente lo que ya usaba la agenda (`cargar.ts` filtra por `owner`).
+ */
 export const GOOGLE_SCOPES = [
   "openid",
-  "email",
-  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/calendar.events.freebusy",
+  "https://www.googleapis.com/auth/calendar.events.owned",
   // Hojas de cálculo. SOLO `drive.file`, y es una decisión deliberada.
   //
   // La API de Sheets acepta este permiso y la propia documentación de Google lo
@@ -112,8 +134,11 @@ export async function fetchCalendars(accessToken: string): Promise<GCalItem[]> {
   const res = await fetch(CALENDAR_LIST_URL, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) return [];
   const j = await res.json();
+  // Solo los calendarios PROPIOS: el permiso `calendar.events.owned` no
+  // alcanza a los compartidos (accessRole «writer»), así que ofrecerlos en el
+  // selector sería ofrecer un calendario donde agendar va a fallar.
   return (j.items ?? [])
-    .filter((c: any) => c.accessRole === "owner" || c.accessRole === "writer")
+    .filter((c: any) => c.accessRole === "owner")
     .map((c: any) => ({ id: c.id, summary: c.summary, primary: !!c.primary, accessRole: c.accessRole }));
 }
 
