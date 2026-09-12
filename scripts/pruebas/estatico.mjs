@@ -9494,6 +9494,17 @@ describe("No nace un tercer motor de flujos", () => {
     );
   });
 
+  test("el teléfono manda el identificador del botón, no su etiqueta", () => {
+    /* En el bloque de agendar, el id del botón ES la hora en ISO. Mandando la
+     * etiqueta («mar 15 de sep, 09:00») el motor no reconoce ninguna hora,
+     * vuelve a pedir que elija de la lista, y la prueba entra en bucle. El
+     * widget de verdad manda `b.id`; esto tiene que hacer lo mismo. */
+    const t = sinComentarios(TELEFONO?.texto ?? "");
+    esperar(/turno\(\{\s*text:\s*b\.id\s*\}\)/.test(t)).verdadero(
+      "el teléfono vuelve a mandar la etiqueta del botón: agendar se queda en bucle",
+    );
+  });
+
   test("probar no es una conversación con un cliente", () => {
     const t = sinComentarios(PUERTA?.texto ?? "");
     esperar(/guardarEnBandeja:\s*false/.test(t)).verdadero(

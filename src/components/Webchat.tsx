@@ -139,10 +139,21 @@ export function Webchat({ flowId, autostart = false }: { flowId?: string; autost
     await turno({ text: t });
   };
 
+  /**
+   * ── SE MANDA EL IDENTIFICADOR DEL BOTÓN, NO SU ETIQUETA ─────────────────
+   *
+   * Es lo que hace el widget de verdad (`public/widget.js`: `post({ text: b.id })`),
+   * y no es un detalle de estilo: en el bloque de agendar, el id del botón ES
+   * LA HORA EN ISO. Mandando la etiqueta —«mar 15 de sep, 09:00»— el motor no
+   * reconocía ninguna hora, volvía a pedir que eligiera una de la lista, y la
+   * prueba se quedaba dando vueltas para siempre.
+   *
+   * En pantalla se sigue viendo la etiqueta: lo que cambia es lo que viaja.
+   */
   const pulsar = async (b: Boton) => {
     if (ocupado) return;
     setMsgs((m) => [...m, { kind: "out", text: b.label, time: hhmm() }]);
-    await turno({ text: b.label });
+    await turno({ text: b.id });
   };
 
   useEffect(() => {
