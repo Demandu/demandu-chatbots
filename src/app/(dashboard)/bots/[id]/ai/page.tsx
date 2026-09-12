@@ -85,9 +85,19 @@ export default async function BotAiPage({
     supabase.from("tiendas").select("id").eq("activa", true).limit(1),
   ]);
 
+  /* RESERVAS PIDE LAS DOS COSAS: mesas Y turnos. Con salón y sin turnos no hay
+   * a qué hora sentar a nadie; con turnos y sin salón no hay dónde. Se mira
+   * igual que en los dos motores — si esto se separara, la pantalla enseñaría
+   * herramientas que el motor no enciende. */
+  const [{ data: mesasDelSalon }, { data: turnosDelSalon }] = await Promise.all([
+    supabase.from("reservas_mesas").select("id").eq("activa", true).limit(1),
+    supabase.from("reservas_turnos").select("id").eq("activo", true).limit(1),
+  ]);
+
   const loQueTiene = {
     agenda: Boolean(integracion) || Boolean(calendly),
     tienda: Boolean((tiendasActivas ?? []).length),
+    reservas: Boolean((mesasDelSalon ?? []).length) && Boolean((turnosDelSalon ?? []).length),
   };
   const horas = ((org?.business_hours as Record<string, DiaLaboral>) ?? {}) as Record<string, DiaLaboral>;
   const DIAS: Record<string, string> = {

@@ -50,10 +50,12 @@ export type LoQueTiene = {
   agenda?: boolean;
   /** Al menos una tienda encendida y vinculada a este chatbot. */
   tienda?: boolean;
+  /** El complemento de Reservas, con salón dibujado y turnos configurados. */
+  reservas?: boolean;
 };
 
 /** Qué hace falta tener para que una herramienta sirva de algo. */
-export type Requisito = "agenda" | "tienda" | null;
+export type Requisito = "agenda" | "tienda" | "reservas" | null;
 
 /**
  * Las que se encienden con la agenda.
@@ -74,6 +76,23 @@ export const POR_LA_AGENDA = [
   "cancelar_cita",
 ] as const;
 
+/**
+ * Las que se encienden con RESERVAS.
+ *
+ * ── VER ANTES DE RESERVAR ─────────────────────────────────────────────────
+ *
+ * `ver_mesas` va primero por lo mismo que `ver_horarios` en la agenda: sin
+ * consultar, el modelo se inventa disponibilidad. Nunca se enciende
+ * `reservar_mesa` sin ella.
+ */
+export const POR_LAS_RESERVAS = [
+  "ver_mesas",
+  "reservar_mesa",
+  "ver_mis_reservas",
+  "mover_reserva",
+  "cancelar_reserva",
+] as const;
+
 /** Las que se encienden con la tienda. */
 export const POR_LA_TIENDA = [
   "ver_catalogo",
@@ -87,14 +106,31 @@ export const POR_LA_TIENDA = [
  */
 export function requisitoDe(clave: string): Requisito {
   if ((POR_LA_AGENDA as readonly string[]).includes(clave)) return "agenda";
+  if ((POR_LAS_RESERVAS as readonly string[]).includes(clave)) return "reservas";
   if ((POR_LA_TIENDA as readonly string[]).includes(clave)) return "tienda";
   return null;
 }
 
-/** Las que se encienden solas con lo que este negocio tiene hoy. */
+/**
+ * Las que se encienden solas con lo que este negocio tiene hoy.
+ *
+ * ── CITAS Y RESERVAS NO CONVIVEN ──────────────────────────────────────────
+ *
+ * Son dos negocios distintos: un médico o un consultor AGENDA CITAS; un
+ * restaurante RESERVA MESAS. Nadie hace las dos cosas.
+ *
+ * Y si las dos cajas estuvieran encendidas, el modelo elegiría mal tarde o
+ * temprano: llamaría a `agendar_cita` para una cena, crearía un evento en un
+ * calendario que el restaurante no mira, y la mesa quedaría sin ocupar. El
+ * grupo llega con su confirmación y no hay nada reservado.
+ *
+ * Con Reservas encendido, las de agenda no se ofrecen. Lo que el negocio marcó
+ * a mano sigue valiendo: esto solo decide lo AUTOMÁTICO.
+ */
 export function herramientasAutomaticas(tiene: LoQueTiene | null | undefined): string[] {
   const out: string[] = [];
-  if (tiene?.agenda) out.push(...POR_LA_AGENDA);
+  if (tiene?.reservas) out.push(...POR_LAS_RESERVAS);
+  else if (tiene?.agenda) out.push(...POR_LA_AGENDA);
   if (tiene?.tienda) out.push(...POR_LA_TIENDA);
   return out;
 }

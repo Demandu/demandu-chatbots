@@ -50,6 +50,7 @@ import {
 import {
   POR_LA_AGENDA, POR_LA_TIENDA, requisitoDe, herramientasAutomaticas,
   herramientasQueManda, deDondeSale, apagadasDespuesDeGuardar,
+  POR_LAS_RESERVAS,
 } from "../../src/lib/ai/capacidades.ts";
 import {
   repartirHorarios, esHorarioElegido, correoValido, quiereOmitir,
@@ -7997,6 +7998,53 @@ describe("Reservas: los turnos del salón", () => {
     const pa = cuandoEmpieza("2026-09-15", "19:00", PA).getTime();
     const mx = cuandoEmpieza("2026-09-15", "19:00", MX).getTime();
     esperar(pa !== mx).verdadero("las dos zonas dieron la misma hora");
+  });
+});
+
+describe("Citas y reservas no conviven", () => {
+  test("un restaurante recibe las de mesas, NO las de citas", () => {
+    /* Son dos negocios distintos. Si las dos cajas estuvieran encendidas, el
+     * modelo llamaría a `agendar_cita` para una cena, crearía un evento en un
+     * calendario que el restaurante no mira, y la mesa quedaría sin ocupar: el
+     * grupo llega con su confirmación y no hay nada reservado. */
+    const h = herramientasAutomaticas({ reservas: true, agenda: true });
+    esperar(h.includes("reservar_mesa")).verdadero();
+    esperar(h.includes("agendar_cita")).falso("un restaurante puede agendar citas");
+    esperar(h.includes("ver_horarios")).falso("un restaurante ve horarios de consultorio");
+  });
+
+  test("un médico recibe las de citas, NO las de mesas", () => {
+    const h = herramientasAutomaticas({ agenda: true });
+    esperar(h.includes("agendar_cita")).verdadero();
+    esperar(h.includes("reservar_mesa")).falso("un consultorio puede reservar mesas");
+  });
+
+  test("VER va antes que RESERVAR", () => {
+    // Igual que en la agenda: sin consultar, el modelo se inventa disponibilidad.
+    esperar(POR_LAS_RESERVAS[0]).igual("ver_mesas");
+    esperar(POR_LAS_RESERVAS.includes("reservar_mesa")).verdadero();
+  });
+
+  test("la tienda convive con las dos", () => {
+    // Un restaurante puede vender por WhatsApp además de reservar.
+    const h = herramientasAutomaticas({ reservas: true, tienda: true });
+    esperar(h.includes("reservar_mesa")).verdadero();
+    esperar(h.includes("ver_catalogo")).verdadero();
+  });
+
+  test("cada herramienta de reservas declara que necesita reservas", () => {
+    // Sin esto la pantalla la ofrecería a un negocio sin salón, y Lana
+    // prometería mesas que no existen.
+    for (const clave of POR_LAS_RESERVAS) {
+      esperar(requisitoDe(clave)).igual("reservas", `${clave} no dice qué necesita`);
+    }
+    esperar(requisitoDe("agendar_cita")).igual("agenda");
+    esperar(requisitoDe("etiquetar")).igual(null);
+  });
+
+  test("sin nada conectado no se enciende nada", () => {
+    esperar(herramientasAutomaticas({}).length).igual(0);
+    esperar(herramientasAutomaticas(null).length).igual(0);
   });
 });
 

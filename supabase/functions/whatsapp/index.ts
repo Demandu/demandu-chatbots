@@ -921,16 +921,47 @@ const POR_LA_TIENDA = [
   "estado_de_pedido",
 ] as const;
 
+/**
+ * Las que se encienden con RESERVAS.
+ *
+ * ── VER ANTES DE RESERVAR ─────────────────────────────────────────────────
+ *
+ * `ver_mesas` va primero por lo mismo que `ver_horarios` en la agenda: sin
+ * consultar, el modelo se inventa disponibilidad. Nunca se enciende
+ * `reservar_mesa` sin ella.
+ */
+const POR_LAS_RESERVAS = [
+  "ver_mesas",
+  "reservar_mesa",
+  "ver_mis_reservas",
+  "mover_reserva",
+  "cancelar_reserva",
+] as const;
+
 type LoQueTiene = {
   /** Google Calendar o Calendly conectado y con el token vivo. */
   agenda?: boolean;
   /** Al menos una tienda encendida y vinculada a este chatbot. */
   tienda?: boolean;
+  /** El complemento de Reservas, con salón dibujado y turnos configurados. */
+  reservas?: boolean;
 };
 
+/**
+ * ── CITAS Y RESERVAS NO CONVIVEN ──────────────────────────────────────────
+ *
+ * Son dos negocios distintos: un médico o un consultor AGENDA CITAS; un
+ * restaurante RESERVA MESAS. Nadie hace las dos cosas.
+ *
+ * Y si las dos cajas estuvieran encendidas, el modelo elegiría mal tarde o
+ * temprano: llamaría a `agendar_cita` para una cena, crearía un evento en un
+ * calendario que el restaurante no mira, y la mesa quedaría sin ocupar. El
+ * grupo llega con su confirmación y no hay nada reservado.
+ */
 function herramientasAutomaticas(tiene: LoQueTiene | null | undefined): string[] {
   const out: string[] = [];
-  if (tiene?.agenda) out.push(...POR_LA_AGENDA);
+  if (tiene?.reservas) out.push(...POR_LAS_RESERVAS);
+  else if (tiene?.agenda) out.push(...POR_LA_AGENDA);
   if (tiene?.tienda) out.push(...POR_LA_TIENDA);
   return out;
 }
@@ -961,19 +992,29 @@ function herramientasQueManda(f: Fuentes | null | undefined): string[] {
  * su asistente tiene que dejar de prometer citas EN ESE MOMENTO, no cuando
  * alguien se acuerde de ir a desmarcar una casilla.
  */
-async function loQueTieneEsteNegocio(ctx: any): Promise<{ agenda: boolean; tienda: boolean }> {
+async function loQueTieneEsteNegocio(
+  ctx: any,
+): Promise<{ agenda: boolean; tienda: boolean; reservas: boolean }> {
   try {
-    const [agenda, tienda] = await Promise.all([
+    const [agenda, tienda, mesas, turnos] = await Promise.all([
       ctx.db.from("integrations").select("provider")
         .eq("org_id", ctx.orgId).in("provider", ["google_calendar", "calendly"]).limit(1),
       ctx.db.from("tiendas").select("id").eq("org_id", ctx.orgId).eq("activa", true).limit(1),
+      /* HACEN FALTA LAS DOS COSAS: mesas Y turnos. Con salón y sin turnos no
+       * hay a qué hora sentar a nadie; con turnos y sin salón no hay dónde. */
+      ctx.db.from("reservas_mesas").select("id").eq("org_id", ctx.orgId).eq("activa", true).limit(1),
+      ctx.db.from("reservas_turnos").select("id").eq("org_id", ctx.orgId).eq("activo", true).limit(1),
     ]);
-    return { agenda: !!(agenda.data ?? []).length, tienda: !!(tienda.data ?? []).length };
+    return {
+      agenda: !!(agenda.data ?? []).length,
+      tienda: !!(tienda.data ?? []).length,
+      reservas: !!(mesas.data ?? []).length && !!(turnos.data ?? []).length,
+    };
   } catch (e) {
     // ANTE LA DUDA, NADA AUTOMÁTICO: encender herramientas porque la base no
     // contestó sería que el bot prometa citas sin poder crearlas.
     console.error("[ia] no pude ver qué tiene conectado este negocio:", e);
-    return { agenda: false, tienda: false };
+    return { agenda: false, tienda: false, reservas: false };
   }
 }
 

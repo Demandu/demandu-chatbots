@@ -201,24 +201,35 @@ async function comoLoDigo(ctx: ContextoAgente, iso: string): Promise<string> {
  * conectada» — y esa es la respuesta correcta para quien escribe, que es lo
  * único que importa aquí.
  */
-async function loQueTieneEsteNegocio(ctx: ContextoAgente): Promise<{ agenda: boolean; tienda: boolean }> {
+async function loQueTieneEsteNegocio(
+  ctx: ContextoAgente,
+): Promise<{ agenda: boolean; tienda: boolean; reservas: boolean }> {
   try {
-    const [agenda, tienda] = await Promise.all([
+    const [agenda, tienda, mesas, turnos] = await Promise.all([
       ctx.admin.from("integrations").select("provider")
         .eq("org_id", ctx.orgId).in("provider", ["google_calendar", "calendly"]).limit(1),
       ctx.admin.from("tiendas").select("id")
         .eq("org_id", ctx.orgId).eq("activa", true).limit(1),
+      /* HACEN FALTA LAS DOS COSAS: mesas Y turnos. Con salón y sin turnos no
+       * hay a qué hora sentar a nadie; con turnos y sin salón no hay dónde. Un
+       * restaurante a medio configurar con las herramientas encendidas es Lana
+       * prometiendo mesas que no existen. */
+      ctx.admin.from("reservas_mesas").select("id")
+        .eq("org_id", ctx.orgId).eq("activa", true).limit(1),
+      ctx.admin.from("reservas_turnos").select("id")
+        .eq("org_id", ctx.orgId).eq("activo", true).limit(1),
     ]);
     return {
       agenda: !!(agenda.data ?? []).length,
       tienda: !!(tienda.data ?? []).length,
+      reservas: !!(mesas.data ?? []).length && !!(turnos.data ?? []).length,
     };
   } catch (e) {
     // ANTE LA DUDA, NADA AUTOMÁTICO. Encender herramientas porque la base no
     // contestó sería que el bot prometa citas sin poder crearlas. Lo que el
     // negocio marcó a mano sigue funcionando igual.
     console.error("[ia] no pude ver qué tiene conectado este negocio:", (e as Error)?.message ?? e);
-    return { agenda: false, tienda: false };
+    return { agenda: false, tienda: false, reservas: false };
   }
 }
 
