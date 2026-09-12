@@ -9517,6 +9517,15 @@ describe("No nace un tercer motor de flujos", () => {
     );
   });
 
+  test("Contactos deja fuera el contacto de prueba", () => {
+    const a = ARCHIVOS.find((x) => x.ruta === "src/app/(dashboard)/contacts/page.tsx");
+    esperar(!!a).verdadero("falta la pantalla de Contactos");
+    const t = sinComentarios(a?.texto ?? "");
+    esperar(/\.not\("external_id",\s*"like",\s*"prueba:%"\)/.test(t)).verdadero(
+      "«Prueba del panel» vuelve a salir en la lista de clientes",
+    );
+  });
+
   test("la Bandeja deja fuera las pruebas", () => {
     const t = sinComentarios(BANDEJA?.texto ?? "");
     esperar(/\.eq\("prueba",\s*false\)/.test(t)).verdadero(

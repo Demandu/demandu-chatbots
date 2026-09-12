@@ -17,6 +17,10 @@ export default async function ContactsPage() {
   const { data } = await createClient()
     .from("contacts")
     .select("id,name,wa_name,phone,email,company,country,channel,tags,created_at")
+    // El contacto que crea «Probar flujo» no es una persona: es el dueño
+    // probando su propio chatbot. La Bandeja ya lo deja fuera; aquí también,
+    // o acaba en la lista de clientes y alguien le escribe.
+    .not("external_id", "like", "prueba:%")
     .order("created_at", { ascending: false });
 
   return (
