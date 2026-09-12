@@ -9,7 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { queMesaLeDoy, comoLoDigo, sePuedenJuntar, capacidadDe, MAX_MESAS_JUNTAS } from "../../src/lib/reservas/asignar.ts";
-import { conUnibles, parNormalizado, acomodar, sePisan, lasQueSePisan, nombreLibre, aforoDelSalon, REJILLA, LIENZO } from "../../src/lib/reservas/mapa.ts";
+import { conUnibles, parNormalizado, acomodar, sePisan, lasQueSePisan, nombreLibre, aforoDelSalon, tandaDeMesas, tamanoPorCapacidad, REJILLA, LIENZO } from "../../src/lib/reservas/mapa.ts";
 import { queHacerConLaAsignacion } from "../../src/lib/avisoDeAsignacion.ts";
 import {
   esChoqueDeUnico, esRepetidaPorTiempo, VENTANA_SEGUNDOS,
@@ -7771,6 +7771,102 @@ describe("Reservas: el mapa del salón", () => {
   test("el aforo suma lo que de verdad hay", () => {
     esperar(aforoDelSalon([{ capacidad: 4 }, { capacidad: 2 }, { capacidad: 0 }])).igual(6);
     esperar(aforoDelSalon(null)).igual(0);
+  });
+});
+
+describe("Reservas: añadir muchas mesas de un golpe", () => {
+  test("«seis mesas de dos» crea seis mesas de dos", () => {
+    const t = tandaDeMesas({ cuantas: 6, capacidad: 2, forma: "redonda" });
+    esperar(t.length).igual(6);
+    esperar(t.every((m) => m.capacidad === 2)).verdadero();
+    esperar(t.every((m) => m.forma === "redonda")).verdadero();
+  });
+
+  test("NINGUNA nace encima de otra", () => {
+    // Soltar veinte mesas encima de las que había dejaría todo en rojo y el
+    // dueño tendría que desenredarlo a mano: más trabajo del que se le ahorró.
+    const t = tandaDeMesas({ cuantas: 20, capacidad: 4 });
+    for (let i = 0; i < t.length; i++) {
+      for (let j = i + 1; j < t.length; j++) {
+        esperar(sePisan(t[i], t[j])).falso(`${t[i].nombre} nació encima de ${t[j].nombre}`);
+      }
+    }
+  });
+
+  test("NINGUNA nace encima de las que ya estaban", () => {
+    const yaHay = [
+      { nombre: "Mesa 1", x: 20, y: 20, ancho: 200, alto: 200 },
+      { nombre: "Mesa 2", x: 300, y: 20, ancho: 200, alto: 200 },
+    ];
+    const t = tandaDeMesas({ cuantas: 8, capacidad: 4, yaHay });
+    for (const nueva of t) {
+      for (const vieja of yaHay) {
+        esperar(sePisan(nueva, vieja)).falso(`${nueva.nombre} nació encima de ${vieja.nombre}`);
+      }
+    }
+  });
+
+  test("los nombres NO se repiten, ni entre sí ni con las que ya había", () => {
+    // La base tiene `unique (org_id, nombre)`. Un nombre repetido no es un
+    // detalle estético: el guardado falla y el dueño ve un error.
+    const yaHay = [{ nombre: "Mesa 1", x: 0, y: 0, ancho: 60, alto: 60 },
+                   { nombre: "Mesa 2", x: 900, y: 700, ancho: 60, alto: 60 }];
+    const t = tandaDeMesas({ cuantas: 5, capacidad: 2, yaHay });
+    const nombres = t.map((m) => m.nombre);
+    esperar(new Set(nombres).size).igual(nombres.length, "la tanda repitió nombres entre sí");
+    esperar(nombres.includes("Mesa 1")).falso("pisó el nombre de una mesa existente");
+    esperar(nombres.includes("Mesa 2")).falso("pisó el nombre de una mesa existente");
+  });
+
+  test("si no caben todas, devuelve LAS QUE CABEN y no las apila fuera", () => {
+    // Crear mesas invisibles es la peor clase de fallo: existirían para Lana y
+    // no para el dueño.
+    const t = tandaDeMesas({ cuantas: 60, capacidad: 12, lienzo: { ancho: 400, alto: 400 } });
+    esperar(t.length < 60).verdadero("dijo que cupieron todas");
+    esperar(t.length > 0).verdadero("no cupo ninguna en un plano de 400x400");
+    for (const m of t) {
+      esperar(m.x >= 0 && m.y >= 0).verdadero(`${m.nombre} quedó fuera del plano`);
+      esperar(m.x + m.ancho <= 400).verdadero(`${m.nombre} se sale por la derecha`);
+      esperar(m.y + m.alto <= 400).verdadero(`${m.nombre} se sale por abajo`);
+    }
+  });
+
+  test("una mesa de diez se dibuja más grande que una de dos", () => {
+    // Si todas midieran igual, el plano dejaría de parecerse al salón.
+    const chica = tamanoPorCapacidad(2, "redonda");
+    const grande = tamanoPorCapacidad(10, "redonda");
+    esperar(grande.ancho > chica.ancho).verdadero();
+    // Pero no sin límite: una de 40 no puede ocupar media pantalla.
+    esperar(tamanoPorCapacidad(40, "redonda").ancho <= 140).verdadero();
+  });
+
+  test("la rectangular crece a lo largo, no en cuadrado", () => {
+    const r = tamanoPorCapacidad(10, "rectangular");
+    esperar(r.ancho > r.alto).verdadero("una mesa larga se dibujó cuadrada");
+  });
+
+  test("pedir cero o basura no crea nada", () => {
+    for (const n of [0, -5, NaN, undefined]) {
+      esperar(tandaDeMesas({ cuantas: n, capacidad: 4 }).length).igual(0, `creó mesas con cuantas=${String(n)}`);
+    }
+    esperar(tandaDeMesas({ cuantas: 3, capacidad: 0 }).length).igual(0);
+  });
+
+  test("no se pueden crear mil mesas de un clic", () => {
+    // Un dedo pesado en el teclado no puede llenar la base de un cliente.
+    esperar(tandaDeMesas({ cuantas: 99999, capacidad: 2 }).length <= 60).verdadero();
+  });
+
+  test("la zona se pone a todas, y vacía es nula", () => {
+    const t = tandaDeMesas({ cuantas: 3, capacidad: 2, zona: " Terraza " });
+    esperar(t.every((m) => m.zona === "Terraza")).verdadero();
+    esperar(tandaDeMesas({ cuantas: 1, capacidad: 2, zona: "   " })[0].zona).igual(null);
+  });
+
+  test("todo lo que sale está pegado a la rejilla", () => {
+    for (const m of tandaDeMesas({ cuantas: 10, capacidad: 6 })) {
+      for (const n of [m.x, m.y, m.ancho, m.alto]) esperar(n % REJILLA).igual(0);
+    }
   });
 });
 

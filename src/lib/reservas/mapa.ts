@@ -170,3 +170,118 @@ export function aforoDelSalon(mesas: MesaEnElMapa[] | null | undefined): number 
     .filter((m) => m && m.activa !== false)
     .reduce((n, m) => n + Math.max(0, Number(m.capacidad) || 0), 0);
 }
+
+/**
+ * EL TAMAÑO DE UNA MESA SEGÚN CUÁNTA GENTE CABE.
+ *
+ * Una mesa de dos y una de diez no se dibujan iguales. Si todas midieran lo
+ * mismo, el plano dejaría de parecerse al salón y el encargado tendría que leer
+ * el número de cada una para entender qué está mirando — que es justo lo que un
+ * plano existe para evitar.
+ *
+ * Las rectangulares crecen a lo largo, como en la vida real: una mesa de diez
+ * es una tabla larga, no un cuadrado enorme.
+ */
+export function tamanoPorCapacidad(
+  capacidad: number,
+  forma: "redonda" | "cuadrada" | "rectangular" = "redonda",
+): { ancho: number; alto: number } {
+  const p = Math.max(1, Math.min(40, Math.round(Number(capacidad) || 2)));
+  // De 2 personas → 60px; de 10 → 120px. Sube despacio a propósito: si creciera
+  // en proporción, una mesa de 20 ocuparía media pantalla.
+  const lado = aLaRejilla(Math.min(140, 50 + p * 7));
+  if (forma === "rectangular") {
+    return { ancho: aLaRejilla(Math.min(240, 60 + p * 14)), alto: aLaRejilla(Math.max(50, lado * 0.6)) };
+  }
+  return { ancho: lado, alto: lado };
+}
+
+/** Cuánto aire se deja entre mesas al colocarlas de golpe. */
+const AIRE = 20;
+
+/**
+ * UNA TANDA DE MESAS IGUALES, COLOCADAS SOLAS.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * «Seis mesas de dos, redondas» en un clic. Ponerlas de una en una y arrastrar
+ * cada una es tedioso, y lo tedioso no se hace: un dueño que abandona a mitad
+ * deja el salón a medias, y un salón a medias hace que Lana rechace reservas
+ * que sí cabían.
+ *
+ * ── NO SE PONEN ENCIMA DE LAS QUE YA HAY ──────────────────────────────────
+ *
+ * Se busca hueco recorriendo el plano. Soltar veinte mesas encima de las que ya
+ * estaban dejaría todo en rojo y el dueño tendría que desenredarlo a mano — más
+ * trabajo del que se le ahorró.
+ *
+ * ── SI NO CABEN TODAS, SE PONEN LAS QUE CABEN ─────────────────────────────
+ *
+ * Y quien llama avisa cuántas entraron. Apilarlas fuera del plano sería crear
+ * mesas invisibles: existirían para Lana y no para el dueño, que es la peor
+ * clase de fallo — el que no se ve.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function tandaDeMesas(opts: {
+  cuantas: number;
+  capacidad: number;
+  forma?: "redonda" | "cuadrada" | "rectangular";
+  zona?: string | null;
+  yaHay?: { nombre?: string | null; x: number; y: number; ancho: number; alto: number }[] | null;
+  base?: string;
+  lienzo?: { ancho: number; alto: number };
+}): {
+  nombre: string; capacidad: number; forma: string; zona: string | null;
+  x: number; y: number; ancho: number; alto: number;
+}[] {
+  const cuantas = Math.max(0, Math.min(60, Math.floor(Number(opts.cuantas) || 0)));
+
+  /* LA CAPACIDAD NO SE CORRIGE, SE RECHAZA. Antes se forzaba a 1 con un
+   * `Math.max`, así que pedir «tres mesas de 0 personas» creaba tres mesas de
+   * una persona que nadie pidió. Un dato inventado en silencio es peor que un
+   * error: el dueño se encuentra mesas que no puso y no sabe de dónde salieron. */
+  const capacidad = Math.round(Number(opts.capacidad));
+  if (!cuantas) return [];
+  if (!Number.isFinite(capacidad) || capacidad < 1 || capacidad > 40) return [];
+
+  const forma = opts.forma ?? "redonda";
+  const lienzo = opts.lienzo ?? LIENZO;
+  const { ancho, alto } = tamanoPorCapacidad(capacidad, forma);
+
+  const existentes = (opts.yaHay ?? []).filter(Boolean);
+  const ocupado = existentes.map((m) => ({ x: m.x, y: m.y, ancho: m.ancho, alto: m.alto }));
+  // Los nombres ya usados se van sumando sobre la marcha: sin esto, la tanda
+  // entera se llamaría igual y el `unique (org_id, nombre)` la rechazaría.
+  const usados = existentes.map((m) => ({ nombre: m.nombre }));
+
+  const salida = [];
+  const pasoX = ancho + AIRE;
+  const pasoY = alto + AIRE;
+
+  for (let n = 0; n < cuantas; n++) {
+    let puesta = false;
+    for (let y = AIRE; y + alto <= lienzo.alto && !puesta; y += pasoY) {
+      for (let x = AIRE; x + ancho <= lienzo.ancho && !puesta; x += pasoX) {
+        const sitio = acomodar({ x, y, ancho, alto }, lienzo);
+        if (ocupado.some((o) => sePisan(sitio, o))) continue;
+
+        const nombre = nombreLibre(usados, opts.base ?? "Mesa");
+        usados.push({ nombre });
+        ocupado.push(sitio);
+        salida.push({
+          nombre, capacidad, forma,
+          zona: String(opts.zona ?? "").trim() || null,
+          ...sitio,
+        });
+        puesta = true;
+      }
+    }
+    /* SALIDA TEMPRANA, NO UN CANDADO — y conviene no confundirlo. Quien impide
+     * apilar mesas es el `continue` de arriba, que descarta cada hueco ocupado.
+     * Esto solo deja de intentarlo: si una mesa no encontró sitio, la siguiente
+     * tampoco va a encontrarlo (mismo tamaño, mismos huecos), así que seguir
+     * sería recorrer el plano entero para nada. */
+    if (!puesta) break;
+  }
+
+  return salida;
+}

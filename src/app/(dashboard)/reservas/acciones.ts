@@ -1,9 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
-import { acomodar, parNormalizado } from "@/lib/reservas/mapa";
+import { acomodar, parNormalizado, tandaDeMesas } from "@/lib/reservas/mapa";
 
 /**
  * EL MAPA DEL SALÓN: GUARDAR.
@@ -19,13 +18,97 @@ import { acomodar, parNormalizado } from "@/lib/reservas/mapa";
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+/* ── LAS ACCIONES DEVUELVEN LO QUE ESCRIBIERON ──────────────────────────────
+ *
+ * 12 SEP 2026. Una mesa creada NO APARECÍA hasta recargar la página. La acción
+ * escribía bien y llamaba a `revalidatePath`, pero el plano guarda las mesas en
+ * el estado del navegador y `useState` solo toma su valor inicial al montarse:
+ * volver a pintar el servidor no lo cambia.
+ *
+ * Así que se devuelve la fila creada y el plano la añade. De paso desaparece
+ * `revalidatePath` de todo el archivo: una vuelta al servidor por cada mesa
+ * arrastrada no servía para nada. */
+export type Mesa = {
+  id: string; nombre: string; capacidad: number; zona: string | null;
+  x: number; y: number; ancho: number; alto: number; forma: string; activa: boolean;
+};
+
+const COLUMNAS = "id, nombre, capacidad, zona, x, y, ancho, alto, forma, activa";
+
 export type Resultado = { ok: true } | { ok: false; error: string };
+export type ResultadoConMesas =
+  | { ok: true; mesas: Mesa[] }
+  | { ok: false; error: string };
 
 const texto = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 const numero = (v: FormDataEntryValue | null) => Number(String(v ?? "").trim());
 
+/**
+ * MUCHAS MESAS IGUALES DE UN CLIC.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * «Seis mesas de dos, redondas.» Ponerlas de una en una y arrastrar cada una es
+ * tedioso, y lo tedioso no se hace: un dueño que abandona a mitad deja el salón
+ * incompleto, y con el salón incompleto Lana rechaza reservas que sí cabían.
+ *
+ * Dónde van lo decide `tandaDeMesas`, que busca hueco y NO las pone encima de
+ * las que ya hay. Aquí solo se comprueba y se escribe.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function crearTanda(formData: FormData): Promise<ResultadoConMesas> {
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return { ok: false, error: "No pude identificar tu cuenta." };
+
+  const cuantas = Math.round(numero(formData.get("cuantas")));
+  const capacidad = Math.round(numero(formData.get("capacidad")));
+  if (!Number.isFinite(cuantas) || cuantas < 1 || cuantas > 60) {
+    return { ok: false, error: "Puedes añadir entre 1 y 60 mesas a la vez." };
+  }
+  if (!Number.isFinite(capacidad) || capacidad < 1 || capacidad > 40) {
+    return { ok: false, error: "La capacidad tiene que estar entre 1 y 40 personas." };
+  }
+
+  const admin = createAdminClient();
+
+  /* SE LEE EL SALÓN ANTES DE COLOCAR. Sin saber qué hay, las nuevas nacerían
+   * encima de las viejas y con nombres repetidos — y el nombre repetido no es
+   * cosmético: lo rechaza `unique (org_id, nombre)` y no se crea ninguna. */
+  const { data: yaHay, error: errLeer } = await admin
+    .from("reservas_mesas")
+    .select("nombre, x, y, ancho, alto")
+    .eq("org_id", orgId);
+  if (errLeer) {
+    console.error("[salón] no pude leer el salón antes de añadir:", errLeer.message);
+    return { ok: false, error: "No pude leer tu salón. No añadí nada." };
+  }
+
+  const nuevas = tandaDeMesas({
+    cuantas,
+    capacidad,
+    forma: (texto(formData.get("forma")) || "redonda") as any,
+    zona: texto(formData.get("zona")) || null,
+    yaHay: (yaHay ?? []) as any,
+  });
+
+  if (!nuevas.length) {
+    return { ok: false, error: "Ya no queda espacio en el plano. Mueve algunas mesas o quita las que no uses." };
+  }
+
+  const { data, error } = await admin
+    .from("reservas_mesas")
+    .insert(nuevas.map((m) => ({ org_id: orgId, ...m })))
+    .select(COLUMNAS);
+
+  if (error) {
+    console.error("[salón] no se pudo crear la tanda:", error.message);
+    return { ok: false, error: "No se pudieron crear las mesas. Intenta de nuevo." };
+  }
+
+  return { ok: true, mesas: (data ?? []) as unknown as Mesa[] };
+}
+
 /** Pone una mesa nueva en el salón. */
-export async function crearMesa(formData: FormData): Promise<Resultado> {
+export async function crearMesa(formData: FormData): Promise<ResultadoConMesas> {
   const orgId = await getCurrentOrgId();
   if (!orgId) return { ok: false, error: "No pude identificar tu cuenta." };
 
@@ -46,14 +129,17 @@ export async function crearMesa(formData: FormData): Promise<Resultado> {
     alto: numero(formData.get("alto")) || 80,
   });
 
-  const { error } = await createAdminClient().from("reservas_mesas").insert({
-    org_id: orgId,
-    nombre,
-    capacidad,
-    zona: texto(formData.get("zona")) || null,
-    forma: texto(formData.get("forma")) || "redonda",
-    ...sitio,
-  });
+  const { data, error } = await createAdminClient()
+    .from("reservas_mesas")
+    .insert({
+      org_id: orgId,
+      nombre,
+      capacidad,
+      zona: texto(formData.get("zona")) || null,
+      forma: texto(formData.get("forma")) || "redonda",
+      ...sitio,
+    })
+    .select(COLUMNAS);
 
   if (error) {
     console.error("[salón] no se pudo crear la mesa:", error.message);
@@ -64,8 +150,7 @@ export async function crearMesa(formData: FormData): Promise<Resultado> {
     return { ok: false, error: "No se pudo guardar la mesa. Intenta de nuevo." };
   }
 
-  revalidatePath("/reservas");
-  return { ok: true };
+  return { ok: true, mesas: (data ?? []) as unknown as Mesa[] };
 }
 
 /** Mueve o redimensiona una mesa. La llama el arrastre al soltar. */
@@ -94,12 +179,11 @@ export async function moverMesa(formData: FormData): Promise<Resultado> {
     return { ok: false, error: "No se pudo guardar la posición." };
   }
 
-  revalidatePath("/reservas");
   return { ok: true };
 }
 
 /** Cambia los datos de una mesa. */
-export async function editarMesa(formData: FormData): Promise<Resultado> {
+export async function editarMesa(formData: FormData): Promise<ResultadoConMesas> {
   const orgId = await getCurrentOrgId();
   if (!orgId) return { ok: false, error: "No pude identificar tu cuenta." };
 
@@ -114,17 +198,20 @@ export async function editarMesa(formData: FormData): Promise<Resultado> {
     return { ok: false, error: "La capacidad tiene que estar entre 1 y 40 personas." };
   }
 
-  const { error } = await createAdminClient()
+  const { data, error } = await createAdminClient()
     .from("reservas_mesas")
     .update({
       nombre,
       capacidad,
       zona: texto(formData.get("zona")) || null,
       forma: texto(formData.get("forma")) || "redonda",
-      activa: texto(formData.get("activa")) !== "no",
+      // La casilla no manda nada cuando está desmarcada, así que «no vino» es
+      // «desactivada». Leerlo al revés desactivaría mesas al guardar.
+      activa: texto(formData.get("activa")) === "si",
     })
     .eq("id", id)
-    .eq("org_id", orgId);
+    .eq("org_id", orgId)
+    .select(COLUMNAS);
 
   if (error) {
     console.error("[salón] no se pudo editar la mesa:", error.message);
@@ -134,8 +221,7 @@ export async function editarMesa(formData: FormData): Promise<Resultado> {
     return { ok: false, error: "No se pudo guardar el cambio." };
   }
 
-  revalidatePath("/reservas");
-  return { ok: true };
+  return { ok: true, mesas: (data ?? []) as unknown as Mesa[] };
 }
 
 /**
@@ -182,7 +268,6 @@ export async function borrarMesa(formData: FormData): Promise<Resultado> {
     return { ok: false, error: "No se pudo borrar la mesa." };
   }
 
-  revalidatePath("/reservas");
   return { ok: true };
 }
 
@@ -252,6 +337,5 @@ export async function guardarUniones(formData: FormData): Promise<Resultado> {
     }
   }
 
-  revalidatePath("/reservas");
   return { ok: true };
 }

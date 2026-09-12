@@ -3,10 +3,10 @@
 import { useCallback, useMemo, useRef, useState, useTransition } from "react";
 import { Plus, Trash2, Link2, EyeOff, Eye } from "lucide-react";
 import {
-  LIENZO, REJILLA, acomodar, aforoDelSalon, conUnibles, lasQueSePisan, nombreLibre,
+  LIENZO, REJILLA, acomodar, aforoDelSalon, conUnibles, lasQueSePisan,
   type MesaEnElMapa, type Par,
 } from "@/lib/reservas/mapa";
-import { crearMesa, moverMesa, editarMesa, borrarMesa, guardarUniones } from
+import { crearTanda, moverMesa, editarMesa, borrarMesa, guardarUniones } from
   "@/app/(dashboard)/reservas/acciones";
 
 /**
@@ -45,6 +45,11 @@ export function MapaDelSalon({
 
   const lienzoRef = useRef<HTMLDivElement>(null);
   const arrastre = useRef<{ id: string; dx: number; dy: number; desde: MesaEnElMapa } | null>(null);
+  /* El estado de las mesas, legible desde un manejador sin meterse dentro de un
+   * actualizador de React. Ver `alSoltar`: hacerlo al revés dejaba la pantalla
+   * en blanco. */
+  const mesasRef = useRef<MesaEnElMapa[]>(inicial);
+  mesasRef.current = mesas;
 
   const conSusUniones = useMemo(() => conUnibles(mesas, pares), [mesas, pares]);
   const sePisan = useMemo(() => lasQueSePisan(mesas), [mesas]);
@@ -90,50 +95,75 @@ export function MapaDelSalon({
     arrastre.current = null;
     if (!a) return;
 
-    setMesas((ms) => {
-      const ahora = ms.find((m) => m.id === a.id);
-      if (!ahora) return ms;
-      // No se guarda si no se movió: un clic para elegir no es un cambio.
-      if (ahora.x === a.desde.x && ahora.y === a.desde.y) return ms;
+    /* ── POR QUÉ ESTO NO VA DENTRO DE `setMesas` ────────────────────────────
+     *
+     * 12 SEP 2026. La pantalla se quedaba EN BLANCO al soltar una mesa.
+     *
+     * La causa era que aquí se leía el estado desde dentro del actualizador de
+     * `setMesas((ms) => …)` y, de paso, se lanzaba la petición al servidor
+     * dentro de esa misma función. Un actualizador de React tiene que ser PURO:
+     * React lo puede llamar dos veces, y llamar a `startTransition` desde
+     * dentro revienta el render entero. Un render que revienta es una pantalla
+     * en blanco — sin mensaje, sin nada.
+     *
+     * Ahora el estado se lee de un `ref` que se mantiene al día, y el guardado
+     * ocurre FUERA de cualquier actualizador. */
+    const ahora = mesasRef.current.find((m) => m.id === a.id);
+    if (!ahora) return;
+    // No se guarda si no se movió: un clic para elegir no es un cambio.
+    if (ahora.x === a.desde.x && ahora.y === a.desde.y) return;
 
-      const fd = new FormData();
-      fd.set("id", a.id);
-      fd.set("x", String(ahora.x));
-      fd.set("y", String(ahora.y));
-      fd.set("ancho", String(ahora.ancho));
-      fd.set("alto", String(ahora.alto));
-      empezar(async () => {
-        const r = await moverMesa(fd);
-        if (!r.ok) {
-          // VUELVE A DONDE ESTABA. Ver la cabecera.
-          setMesas((cs) => cs.map((m) => (m.id === a.id ? { ...m, ...a.desde } : m)));
-          decir(true, r.error);
-        }
-      });
-      return ms;
+    const fd = new FormData();
+    fd.set("id", a.id);
+    fd.set("x", String(ahora.x));
+    fd.set("y", String(ahora.y));
+    fd.set("ancho", String(ahora.ancho));
+    fd.set("alto", String(ahora.alto));
+
+    empezar(async () => {
+      const r = await moverMesa(fd);
+      if (!r.ok) {
+        // VUELVE A DONDE ESTABA. Ver la cabecera.
+        setMesas((cs) => cs.map((m) => (m.id === a.id ? { ...m, ...a.desde } : m)));
+        decir(true, r.error);
+      }
     });
   }, []);
 
   // ── Acciones del panel ────────────────────────────────────────────────────
-  const anadir = () => {
-    const fd = new FormData();
-    const nombre = nombreLibre(mesas);
-    fd.set("nombre", nombre);
-    fd.set("capacidad", "4");
-    // Escalonadas para que no nazcan todas una encima de otra.
-    fd.set("x", String(40 + (mesas.length % 8) * 110));
-    fd.set("y", String(40 + Math.floor(mesas.length / 8) * 110));
+
+  /**
+   * AÑADIR UNA TANDA. «Seis mesas de dos, redondas» en un clic.
+   *
+   * LAS MESAS SE AÑADEN AL ESTADO CON LO QUE DEVUELVE EL SERVIDOR, no con lo
+   * que se pidió. Los ids y las posiciones definitivas los pone la base; si el
+   * plano se los inventara, la siguiente que se arrastrara se guardaría contra
+   * un id que no existe y el fallo aparecería mucho después.
+   */
+  const anadirTanda = (fd: FormData) => {
+    const cuantas = Number(fd.get("cuantas")) || 0;
     empezar(async () => {
-      const r = await crearMesa(fd);
-      if (r.ok) decir(false, `${nombre} añadida.`);
-      else decir(true, r.error);
+      const r = await crearTanda(fd);
+      if (!r.ok) return decir(true, r.error);
+      setMesas((ms) => [...ms, ...(r.mesas as unknown as MesaEnElMapa[])]);
+      const n = r.mesas.length;
+      decir(
+        false,
+        n < cuantas
+          ? `Cupieron ${n} de ${cuantas}. Acomoda y añade las demás.`
+          : `${n} mesa${n === 1 ? "" : "s"} añadida${n === 1 ? "" : "s"}.`,
+      );
     });
   };
 
   const guardarFicha = (fd: FormData) => {
     empezar(async () => {
       const r = await editarMesa(fd);
-      decir(!r.ok, r.ok ? "Cambio guardado." : r.error);
+      if (!r.ok) return decir(true, r.error);
+      // Se pinta lo que quedó guardado, no lo que se escribió en el formulario.
+      const guardada = (r.mesas ?? [])[0] as unknown as MesaEnElMapa | undefined;
+      if (guardada) setMesas((ms) => ms.map((m) => (m.id === guardada.id ? { ...m, ...guardada } : m)));
+      decir(false, "Cambio guardado.");
     });
   };
 
@@ -179,10 +209,39 @@ export function MapaDelSalon({
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_320px]">
       {/* ── El plano ───────────────────────────────────────────────────── */}
       <div>
-        <div className="mb-3 flex flex-wrap items-center gap-3">
-          <button onClick={anadir} disabled={guardando} className="btn-primary">
-            <Plus className="h-4 w-4" /> Añadir mesa
+        {/* ── AÑADIR EN TANDA ──────────────────────────────────────────────
+            Nadie dibuja veinticuatro mesas de una en una. Se dice cuántas, de
+            cuánta gente y de qué forma, y aparecen acomodadas solas. */}
+        <form action={anadirTanda} className="card-l mb-3 flex flex-wrap items-end gap-3 p-4">
+          <div className="w-20">
+            <label className="mb-1 block text-xs font-semibold text-ink-2">Cuántas</label>
+            <input name="cuantas" type="number" min={1} max={60} defaultValue={4} required className="input-l" />
+          </div>
+          <div className="w-24">
+            <label className="mb-1 block text-xs font-semibold text-ink-2">Personas</label>
+            <input name="capacidad" type="number" min={1} max={40} defaultValue={2} required className="input-l" />
+          </div>
+          <div className="w-36">
+            <label className="mb-1 block text-xs font-semibold text-ink-2">Forma</label>
+            <select name="forma" defaultValue="redonda" className="input-l">
+              <option value="redonda">Redondas</option>
+              <option value="cuadrada">Cuadradas</option>
+              <option value="rectangular">Rectangulares</option>
+            </select>
+          </div>
+          <div className="w-40">
+            <label className="mb-1 block text-xs font-semibold text-ink-2">Zona (opcional)</label>
+            <input name="zona" className="input-l" placeholder="Terraza, Salón…" />
+          </div>
+          <button className="btn-primary" disabled={guardando}>
+            <Plus className="h-4 w-4" /> Añadir al plano
           </button>
+          <p className="w-full text-[11px] text-ink-3">
+            Aparecen acomodadas en el espacio libre. Después las arrastras donde van.
+          </p>
+        </form>
+
+        <div className="mb-3 flex flex-wrap items-center gap-3">
           <span className="text-sm text-ink-2">
             <strong className="text-ink">{mesas.filter((m) => m.activa !== false).length}</strong> mesas ·{" "}
             <strong className="text-ink">{aforo}</strong> personas de aforo
@@ -256,7 +315,7 @@ export function MapaDelSalon({
               <div className="absolute inset-0 grid place-items-center text-center text-sm text-ink-3">
                 <div>
                   Tu salón está vacío.<br />
-                  Pulsa <strong className="text-ink-2">Añadir mesa</strong> y arrástrala a su sitio.
+                  Dí cuántas mesas tienes arriba y aparecen solas.
                 </div>
               </div>
             )}
