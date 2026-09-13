@@ -18,3 +18,20 @@
   for = "/widget.js"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
+
+# ── LA DIRECCIÓN DE NETLIFY MANDA AL DOMINIO PROPIO ─────────────────────────
+#
+# demandu-chatbots.netlify.app servía la plataforma ENTERA, sin redirigir. Eso
+# rompe cualquier OAuth (Google, Meta, Apple) para quien entre por ahí: la URL
+# de retorno se construye desde el dominio de la petición y ninguno de esos
+# proveedores tiene registrada la de Netlify (y Google ni deja registrarla:
+# no es un dominio nuestro). El síntoma es «redirect_uri_mismatch» y no dice
+# cuál dirección esperaba.
+#
+# Solo la de producción. Las de rama y vista previa (main--…, <deploy>--…) se
+# quedan como están: sirven para probar antes de publicar.
+[[redirects]]
+  from = "https://demandu-chatbots.netlify.app/*"
+  to = "https://platform.demandu.tech/:splat"
+  status = 301
+  force = true

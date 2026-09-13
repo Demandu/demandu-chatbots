@@ -9345,6 +9345,17 @@ describe("Google: se pide exactamente lo declarado en la consola", () => {
     esperar(/export function correoDeConexionRota/.test(plantillas)).verdadero("falta la plantilla del correo de conexión rota");
   });
 
+  test("la dirección de Netlify redirige al dominio propio", () => {
+    // Sin esto, demandu-chatbots.netlify.app sirve la plataforma entera y
+    // cualquier OAuth iniciado desde ahí muere en redirect_uri_mismatch.
+    const toml = fs.readFileSync(path.join(SRC, "..", "netlify.toml"), "utf8");
+    esperar(/from\s*=\s*"https:\/\/demandu-chatbots\.netlify\.app\/\*"/.test(toml)).verdadero(
+      "netlify.toml perdió la redirección de demandu-chatbots.netlify.app",
+    );
+    esperar(/to\s*=\s*"https:\/\/platform\.demandu\.tech\/:splat"/.test(toml)).verdadero("la redirección no va a platform.demandu.tech");
+    esperar(/force\s*=\s*true/.test(toml)).verdadero("sin force = true, Netlify sirve el archivo si existe y no redirige");
+  });
+
   test("el selector solo ofrece calendarios propios", () => {
     // `events.owned` no alcanza a los compartidos: ofrecerlos es ofrecer un
     // calendario donde agendar va a fallar.
