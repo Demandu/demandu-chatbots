@@ -1,5 +1,7 @@
 "use client";
 
+import { Eye, EyeOff } from "lucide-react";
+
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -45,6 +47,12 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const [negocio, setNegocio] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  /* ── VER LO QUE SE ESCRIBIÓ ───────────────────────────────────────────
+   * Empieza SIEMPRE oculta: quien entra desde un mostrador o una oficina
+   * compartida no puede encontrarse su clave escrita en pantalla por una
+   * preferencia que quedó pegada de la vez anterior. Por eso no se recuerda
+   * entre visitas — es a propósito, no un olvido. */
+  const [verClave, setVerClave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -186,15 +194,30 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-muted">Contraseña</label>
+            <div className="relative">
             <input
-              type="password"
+              type={verClave ? "text" : "password"}
               required
               minLength={6}
-              className="input"
+              className="input pr-11"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
             />
+              {/* NO ES UN `submit`. Sin `type="button"` un botón dentro de un
+                  formulario lo ENVÍA: pulsar el ojo intentaría entrar con la
+                  contraseña a medio escribir y devolvería «no coinciden». */}
+              <button
+                type="button"
+                onClick={() => setVerClave((v) => !v)}
+                aria-label={verClave ? "Ocultar contraseña" : "Ver contraseña"}
+                title={verClave ? "Ocultar contraseña" : "Ver contraseña"}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted transition hover:text-white"
+                tabIndex={-1}
+              >
+                {verClave ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
             {mode === "register" && <p className="mt-1 text-[11px] text-muted-2">Mínimo 6 caracteres.</p>}
             {/* Va DEBAJO del campo de contraseña, que es donde la persona se da
                 cuenta de que no la recuerda. Ponerlo al pie de la página, junto

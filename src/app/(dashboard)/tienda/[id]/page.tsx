@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CopiarEnlace } from "@/components/tienda/CopiarEnlace";
 import { notFound } from "next/navigation";
 import { ArrowLeft, AlertTriangle, Bot, ExternalLink } from "lucide-react";
 import { Topbar } from "@/components/Topbar";
@@ -220,6 +221,13 @@ export default async function TiendaDetallePage({
         >
           Ver la tienda <ExternalLink className="h-3.5 w-3.5" />
         </a>
+
+        {/* Al lado de «Ver la tienda» a propósito: es la misma dirección y las
+            dos cosas que se hacen con ella —mirarla y repartirla— tienen que
+            estar juntas. */}
+        <span className="ml-3 inline-block align-middle">
+          <CopiarEnlace enlace={enlaceDeTienda(tienda.slug)} />
+        </span>
 
         {/* LO QUE LE FALTA PARA VENDER, ARRIBA Y SIEMPRE VISIBLE. El fallo más
             caro de una tienda es el que no se ve: se ve perfecta, el cliente

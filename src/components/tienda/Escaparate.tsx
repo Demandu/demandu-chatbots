@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { enlaceDeFacebook, comoSeLeeFacebook, correoValido } from "@/lib/tienda/redes";
 import { Search, ShoppingBag, Plus, Minus, ArrowLeft, ChevronDown } from "lucide-react";
 import { comoDinero, type GrupoVariedad } from "@/lib/tienda/variedades";
 import type { ConfigTienda } from "@/lib/tienda/config";
@@ -571,6 +572,24 @@ export function Escaparate({
               rel="noopener noreferrer"
             >
               {config.contacto.instagram}
+            </a>
+          </p>
+        )}
+        {enlaceDeFacebook(config.contacto.facebook) && (
+          <p className="mt-1 text-xs">
+            <a
+              href={enlaceDeFacebook(config.contacto.facebook) as string}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {comoSeLeeFacebook(config.contacto.facebook)}
+            </a>
+          </p>
+        )}
+        {correoValido(config.contacto.correo) && (
+          <p className="mt-1 text-xs">
+            <a href={`mailto:${correoValido(config.contacto.correo)}`}>
+              {correoValido(config.contacto.correo)}
             </a>
           </p>
         )}

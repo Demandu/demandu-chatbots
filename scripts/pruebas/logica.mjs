@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/campanas/repetida.ts";
 import { ATAJOS_DEFAULT, detectarAtajo, normalizar, leerAtajos } from "../../src/lib/flow/shortcuts.ts";
 import { paletaChat, claridad } from "../../src/lib/chatColors.ts";
+import { enlaceDeFacebook, comoSeLeeFacebook } from "../../src/lib/tienda/redes.ts";
 import {
   comoAjustes, ajustesQueMandan, tiendaQueManda,
 } from "../../src/lib/ai/agenteAjustes.ts";
@@ -8045,6 +8046,61 @@ describe("Citas y reservas no conviven", () => {
   test("sin nada conectado no se enciende nada", () => {
     esperar(herramientasAutomaticas({}).length).igual(0);
     esperar(herramientasAutomaticas(null).length).igual(0);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * EL PIE DE LA TIENDA: FACEBOOK Y CORREO
+ *
+ * El editor pedía cinco datos de contacto y el escaparate pintaba tres.
+ * Facebook y correo se guardaban bien y no se veían en ninguna parte: el
+ * negocio los escribía, guardaba, miraba su tienda y no estaban.
+ *
+ * Aquí se prueba lo que hace que eso no vuelva a ser un enlace roto: aceptar
+ * las dos formas en que un negocio escribe su Facebook, y NO inventarse un
+ * enlace cuando lo escrito no es ni una dirección ni un usuario.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("El pie de la tienda enseña Facebook y correo", () => {
+  test("acepta la dirección completa", () => {
+    esperar(enlaceDeFacebook("https://www.facebook.com/darwinbracho.501")).igual(
+      "https://www.facebook.com/darwinbracho.501",
+    );
+  });
+
+  test("acepta el nombre de usuario, con y sin arroba", () => {
+    esperar(enlaceDeFacebook("zapateriamaxi")).igual("https://www.facebook.com/zapateriamaxi");
+    esperar(enlaceDeFacebook("@zapateriamaxi")).igual("https://www.facebook.com/zapateriamaxi");
+  });
+
+  test("acepta lo que se pega sin el protocolo", () => {
+    esperar(enlaceDeFacebook("facebook.com/zapateriamaxi")).igual("https://www.facebook.com/zapateriamaxi");
+    esperar(enlaceDeFacebook("www.facebook.com/zapateriamaxi")).igual("https://www.facebook.com/zapateriamaxi");
+  });
+
+  test("NO inventa un enlace con cualquier cosa", () => {
+    // Un enlace roto en la tienda de un cliente es peor que un hueco: el
+    // visitante lo pulsa, cae en un error, y el que queda mal es el negocio.
+    const basuras = ["", "   ", "mi tienda", "zapateria@gmail.com", "https://instagram.com/maxi", "https://facebook.com", "ab"];
+    for (const basura of basuras) {
+      esperar(enlaceDeFacebook(basura)).igual(null, "no deberia aceptar: " + basura);
+    }
+    esperar(enlaceDeFacebook(null)).igual(null);
+    esperar(enlaceDeFacebook(undefined)).igual(null);
+  });
+
+  test("en pantalla se lee el nombre, no la dirección entera", () => {
+    esperar(comoSeLeeFacebook("https://www.facebook.com/darwinbracho.501")).igual("darwinbracho.501");
+    esperar(comoSeLeeFacebook("zapateriamaxi")).igual("zapateriamaxi");
+  });
+
+  test("el correo del pie usa la MISMA regla que la agenda", () => {
+    // No hay dos criterios de «esto es un correo» en la plataforma: el pie de
+    // la tienda usa el de `agendaHorarios`, que ya estaba probado más abajo.
+    esperar(correoValido("zapateriamaxi@gmail.com")).igual("zapateriamaxi@gmail.com");
+    esperar(correoValido("  Hola@Demandu.tech  ")).igual("hola@demandu.tech");
+    for (const malo of ["", "hola", "hola@", "@demandu.tech", "hola@demandu"]) {
+      esperar(correoValido(malo)).igual(null, "no deberia aceptar: " + malo);
+    }
   });
 });
 

@@ -228,3 +228,35 @@
 .flow-light .bg-pink.hover\:text-white:hover,
 .flow-light .bg-danger.hover\:text-white:hover,
 .flow-light .bg-success.hover\:text-white:hover { color: #ffffff; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   EL CURSOR DEL LIENZO NO PARPADEA
+
+   Reportado por un cliente: al mover el ratón por el constructor, el cursor
+   parpadea o se vuelve difícil de ver, y cuesta saber dónde se va a hacer clic.
+
+   La causa que sí se puede señalar: NADIE declaraba el cursor en el lienzo.
+   Cada trozo —el fondo, la tarjeta de un nodo, el conector, el punto de
+   enganche— lo heredaba de sitios distintos, así que al pasar de uno a otro el
+   cursor cambiaba de forma varias veces por segundo. Declararlo a propósito en
+   cada capa hace que solo cambie cuando de verdad cambia lo que se puede hacer.
+
+   HONESTIDAD: el parpadeo no se pudo reproducir aquí, así que esto puede no
+   ser todo el problema. Lo que sí arregla —el cursor diciendo cosas distintas
+   sobre el mismo sitio— es real y se ve. Si sigue pasando, hace falta ver la
+   pantalla de quien lo sufre: puede ser la aceleración del navegador.
+   ───────────────────────────────────────────────────────────────────────── */
+.react-flow__pane { cursor: grab; }
+.react-flow__pane.dragging { cursor: grabbing; }
+.react-flow__node { cursor: grab; }
+.react-flow__node.dragging { cursor: grabbing; }
+/* Dentro de un nodo hay cosas que se pulsan y no se arrastran. */
+.react-flow__node button,
+.react-flow__node a,
+.react-flow__node input,
+.react-flow__node select,
+.react-flow__node textarea { cursor: pointer; }
+/* El punto de enganche: lo que se hace ahí es tirar una conexión. */
+.react-flow__handle { cursor: crosshair; }
+.react-flow__edge,
+.react-flow__edge-path { cursor: pointer; }

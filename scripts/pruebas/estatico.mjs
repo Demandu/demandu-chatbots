@@ -9665,4 +9665,61 @@ describe("Los idiomas no se desincronizan", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * LO QUE EL EDITOR PIDE, EL ESCAPARATE LO ENSEÑA
+ *
+ * El editor de la tienda pedía cinco datos de contacto —horario, Instagram,
+ * Facebook, correo y dirección— y el escaparate pintaba tres. Facebook y
+ * correo se guardaban correctamente y no aparecían en ninguna parte.
+ *
+ * Es el peor tipo de fallo que existe en un producto: el negocio escribe su
+ * dato, pulsa guardar, la pantalla dice «Diseño guardado», mira su tienda y no
+ * está. No hay error, no hay aviso, no hay nada que investigar. Lo reportó un
+ * cliente, no nosotros — llevaba ahí desde el primer día.
+ *
+ * Un campo nuevo en el editor que nadie pinta vuelve a crear exactamente eso.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Lo que el editor de la tienda pide, el escaparate lo enseña", () => {
+  const EDITOR = ARCHIVOS.find((a) => a.ruta === "src/components/tienda/EditorDiseno.tsx");
+  const ESCAPARATE = ARCHIVOS.find((a) => a.ruta === "src/components/tienda/Escaparate.tsx");
+
+  /* Los datos de contacto del pie. Si se añade uno al editor, va aquí — y esta
+   * regla obliga a pintarlo antes de que ningún cliente lo escriba en vano. */
+  const DE_CONTACTO = ["horario", "instagram", "facebook", "correo", "direccion"];
+
+  test("los dos archivos siguen ahí", () => {
+    esperar(!!EDITOR).verdadero("falta EditorDiseno.tsx");
+    esperar(!!ESCAPARATE).verdadero("falta Escaparate.tsx");
+  });
+
+  test("el editor sigue pidiendo los cinco", () => {
+    // Si alguien quita un campo del editor, esta regla tiene que enterarse en
+    // vez de seguir exigiendo que se pinte algo que ya no se pregunta.
+    const t = EDITOR?.texto ?? "";
+    const faltan = DE_CONTACTO.filter((c) => !t.includes(`name="${c}"`));
+    esperar(faltan.join(", ")).igual("", "el editor dejó de pedir estos datos: quítalos también de esta regla");
+  });
+
+  test("el escaparate pinta TODOS los que el editor pide", () => {
+    const t = sinComentarios(ESCAPARATE?.texto ?? "");
+    const invisibles = DE_CONTACTO.filter((c) => !t.includes(`config.contacto.${c}`));
+    esperar(invisibles.join(", ")).igual(
+      "",
+      "el negocio escribe estos datos, la pantalla dice «guardado», y en su tienda no aparecen",
+    );
+  });
+
+  test("Facebook y correo se pintan como enlaces comprobados", () => {
+    /* Pintarlos crudos sería la otra mitad del mismo fallo: un `mailto:` con
+     * basura dentro o un enlace a una página que no existe se vive como «su
+     * tienda está rota», y el que queda mal es el negocio. */
+    const t = sinComentarios(ESCAPARATE?.texto ?? "");
+    esperar(t.includes("enlaceDeFacebook(")).verdadero(
+      "el Facebook del pie se pinta sin comprobar: un enlace roto es peor que un hueco",
+    );
+    esperar(t.includes("correoValido(")).verdadero("el correo del pie se vuelve un `mailto:` sin comprobarlo");
+  });
+});
+
 process.exit(await correrPruebas());

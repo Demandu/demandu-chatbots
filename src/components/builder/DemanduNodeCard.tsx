@@ -11,7 +11,11 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
 
   return (
     <div
-      className={`relative w-[230px] overflow-hidden rounded-2xl border bg-surface-card shadow-card transition ${
+      /* SIN `overflow-hidden`: la etiqueta «▶ Inicio» cuelga por encima del
+         borde (-top-2.5) y el recorte de la tarjeta la partía por la mitad.
+         El redondeado se mantiene con `rounded-2xl` en la tarjeta y en la
+         barra de color de arriba, que es lo único que asomaba por la esquina. */
+      className={`relative w-[230px] rounded-2xl border bg-surface-card shadow-card transition ${
         d.isStart
           ? "border-success shadow-glow"
           : selected
@@ -26,22 +30,27 @@ export function DemanduNodeCard({ type, data, selected }: NodeProps) {
       )}
 
       {/* Barra de acento por tipo */}
-      <div style={{ height: 4, background: meta.color }} />
+      <div className="rounded-t-2xl" style={{ height: 4, background: meta.color }} />
 
       {type !== "start" && (
         <Handle type="target" position={Position.Left} className="!border-muted" />
       )}
 
-      <div className="flex items-center gap-2.5 border-b border-surface-border px-3.5 py-2.5">
+      <div className="flex items-start gap-2.5 border-b border-surface-border px-3.5 py-2.5">
         <span
           className="grid h-6 w-6 flex-none place-items-center rounded-lg text-sm"
           style={{ background: meta.bg, color: meta.color }}
         >
           {meta.icon}
         </span>
-        <span className="font-display text-[13px] font-bold text-white">{d.label}</span>
         <span
-          className="ml-auto rounded-md px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide"
+          title={d.label}
+          className="min-w-0 flex-1 break-words font-display text-[13px] font-bold leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden"
+        >
+          {d.label}
+        </span>
+        <span
+          className="ml-auto flex-none rounded-md px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide"
           style={{ background: meta.bg, color: meta.color }}
         >
           {meta.label}
