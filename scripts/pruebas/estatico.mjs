@@ -9648,6 +9648,24 @@ describe("Los idiomas no se desincronizan", () => {
     esperar(enCodigo.join(",")).igual(IDIOMAS.join(","), "cambió la lista de idiomas: actualiza también esta regla");
   });
 
+  test("cambiar de idioma se guarda con la llave de servicio", () => {
+    /* `memberships` solo deja a una sesión de usuario escribir UNA columna
+     * (`debe_cambiar_contrasena`): todo lo demás está cerrado para que nadie
+     * pueda ascenderse a dueño de su propia cuenta. `idioma` heredó ese
+     * cierre y la pantalla devolvía «No se pudo guardar tu idioma» — se vio en
+     * producción. Volver al cliente de sesión reproduce el fallo exacto, y no
+     * falla al compilar: falla en la cara del cliente. */
+    const a = ARCHIVOS.find((x) => x.ruta === "src/app/(dashboard)/settings/idioma/acciones.ts");
+    esperar(!!a).verdadero("falta la acción de guardar el idioma");
+    const t = sinComentarios(a?.texto ?? "");
+    esperar(/createAdminClient\(\)\s*\n?\s*\.from\("memberships"\)/.test(t)).verdadero(
+      "el idioma vuelve a guardarse con la sesión: memberships no se lo permite",
+    );
+    // Y sigue acotado a quien llama: la llave de servicio no puede volverse un coladero.
+    esperar(t.includes('.eq("user_id", user.id)')).verdadero("ya no filtra por el usuario que llama");
+    esperar(t.includes('.eq("org_id", orgId)')).verdadero("ya no filtra por la cuenta en la que está");
+  });
+
   test("las pantallas ya traducidas no vuelven a tener texto suelto", () => {
     /* LA LISTA CRECE. Cada pantalla que se traduzca se añade aquí y ya no
      * puede volver atrás. */

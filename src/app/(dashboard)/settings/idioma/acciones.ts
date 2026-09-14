@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import { IDIOMAS, type Idioma } from "@/i18n/idiomas";
 
@@ -28,7 +29,24 @@ export async function guardarIdioma(idioma: string): Promise<{ ok: boolean; erro
   const orgId = await getCurrentOrgId();
   if (!user || !orgId) return { ok: false, error: "sin_sesion" };
 
-  const { error } = await sb
+  /* ── SE ESCRIBE CON LA LLAVE DE SERVICIO, Y NO ES PEREZA ──────────────
+   *
+   * `memberships` solo concede a una sesión de usuario UNA columna:
+   * `debe_cambiar_contrasena`. Todo lo demás —el rol, los permisos, el acceso
+   * de soporte— está cerrado a propósito, porque una persona que pudiera
+   * editar su propia membresía podría ascenderse a dueña de la cuenta.
+   *
+   * `idioma` nació dentro de esa tabla y heredó ese cierre: la pantalla
+   * guardaba y devolvía «No se pudo guardar tu idioma». Lo VIMOS en producción,
+   * no lo dedujimos.
+   *
+   * La salida NO es abrir la columna: abrir `memberships` a la sesión por una
+   * preferencia sería pagar un riesgo grande por una comodidad pequeña, y la
+   * política que existe está afinada para otra cosa. Se escribe con la llave de
+   * servicio DESPUÉS de saber quién llama, y se filtra por `user_id` Y
+   * `org_id`: el alcance es exactamente el mismo —tu propia membresía, en la
+   * cuenta en la que estás— y nadie puede cambiarle el idioma a otra persona. */
+  const { error } = await createAdminClient()
     .from("memberships")
     .update({ idioma: idioma as Idioma })
     .eq("user_id", user.id)
