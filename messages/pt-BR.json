@@ -1,0 +1,34 @@
+{
+  "menu": {
+    "principal": "Principal",
+    "ajustes": "Configurações",
+    "inicio": "Início",
+    "chatbots": "Chatbots",
+    "conversaciones": "Conversas",
+    "embudo": "Funil",
+    "contactos": "Contatos",
+    "tienda": "Loja",
+    "reservas": "Reservas",
+    "calendario": "Agenda",
+    "enEspera": "Em espera",
+    "configuracion": "Configurações",
+    "resultados": "Resultados",
+    "lanaIa": "Lana IA",
+    "superadmin": "Superadmin",
+    "equipo": "Equipe",
+    "esperando": "{n, plural, one {# pessoa está esperando} other {# pessoas estão esperando}} uma resposta"
+  },
+  "plan": {
+    "mensajesDelMes": "Mensagens enviadas este mês",
+    "sinLimite": "Mensagens sem limite",
+    "plan": "Plano {nombre}"
+  },
+  "idioma": {
+    "titulo": "Idioma",
+    "explicacion": "É seu, não da conta: cada pessoa da equipe pode ter o dela.",
+    "guardar": "Salvar idioma",
+    "guardado": "Pronto. A plataforma já fala com você em {idioma}.",
+    "noSePudo": "Não foi possível salvar seu idioma. Tente de novo.",
+    "sinPermiso": "Sua sessão expirou. Entre novamente."
+  }
+}

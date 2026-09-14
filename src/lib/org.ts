@@ -31,7 +31,7 @@ export const membresiaDeLaSesion = cache(async function membresiaDeLaSesion(): P
 
   const { data } = await supabase
     .from("memberships")
-    .select("org_id, role, permisos, soporte_hasta, created_at")
+    .select("org_id, role, permisos, soporte_hasta, created_at, idioma")
     .eq("user_id", user.id);
 
   return membresiaActiva((data ?? []) as Membresia[]);

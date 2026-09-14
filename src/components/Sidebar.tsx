@@ -9,23 +9,24 @@ import {
 import { Logo } from "./Logo";
 import { cn } from "@/lib/utils";
 import { usePendientes, useEsperando } from "@/lib/pendientes";
+import { useTranslations } from "next-intl";
 
 // Lenguaje simple para gente no técnica. Cada opción dice en humano qué es.
 // "Envíos masivos" (solo WhatsApp) NO va aquí: vive dentro de cada chatbot.
 // "Integraciones" tampoco: cada canal se conecta desde la pestaña Conexión del bot.
 const MAIN = [
-  { href: "/dashboard", label: "Inicio", icon: Home },
-  { href: "/bots", label: "Chatbots", icon: Bot },
-  { href: "/inbox", label: "Conversaciones", icon: MessagesSquare },
-  { href: "/crm", label: "Embudo", icon: KanbanSquare },
-  { href: "/contacts", label: "Contactos", icon: Users },
+  { href: "/dashboard", clave: "inicio", icon: Home },
+  { href: "/bots", clave: "chatbots", icon: Bot },
+  { href: "/inbox", clave: "conversaciones", icon: MessagesSquare },
+  { href: "/crm", clave: "embudo", icon: KanbanSquare },
+  { href: "/contacts", clave: "contactos", icon: Users },
   // La tienda va en Principal y no en Ajustes porque no es una configuración:
   // es un sitio donde se trabaja todos los días —cargar productos, agotar,
   // cambiar precios— igual que la Bandeja o el Embudo.
-  { href: "/tienda", label: "Tienda", icon: Store },
+  { href: "/tienda", clave: "tienda", icon: Store },
   // Reservas: mismo criterio que la Tienda. No es una configuración — es donde
   // el restaurante mira su salón todos los días.
-  { href: "/reservas", label: "Reservas", icon: UtensilsCrossed },
+  { href: "/reservas", clave: "reservas", icon: UtensilsCrossed },
 ];
 
 /**
@@ -46,7 +47,7 @@ const MAIN = [
  * ─────────────────────────────────────────────────────────────────────────────
  */
 const CUANDO_HAY = [
-  { href: "/inbox/programados", label: "En espera", icon: Clock },
+  { href: "/inbox/programados", clave: "enEspera", icon: Clock },
 ];
 
 /**
@@ -57,12 +58,12 @@ const CUANDO_HAY = [
  * que ya la conectaste. Lo decide el marco (servidor), que es quien sabe si hay
  * conexión; el menú solo pinta.
  */
-const CON_AGENDA = { href: "/calendario", label: "Calendario", icon: CalendarDays };
+const CON_AGENDA = { href: "/calendario", clave: "calendario", icon: CalendarDays };
 
 const CONFIG = [
-  { href: "/settings", label: "Configuración", icon: Settings },
-  { href: "/analytics", label: "Resultados", icon: BarChart3 },
-  { href: "/settings/ai", label: "Lana IA", icon: Sparkles },
+  { href: "/settings", clave: "configuracion", icon: Settings },
+  { href: "/analytics", clave: "resultados", icon: BarChart3 },
+  { href: "/settings/ai", clave: "lanaIa", icon: Sparkles },
 ];
 
 /** Lo justo para pintar la tarjeta de abajo. Lo calcula el marco (servidor). */
@@ -105,9 +106,14 @@ export function Sidebar({
   // otra encendía dos opciones a la vez y el menú dejaba de decirte dónde
   // estás. Se queda aunque ahora mismo ninguna opción anide dentro de otra:
   // la próxima que se añada lo volvería a romper.
+  // Los textos del menú, en el idioma de quien mira. Bajan del marco del
+  // panel: aquí no se abre ninguna petición nueva.
+  const t = useTranslations("menu");
+  const tPlan = useTranslations("plan");
+
   const TODAS = [...MAIN, ...CUANDO_HAY, CON_AGENDA, ...CONFIG].map((i) => i.href);
 
-  const Item = ({ href, label, icon: Icon }: (typeof MAIN)[number]) => {
+  const Item = ({ href, clave, icon: Icon }: (typeof MAIN)[number]) => {
     const encaja = (h: string) => pathname === h || pathname.startsWith(h + "/");
     const mejor = TODAS.filter(encaja).sort((a, b) => b.length - a.length)[0];
     const active = encaja(href) && mejor === href;
@@ -123,11 +129,11 @@ export function Sidebar({
         )}
       >
         <Icon className={cn("h-5 w-5", active && "text-pink")} />
-        {label}
+        {t(clave)}
         {aviso > 0 && (
           <span
             className="ml-auto grid h-5 min-w-[20px] animate-pulse place-items-center rounded-full bg-pink px-1.5 text-[11px] font-bold text-white"
-            title={`${aviso} ${aviso === 1 ? "persona espera" : "personas esperan"} a que les contesten`}
+            title={t("esperando", { n: aviso })}
           >
             {aviso > 9 ? "9+" : aviso}
           </span>
@@ -143,7 +149,7 @@ export function Sidebar({
       </div>
 
       <p className="px-2.5 pb-1.5 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-2">
-        Principal
+        {t("principal")}
       </p>
       {MAIN.map((i) => (
         <Item key={i.href} {...i} />
@@ -157,7 +163,7 @@ export function Sidebar({
         CUANDO_HAY.map((i) => <Item key={i.href} {...i} />)}
 
       <p className="px-2.5 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-muted-2">
-        Ajustes
+        {t("ajustes")}
       </p>
       {CONFIG.map((i) => (
         <Item key={i.href} {...i} />
@@ -177,7 +183,7 @@ export function Sidebar({
           className="mt-4 flex items-center gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2.5 text-sm font-medium text-amber-200 transition hover:border-amber-400/60 hover:text-amber-100"
         >
           <Crown className="h-5 w-5" />
-          Superadmin
+          {t("superadmin")}
         </Link>
       )}
 
@@ -194,9 +200,7 @@ export function Sidebar({
       {plan && (
         <Link href="/settings/plan" className="mt-auto card p-3 transition hover:border-pink/35">
           <div className="flex items-center justify-between text-xs text-muted">
-            <span>
-              Plan <b className="text-white">{plan.nombre}</b>
-            </span>
+            <span>{tPlan("plan", { nombre: plan.nombre })}</span>
             {plan.limite > 0 && (
               <span>
                 {corto(plan.usados)} / {corto(plan.limite)}
@@ -221,7 +225,7 @@ export function Sidebar({
             </div>
           )}
           <p className="mt-2 text-xs text-muted-2">
-            {plan.limite > 0 ? "Mensajes enviados este mes" : "Mensajes sin límite"}
+            {plan.limite > 0 ? tPlan("mensajesDelMes") : tPlan("sinLimite")}
           </p>
         </Link>
       )}

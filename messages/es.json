@@ -1,0 +1,34 @@
+{
+  "menu": {
+    "principal": "Principal",
+    "ajustes": "Ajustes",
+    "inicio": "Inicio",
+    "chatbots": "Chatbots",
+    "conversaciones": "Conversaciones",
+    "embudo": "Embudo",
+    "contactos": "Contactos",
+    "tienda": "Tienda",
+    "reservas": "Reservas",
+    "calendario": "Calendario",
+    "enEspera": "En espera",
+    "configuracion": "Configuración",
+    "resultados": "Resultados",
+    "lanaIa": "Lana IA",
+    "superadmin": "Superadmin",
+    "equipo": "Equipo",
+    "esperando": "{n, plural, one {# persona espera} other {# personas esperan}} a que les contesten"
+  },
+  "plan": {
+    "mensajesDelMes": "Mensajes enviados este mes",
+    "sinLimite": "Mensajes sin límite",
+    "plan": "Plan {nombre}"
+  },
+  "idioma": {
+    "titulo": "Idioma",
+    "explicacion": "Es tuyo, no de la cuenta: cada persona del equipo puede tener el suyo.",
+    "guardar": "Guardar idioma",
+    "guardado": "Listo. La plataforma ya te habla en {idioma}.",
+    "noSePudo": "No se pudo guardar tu idioma. Inténtalo otra vez.",
+    "sinPermiso": "Tu sesión caducó. Vuelve a entrar."
+  }
+}

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   CreditCard, Bell, Zap, Palette, ListTree, Tags, Users,
   Shuffle, UsersRound, KanbanSquare, Clock, Plug,
+  Languages,
 } from "lucide-react";
 
 /**
@@ -30,6 +31,7 @@ const GRUPOS: {
       // no del cliente, y no tenía por qué colgar del menú de su Configuración.
       { href: "/settings/notifications", label: "Notificaciones", icon: Bell },
       { href: "/settings/hours", label: "Horario laboral", icon: Clock },
+      { href: "/settings/idioma", label: "Idioma", icon: Languages },
     ],
   },
   {

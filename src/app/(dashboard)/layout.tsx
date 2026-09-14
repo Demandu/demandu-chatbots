@@ -1,4 +1,6 @@
 import { redirect } from "next/navigation";
+import { NextIntlClientProvider } from "next-intl";
+import { getMessages } from "next-intl/server";
 import { Sidebar, type ResumenDePlan } from "@/components/Sidebar";
 import { anotarPaso } from "@/lib/equipo/asistencia";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -150,12 +152,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
     tieneAgenda = false;
   }
 
+  /* ── LOS TEXTOS BAJAN DESDE EL SERVIDOR, UNA SOLA VEZ ─────────────────
+   *
+   * Los componentes de cliente —la barra lateral, la Bandeja— no pueden leer
+   * el idioma por su cuenta sin abrir su propia petición. Se les entrega aquí,
+   * en el marco, que es el único sitio por el que pasan TODAS las pantallas
+   * del panel. Se pasan explícitamente en vez de dejarlo implícito: así, si un
+   * día falta, falla al compilar y no en la pantalla de un cliente. */
+  const textos = await getMessages();
+
   return (
-    <div className="flex min-h-dvh flex-col">
-      {soporte && <AvisoDeSoporte negocio={soporte.negocio} hasta={soporte.hasta} />}
-      <div className="min-h-0 flex-1">
-        <Shell sidebar={<Sidebar plan={plan} esDelEquipo={esDelEquipo} tieneAgenda={tieneAgenda} />}>{children}</Shell>
+    <NextIntlClientProvider messages={textos}>
+      <div className="flex min-h-dvh flex-col">
+        {soporte && <AvisoDeSoporte negocio={soporte.negocio} hasta={soporte.hasta} />}
+        <div className="min-h-0 flex-1">
+          <Shell sidebar={<Sidebar plan={plan} esDelEquipo={esDelEquipo} tieneAgenda={tieneAgenda} />}>{children}</Shell>
+        </div>
       </div>
-    </div>
+    </NextIntlClientProvider>
   );
 }

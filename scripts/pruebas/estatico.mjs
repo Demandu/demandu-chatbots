@@ -9556,4 +9556,113 @@ describe("No nace un tercer motor de flujos", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * LOS IDIOMAS NO SE DESINCRONIZAN
+ *
+ * Traducir una plataforma a mano no falla el día que se traduce: falla tres
+ * semanas después, cuando alguien añade una pantalla en español y nadie se
+ * entera hasta que un cliente brasileño ve media pantalla en un idioma que no
+ * es el suyo. Un texto que falta en un diccionario ni siquiera avisa: next-intl
+ * pinta la clave cruda.
+ *
+ * Tres cosas se vigilan:
+ *
+ *   1. Los tres diccionarios tienen EXACTAMENTE las mismas claves.
+ *   2. La lista de idiomas del código y la de la base dicen lo mismo.
+ *   3. Las pantallas YA TRADUCIDAS no vuelven a tener texto suelto.
+ *
+ * La tercera lleva una lista que crece: cada pantalla que se traduce se añade
+ * aquí y a partir de ese momento no puede volver atrás. Es la misma forma de
+ * adoptar una regla sobre código que ya existe que se usó con el scroll y con
+ * las consultas que no miran su error.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Los idiomas no se desincronizan", () => {
+  const MENSAJES = path.join(RAIZ, "messages");
+  const IDIOMAS = ["es", "pt-BR", "en"];
+
+  /** Todas las claves de un diccionario, en forma «grupo.clave». */
+  const claves = (obj, prefijo = "") =>
+    Object.entries(obj).flatMap(([k, v]) =>
+      v && typeof v === "object" ? claves(v, `${prefijo}${k}.`) : [`${prefijo}${k}`],
+    );
+
+  const leer = (idioma) => {
+    const f = path.join(MENSAJES, `${idioma}.json`);
+    return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null;
+  };
+
+  test("los tres diccionarios existen y no están vacíos", () => {
+    for (const i of IDIOMAS) {
+      const j = leer(i);
+      esperar(!!j).verdadero(`falta messages/${i}.json`);
+      esperar(claves(j ?? {}).length > 0).verdadero(`messages/${i}.json está vacío`);
+    }
+  });
+
+  test("tienen exactamente las mismas claves", () => {
+    const base = claves(leer("es") ?? {}).sort();
+    for (const i of IDIOMAS.filter((x) => x !== "es")) {
+      const suyas = claves(leer(i) ?? {}).sort();
+      const faltan = base.filter((k) => !suyas.includes(k));
+      const sobran = suyas.filter((k) => !base.includes(k));
+      esperar(faltan.join(", ")).igual("", `a messages/${i}.json le faltan claves: saldrían sin traducir`);
+      esperar(sobran.join(", ")).igual("", `messages/${i}.json tiene claves que ya no existen en español`);
+    }
+  });
+
+  test("ningún texto se quedó sin traducir (igual que el español)", () => {
+    /* Un valor idéntico al español es casi siempre un copiar-pegar que se
+     * olvidó. Las excepciones son de verdad iguales en los tres idiomas y van
+     * nombradas: si alguien añade una, tiene que decir por qué. */
+    const IGUALES_A_PROPOSITO = ["menu.chatbots", "menu.reservas", "menu.superadmin", "menu.lanaIa", "menu.resultados", "menu.principal", "idioma.titulo"];
+    const es = leer("es") ?? {};
+    const valor = (o, k) => k.split(".").reduce((a, p) => a?.[p], o);
+    const sospechosas = [];
+    for (const i of IDIOMAS.filter((x) => x !== "es")) {
+      const otro = leer(i) ?? {};
+      for (const k of claves(es)) {
+        if (IGUALES_A_PROPOSITO.includes(k)) continue;
+        if (valor(es, k) === valor(otro, k)) sospechosas.push(`${i}:${k}`);
+      }
+    }
+    esperar(sospechosas.join(", ")).igual("", "estos textos siguen en español en otro idioma");
+  });
+
+  test("la lista de idiomas del código y la de la base dicen lo mismo", () => {
+    const codigo = ARCHIVOS.find((a) => a.ruta === "src/i18n/idiomas.ts");
+    esperar(!!codigo).verdadero("falta src/i18n/idiomas.ts");
+    const enCodigo = [...(codigo?.texto ?? "").matchAll(/IDIOMAS = \[([^\]]+)\]/g)]
+      .flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));
+
+    const f = fs.readdirSync(path.join(RAIZ, "supabase", "migrations")).find((n) => n.startsWith("0123_"));
+    esperar(!!f).verdadero("falta la migración 0123");
+    const sql = fs.readFileSync(path.join(RAIZ, "supabase", "migrations", f), "utf8");
+    const enLaBase = [...sql.matchAll(/idioma in \(([^)]+)\)/g)]
+      .flatMap((m) => [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]));
+
+    esperar([...new Set(enCodigo)].sort().join(",")).igual(
+      [...new Set(enLaBase)].sort().join(","),
+      "el código acepta idiomas que la base rechaza (o al revés): la pantalla se quedaría sin traducir",
+    );
+    esperar(enCodigo.join(",")).igual(IDIOMAS.join(","), "cambió la lista de idiomas: actualiza también esta regla");
+  });
+
+  test("las pantallas ya traducidas no vuelven a tener texto suelto", () => {
+    /* LA LISTA CRECE. Cada pantalla que se traduzca se añade aquí y ya no
+     * puede volver atrás. */
+    const YA_TRADUCIDAS = ["src/components/Sidebar.tsx", "src/components/settings/ElegirIdioma.tsx"];
+    const sucias = [];
+    for (const ruta of YA_TRADUCIDAS) {
+      const a = ARCHIVOS.find((x) => x.ruta === ruta);
+      if (!a) { sucias.push(`${ruta} (ya no existe)`); continue; }
+      const t = sinComentarios(a.texto);
+      const jsx = [...t.matchAll(/>[ ]*([A-ZÁÉÍÓÚÑ][^<>{}]{2,})</g)].map((m) => m[1].trim());
+      const conAcento = [...t.matchAll(/"([^"]*[áéíóúñ¿¡][^"]*)"/g)].map((m) => m[1]);
+      if (jsx.length || conAcento.length) sucias.push(`${ruta}: ${[...jsx, ...conAcento].join(" | ")}`);
+    }
+    esperar(sucias.join("  ||  ")).igual("", "hay texto en español escrito a mano en una pantalla ya traducida");
+  });
+});
+
 process.exit(await correrPruebas());

@@ -37,6 +37,8 @@
 
 export type Membresia = {
   org_id: string;
+  /** El idioma que eligió esta persona. NULO = hereda el de su organización. */
+  idioma?: string | null;
   role?: string | null;
   permisos?: unknown;
   soporte_hasta?: string | null;
