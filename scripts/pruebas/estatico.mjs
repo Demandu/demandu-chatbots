@@ -9722,4 +9722,50 @@ describe("Lo que el editor de la tienda pide, el escaparate lo enseña", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * UNA CONVERSACIÓN QUE PIDE UNA PERSONA SIEMPRE TIENE DUEÑO
+ *
+ * El reparto automático existía entero y aun así las conversaciones salían
+ * «Sin asignar». No era el código: `assignment_settings.enabled` estaba en
+ * falso, y aun encendido `solo_en_linea` exigía que alguien hubiera tenido el
+ * panel abierto en los últimos cinco minutos. Quien cierra la pestaña para
+ * comer apagaba el reparto sin saberlo.
+ *
+ * La 0124 convierte ese filtro en una PREFERENCIA con dos escalones detrás.
+ * Quitarlos devuelve el agujero sin que falle nada: el reparto seguiría
+ * «funcionando» y simplemente no elegiría a nadie, que es como se vive el
+ * fallo desde fuera — en silencio.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Una conversación que pide una persona siempre tiene dueño", () => {
+  const MIGRA = path.join(RAIZ, "supabase", "migrations");
+  const archivo = fs.readdirSync(MIGRA).find((n) => n.startsWith("0124_"));
+
+  test("la migración sigue puesta", () => {
+    esperar(!!archivo).verdadero("falta la migración 0124: el reparto vuelve a poder no elegir a nadie");
+  });
+
+  test("hay escalones detrás del filtro de «en línea»", () => {
+    const sql = fs.readFileSync(path.join(MIGRA, archivo), "utf8").replace(/^\s*--.*$/gm, "");
+    /* Tres `select ... into elegido`: el preferente y los dos de respaldo. Con
+     * uno solo, estamos otra vez en «si nadie está en línea, nadie se queda
+     * con el cliente». */
+    const cuantos = (sql.match(/into\s+elegido/g) ?? []).length;
+    esperar(cuantos >= 3).verdadero(
+      `solo hay ${cuantos} formas de elegir agente: faltan los escalones de respaldo de la 0124`,
+    );
+    esperar(/tm\.available/.test(sql)).verdadero("el escalón preferente dejó de preferir a quien está disponible");
+  });
+
+  test("el respaldo NO exige estar disponible ni en línea", () => {
+    const sql = fs.readFileSync(path.join(MIGRA, archivo), "utf8").replace(/^\s*--.*$/gm, "");
+    // El último bloque, el de «cualquiera de la cuenta», no puede filtrar por
+    // disponibilidad: si lo hiciera volvería a devolver nulo con todos ausentes.
+    const ultimo = sql.slice(sql.lastIndexOf("if elegido is null then"));
+    esperar(/tm\.available|last_seen_at/.test(ultimo)).falso(
+      "el último recurso volvió a exigir disponibilidad: con todo el equipo ausente, nadie se queda con el chat",
+    );
+  });
+});
+
 process.exit(await correrPruebas());
