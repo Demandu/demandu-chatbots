@@ -1,6 +1,7 @@
 import { Topbar } from "@/components/Topbar";
 import { SettingsNav, TituloSeccion } from "@/components/SettingsNav";
 import { createClient } from "@/lib/supabase/server";
+import { getTranslations } from "next-intl/server";
 
 export const dynamic = "force-dynamic";
 
@@ -16,10 +17,11 @@ export const dynamic = "force-dynamic";
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
   // Las pestañas internas de Demandu solo se muestran al equipo de la plataforma.
   const { data: esAdmin } = await createClient().rpc("is_platform_admin");
+  const t = await getTranslations("config");
 
   return (
     <>
-      <Topbar crumb={<span className="font-semibold text-white">Configuración</span>} />
+      <Topbar crumb={<span className="font-semibold text-white">{t("titulo")}</span>} />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <SettingsNav isAdmin={!!esAdmin} />
         <div className="min-h-0 flex-1 overflow-auto bg-canvas p-4 pb-[env(safe-area-inset-bottom)] text-ink sm:p-6 lg:p-8">

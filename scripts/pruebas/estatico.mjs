@@ -9615,7 +9615,19 @@ describe("Los idiomas no se desincronizan", () => {
     /* Un valor idéntico al español es casi siempre un copiar-pegar que se
      * olvidó. Las excepciones son de verdad iguales en los tres idiomas y van
      * nombradas: si alguien añade una, tiene que decir por qué. */
-    const IGUALES_A_PROPOSITO = ["menu.chatbots", "menu.reservas", "menu.superadmin", "menu.lanaIa", "menu.resultados", "menu.principal", "idioma.titulo"];
+    const IGUALES_A_PROPOSITO = [
+      "menu.chatbots", "menu.reservas", "menu.superadmin", "menu.lanaIa",
+      "menu.resultados", "menu.principal", "idioma.titulo",
+      // Se escriben igual en español y en portugués. No son un copiar-pegar:
+      // «Etiquetas», «Atributos» y «Idioma» son palabras portuguesas correctas,
+      // y «leads» no se traduce en ninguno de los dos.
+      "config.idioma", "config.etiquetas", "config.atributos", "config.gruposLeads",
+      // Duraciones y unidades: «30 min», «1 hora» y «4 horas» se escriben igual
+      // en portugués, y «30 min» también en inglés.
+      "avisos.silenciar30", "avisos.silenciar60", "avisos.silenciar240",
+      // «Toc toc» y «Suave» son portugués correcto; «Color» se escribe igual en inglés.
+      "avisos.tonos.toc", "avisos.tonos.suave", "gruposLeads.color",
+    ];
     const es = leer("es") ?? {};
     const valor = (o, k) => k.split(".").reduce((a, p) => a?.[p], o);
     const sospechosas = [];
@@ -9666,18 +9678,117 @@ describe("Los idiomas no se desincronizan", () => {
     esperar(t.includes('.eq("org_id", orgId)')).verdadero("ya no filtra por la cuenta en la que está");
   });
 
+  test("toda clave que una pantalla pide EXISTE en el diccionario", () => {
+    /* ── LA QUE FALTABA ──────────────────────────────────────────────────────
+     *
+     * Las otras reglas comparan los tres diccionarios entre sí. Ninguna miraba
+     * lo que el CÓDIGO pide. Una clave mal escrita —`t("guardar")` cuando la
+     * clave es `guardarIdioma`— pasa el compilador, pasa las cinco reglas de
+     * arriba y revienta en la cara del cliente al abrir la pantalla: next-intl
+     * lanza en un componente de servidor. No hay fallo más barato de cometer
+     * ni más caro de descubrir.
+     *
+     * Se leen las llamadas reales: `useTranslations("x")` / `getTranslations("x")`
+     * fija el prefijo, y cada `t("y")` de ese archivo pide `x.y`. Las claves
+     * armadas al vuelo —`t(`tonos.${id}`)`— no se pueden leer así, y se
+     * comprueba que el PREFIJO exista en vez de inventarse la clave entera.
+     */
+    const es = leer("es") ?? {};
+    const nodo = (k) => k.split(".").reduce((a, p) => (a == null ? a : a[p]), es);
+    const existe = (k) => nodo(k) !== undefined;
+
+    const faltan = [];
+    for (const a of ARCHIVOS) {
+      const t = sinComentarios(a.texto);
+      const prefijos = [...t.matchAll(/(?:useTranslations|getTranslations)\(\s*"([^"]+)"\s*\)/g)].map((m) => m[1]);
+      if (!prefijos.length) continue;
+      // Con un solo prefijo se sabe de quién cuelga cada `t("…")`. Con dos o
+      // más en el mismo archivo no, así que vale con que exista en alguno.
+      const claves = [...t.matchAll(/\bt(?:\.rich)?\(\s*"([A-Za-z][\w.]*)"/g)].map((m) => m[1]);
+      for (const c of claves) {
+        if (prefijos.some((p) => existe(`${p}.${c}`))) continue;
+        faltan.push(`${a.ruta}: ${prefijos.join("|")}.${c}`);
+      }
+      /* Claves armadas al vuelo. Dos formas, y se comprueban distinto:
+       *   t(`tonos.${id}`)      el trozo acaba en punto: `tonos` tiene que
+       *                         existir como RAMA del diccionario.
+       *   t(`silenciar${min}`)  el trozo se pega al valor: no hay rama que
+       *                         mirar, asi que se exige que ALGUNA clave
+       *                         hermana empiece por `silenciar`.
+       * Aceptar «existe el prefijo a secas» era una puerta abierta: con eso,
+       * t(`loquesea.${x}`) pasaba siempre. Probado en rojo. */
+      for (const m of t.matchAll(/\bt\(\s*`([A-Za-z][\w.]*?)([.$])/g)) {
+        const trozo = m[1], termina = m[2];
+        const ok = prefijos.some((pre) => {
+          if (termina === ".") {
+            const n = nodo(`${pre}.${trozo}`);
+            return !!n && typeof n === "object";
+          }
+          const partes = `${pre}.${trozo}`.split(".");
+          const parcial = partes.pop();
+          const padre = nodo(partes.join("."));
+          return !!padre && typeof padre === "object" && Object.keys(padre).some((k) => k.startsWith(parcial));
+        });
+        if (!ok) faltan.push(`${a.ruta}: ${prefijos.join("|")}.${trozo}… (armada)`);
+      }
+    }
+    esperar(faltan.join("  |  ")).igual(
+      "",
+      "una pantalla pide una clave que no existe: next-intl revienta al abrirla",
+    );
+  });
+
   test("las pantallas ya traducidas no vuelven a tener texto suelto", () => {
     /* LA LISTA CRECE. Cada pantalla que se traduzca se añade aquí y ya no
-     * puede volver atrás. */
-    const YA_TRADUCIDAS = ["src/components/Sidebar.tsx", "src/components/settings/ElegirIdioma.tsx"];
+     * puede volver atrás.
+     *
+     * ── 15 SEP 2026: LA REGLA NO SUJETABA NADA ──────────────────────────────
+     *
+     * La versión anterior buscaba `>Texto<` en UNA sola línea y cadenas CON
+     * acento. Probada en rojo a propósito, sobrevivió a las dos mutaciones
+     * obvias: devolver «Tu cuenta» como texto de un <p> (que el formateador
+     * parte en tres líneas, así que el `>` y el texto nunca comparten línea) y
+     * escribir «Horario laboral» como etiqueta (no lleva acento). O sea: una
+     * pantalla podía volver entera al español sin que la regla se enterara.
+     * Era una regla que no podía fallar, que es lo mismo que no tener regla.
+     */
+    const YA_TRADUCIDAS = [
+      "src/components/Sidebar.tsx",
+      "src/components/settings/ElegirIdioma.tsx",
+      "src/components/SettingsNav.tsx",
+      "src/app/(dashboard)/settings/layout.tsx",
+      "src/app/(dashboard)/settings/notifications/page.tsx",
+      "src/app/(dashboard)/settings/chat/page.tsx",
+      "src/app/(dashboard)/settings/lead-groups/page.tsx",
+      "src/components/notifications/NotificationsSettings.tsx",
+    ];
     const sucias = [];
     for (const ruta of YA_TRADUCIDAS) {
       const a = ARCHIVOS.find((x) => x.ruta === ruta);
       if (!a) { sucias.push(`${ruta} (ya no existe)`); continue; }
       const t = sinComentarios(a.texto);
-      const jsx = [...t.matchAll(/>[ ]*([A-ZÁÉÍÓÚÑ][^<>{}]{2,})</g)].map((m) => m[1].trim());
-      const conAcento = [...t.matchAll(/"([^"]*[áéíóúñ¿¡][^"]*)"/g)].map((m) => m[1]);
-      if (jsx.length || conAcento.length) sucias.push(`${ruta}: ${[...jsx, ...conAcento].join(" | ")}`);
+
+      /* 1. Texto entre etiquetas, AUNQUE ESTÉ EN OTRA LÍNEA. Lo que sale de
+       *    `{...}` no cuenta: eso ya es una llamada, no una frase. */
+      const jsx = [...t.matchAll(/(?<![=\->])>\s*([^<>{}\n]*[A-Za-zÁÉÍÓÚÑáéíóúñ][^<>{}]*?)\s*<(?=[\/A-Za-z])/g)]
+        .map((m) => m[1].replace(/\s+/g, " ").trim())
+        /* Una frase para un humano no lleva punto y coma ni paréntesis. Sin
+         * este filtro, `=>` y los tipos genéricos (`useState<Idioma>`) hacían
+         * pasar por «texto» trozos de código, y una regla que grita siempre se
+         * acaba apagando. */
+        .filter((x) => x.length > 1 && /^[^;=(){}\[\]`]+$/.test(x));
+
+      /* 2. Cadenas que parecen una frase para un humano: empiezan en mayúscula
+       *    y llevan un espacio. Las clases de Tailwind y las rutas empiezan en
+       *    minúscula o con «/», así que no caen aquí. */
+      const frases = [...t.matchAll(/"([A-ZÁÉÍÓÚÑ][^"\n]*\s[^"\n]*)"/g)].map((m) => m[1]);
+
+      /* 3. Y lo que tenga acento en cualquier parte: se escapa de las dos
+       *    anteriores cuando es una palabra suelta («Configuración»). */
+      const conAcento = [...t.matchAll(/"([^"\n]*[áéíóúñ¿¡][^"\n]*)"/g)].map((m) => m[1]);
+
+      const todo = [...new Set([...jsx, ...frases, ...conAcento])];
+      if (todo.length) sucias.push(`${ruta}: ${todo.join(" | ")}`);
     }
     esperar(sucias.join("  ||  ")).igual("", "hay texto en español escrito a mano en una pantalla ya traducida");
   });

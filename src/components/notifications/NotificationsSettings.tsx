@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations, useLocale } from "next-intl";
 import { Bell, BellOff, Volume2, Play, Monitor, Moon, CheckCircle2, AlertTriangle, MessageSquare } from "lucide-react";
 import { lanzarAviso } from "./Toasts";
 import {
@@ -36,14 +37,15 @@ function Switch({
   );
 }
 
-const SILENCIAR_RAPIDO = [
-  { min: 30, texto: "30 min" },
-  { min: 60, texto: "1 hora" },
-  { min: 240, texto: "4 horas" },
-  { min: 1440, texto: "Hasta mañana" },
-];
+/* Claves, no frases: el texto lo pone el diccionario. Ver `SettingsNav`. */
+const SILENCIAR_RAPIDO = [30, 60, 240, 1440] as const;
 
 export function NotificationsSettings() {
+  const t = useTranslations("avisos");
+  /* LA HORA SE ESCRIBE EN EL IDIOMA DE QUIEN MIRA. Estaba clavado a "es-MX":
+   * un panel en inglés decía «Silenciado hasta las 14:30» con formato mexicano.
+   * El idioma ya viaja en cada petición; usarlo aquí no cuesta una consulta. */
+  const locale = useLocale();
   const [p, setP] = useState<PrefsAviso>(PREFS_DEFAULT);
   const [listo, setListo] = useState(false);
   const [permiso, setPermiso] = useState<string>("default");
@@ -60,7 +62,7 @@ export function NotificationsSettings() {
     const next = { ...p, ...patch };
     setP(next);
     guardarPrefs(next);
-    setAviso("Guardado");
+    setAviso(t("guardado"));
     setTimeout(() => setAviso(""), 2000);
   };
 
@@ -73,12 +75,12 @@ export function NotificationsSettings() {
 
   const silenciar = (min: number) => set({ silenciarHasta: Date.now() + min * 60_000 });
 
-  if (!listo) return <div className="text-sm text-ink-3">Cargando tus preferencias…</div>;
+  if (!listo) return <div className="text-sm text-ink-3">{t("cargando")}</div>;
 
   const silenciadoAhora = enSilencio(p);
   const hastaTexto =
     p.silenciarHasta && Date.now() < p.silenciarHasta
-      ? new Date(p.silenciarHasta).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })
+      ? new Date(p.silenciarHasta).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
       : null;
 
   return (
@@ -104,23 +106,23 @@ export function NotificationsSettings() {
         </span>
         <div className="text-sm text-ink">
           {!p.activo
-            ? "Los avisos están apagados. No te enteras de mensajes nuevos."
+            ? t("apagados")
             : hastaTexto
-            ? `Silenciado hasta las ${hastaTexto}.`
+            ? t("silenciadoHasta", { hora: hastaTexto })
             : silenciadoAhora
-            ? `En modo silencio (${p.silencioDesde} a ${p.silencioHasta}).`
-            : "Te avisamos cuando un cliente escriba."}
+            ? t("enSilencio", { desde: p.silencioDesde, hasta: p.silencioHasta })
+            : t("activos")}
         </div>
         {hastaTexto && (
           <button onClick={() => set({ silenciarHasta: 0 })} className="btn-soft ml-auto px-3 py-1.5 text-xs">
-            Reactivar
+            {t("reactivar")}
           </button>
         )}
       </div>
 
       <Switch
-        titulo="Avisarme de mensajes nuevos"
-        detalle="Es el interruptor principal. Si lo apagas, no suena nada ni aparece ningún aviso."
+        titulo={t("principalTitulo")}
+        detalle={t("principalDetalle")}
         valor={p.activo}
         onChange={(v) => set({ activo: v })}
         icono={<Bell className="h-4 w-4" />}
@@ -128,16 +130,16 @@ export function NotificationsSettings() {
 
       <div className={p.activo ? "space-y-3" : "pointer-events-none space-y-3 opacity-45"}>
         <Switch
-          titulo="Aviso dentro de la app"
-          detalle="La tarjeta que aparece arriba a la derecha con el nombre y un adelanto del mensaje. Tócala para abrir la conversación."
+          titulo={t("enAppTitulo")}
+          detalle={t("enAppDetalle")}
           valor={p.enApp}
           onChange={(v) => set({ enApp: v })}
           icono={<MessageSquare className="h-4 w-4" />}
         />
 
         <Switch
-          titulo="Sonido"
-          detalle="Reproduce un tono corto cuando llega un mensaje."
+          titulo={t("sonidoTitulo")}
+          detalle={t("sonidoDetalle")}
           valor={p.sonido}
           onChange={(v) => set({ sonido: v })}
           icono={<Volume2 className="h-4 w-4" />}
@@ -145,25 +147,25 @@ export function NotificationsSettings() {
 
         {p.sonido && (
           <div className="rounded-xl border border-linea bg-tarjeta p-4">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">Tono</p>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">{t("tono")}</p>
             <div className="flex flex-wrap gap-2">
-              {TONOS_DISPONIBLES.map((t) => (
+              {TONOS_DISPONIBLES.map((id) => (
                 <button
-                  key={t.id}
+                  key={id}
                   type="button"
-                  onClick={() => { set({ tono: t.id as Tono }); reproducirTono(t.id as Tono, p.volumen); }}
+                  onClick={() => { set({ tono: id }); reproducirTono(id, p.volumen); }}
                   className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm transition ${
-                    p.tono === t.id ? "border-violet bg-violet/10 font-semibold text-ink" : "border-linea-2 text-ink-2 hover:border-pink"
+                    p.tono === id ? "border-violet bg-violet/10 font-semibold text-ink" : "border-linea-2 text-ink-2 hover:border-pink"
                   }`}
                 >
-                  <Play className="h-3.5 w-3.5" /> {t.nombre}
+                  <Play className="h-3.5 w-3.5" /> {t(`tonos.${id}`)}
                 </button>
               ))}
             </div>
 
             <div className="mt-4">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-3">
-                Volumen · {p.volumen}%
+                {t("volumen", { n: p.volumen })}
               </label>
               <div className="flex items-center gap-3">
                 <input
@@ -182,7 +184,7 @@ export function NotificationsSettings() {
                   onClick={() => reproducirTono(p.tono, p.volumen)}
                   className="btn-soft flex-none px-3 py-1.5 text-xs"
                 >
-                  Probar
+                  {t("probarTono")}
                 </button>
               </div>
             </div>
@@ -190,8 +192,8 @@ export function NotificationsSettings() {
         )}
 
         <Switch
-          titulo="Aviso en el escritorio"
-          detalle="La notificación de tu sistema, para cuando estás en OTRA pestaña o programa. Si estás viendo Demandu, verás la tarjeta de arriba en vez de esta."
+          titulo={t("escritorioTitulo")}
+          detalle={t("escritorioDetalle")}
           valor={p.escritorio}
           onChange={activarEscritorio}
           icono={<Monitor className="h-4 w-4" />}
@@ -199,26 +201,23 @@ export function NotificationsSettings() {
         {permiso === "denied" && (
           <div className="flex items-start gap-2 rounded-xl border border-warning/50 bg-warning/10 px-4 py-3 text-xs text-ink-2">
             <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-aviso" />
-            <span>
-              Tu navegador tiene bloqueadas las notificaciones para este sitio. Búscalo en el candado de la barra de
-              direcciones y permítelas para poder activarlo.
-            </span>
+            <span>{t("escritorioBloqueado")}</span>
           </div>
         )}
         {permiso === "no-soportado" && (
-          <p className="px-1 text-xs text-ink-3">Este navegador no soporta avisos de escritorio.</p>
+          <p className="px-1 text-xs text-ink-3">{t("escritorioNoSoportado")}</p>
         )}
 
         <Switch
-          titulo="Contador en la pestaña"
-          detalle="Muestra cuántos mensajes sin leer tienes en el título de la pestaña del navegador."
+          titulo={t("contadorTitulo")}
+          detalle={t("contadorDetalle")}
           valor={p.titulo}
           onChange={(v) => set({ titulo: v })}
         />
 
         <Switch
-          titulo="Solo mis conversaciones"
-          detalle="Avisar únicamente cuando escriban en un chat asignado a alguien de tu equipo, no en los que aún no tienen dueño."
+          titulo={t("soloMiasTitulo")}
+          detalle={t("soloMiasDetalle")}
           valor={p.soloMias}
           onChange={(v) => set({ soloMias: v })}
         />
@@ -227,32 +226,32 @@ export function NotificationsSettings() {
         <div className="rounded-xl border border-linea bg-tarjeta p-4">
           <div className="mb-2 flex items-center gap-2">
             <Moon className="h-4 w-4 text-ink-3" />
-            <span className="text-sm font-semibold text-ink">Silenciar un rato</span>
+            <span className="text-sm font-semibold text-ink">{t("silenciarUnRato")}</span>
           </div>
           <div className="flex flex-wrap gap-2">
-            {SILENCIAR_RAPIDO.map((s) => (
+            {SILENCIAR_RAPIDO.map((min) => (
               <button
-                key={s.min}
+                key={min}
                 type="button"
-                onClick={() => silenciar(s.min)}
+                onClick={() => silenciar(min)}
                 className="btn-soft px-3 py-1.5 text-xs"
               >
-                {s.texto}
+                {t(`silenciar${min}`)}
               </button>
             ))}
           </div>
 
           <div className="mt-4 border-t border-linea pt-4">
             <Switch
-              titulo="Horario de silencio"
-              detalle="No avisar dentro de este rango, todos los días."
+              titulo={t("horarioSilencioTitulo")}
+              detalle={t("horarioSilencioDetalle")}
               valor={p.silencioActivo}
               onChange={(v) => set({ silencioActivo: v })}
             />
             {p.silencioActivo && (
               <div className="mt-3 flex flex-wrap items-end gap-3">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-ink-2">Desde</label>
+                  <label className="mb-1 block text-xs font-semibold text-ink-2">{t("desde")}</label>
                   <input
                     type="time"
                     value={p.silencioDesde}
@@ -261,7 +260,7 @@ export function NotificationsSettings() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-ink-2">Hasta</label>
+                  <label className="mb-1 block text-xs font-semibold text-ink-2">{t("hasta")}</label>
                   <input
                     type="time"
                     value={p.silencioHasta}
@@ -276,36 +275,33 @@ export function NotificationsSettings() {
       </div>
 
       <div className="rounded-xl border border-linea bg-tarjeta p-4">
-        <div className="mb-1 text-sm font-semibold text-ink">¿Funciona?</div>
-        <p className="mb-3 text-xs text-ink-3">
-          Lanza un aviso de prueba con tu configuración actual, tal cual lo verías al llegar un mensaje real.
-        </p>
+        <div className="mb-1 text-sm font-semibold text-ink">{t("funcionaTitulo")}</div>
+        <p className="mb-3 text-xs text-ink-3">{t("funcionaDetalle")}</p>
         <button
           type="button"
           onClick={() => {
             if (p.sonido) reproducirTono(p.tono, p.volumen);
             if (p.enApp) {
               lanzarAviso({
-                titulo: "Mensaje de prueba",
-                cuerpo: "Así se ve un aviso cuando un cliente te escribe. 👋",
+                titulo: t("pruebaTitulo"),
+                cuerpo: t("pruebaCuerpo"),
                 href: "/inbox",
               });
             }
           }}
           className="btn-soft px-3 py-2 text-sm"
         >
-          Probar aviso
+          {t("probarAviso")}
         </button>
         {!p.activo && (
-          <p className="mt-2 text-[11px] text-ink-3">
-            Los avisos están apagados: préndelos arriba para recibirlos de verdad.
-          </p>
+          <p className="mt-2 text-[11px] text-ink-3">{t("apagadosAviso")}</p>
         )}
       </div>
 
       <p className="text-xs text-ink-3">
-        Estas preferencias son de <b className="text-ink-2">esta computadora</b>. Cada persona de tu equipo configura
-        las suyas, sin afectar a los demás.
+        {t.rich("sonDeEstaComputadora", {
+          b: (c) => <b className="text-ink-2">{c}</b>,
+        })}
       </p>
     </div>
   );

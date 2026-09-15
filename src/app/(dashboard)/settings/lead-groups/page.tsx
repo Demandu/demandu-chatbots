@@ -1,9 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { createLeadGroup, deleteLeadGroup } from "../actions";
+import { getTranslations } from "next-intl/server";
 
 export const dynamic = "force-dynamic";
 
 export default async function LeadGroupsPage() {
+  const t = await getTranslations("gruposLeads");
   const { data } = await createClient().from("lead_groups").select("*").order("created_at");
   const groups = (data ?? []) as any[];
 
@@ -12,20 +14,20 @@ export default async function LeadGroupsPage() {
       <form action={createLeadGroup} className="mb-6 rounded-2xl border border-linea bg-tarjeta p-4">
         <div className="flex items-end gap-3">
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre del grupo</label>
-            <input name="name" required placeholder="Clientes frecuentes" className="input-l" />
+            <label className="mb-1.5 block text-xs font-semibold text-ink-2">{t("nombre")}</label>
+            <input name="name" required placeholder={t("nombreEjemplo")} className="input-l" />
           </div>
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-ink-2">Color</label>
+            <label className="mb-1.5 block text-xs font-semibold text-ink-2">{t("color")}</label>
             <input type="color" name="color" defaultValue="#6E42FF" className="h-11 w-14 cursor-pointer rounded-lg border border-linea-2 bg-tarjeta" />
           </div>
         </div>
         <div className="mt-3 flex items-end gap-3">
           <div className="flex-1">
-            <label className="mb-1.5 block text-xs font-semibold text-ink-2">Descripción (opcional)</label>
-            <input name="description" placeholder="Compran cada mes" className="input-l" />
+            <label className="mb-1.5 block text-xs font-semibold text-ink-2">{t("descripcion")}</label>
+            <input name="description" placeholder={t("descripcionEjemplo")} className="input-l" />
           </div>
-          <button className="btn-primary">Crear grupo</button>
+          <button className="btn-primary">{t("crear")}</button>
         </div>
       </form>
 
@@ -39,12 +41,12 @@ export default async function LeadGroupsPage() {
             </div>
             <form action={deleteLeadGroup}>
               <input type="hidden" name="id" value={g.id} />
-              <button className="text-ink-3 transition hover:text-danger" title="Eliminar">✕</button>
+              <button className="text-ink-3 transition hover:text-danger" title={t("eliminar")}>✕</button>
             </form>
           </div>
         ))}
         {groups.length === 0 && (
-          <p className="text-sm text-ink-3">Aún no tienes grupos de leads. Crea el primero arriba 👆</p>
+          <p className="text-sm text-ink-3">{t("vacio")}</p>
         )}
       </div>
     </div>

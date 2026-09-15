@@ -102,13 +102,10 @@ const TONOS: Record<Tono, { notas: [number, number, number][]; onda: OscillatorT
   suave: { onda: "sine", notas: [[440, 0, 0.5]] },
 };
 
-export const TONOS_DISPONIBLES: { id: Tono; nombre: string }[] = [
-  { id: "campana", nombre: "Campana" },
-  { id: "burbuja", nombre: "Burbuja" },
-  { id: "toc", nombre: "Toc toc" },
-  { id: "trino", nombre: "Trino" },
-  { id: "suave", nombre: "Suave" },
-];
+/* Solo los identificadores: el nombre que se lee en pantalla sale del
+ * diccionario (`avisos.tonos.*`). Guardarlo aquí lo dejaba en español para
+ * todo el mundo, y este archivo no tiene forma de saber quién está mirando. */
+export const TONOS_DISPONIBLES: Tono[] = ["campana", "burbuja", "toc", "trino", "suave"];
 
 let ctxAudio: AudioContext | null = null;
 
