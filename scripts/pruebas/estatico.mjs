@@ -9775,6 +9775,41 @@ describe("Una conversación que pide una persona siempre tiene dueño", () => {
     esperar(/tm\.available/.test(sql)).verdadero("el escalón preferente dejó de preferir a quien está disponible");
   });
 
+  test("soltar un chat lo devuelve a la rueda, y a OTRO", () => {
+    /* «Sin asignar» en la Bandeja deshacía a mano lo que la 0124 garantiza.
+     * Ahora significa «devuélvelo al equipo»: el disparador reparte en el
+     * mismo instante, excluyendo a quien lo soltó — con «menos carga» sería el
+     * primer candidato y el chat le rebotaría. */
+    const f = fs.readdirSync(MIGRA).find((n) => n.startsWith("0125_"));
+    esperar(!!f).verdadero("falta la migración 0125: soltar un chat vuelve a dejarlo huérfano");
+    const sql = fs.readFileSync(path.join(MIGRA, f), "utf8").replace(/^\s*--.*$/gm, "");
+    esperar(/tg_op = 'UPDATE' and old\.assignee_member_id is not null/.test(sql)).verdadero(
+      "el reparto ya no detecta que alguien soltó la conversación",
+    );
+    esperar(/crm_elegir_agente\(new\.org_id, quien_la_solto\)/.test(sql)).verdadero(
+      "vuelve a poder devolverle el chat a quien lo acaba de soltar",
+    );
+  });
+
+  test("la Bandeja pinta lo que la base devolvió, no lo que pidió", () => {
+    /* Al soltar, la base NO deja la conversación sin dueño: elige a otro. Si
+     * la pantalla pintara lo que pidió, enseñaría «Sin asignar» sobre un chat
+     * que ya tiene responsable. Y si la escritura falla, enseñaría un dueño
+     * que la base no tiene. */
+    const a = ARCHIVOS.find((x) => x.ruta === "src/components/inbox/InboxClient.tsx");
+    esperar(!!a).verdadero("falta InboxClient.tsx");
+    const t = sinComentarios(a?.texto ?? "");
+    const i = t.indexOf("const setAssignee");
+    esperar(i >= 0).verdadero("no encontré setAssignee");
+    const cuerpo = t.slice(i, i + 1400);
+    esperar(/\.select\("assignee_member_id/.test(cuerpo)).verdadero(
+      "reasignar volvió a no leer lo que la base guardó de verdad",
+    );
+    esperar(/error \|\| !data/.test(cuerpo)).verdadero(
+      "reasignar volvió a no mirar si falló: la pantalla mentiría en silencio",
+    );
+  });
+
   test("el respaldo NO exige estar disponible ni en línea", () => {
     const sql = fs.readFileSync(path.join(MIGRA, archivo), "utf8").replace(/^\s*--.*$/gm, "");
     // El último bloque, el de «cualquiera de la cuenta», no puede filtrar por

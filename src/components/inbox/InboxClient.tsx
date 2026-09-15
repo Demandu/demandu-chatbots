@@ -651,11 +651,48 @@ export function InboxClient({
       await sb.from("opportunities").update({ stage_id: stateId }).eq("id", (sel as any).opportunity_id);
     }
   };
+  /**
+   * Cambiar de responsable.
+   *
+   * ── SE PINTA LO QUE LA BASE DEVUELVE, NO LO QUE SE PIDIÓ ────────────────
+   *
+   * Antes esto pintaba el nuevo dueño y mandaba el cambio sin mirar si había
+   * funcionado. Dos formas de mentir, las dos silenciosas:
+   *
+   *   · Si la escritura falla, la pantalla dice «es de Ana» y la base sigue
+   *     diciendo que es de Darwin. Dos agentes con verdades distintas sobre el
+   *     mismo chat es peor que no poder reasignar: ninguno contesta, porque
+   *     cada uno cree que es del otro.
+   *
+   *   · Al elegir «Sin asignar», la base NO lo deja sin dueño: lo devuelve a
+   *     la rueda y elige a otro en el mismo instante (migración 0125). La
+   *     pantalla habría seguido enseñando «Sin asignar» sobre una conversación
+   *     que ya tiene responsable.
+   *
+   * Por eso se pide la fila de vuelta con `select` y se pinta ESO. Si no
+   * vuelve nada, se deja la lista como estaba y se avisa: quedarse con lo que
+   * uno quería creer es exactamente el fallo.
+   */
   const setAssignee = async (memberId: string) => {
     if (!sel) return;
-    const mm = members.find((m) => m.id === memberId) ?? null;
-    setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, assignee_member_id: memberId || null, member: mm } : c)));
-    await sb.from("conversations").update({ assignee_member_id: memberId || null }).eq("id", sel.id);
+    const { data, error } = await sb
+      .from("conversations")
+      .update({ assignee_member_id: memberId || null })
+      .eq("id", sel.id)
+      .select("assignee_member_id, member:team_members(id,name)")
+      .maybeSingle();
+
+    if (error || !data) {
+      console.error("[bandeja] no se pudo reasignar:", error?.message);
+      alert("No se pudo cambiar el responsable. Inténtalo otra vez.");
+      return;
+    }
+
+    const real = (data as any).assignee_member_id as string | null;
+    const mm = ((data as any).member as { id: string; name: string } | null)
+      ?? members.find((m) => m.id === real)
+      ?? null;
+    setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, assignee_member_id: real, member: mm } : c)));
   };
   const toggleTag = async (name: string) => {
     if (!sel?.contact) return;
