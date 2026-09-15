@@ -264,6 +264,91 @@ describe("Registro de recorridos de flujo", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * LO QUE MANDA EL CLIENTE TAMBIÉN SE GUARDA
+ *
+ * El entrante de WhatsApp guardaba SOLO una etiqueta —«📷 Imagen», «🎤 Audio»,
+ * «🩷 Sticker»— y tiraba el archivo. El agente abría la conversación y veía
+ * tres palabras donde había una foto del producto roto o un comprobante de
+ * pago. 516 mensajes de WhatsApp en la plataforma y ni uno con su adjunto.
+ *
+ * Instagram sí los guardaba. Dos canales, dos comportamientos: era un olvido.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("El adjunto del cliente no se tira", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+  const motor = wa.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  test("el motor BAJA el archivo y lo guarda en el almacén", () => {
+    esperar(/function guardarMedioEntrante/.test(motor)).verdadero(
+      "desapareció la bajada del adjunto: el cliente manda una foto y no queda en ninguna parte",
+    );
+    esperar(/storage\.from\("media"\)\.upload/.test(motor)).verdadero(
+      "ya no se guarda el archivo: el enlace de Meta caduca, así que esto es perderlo",
+    );
+  });
+
+  test("y lo pega al mensaje con la forma que la Bandeja YA pinta", () => {
+    /* `VistaAdjunto` pinta `payload.adjunto` con {url, nombre, tipo, bytes}.
+     * Guardarlo con otra forma sería guardarlo para nadie: la pantalla no lo
+     * encontraría y el fallo no daría ningún error. */
+    esperar(/payload: \{ adjunto \}/.test(motor)).verdadero(
+      "el adjunto ya no se pega al mensaje, o se pega con otro nombre que la Bandeja no lee",
+    );
+    for (const campo of ["url:", "nombre:", "tipo:", "bytes:"]) {
+      esperar(motor.includes(campo)).verdadero(`el adjunto perdió el campo ${campo}`);
+    }
+  });
+
+  test("los CINCO tipos de archivo, no solo las fotos", () => {
+    const i = motor.indexOf("function medioDelMensaje");
+    esperar(i >= 0).verdadero("no encontré medioDelMensaje");
+    const cuerpo = motor.slice(i, i + 700);
+    for (const clase of ["image", "video", "audio", "document", "sticker"]) {
+      esperar(cuerpo.includes(`"${clase}"`)).verdadero(
+        `${clase} volvió a quedarse fuera: ese cliente manda su archivo y no llega`,
+      );
+    }
+  });
+
+  test("el archivo NO puede costarle la respuesta al cliente", () => {
+    /* Dos garantías, y las dos se vieron caer en este repo con otra cara:
+     *  1. El mensaje se guarda ANTES de tocar el archivo.
+     *  2. Bajarlo no lanza nunca: devuelve null y lo dice en los registros. */
+    const iIns = motor.indexOf('direction: "inbound"');
+    const iAdj = motor.indexOf("guardarMedioEntrante(db");
+    esperar(iIns >= 0 && iAdj > iIns).verdadero(
+      "el adjunto se bajó ANTES de guardar el mensaje: si falla, se pierde la conversación entera",
+    );
+    const cuerpo = motor.slice(motor.indexOf("async function guardarMedioEntrante"));
+    esperar(/catch \(e\)[\s\S]{0,300}?return null/.test(cuerpo)).verdadero(
+      "bajar el adjunto ya puede lanzar: un archivo roto dejaría al cliente sin respuesta",
+    );
+    esperar(/console\.error\("\[whatsapp\] no pude guardar el adjunto/.test(cuerpo)).verdadero(
+      "el fallo dejó de contarse: se convierte en un misterio en vez de un error",
+    );
+  });
+
+  test("hay tope de peso, y se mira lo que DE VERDAD llegó", () => {
+    /* `file_size` lo dice Meta. Fiarse solo de eso deja que un número mentido
+     * meta cien megas en la memoria de la función y la tumbe. */
+    const cuerpo = motor.slice(motor.indexOf("async function guardarMedioEntrante"));
+    esperar(/TOPE_MEDIO_BYTES/.test(cuerpo)).verdadero("desapareció el tope de peso");
+    esperar(/byteLength > TOPE_MEDIO_BYTES/.test(cuerpo)).verdadero(
+      "solo se comprueba lo que Meta DICE que pesa, no lo que entró en memoria",
+    );
+  });
+
+  test("la primera carpeta del almacén es la cuenta", () => {
+    /* La regla del almacén hace `foldername(name)[1]::uuid IN (auth_org_ids())`.
+     * Con cualquier otra cosa delante, el agente no puede abrir su propio
+     * archivo — y eso ya pasó una vez con la ruta `inbox/<org>/…`. */
+    esperar(/\$\{orgId\}\/whatsapp\//.test(motor)).verdadero(
+      "la ruta del almacén ya no empieza por la cuenta: el agente no podrá abrir el archivo",
+    );
+  });
+});
+
 describe("Motor de WhatsApp desplegado", () => {
   test("el archivo del repo declara su versión, para poder comparar con producción", () => {
     const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");

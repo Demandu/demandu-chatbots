@@ -19,7 +19,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "42";
+const VERSION_MOTOR = "43";
 
 // ─── La firma de Meta ────────────────────────────────────────────────────────
 //
@@ -659,6 +659,113 @@ function mediaPost(
     });
   }
   return waPost(pnid, token, { to, type: "image", image: cuerpo });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * LO QUE MANDA EL CLIENTE TAMBIÉN SE GUARDA.
+ *
+ * Hasta hoy el entrante de WhatsApp guardaba SOLO una etiqueta: «📷 Imagen»,
+ * «🎤 Audio», «🩷 Sticker». El archivo no se bajaba de Meta ni se guardaba en
+ * ninguna parte, así que el agente abría la conversación tres días después y
+ * veía tres palabras donde el cliente había mandado la foto del producto roto,
+ * el comprobante de la transferencia o la nota de voz con el pedido.
+ *
+ * Que era un olvido y no una decisión lo prueba Instagram: ESE canal sí guarda
+ * sus adjuntos. Dos canales, dos comportamientos.
+ *
+ * SE BAJA, NO SE ENLAZA. El enlace que da Meta caduca y además solo funciona
+ * con el token en la cabecera: no es algo que se pueda guardar para después.
+ * Un CRM cuyo historial se vacía solo no es un historial.
+ *
+ * SE GUARDA CON LA FORMA QUE LA BANDEJA YA PINTA — {url, nombre, tipo, bytes}
+ * dentro de `payload.adjunto`, la misma que escribe el agente cuando adjunta
+ * algo. Así la pantalla no cambia ni una línea, y de propina los stickers
+ * (`image/webp`) se ven como lo que son: una imagen.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** El mismo tope que la Bandeja le pone al agente. Ver `Adjunto.tsx`. */
+const TOPE_MEDIO_BYTES = 25 * 1024 * 1024;
+
+const EXTENSION: Record<string, string> = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
+  "video/mp4": "mp4", "video/3gpp": "3gp",
+  "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/amr": "amr",
+  "application/pdf": "pdf",
+};
+
+/**
+ * El trozo del mensaje que trae un archivo, sea del tipo que sea.
+ *
+ * El documento es el único que trae nombre propio; a los demás se les pone uno
+ * con su extensión de verdad. Un archivo llamado «bin» que en realidad es un
+ * audio es un archivo que el agente no abre.
+ */
+function medioDelMensaje(msg: any): { id: string; mime: string; nombre: string } | null {
+  for (const clase of ["image", "video", "audio", "document", "sticker"]) {
+    const m = msg?.[clase];
+    if (!m?.id) continue;
+    const mime = String(m.mime_type ?? "").split(";")[0].trim() || "application/octet-stream";
+    const nombre = String(m.filename ?? "").trim()
+      || `${clase}-${Date.now()}.${EXTENSION[mime] ?? "bin"}`;
+    return { id: String(m.id), mime, nombre };
+  }
+  return null;
+}
+
+/**
+ * Baja el archivo de Meta y lo deja en el almacén, listo para la Bandeja.
+ *
+ * Devuelve `null` cuando no hay archivo o cuando algo falló. NUNCA lanza: el
+ * mensaje del cliente ya está guardado cuando esto corre, y un archivo que no
+ * se pudo bajar no puede costarle la respuesta a nadie.
+ */
+async function guardarMedioEntrante(
+  db: any, token: string, orgId: string, convId: string, msg: any,
+): Promise<{ url: string; nombre: string; tipo: string; bytes: number } | null> {
+  const medio = medioDelMensaje(msg);
+  if (!medio) return null;
+
+  try {
+    // Meta no da el archivo: da dónde está, y solo por un rato.
+    const r1 = await fetch(`${GRAPH}/${medio.id}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r1.ok) throw new Error(`Meta no me dijo dónde está el archivo (${r1.status})`);
+    const ficha = await r1.json();
+
+    // El peso se mira DOS veces y no es redundante: esto es lo que Meta DICE
+    // que pesa, y abajo lo que de verdad entró en memoria. Fiarse solo del
+    // primero deja que un número mentido tumbe la función entera.
+    const dichos = Number(ficha?.file_size ?? 0);
+    if (dichos > TOPE_MEDIO_BYTES) throw new Error(`dice pesar ${dichos} bytes, pasa del tope`);
+
+    const enlace = String(ficha?.url ?? "");
+    if (!enlace) throw new Error("la ficha del medio vino sin enlace");
+    const r2 = await fetch(enlace, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r2.ok) throw new Error(`no pude bajarlo (${r2.status})`);
+
+    const datos = new Uint8Array(await r2.arrayBuffer());
+    if (!datos.byteLength) throw new Error("el archivo llegó vacío");
+    if (datos.byteLength > TOPE_MEDIO_BYTES) throw new Error(`llegaron ${datos.byteLength} bytes`);
+
+    const tipo = String(ficha?.mime_type ?? medio.mime).split(";")[0].trim() || medio.mime;
+    // La primera carpeta ES la cuenta, y no es estética: la regla del almacén
+    // hace `foldername(name)[1]::uuid IN (auth_org_ids())`. Con cualquier otra
+    // cosa delante, el agente no puede leer su propio archivo.
+    const limpio = medio.nombre.replace(/[^\w.\-]+/g, "_").slice(-80);
+    const ruta = `${orgId}/whatsapp/${convId}/${Date.now()}-${limpio}`;
+
+    const { error } = await db.storage.from("media").upload(ruta, datos, {
+      contentType: tipo, cacheControl: "3600", upsert: false,
+    });
+    if (error) throw new Error(`el almacén lo rechazó: ${error.message}`);
+
+    const { data: pub } = db.storage.from("media").getPublicUrl(ruta);
+    return { url: pub.publicUrl, nombre: medio.nombre, tipo, bytes: datos.byteLength };
+  } catch (e) {
+    // Se pierde el adjunto, no la conversación — y queda dicho POR QUÉ, que es
+    // la diferencia entre un fallo y un misterio.
+    console.error("[whatsapp] no pude guardar el adjunto del cliente:", (e as Error).message);
+    return null;
+  }
 }
 
 /** Envía imagen, video o archivo con su texto (caption), en el orden correcto. */
@@ -6485,8 +6592,25 @@ Deno.serve(async (req: Request) => {
       // ningún canal. El bot contestaba perfecto porque el flujo corre igual,
       // así que desde fuera parecía que hablaba solo. No hubo un solo error en
       // ninguna parte porque nadie miraba el resultado.
-      const { error: errEntrante } = await db.from("messages").insert({ conversation_id: conv.id, org_id: cfg.org_id, direction: "inbound", sender: "contact", body: visible });
+      const { data: filaEntrante, error: errEntrante } = await db.from("messages")
+        .insert({ conversation_id: conv.id, org_id: cfg.org_id, direction: "inbound", sender: "contact", body: visible })
+        .select("id").maybeSingle();
       if (errEntrante) console.error("[whatsapp] NO SE GUARDÓ EL MENSAJE DEL CLIENTE:", errEntrante.message);
+
+      /* EL ARCHIVO VA DESPUÉS DEL MENSAJE, A PROPÓSITO.
+       *
+       * Bajarlo antes retrasaría la respuesta al cliente por algo que no la
+       * afecta, y un archivo que no se pudo bajar dejaría al mensaje entero sin
+       * guardar. Así el mensaje entra ya, y el adjunto se le pega un instante
+       * después: la Bandeja refresca sola y nadie nota el hueco. */
+      if (filaEntrante?.id) {
+        const adjunto = await guardarMedioEntrante(db, cfg.access_token, cfg.org_id, conv.id, msg);
+        if (adjunto) {
+          const { error: errAdjunto } = await db.from("messages")
+            .update({ payload: { adjunto } }).eq("id", (filaEntrante as any).id);
+          if (errAdjunto) console.error("[whatsapp] bajé el adjunto pero no pude pegarlo al mensaje:", errAdjunto.message);
+        }
+      }
       await db.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conv.id);
       // Ajustes del chatbot: personalidad de la IA y atajos (0 / 1, etc.)
       const { data: botRow } = cfg.bot_id
