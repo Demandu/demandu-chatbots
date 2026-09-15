@@ -41,6 +41,7 @@ import { rellenar, type RespuestaRapida } from "@/lib/quickReplies";
 import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
 import { paletaChat } from "@/lib/chatColors";
+import { rastroDeLaAsignacion } from "@/lib/avisoDeAsignacion";
 
 type Contact = {
   id: string; name: string | null; wa_name: string | null; phone: string | null; email: string | null;
@@ -50,7 +51,7 @@ type Contact = {
   origen: Record<string, any> | null;
 };
 type State = { id: string; name: string; color: string };
-type Member = { id: string; name: string };
+type Member = { id: string; name: string; user_id?: string | null };
 type Convo = {
   id: string;
   channel: string;
@@ -64,6 +65,8 @@ type Convo = {
   state_id: string | null;
   opportunity_id?: string | null;
   assignee_member_id: string | null;
+  /** Quién puso al responsable actual. Nulo = lo repartió la plataforma. */
+  asignada_por: string | null;
   /** En qué idioma escribe el lead. Se detecta solo; el agente puede cambiarlo. */
   idioma_lead: string | null;
   contact: Contact | null;
@@ -135,6 +138,7 @@ export function InboxClient({
   bubbleOut,
   orgId,
   quickReplies = [],
+  userId = null,
 }: {
   initial: Convo[];
   members: Member[];
@@ -148,8 +152,17 @@ export function InboxClient({
   orgId?: string | null;
   /** Mensajes prediseñados del equipo */
   quickReplies?: RespuestaRapida[];
+  /** Quién está mirando, para el rastro de quién pasó cada conversación. */
+  userId?: string | null;
 }) {
   const sb = useMemo(() => createClient(), []);
+  // Cuál de los miembros del equipo soy yo. Sin esto no se puede distinguir
+  // «te la pasó Ana» de «la asignó Ana»: el responsable es un team_member y
+  // quien la pasó es un usuario de auth; son dos identidades distintas.
+  const miMemberId = useMemo(
+    () => (userId ? members.find((m) => m.user_id === userId)?.id ?? null : null),
+    [members, userId],
+  );
   const [convos, setConvos] = useState<Convo[]>(initial);
   const params = useSearchParams();
   const pedida = params.get("c");
@@ -226,7 +239,7 @@ export function InboxClient({
   })();
 
   const selectSql =
-    "id, channel, bot_id, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, idioma_lead, " +
+    "id, channel, bot_id, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, asignada_por, opportunity_id, idioma_lead, " +
     "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags,origen), " +
     "state:conversation_states(id,name,color), member:team_members(id,name)";
 
@@ -679,7 +692,7 @@ export function InboxClient({
       .from("conversations")
       .update({ assignee_member_id: memberId || null })
       .eq("id", sel.id)
-      .select("assignee_member_id, member:team_members(id,name)")
+      .select("assignee_member_id, asignada_por, member:team_members(id,name)")
       .maybeSingle();
 
     if (error || !data) {
@@ -692,7 +705,8 @@ export function InboxClient({
     const mm = ((data as any).member as { id: string; name: string } | null)
       ?? members.find((m) => m.id === real)
       ?? null;
-    setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, assignee_member_id: real, member: mm } : c)));
+    const porQuien = ((data as any).asignada_por as string | null) ?? null;
+    setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, assignee_member_id: real, asignada_por: porQuien, member: mm } : c)));
   };
   const toggleTag = async (name: string) => {
     if (!sel?.contact) return;
@@ -982,6 +996,21 @@ export function InboxClient({
                 <option value="">Sin asignar</option>
                 {members.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
               </select>
+              {(() => {
+                /* QUIÉN LA PASÓ, AL LADO DE QUIÉN LA TIENE. Ver
+                 * `rastroDeLaAsignacion`: se calla cuando no aporta. */
+                const rastro = rastroDeLaAsignacion({
+                  responsable: sel.assignee_member_id,
+                  asignadaPor: sel.asignada_por,
+                  miUserId: userId,
+                  miMemberId,
+                  nombreDeQuienPaso:
+                    members.find((m) => m.user_id && m.user_id === sel.asignada_por)?.name ?? null,
+                });
+                return rastro ? (
+                  <span className="text-[11px] leading-tight text-muted">· {rastro}</span>
+                ) : null;
+              })()}
               <select
                 value={sel.state_id ?? ""}
                 onChange={(e) => setState(e.target.value)}

@@ -930,6 +930,103 @@ const POR_LA_TIENDA = [
  * consultar, el modelo se inventa disponibilidad. Nunca se enciende
  * `reservar_mesa` sin ella.
  */
+/**
+ * LAS RESERVAS, PREGUNTÁNDOSELAS A LA PLATAFORMA.
+ *
+ * MISMO MOTIVO QUE `pedirAgenda`, y aquí pesa todavía más: el cálculo de qué
+ * mesa le toca a un grupo —capacidad, uniones, tope de mesas juntas— vive en
+ * `src/lib/reservas/`. Copiarlo a Deno sería tener dos versiones del reparto
+ * del salón, y el día que se separen WhatsApp diría que hay mesa y la pantalla
+ * del restaurante que no. De las dos, ninguna sería de fiar.
+ *
+ * Se autentica igual que la agenda: con la llave de servicio que el motor y la
+ * web YA comparten. No hay un secreto nuevo que configurar.
+ */
+async function pedirReservas(cuerpo: Record<string, any>): Promise<any> {
+  const base = Deno.env.get("PLATAFORMA_URL") ?? "https://platform.demandu.tech";
+  const llave = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const ctl = new AbortController();
+  const reloj = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const r = await fetch(`${base}/api/motor/reservas`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-demandu-motor": llave },
+      body: JSON.stringify(cuerpo),
+      signal: ctl.signal,
+    });
+    const crudo = await r.text();
+    if (!r.ok) {
+      // EL PORQUÉ, NO SOLO EL QUÉ: un 401 y un salón lleno le dicen lo mismo a
+      // la persona y son dos mundos distintos para arreglar.
+      console.error(`[reservas] la plataforma respondió ${r.status}: ${crudo.slice(0, 200)}`);
+      return { __fallo: `http ${r.status}` };
+    }
+    try { return JSON.parse(crudo); } catch {
+      console.error(`[reservas] respuesta ilegible: ${crudo.slice(0, 200)}`);
+      return { __fallo: "respuesta ilegible" };
+    }
+  } catch (e) {
+    console.error("[reservas] no contestó:", e);
+    return { __fallo: "sin respuesta" };
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
+/* ── LA MEMORIA DE LOS TURNOS OFRECIDOS ────────────────────────────────────
+ *
+ * COPIA DELIBERADA de `src/lib/ai/herramientas.ts`. Este motor corre en Deno y
+ * no puede importar del proyecto. Lo que se copia es SOLO la traducción de «el
+ * primer turno» al identificador exacto — el reparto del salón no se copia
+ * nunca, ese se pregunta por HTTP.
+ *
+ * Existe por el mismo fallo real que `horarios_ofrecidos` en la agenda: el
+ * modelo reescribe la lista con sus palabras para enseñársela a la persona y
+ * pierde el identificador. Sin esto acabaría mandando un uuid inventado. */
+type TurnoOfrecido = { id: string; fecha: string; label: string };
+
+function leerTurnosOfrecidos(crudo: unknown): TurnoOfrecido[] {
+  try {
+    const x = JSON.parse(String(crudo ?? "[]"));
+    return Array.isArray(x) ? (x as TurnoOfrecido[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function turnoQuePidio(pedido: string, ofrecidos: TurnoOfrecido[]): TurnoOfrecido | null {
+  const q = String(pedido ?? "").trim().toLowerCase();
+  if (!ofrecidos.length) return null;
+  if (!q) return ofrecidos.length === 1 ? ofrecidos[0] : null;
+
+  const exacto = ofrecidos.find((t) => t.id.toLowerCase() === q);
+  if (exacto) return exacto;
+
+  const porEtiqueta = ofrecidos.find((t) => t.label.toLowerCase() === q);
+  if (porEtiqueta) return porEtiqueta;
+
+  const parecido = ofrecidos.filter((t) => t.label.toLowerCase().includes(q) || q.includes(t.label.toLowerCase()));
+  if (parecido.length === 1) return parecido[0];
+
+  return ofrecidos.length === 1 ? ofrecidos[0] : null;
+}
+
+function comoRecordarLosTurnos(ofrecidos: TurnoOfrecido[]): string {
+  if (!ofrecidos.length) {
+    return "Todavía no has consultado la disponibilidad. Llama primero a ver_mesas con la fecha y cuántas personas son.";
+  }
+  return (
+    "No supe a qué turno te refieres. Vuelve a llamar copiando uno de estos tal cual:\n" +
+    ofrecidos.map((t) => `- ${t.label} → turno: ${t.id}`).join("\n")
+  );
+}
+
+/** "AAAA-MM-DD" o nada. El modelo no inventa fechas: si no la sabe, pregunta. */
+function fechaPedida(x: unknown): string {
+  const s = String(x ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+}
+
 const POR_LAS_RESERVAS = [
   "ver_mesas",
   "reservar_mesa",
@@ -1130,6 +1227,96 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
         "Cancela la cita que esta persona tiene. CONFÍRMALE ANTES que de verdad la quiere cancelar: " +
         "se borra del calendario del negocio y no se deshace. Si lo que quiere es cambiarla de hora, " +
         "usa reagendar_cita en vez de esta.",
+      input_schema: { type: "object", properties: {} },
+    });
+  }
+
+  /* ── LAS CINCO DE RESERVAS ────────────────────────────────────────────────
+   *
+   * `ver_mesas` va primero por lo mismo que `ver_horarios`: sin consultar, el
+   * modelo se inventa disponibilidad. Y ninguna de las tres últimas recibe el
+   * id de una reserva — la plataforma sabe cuál es la suya. */
+
+  if (quiere.includes("ver_mesas")) {
+    tools.push({
+      name: "ver_mesas",
+      description:
+        "Consulta si el restaurante tiene sitio un día concreto para un número de personas. " +
+        "Úsala SIEMPRE antes de prometer una mesa: nunca inventes disponibilidad ni digas que hay sitio sin llamarla. " +
+        "Devuelve los turnos donde el grupo cabe de verdad.",
+      input_schema: {
+        type: "object",
+        properties: {
+          fecha: { type: "string", description: "El día exacto, como AAAA-MM-DD, si lo sabes con certeza." },
+          dias: {
+            type: "integer",
+            description:
+              "O la distancia desde hoy: 0 = hoy, 1 = mañana, 2 = pasado mañana. " +
+              "ÚSALA cuando la persona hable en relativo. NO calcules tú la fecha: no sabes en qué día vives.",
+          },
+          personas: { type: "integer", description: "Cuántas personas son. Si no lo sabes, pregúntaselo antes." },
+        },
+        required: ["personas"],
+      },
+    });
+  }
+
+  if (quiere.includes("reservar_mesa")) {
+    tools.push({
+      name: "reservar_mesa",
+      description:
+        "Hace la reserva. El `turno` DEBE ser uno de los que devolvió ver_mesas, copiado tal cual. " +
+        "No la llames sin haber confirmado con la persona el día, la hora y cuántos son. " +
+        "Si la respuesta dice APARTADA, NO le digas que está confirmada.",
+      input_schema: {
+        type: "object",
+        properties: {
+          turno: { type: "string", description: "El turno que devolvió ver_mesas, tal cual." },
+          personas: { type: "integer", description: "Cuántas personas son." },
+          nombre: { type: "string", description: "A nombre de quién, si lo sabes." },
+          notas: { type: "string", description: "Lo que haya pedido: cumpleaños, terraza, silla de bebé." },
+        },
+        required: ["turno"],
+      },
+    });
+  }
+
+  if (quiere.includes("ver_mis_reservas")) {
+    tools.push({
+      name: "ver_mis_reservas",
+      description:
+        "Consulta las reservas que ESTA persona tiene por delante, en todos los canales por los que te " +
+        "haya escrito. Úsala SIEMPRE que pregunte por su reserva —si la tiene, si quedó confirmada, " +
+        "cuándo es, para cuántos—. NO adivines ni digas que no puedes verlas: llámala.",
+      input_schema: { type: "object", properties: {} },
+    });
+  }
+
+  if (quiere.includes("mover_reserva")) {
+    tools.push({
+      name: "mover_reserva",
+      description:
+        "Mueve la reserva que esta persona ya tiene a otro día o turno. Llámala sin `turno` para saber " +
+        "cuándo la tiene; después usa ver_mesas y vuelve a llamarla con el turno nuevo. " +
+        "NO necesitas identificar la reserva: la plataforma sabe cuál es la suya. " +
+        "Mover puede dejarla pendiente de confirmar otra vez: di lo que responda, no lo que había antes.",
+      input_schema: {
+        type: "object",
+        properties: {
+          turno: { type: "string", description: "El turno nuevo, tal cual lo devolvió ver_mesas." },
+          personas: { type: "integer", description: "Si además cambia cuántos son." },
+        },
+      },
+    });
+  }
+
+  if (quiere.includes("cancelar_reserva")) {
+    tools.push({
+      name: "cancelar_reserva",
+      description:
+        "Cancela la reserva que esta persona tiene. CONFÍRMALE ANTES que de verdad la quiere cancelar: " +
+        "la mesa se libera y no se deshace. Si lo que quiere es cambiar el día o la hora, usa " +
+        "mover_reserva en vez de esta.",
       input_schema: { type: "object", properties: {} },
     });
   }
@@ -1525,6 +1712,145 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         }
         ctx.vars.cita_ok = "false";
         return "Cita cancelada. Díselo, y ofrécele agendar otra cuando le venga bien.";
+      }
+
+      case "ver_mesas": {
+        const personas = Math.round(Number(args?.personas));
+        if (!Number.isFinite(personas) || personas < 1) {
+          return "Falta cuántas personas son. Pregúntaselo y vuelve a llamarme.";
+        }
+
+        /* NI LA FECHA NI EL «HOY» SE CALCULAN AQUÍ. Los resuelve la plataforma
+         * en la zona del restaurante: a las 11 de la noche en Panamá este motor
+         * ya está en mañana, y una reserva con un día de más es un grupo que
+         * llega el día que no es. */
+        const dias = Number(args?.dias);
+        const r = await pedirReservas({
+          accion: "turnos",
+          org_id: ctx.orgId,
+          fecha: fechaPedida(args?.fecha),
+          dias: Number.isFinite(dias) ? dias : null,
+          personas,
+        });
+        if (r?.__fallo) return "Ahora mismo no puedo consultar la disponibilidad. Dile que alguien del restaurante le escribe enseguida.";
+        if (!r?.ok) return String(r?.queDecir ?? "Ese día no hay sitio. Ofrécele otro día.");
+
+        const turnos = r.turnos ?? [];
+        ctx.vars.turnos_ofrecidos = JSON.stringify(
+          turnos.map((t: any) => ({ id: t.id, fecha: r.fecha, label: t.comoSeDice })),
+        );
+
+        return (
+          `Hay sitio el ${r.fecha} para ${personas}. Turnos (usa el valor de \`turno\` tal cual al reservar):\n` +
+          turnos.map((t: any) => `- ${t.comoSeDice} → turno: ${t.id}`).join("\n") +
+          "\nOfrécele estos y NINGÚN otro."
+        );
+      }
+
+      case "reservar_mesa": {
+        const ofrecidos = leerTurnosOfrecidos(ctx.vars?.turnos_ofrecidos);
+        const elegido = turnoQuePidio(String(args?.turno ?? ""), ofrecidos);
+        if (!elegido) return comoRecordarLosTurnos(ofrecidos);
+
+        const personas = Math.round(Number(args?.personas));
+        const r = await pedirReservas({
+          accion: "reservar",
+          org_id: ctx.orgId,
+          fecha: elegido.fecha,
+          turno_id: elegido.id,
+          personas: Number.isFinite(personas) && personas > 0 ? personas : 0,
+          contacto_id: await idDelContacto(ctx),
+          conversacion_id: ctx.conversationId ?? null,
+          nombre: String(args?.nombre ?? "") || null,
+          telefono: ctx.to ?? null,
+          notas: String(args?.notas ?? "") || null,
+        });
+
+        if (r?.__fallo) return "No pude completar la reserva. Dile que alguien del restaurante le escribe enseguida.";
+        if (!r?.ok) return String(r?.queDecir ?? "No se pudo reservar. Ofrécele otro turno.");
+
+        ctx.vars.reserva_fecha = r.fecha ?? "";
+        ctx.vars.reserva_turno = r.turno ?? "";
+        ctx.vars.reserva_estado = r.estado ?? "";
+        return String(r.queDecir ?? "Reserva hecha.");
+      }
+
+      /* Mismo cuidado que en `ver_mis_citas`: un fallo de lectura NO puede
+       * leerse como «no tiene reserva». Si se lo dijera a alguien que sí la
+       * tiene, esa persona reserva otra vez y el sábado hay dos mesas a su
+       * nombre — una de ellas vacía toda la noche. */
+      case "ver_mis_reservas": {
+        const r = await pedirReservas({
+          accion: "mis_reservas",
+          org_id: ctx.orgId,
+          contacto_id: await idDelContacto(ctx),
+        });
+        if (r?.__fallo || !r?.ok) {
+          return "No pude consultar sus reservas ahora mismo. NO le digas que no tiene ninguna: dile que alguien del restaurante se lo confirma.";
+        }
+        const suyas = r.reservas ?? [];
+        if (!suyas.length) {
+          return "Esta persona NO tiene ninguna reserva por delante. Díselo con esas palabras y ofrécele hacer una.";
+        }
+        return (
+          `Sus reservas por delante (${suyas.length}):\n` +
+          suyas
+            .map((s: any) => {
+              const como = s.estado === "confirmada" ? "CONFIRMADA" : "APARTADA, pendiente de que el restaurante la confirme";
+              const mesas = (s.mesas ?? []).length ? ` · ${(s.mesas ?? []).join(" + ")}` : "";
+              return `- ${s.fecha}, ${s.comoSeDice}, ${s.personas} personas — ${como}${mesas}`;
+            })
+            .join("\n") +
+          "\nDíselas tal cual aparecen aquí, y NO llames confirmada a una que está apartada."
+        );
+      }
+
+      case "mover_reserva": {
+        const pedido = String(args?.turno ?? "").trim();
+
+        if (!pedido) {
+          const r = await pedirReservas({
+            accion: "mis_reservas", org_id: ctx.orgId, contacto_id: await idDelContacto(ctx),
+          });
+          if (r?.__fallo || !r?.ok) return "No pude consultar su reserva ahora mismo. Dile que alguien del restaurante le escribe enseguida.";
+          const suya = (r.reservas ?? [])[0];
+          if (!suya) return "Esta persona no tiene ninguna reserva por delante. Ofrécele hacer una.";
+          return `Su reserva es el ${suya.fecha}, ${suya.comoSeDice}, para ${suya.personas}. ` +
+            "Pregúntale para qué día la quiere mover, llama a ver_mesas con esa fecha, y vuelve a llamarme con el turno nuevo.";
+        }
+
+        const ofrecidos = leerTurnosOfrecidos(ctx.vars?.turnos_ofrecidos);
+        const elegido = turnoQuePidio(pedido, ofrecidos);
+        if (!elegido) return comoRecordarLosTurnos(ofrecidos);
+
+        const personas = Math.round(Number(args?.personas));
+        const r = await pedirReservas({
+          accion: "mover",
+          org_id: ctx.orgId,
+          contacto_id: await idDelContacto(ctx),
+          fecha: elegido.fecha,
+          turno_id: elegido.id,
+          personas: Number.isFinite(personas) && personas > 0 ? personas : null,
+        });
+        if (r?.__fallo) return "No pude mover la reserva. Dile que alguien del restaurante le escribe enseguida.";
+        if (!r?.ok) return String(r?.queDecir ?? "No se pudo mover. Ofrécele otro turno.");
+
+        ctx.vars.reserva_fecha = r.fecha ?? "";
+        ctx.vars.reserva_turno = r.turno ?? "";
+        ctx.vars.reserva_estado = r.estado ?? "";
+        return String(r.queDecir ?? "Reserva movida.");
+      }
+
+      case "cancelar_reserva": {
+        const r = await pedirReservas({
+          accion: "cancelar",
+          org_id: ctx.orgId,
+          contacto_id: await idDelContacto(ctx),
+        });
+        if (r?.__fallo) return "No pude cancelar la reserva ahora mismo. Dile que alguien del restaurante le escribe enseguida.";
+        if (!r?.ok) return String(r?.queDecir ?? "No se pudo cancelar. Dile que le pasarás con una persona.");
+        ctx.vars.reserva_estado = "cancelada";
+        return String(r.queDecir ?? "Reserva cancelada.");
       }
 
       case "etiquetar": {

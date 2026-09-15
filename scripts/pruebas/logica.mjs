@@ -11,7 +11,7 @@ import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 import { enMinutos, horaEnPalabras, diaDeLaSemana, cuandoEmpieza, yaPaso, turnosDelDia, confirmaSola, nombreDelTurno, diasEnPalabras } from "../../src/lib/reservas/turnos.ts";
 import { queMesaLeDoy, comoLoDigo, sePuedenJuntar, capacidadDe, MAX_MESAS_JUNTAS } from "../../src/lib/reservas/asignar.ts";
 import { conUnibles, parNormalizado, acomodar, sePisan, lasQueSePisan, nombreLibre, aforoDelSalon, tandaDeMesas, tamanoPorCapacidad, REJILLA, LIENZO } from "../../src/lib/reservas/mapa.ts";
-import { queHacerConLaAsignacion } from "../../src/lib/avisoDeAsignacion.ts";
+import { queHacerConLaAsignacion, comoSeAnuncia, rastroDeLaAsignacion } from "../../src/lib/avisoDeAsignacion.ts";
 import {
   esChoqueDeUnico, esRepetidaPorTiempo, VENTANA_SEGUNDOS,
 } from "../../src/lib/campanas/repetida.ts";
@@ -8101,6 +8101,119 @@ describe("El pie de la tienda enseña Facebook y correo", () => {
     for (const malo of ["", "hola", "hola@", "@demandu.tech", "hola@demandu"]) {
       esperar(correoValido(malo)).igual(null, "no deberia aceptar: " + malo);
     }
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * QUÉ DICE EL AVISO DE QUE TE PASARON UN CHAT
+ *
+ * «Te asignaron un chat» no decía quién ni de quién. La base guarda al
+ * responsable desde la 0118 y el aviso lo callaba.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("El aviso dice quién te pasó el chat", () => {
+  test("con nombre, se nombra a la persona", () => {
+    const a = comoSeAnuncia("Darwin", "Juan Pérez");
+    esperar(a.titulo.includes("Darwin")).verdadero("el título no nombra a quien lo pasó");
+    esperar(a.cuerpo).igual("Darwin te pasó la conversación de Juan Pérez.");
+  });
+
+  test("sin nombre, fue la plataforma y NO se inventa una persona", () => {
+    // Nulo = reparto automático. Decir «alguien te pasó» mandaría a buscar a
+    // un compañero que no existe.
+    for (const nadie of [null, undefined, "", "   "]) {
+      const a = comoSeAnuncia(nadie, "Juan");
+      esperar(a.cuerpo).igual("Se te asignó la conversación de Juan.");
+      esperar(a.cuerpo.includes("te pasó")).falso("suena a persona y no lo fue");
+    }
+  });
+
+  test("sin saber de quién es el chat, no queda la frase coja", () => {
+    esperar(comoSeAnuncia("Ana", null).cuerpo).igual("Ana te pasó la conversación de un cliente.");
+    esperar(comoSeAnuncia(null, "  ").cuerpo).igual("Se te asignó la conversación de un cliente.");
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * QUÉ SE VE EN LA CABECERA: QUIÉN PASÓ LA CONVERSACIÓN
+ *
+ * El aviso pasa y se va; la cabecera es lo que queda. Sin este rastro,
+ * reasignar era borrar: el chat cambiaba de manos sin dejar señal.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("La cabecera dice quién pasó la conversación", () => {
+  const YO = "u-yo", OTRO = "u-otro", MI_MIEMBRO = "m-yo", SU_MIEMBRO = "m-otro";
+
+  test("me la pasó un compañero: se le nombra", () => {
+    esperar(
+      rastroDeLaAsignacion({
+        responsable: MI_MIEMBRO, asignadaPor: OTRO,
+        miUserId: YO, miMemberId: MI_MIEMBRO, nombreDeQuienPaso: "Darwin",
+      }),
+    ).igual("te la pasó Darwin");
+  });
+
+  test("se la pasó a otro: no dice «te la pasó»", () => {
+    const r = rastroDeLaAsignacion({
+      responsable: SU_MIEMBRO, asignadaPor: OTRO,
+      miUserId: YO, miMemberId: MI_MIEMBRO, nombreDeQuienPaso: "Darwin",
+    });
+    esperar(r).igual("la asignó Darwin");
+    esperar(String(r).includes("te la")).falso("dice que es mía y no lo es");
+  });
+
+  test("fui yo quien la movió: a otro sí se dice, a mí mismo no", () => {
+    esperar(
+      rastroDeLaAsignacion({
+        responsable: SU_MIEMBRO, asignadaPor: YO,
+        miUserId: YO, miMemberId: MI_MIEMBRO, nombreDeQuienPaso: "Yo",
+      }),
+    ).igual("la asignaste tú");
+    esperar(
+      rastroDeLaAsignacion({
+        responsable: MI_MIEMBRO, asignadaPor: YO,
+        miUserId: YO, miMemberId: MI_MIEMBRO, nombreDeQuienPaso: "Yo",
+      }),
+    ).igual(null);
+  });
+
+  test("la repartió la plataforma: no se inventa una persona", () => {
+    for (const nadie of [null, undefined, "", "   "]) {
+      const r = rastroDeLaAsignacion({
+        responsable: MI_MIEMBRO, asignadaPor: nadie,
+        miUserId: YO, miMemberId: MI_MIEMBRO, nombreDeQuienPaso: "Darwin",
+      });
+      esperar(r).igual("asignada automáticamente");
+      esperar(String(r).includes("Darwin")).falso("nombra a alguien que no la pasó");
+    }
+  });
+
+  test("sin responsable se calla: el desplegable ya dice «Sin asignar»", () => {
+    for (const nadie of [null, undefined, "", "   "]) {
+      esperar(
+        rastroDeLaAsignacion({
+          responsable: nadie, asignadaPor: OTRO,
+          miUserId: YO, miMemberId: MI_MIEMBRO, nombreDeQuienPaso: "Darwin",
+        }),
+      ).igual(null);
+    }
+  });
+
+  test("el compañero ya no está en el equipo: «alguien del equipo», no un hueco", () => {
+    esperar(
+      rastroDeLaAsignacion({
+        responsable: MI_MIEMBRO, asignadaPor: OTRO,
+        miUserId: YO, miMemberId: MI_MIEMBRO, nombreDeQuienPaso: null,
+      }),
+    ).igual("te la pasó alguien del equipo");
+  });
+
+  test("sin saber quién soy no se afirma que el chat es mío", () => {
+    // Si la sesión no trajo usuario, «te la pasó» sería una invención.
+    esperar(
+      rastroDeLaAsignacion({
+        responsable: MI_MIEMBRO, asignadaPor: OTRO,
+        miUserId: null, miMemberId: null, nombreDeQuienPaso: "Darwin",
+      }),
+    ).igual("la asignó Darwin");
   });
 });
 

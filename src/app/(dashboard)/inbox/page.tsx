@@ -12,11 +12,15 @@ export default async function InboxPage() {
   // abierto en la cuenta de un cliente— recibía una de las dos al azar: el
   // color de las burbujas de un negocio dentro del inbox de otro.
   const orgId = await getCurrentOrgId();
+  // Quién está mirando. La cabecera necesita distinguir «te la pasó Ana» de
+  // «la asignó Ana» — y callarse cuando el que la movió fui yo mismo.
+  const { data: sesion } = await sb.auth.getUser();
+  const miUserId = sesion.user?.id ?? null;
   const [conv, mem, st, tg, attr, org, rapidas] = await Promise.all([
     sb
       .from("conversations")
       .select(
-        "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, opportunity_id, idioma_lead, " +
+        "id, channel, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, asignada_por, opportunity_id, idioma_lead, " +
           "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags,origen), " +
           "state:conversation_states(id,name,color), " +
           "member:team_members(id,name)"
@@ -25,7 +29,7 @@ export default async function InboxPage() {
       // propio chatbot. Verlas aquí es ver un lead que no existe.
       .eq("prueba", false)
       .order("last_message_at", { ascending: false }),
-    sb.from("team_members").select("id,name").order("name"),
+    sb.from("team_members").select("id,name,user_id").order("name"),
     sb.from("conversation_states").select("id,name,color").order("sort"),
     sb.from("tags").select("id,name,color").order("name"),
     sb.from("custom_attributes").select("id,name,key").eq("visible", true).order("sort"),
@@ -47,6 +51,7 @@ export default async function InboxPage() {
         bubbleOut={branding.bubble_out ?? null}
         orgId={(org.data as any)?.id ?? null}
         quickReplies={(rapidas.data as any[]) ?? []}
+        userId={miUserId}
       />
     </>
   );

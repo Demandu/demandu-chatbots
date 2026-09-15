@@ -9810,6 +9810,47 @@ describe("Una conversación que pide una persona siempre tiene dueño", () => {
     );
   });
 
+  test("reasignar deja rastro visible: quién la pasó, en la cabecera", () => {
+    /* El aviso pasa y se va. Quien abre la conversación tres días después solo
+     * veía un desplegable con un nombre: «me la pasó Ana», «me la puso la
+     * máquina» y «me la quedé yo» se veían exactamente igual. Reasignar era
+     * borrar. La base guarda `asignada_por` desde la 0118; callarlo en pantalla
+     * era tirar el dato. */
+    const c = ARCHIVOS.find((x) => x.ruta === "src/components/inbox/InboxClient.tsx");
+    const pg = ARCHIVOS.find((x) => x.ruta === "src/app/(dashboard)/inbox/page.tsx");
+    esperar(!!c && !!pg).verdadero("falta la Bandeja");
+    const t = sinComentarios(c?.texto ?? "");
+    const p = sinComentarios(pg?.texto ?? "");
+
+    esperar(/rastroDeLaAsignacion/.test(t)).verdadero(
+      "la cabecera dejó de decir quién pasó la conversación",
+    );
+    /* Sin el dato en la consulta, la etiqueta no puede saber nada — y hay DOS
+     * consultas: la que refresca la lista cada pocos segundos y la que lee de
+     * vuelta la reasignación. Mirar el archivo entero dejaba pasar que una se
+     * quedara sin el dato mientras la otra lo tuviera. */
+    const iSql = t.indexOf("const selectSql");
+    esperar(iSql >= 0).verdadero("no encontré selectSql");
+    esperar(/assignee_member_id, asignada_por/.test(t.slice(iSql, iSql + 400))).verdadero(
+      "el refresco de la Bandeja volvió a pedir el responsable sin pedir quién lo puso",
+    );
+    const iSet = t.indexOf("const setAssignee");
+    esperar(/assignee_member_id, asignada_por/.test(t.slice(iSet, iSet + 1400))).verdadero(
+      "reasignar volvió a no leer quién la pasó: la etiqueta se quedaría en lo anterior",
+    );
+    esperar(/assignee_member_id, asignada_por/.test(p)).verdadero(
+      "la primera carga no trae quién pasó la conversación: la etiqueta saldría vacía hasta el primer refresco",
+    );
+    // El responsable es un team_member y quien la pasó es un usuario de auth:
+    // sin `user_id` no se pueden cruzar y saldría «alguien del equipo» siempre.
+    esperar(/team_members"\)\.select\("id,name,user_id"\)/.test(p)).verdadero(
+      "sin user_id no se puede poner nombre a quien pasó la conversación",
+    );
+    esperar(/userId=\{/.test(p)).verdadero(
+      "la Bandeja ya no sabe quién está mirando: no puede distinguir «te la pasó» de «la asignó»",
+    );
+  });
+
   test("el respaldo NO exige estar disponible ni en línea", () => {
     const sql = fs.readFileSync(path.join(MIGRA, archivo), "utf8").replace(/^\s*--.*$/gm, "");
     // El último bloque, el de «cualquiera de la cuenta», no puede filtrar por
@@ -9818,6 +9859,89 @@ describe("Una conversación que pide una persona siempre tiene dueño", () => {
     esperar(/tm\.available|last_seen_at/.test(ultimo)).falso(
       "el último recurso volvió a exigir disponibilidad: con todo el equipo ausente, nadie se queda con el chat",
     );
+  });
+});
+
+// ─── Una herramienta declarada es una herramienta que EXISTE ─────────────────
+//
+// ESTA REGLA NACE DE UN FALLO REAL, encontrado el 14 sep 2026.
+//
+// `POR_LAS_RESERVAS` declaraba cinco herramientas —ver_mesas, reservar_mesa,
+// ver_mis_reservas, mover_reserva, cancelar_reserva— y NINGUNA existía. Los
+// cinco nombres vivían solo en dos listas.
+//
+// Las herramientas se arman con `quiere.includes("<nombre>")`, así que un
+// nombre que no tiene constructor SE CAE EN SILENCIO: sin error, sin registro,
+// sin nada. Y como `herramientasAutomaticas` enciende reservas en cuanto hay
+// una mesa y un turno —apagando de paso las de agenda—, un restaurante acababa
+// con Lana sin NINGUNA forma de consultar. Lana no se calla por eso: contesta
+// sobre mesas con lo que tenga entrenado, o sea INVENTANDO disponibilidad, y
+// promete por WhatsApp una mesa que nunca se reservó.
+//
+// Las pruebas de entonces comprobaban que el nombre estaba en la lista. Eso no
+// es que la herramienta exista. Esta sí lo comprueba, y en los DOS motores:
+// una herramienta que solo vive en WhatsApp deja el widget web e Instagram
+// contestando de memoria.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Las herramientas de la IA existen de verdad", () => {
+  const CAPACIDADES = fs.readFileSync(path.join(SRC, "lib/ai/capacidades.ts"), "utf8");
+  const WEB = fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8");
+  const WA = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
+
+  /** Los nombres de una lista `export const X = [ "a", "b" ] as const;`. */
+  function nombresDe(lista) {
+    const m = new RegExp(`${lista}\\s*=\\s*\\[([^\\]]*)\\]`).exec(CAPACIDADES);
+    if (!m) return [];
+    return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+  }
+
+  const GRUPOS = ["POR_LA_AGENDA", "POR_LAS_RESERVAS", "POR_LA_TIENDA"];
+
+  // Si alguien renombra una lista, la regla dejaría de mirar nada y pasaría en
+  // verde. Eso es exactamente cómo se pierde una regla.
+  test("las tres listas de capacidades siguen existiendo", () => {
+    for (const g of GRUPOS) {
+      esperar(nombresDe(g).length > 0).verdadero(
+        `${g} ya no se puede leer de capacidades.ts: esta regla dejó de comprobar nada`,
+      );
+    }
+  });
+
+  for (const grupo of GRUPOS) {
+    for (const nombre of nombresDe(grupo)) {
+      test(`${nombre}: se construye y se ejecuta en los dos motores`, () => {
+        const construye = (t) => t.includes(`quiere.includes("${nombre}")`);
+        const ejecuta = (t) => new RegExp(`case\\s+"${nombre}"\\s*:`).test(t);
+
+        esperar(construye(WEB)).verdadero(
+          `${nombre} está declarada en ${grupo} pero NO se construye en src/lib/ai/herramientas.ts: el modelo nunca la recibe y se cae en silencio`,
+        );
+        esperar(ejecuta(WEB)).verdadero(
+          `${nombre} se construye en el motor web pero no tiene ejecutor: el modelo la llamaría y no pasaría nada`,
+        );
+        esperar(construye(WA)).verdadero(
+          `${nombre} está declarada en ${grupo} pero NO se construye en el motor de WhatsApp`,
+        );
+        esperar(ejecuta(WA)).verdadero(
+          `${nombre} se construye en el motor de WhatsApp pero no tiene ejecutor`,
+        );
+      });
+    }
+  }
+
+  // Las dos listas están escritas dos veces —una en cada motor, porque Deno no
+  // puede importar del proyecto— y separarse es cuestión de tiempo. Si se
+  // separan, un motor ofrece una herramienta que el otro no tiene.
+  test("las listas dicen lo mismo en los dos motores", () => {
+    for (const grupo of GRUPOS) {
+      const enWa = new RegExp(`${grupo}\\s*=\\s*\\[([^\\]]*)\\]`).exec(WA);
+      esperar(!!enWa).verdadero(`${grupo} ya no existe en el motor de WhatsApp`);
+      const nombresWa = [...enWa[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+      esperar(nombresWa.join(",")).igual(
+        nombresDe(grupo).join(","),
+        `${grupo} ya no dice lo mismo en los dos motores`,
+      );
+    }
   });
 });
 

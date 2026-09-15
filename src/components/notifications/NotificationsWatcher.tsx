@@ -8,7 +8,7 @@ import {
 } from "@/lib/notifications";
 import { lanzarAviso } from "./Toasts";
 import { anunciarPendientes, anunciarEsperando } from "@/lib/pendientes";
-import { queHacerConLaAsignacion } from "@/lib/avisoDeAsignacion";
+import { queHacerConLaAsignacion, comoSeAnuncia } from "@/lib/avisoDeAsignacion";
 
 /**
  * Vigila mensajes nuevos en toda la plataforma (no solo en la Bandeja) y avisa
@@ -163,13 +163,34 @@ export function NotificationsWatcher() {
         // definición es tuya, y es la que te acaban de poner encima.
         if (avisar && debeAvisar(prefs)) {
           const dequien = ultimaMia.contact?.name || ultimaMia.contact?.wa_name || "un cliente";
-          const cuerpo = `Te pasaron la conversación de ${dequien}.`;
+
+          /* ── EL NOMBRE DE QUIEN TE LA PASÓ ──────────────────────────────
+           *
+           * `asignada_por` guarda el USUARIO, no el miembro del equipo, así
+           * que hay que traducirlo a un nombre. Si la consulta falla o esa
+           * persona ya no está en el equipo, se queda sin nombre y el aviso
+           * lo dice como lo que es —«se te asignó»— en vez de inventarse a
+           * alguien a quien contestarle. */
+          let quienMePasa: string | null = null;
+          const porQuien = (ultimaMia as any).asignada_por as string | null;
+          if (porQuien) {
+            const { data: p, error: errP } = await sb
+              .from("team_members")
+              .select("name")
+              .eq("user_id", porQuien)
+              .limit(1)
+              .maybeSingle();
+            if (errP) console.error("[avisos] no pude saber quién me pasó el chat:", errP.message);
+            else quienMePasa = ((p as any)?.name as string) ?? null;
+          }
+
+          const { titulo, cuerpo } = comoSeAnuncia(quienMePasa, dequien);
           if (prefs.sonido) reproducirTono(prefs.tono, prefs.volumen);
           if (prefs.enApp) {
-            lanzarAviso({ titulo: "📥 Te asignaron un chat", cuerpo, href: `/inbox?c=${ultimaMia.id}` });
+            lanzarAviso({ titulo, cuerpo, href: `/inbox?c=${ultimaMia.id}` });
           }
           if (prefs.escritorio && document.visibilityState !== "visible") {
-            avisoEscritorio("Te asignaron un chat", cuerpo, () => router.push(`/inbox?c=${ultimaMia.id}`));
+            avisoEscritorio(titulo.replace(/^📥\s*/, ""), cuerpo, () => router.push(`/inbox?c=${ultimaMia.id}`));
           }
         }
       }
