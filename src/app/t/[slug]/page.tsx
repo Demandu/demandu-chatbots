@@ -43,6 +43,16 @@ export async function generateMetadata({
   return {
     title: titulo,
     description: `Haz tu pedido en ${titulo}.`,
+    /* LA PESTAÑA DE LA TIENDA ES DEL NEGOCIO, NO NUESTRA.
+     *
+     * Esta página es la tienda de la panadería, no la plataforma. Dejar aquí
+     * el robot de Demandu pondría NUESTRA marca en la pestaña de su cliente
+     * —y encima el cliente final no sabe ni quiénes somos: para él es un icono
+     * ajeno en la tienda de su barrio—. Marca blanca es también la pestaña.
+     *
+     * Si el negocio no ha subido logo se deja que mande el icono de la app,
+     * que al menos es un icono y no el cuadro en blanco del navegador. */
+    ...(config.logo_url ? { icons: { icon: config.logo_url } } : {}),
     // Lo que se ve cuando alguien comparte el enlace por WhatsApp, que es
     // exactamente como se comparten estas tiendas.
     openGraph: {

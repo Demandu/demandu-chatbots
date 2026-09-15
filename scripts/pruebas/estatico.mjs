@@ -349,6 +349,72 @@ describe("El adjunto del cliente no se tira", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * LA APP TIENE CARA EN LA PESTAÑA
+ *
+ * Hasta el 15 sep 2026 la plataforma no tenía NINGÚN icono: ni `favicon.ico`,
+ * ni `icon.png`, ni manifiesto. Todas las pestañas salían con el cuadro en
+ * blanco del navegador, incluidas las de los clientes que la tienen abierta
+ * ocho horas al día entre otras veinte pestañas.
+ *
+ * Es de los fallos que nadie reporta y todo el mundo ve.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("La app tiene icono", () => {
+  const RUTA_APP = path.join(SRC, "app");
+
+  test("están los cuatro archivos que mira el navegador", () => {
+    /* Next los enlaza SOLO por estar donde están: `app/icon.png`,
+     * `app/apple-icon.png`, `app/favicon.ico`. Un renombrado los desactiva sin
+     * romper el build y sin un solo aviso. */
+    for (const f of ["favicon.ico", "icon.png", "apple-icon.png", "manifest.ts"]) {
+      esperar(fs.existsSync(path.join(RUTA_APP, f))).verdadero(
+        `falta src/app/${f}: la pestaña vuelve al cuadro en blanco`,
+      );
+    }
+  });
+
+  test("y no están vacíos ni son un marcador de sitio", () => {
+    for (const f of ["favicon.ico", "icon.png", "apple-icon.png"]) {
+      esperar(fs.statSync(path.join(RUTA_APP, f)).size > 500).verdadero(
+        `src/app/${f} pesa casi nada: no es un icono de verdad`,
+      );
+    }
+  });
+
+  test("CADA icono que promete el manifiesto existe de verdad", () => {
+    /* La que de verdad importa. Un `src` mal escrito en el manifiesto no
+     * rompe nada al compilar: el teléfono pide el archivo, recibe un 404 y
+     * pone un icono genérico. Nadie se entera hasta que alguien intenta
+     * añadirla a su pantalla de inicio. */
+    const man = fs.readFileSync(path.join(RUTA_APP, "manifest.ts"), "utf8");
+    const rutas = [...man.matchAll(/src: "(\/[^"]+)"/g)].map((m) => m[1]);
+    esperar(rutas.length >= 2).verdadero("el manifiesto se quedó sin iconos");
+    const rotas = rutas.filter((r) => !fs.existsSync(path.join(RAIZ, "public", r)));
+    esperar(rotas.join(", ")).igual("", "el manifiesto promete iconos que no están en public/");
+  });
+
+  test("hay un icono «maskable», que no es un duplicado", () => {
+    /* Android recorta el icono con la forma del teléfono. Sin una versión con
+     * más aire, el recorte se come la antena y las orejas del robot. */
+    const man = fs.readFileSync(path.join(RUTA_APP, "manifest.ts"), "utf8");
+    esperar(/purpose: "maskable"/.test(man)).verdadero(
+      "se fue el icono maskable: Android le va a recortar la cabeza al robot",
+    );
+  });
+
+  test("la tienda del cliente NO lleva nuestro icono si tiene el suyo", () => {
+    /* Marca blanca es también la pestaña: el cliente final que abre la tienda
+     * de su panadería no sabe quiénes somos, y nuestro robot ahí es un icono
+     * ajeno en una tienda de su barrio. */
+    const t = ARCHIVOS.find((x) => x.ruta === "src/app/t/[slug]/page.tsx");
+    esperar(!!t).verdadero("falta la tienda pública");
+    esperar(/icons: \{ icon: config\.logo_url \}/.test(sinComentarios(t?.texto ?? ""))).verdadero(
+      "la tienda del negocio volvió a enseñar el icono de Demandu en la pestaña",
+    );
+  });
+});
+
 describe("Motor de WhatsApp desplegado", () => {
   test("el archivo del repo declara su versión, para poder comparar con producción", () => {
     const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
