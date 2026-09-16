@@ -19,7 +19,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "44";
+const VERSION_MOTOR = "45";
 
 // ─── La firma de Meta ────────────────────────────────────────────────────────
 //
@@ -911,6 +911,7 @@ async function pasoElTopeDeIA(ctx: any): Promise<boolean> {
 const CLAVES_DE_ACCION = [
   "etiquetar", "pasar_a_humano", "guardar_dato",
   "ver_horarios", "ver_mis_citas", "agendar_cita", "reagendar_cita", "cancelar_cita", "consultar_sistema",
+  "horario_del_negocio",
   // Las de la tienda. ESTA LISTA TIENE QUE SER IDÉNTICA a la de
   // `src/lib/ai/acciones.ts`: si una acción existe en un motor y no en el otro,
   // el mismo prompt hace cosas distintas en WhatsApp y en la web, y el cliente
@@ -1297,6 +1298,18 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
 
   const tools: any[] = [];
   const notas: string[] = [];
+
+  if (quiere.includes("horario_del_negocio") || quiere.includes("ver_horarios")) {
+    tools.push({
+      name: "horario_del_negocio",
+      description:
+        "A qué hora abre y cierra el negocio cada día. ÚSALA SIEMPRE que pregunten por el horario, " +
+        "si están abiertos o hasta qué hora atienden. NUNCA contestes eso de memoria ni con lo que " +
+        "hayas leído en el entrenamiento: el negocio cambia su horario en la plataforma y solo esta " +
+        "herramienta sabe el de hoy.",
+      input_schema: { type: "object", properties: {}, required: [] },
+    });
+  }
 
   if (quiere.includes("ver_horarios")) {
     tools.push({
@@ -1726,6 +1739,23 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         const t = await tiendaDeEsteBot(ctx);
         if (!t) return "Este negocio no tiene tienda en línea activa. No des ningún enlace.";
         return `Enlace de la tienda (dáselo tal cual): ${enlaceDeTienda(t.slug)}`;
+      }
+
+      case "horario_del_negocio": {
+        const r = await pedirAgenda({
+          accion: "horario_del_negocio",
+          org_id: ctx.orgId,
+          // Para poder decir «hora de México» si quien pregunta está en otro huso.
+          zona_de_quien_pregunta: zonaDelTelefono(ctx.to) || undefined,
+        });
+        if (!r?.ok) return "No pude consultar el horario. Dile que no lo tienes a la mano y ofrece pasarlo con una persona.";
+        if (r.sinConfigurar || r.sin_configurar) return String(r.texto ?? "");
+        const abierto =
+          r.abierto_ahora === true ? "\nAhora mismo ESTÁ ABIERTO."
+          : r.abierto_ahora === false ? "\nAhora mismo está CERRADO."
+          // Nulo = no se puede saber. Que no afirme ninguna de las dos.
+          : "\nNo puedes saber si ahora mismo está abierto: no lo afirmes.";
+        return `Horario del negocio:\n${r.texto}${abierto}`;
       }
 
       case "ver_horarios": {

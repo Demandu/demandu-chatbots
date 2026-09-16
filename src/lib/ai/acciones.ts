@@ -105,6 +105,14 @@ export const ACCIONES: Accion[] = [
     pista: "Úsala al final: primero que resuelva la duda, y luego el enlace para cerrar.",
   },
   {
+    clave: "horario_del_negocio",
+    nombre: "Decir el horario",
+    desc: "A qué hora abres y cierras cada día",
+    pista:
+      "Sale de tu Horario laboral, no de lo que le enseñaste: si lo cambias ahí, el chatbot lo dice " +
+      "actualizado el mismo minuto.",
+  },
+  {
     clave: "consultar_sistema",
     nombre: "Consultar tu sistema",
     desc: "Pregunta a una dirección tuya (inventario, precios…)",

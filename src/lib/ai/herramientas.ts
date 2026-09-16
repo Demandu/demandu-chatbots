@@ -11,7 +11,7 @@ import { accionesDelPrompt } from "@/lib/ai/acciones";
 import { herramientasAutomaticas, herramientasQueManda } from "@/lib/ai/capacidades";
 import {
   horarioQuePidio, comoRecordarLosHorarios, enLaZonaDelCliente, comoSeLoDigo,
-  type HorarioOfrecido,
+  type HorarioOfrecido, deQueHoraHablamos,
 } from "@/lib/agendaHorarios";
 import { zonaDelTelefono } from "@/lib/zonaHoraria";
 import { emitir } from "@/lib/salidas";
@@ -20,6 +20,7 @@ import {
   cuantoDura, loQueSeCongela, servicioQuePidio, comoSeLosOfrezco, POR_DEFECTO_MIN,
   type Servicio,
 } from "@/lib/duracionDeLaCita";
+import { comoSeCuentaElHorario, abiertoAhora, SIN_HORARIO } from "@/lib/horarioDelNegocio";
 import { correoParaLaCita } from "@/lib/ai/correoDeLaCita";
 import {
   tiendaDelBot, enlaceDelBot, productosQueSePuedenOfrecer, precioDelBot,
@@ -396,6 +397,18 @@ export async function armarHerramientas(
 
   const tools: any[] = [];
   const notas: string[] = [];
+
+  if (quiere.includes("horario_del_negocio") || quiere.includes("ver_horarios")) {
+    tools.push({
+      name: "horario_del_negocio",
+      description:
+        "A qué hora abre y cierra el negocio cada día. ÚSALA SIEMPRE que pregunten por el horario, " +
+        "si están abiertos o hasta qué hora atienden. NUNCA contestes eso de memoria ni con lo que " +
+        "hayas leído en el entrenamiento: el negocio cambia su horario en la plataforma y solo esta " +
+        "herramienta sabe el de hoy.",
+      input_schema: { type: "object", properties: {}, required: [] },
+    });
+  }
 
   if (quiere.includes("ver_horarios")) {
     tools.push({
@@ -962,6 +975,27 @@ export async function ejecutarHerramienta(
 
         return "Horarios libres (usa el valor de `inicio` tal cual al agendar):\n" +
           slots.map((s) => `- ${s.label} → inicio: ${s.startISO}`).join("\n");
+      }
+
+      case "horario_del_negocio": {
+        const { data: org, error } = await ctx.admin
+          .from("organizations").select("business_hours, timezone").eq("id", ctx.orgId).maybeSingle();
+        if (error) console.error("[agenda] no pude leer el horario del negocio:", error.message);
+
+        const zonaNeg = (org as any)?.timezone ?? null;
+        const texto = comoSeCuentaElHorario(
+          (org as any)?.business_hours,
+          deQueHoraHablamos(zonaNeg, await zonaDeQuienEscribe(ctx)),
+        );
+        // Vacío NO es «cerrado toda la semana»: es que nadie lo configuró.
+        if (!texto) return SIN_HORARIO;
+
+        const ahora = abiertoAhora((org as any)?.business_hours, zonaNeg);
+        const estado =
+          ahora === true ? "\nAhora mismo ESTÁ ABIERTO."
+          : ahora === false ? "\nAhora mismo está CERRADO."
+          : "\nNo puedes saber si ahora mismo está abierto: no lo afirmes.";
+        return `Horario del negocio:\n${texto}${estado}`;
       }
 
       case "agendar_cita": {

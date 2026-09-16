@@ -5,6 +5,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   cuantoDura, loQueSeCongela, servicioQuePidio, POR_DEFECTO_MIN, type Servicio,
 } from "@/lib/duracionDeLaCita";
+import { comoSeCuentaElHorario, abiertoAhora, SIN_HORARIO } from "@/lib/horarioDelNegocio";
+import { deQueHoraHablamos } from "@/lib/agendaHorarios";
 import { esDelMotor } from "@/lib/motor/autorizado";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +61,36 @@ export async function POST(req: Request) {
     const elegido = servicioQuePidio(dicho as string, (data as Servicio[]) ?? []);
     return { elegido, porDefecto };
   };
+
+  /* ── «¿A QUÉ HORA ABREN?» ─────────────────────────────────────────────────
+   *
+   * El bot sabía buscar HUECOS pero no sabía decir el horario, así que esa
+   * respuesta salía del entrenamiento o de una web importada hace meses — una
+   * segunda copia que se desincroniza en cuanto el negocio cambia su horario
+   * en Configuración. Ahora sale de `business_hours`, la MISMA fuente con la
+   * que se calculan los huecos. */
+  if (b.accion === "horario_del_negocio") {
+    const { data: org, error } = await createAdminClient()
+      .from("organizations").select("business_hours, timezone").eq("id", orgId).maybeSingle();
+    if (error) console.error("[motor/agenda] no pude leer el horario:", error.message);
+
+    const zonaNegocio = (org as any)?.timezone ?? null;
+    const texto = comoSeCuentaElHorario(
+      (org as any)?.business_hours,
+      deQueHoraHablamos(zonaNegocio, b.zona_de_quien_pregunta),
+    );
+    // Vacío NO es «cerrado toda la semana»: es que nadie lo configuró. Decir
+    // que está cerrado espantaría a un cliente con un dato que no existe.
+    if (!texto) return Response.json({ ok: true, sin_configurar: true, texto: SIN_HORARIO });
+
+    const abierto = abiertoAhora((org as any)?.business_hours, zonaNegocio);
+    return Response.json({
+      ok: true,
+      texto,
+      // `null` = no se puede saber. El bot NO debe afirmar ninguna de las dos.
+      abierto_ahora: abierto,
+    });
+  }
 
   if (b.accion === "horarios") {
     const r = await horariosLibres(orgId, {

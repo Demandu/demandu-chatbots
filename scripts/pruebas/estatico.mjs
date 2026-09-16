@@ -634,6 +634,45 @@ describe("El entrenamiento no promete dos cosas distintas", () => {
   });
 });
 
+describe("El horario no se contesta de memoria", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const herr = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/herramientas.ts")?.texto ?? "");
+  const puerta = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/app/api/motor/agenda/route.ts")?.texto ?? "");
+
+  test("la herramienta existe en los DOS motores", () => {
+    /* Si solo la tuviera el panel, WhatsApp seguiría contestando el horario
+     * con lo que leyó de una web hace dos meses — y WhatsApp es donde
+     * preguntan. */
+    for (const [donde, t] of [["la plataforma", herr], ["el motor", wa]]) {
+      esperar(/horario_del_negocio/.test(t)).verdadero(`${donde} se quedó sin la herramienta del horario`);
+    }
+  });
+
+  test("y le dice al modelo que NO la conteste de memoria", () => {
+    for (const [donde, t] of [["la plataforma", herr], ["el motor", wa]]) {
+      esperar(/NUNCA contestes eso de memoria/.test(t)).verdadero(
+        `${donde} dejó de prohibirle contestar el horario de memoria`,
+      );
+    }
+  });
+
+  test("sale de business_hours, que es la MISMA fuente que los huecos", () => {
+    /* La única forma de que no haya segunda copia: el texto que se dice y los
+     * huecos que se ofrecen leen la misma columna. */
+    esperar(/business_hours/.test(herr)).verdadero("la plataforma dejó de leer el horario configurado");
+    esperar(/business_hours/.test(puerta)).verdadero("la puerta del motor dejó de leer el horario configurado");
+  });
+
+  test("sin horario configurado NO se responde «cerrado»", () => {
+    for (const [donde, t] of [["la plataforma", herr], ["la puerta", puerta]]) {
+      esperar(/SIN_HORARIO/.test(t)).verdadero(
+        `${donde} ya no distingue «no lo configuró» de «está cerrado»`,
+      );
+    }
+  });
+});
+
 describe("Motor de WhatsApp desplegado", () => {
   test("el archivo del repo declara su versión, para poder comparar con producción", () => {
     const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");

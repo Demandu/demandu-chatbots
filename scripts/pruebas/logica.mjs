@@ -6,6 +6,9 @@
  */
 import fs from "node:fs";
 import {
+  agruparDias, comoSeCuentaElHorario, abiertoAhora, SIN_HORARIO,
+} from "../../src/lib/horarioDelNegocio.ts";
+import {
   PLANTILLAS_DE_RUBRO, plantillaPorClave, pareceLlevarDatos, NUNCA_INVENTES,
 } from "../../src/lib/ai/plantillasDeRubro.ts";
 import {
@@ -8536,6 +8539,87 @@ describe("Las plantillas llevan tono, no datos", () => {
       for (const h of p.herramientas) if (!reales.has(h)) malas.push(`${p.clave}: ${h}`);
     }
     esperar(malas.join(", ")).igual("", "una plantilla sugiere una herramienta que no existe");
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * «¿A QUÉ HORA ABREN?»
+ *
+ * El bot sabía buscar HUECOS LIBRES pero no sabía decir el horario. Así que esa
+ * respuesta salía de donde hubiera caído: del entrenamiento, de una web
+ * importada hace dos meses, o de lo que el modelo considerara verosímil.
+ *
+ * Eso es una SEGUNDA COPIA de la verdad. El negocio cambia su horario en
+ * Configuración, nadie reimporta la web, y el bot DICE un horario y OFRECE otro.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("El horario lo dice la configuración, no el entrenamiento", () => {
+  // El horario real de una cuenta de producción.
+  const H = {
+    mon: { open: "09:00", close: "18:00", enabled: true },
+    tue: { open: "09:00", close: "18:00", enabled: true },
+    wed: { open: "09:00", close: "18:00", enabled: true },
+    thu: { open: "09:00", close: "18:00", enabled: true },
+    fri: { open: "09:00", close: "18:00", enabled: true },
+    sat: { open: "09:00", close: "14:00", enabled: true },
+    sun: { open: "09:00", close: "14:00", enabled: false },
+  };
+
+  test("agrupa los días seguidos en vez de repetirse cinco veces", () => {
+    // Nadie lee cinco renglones idénticos, y por WhatsApp menos.
+    const b = agruparDias(H);
+    esperar(b.length).igual(2);
+    esperar(b[0].dias).igual("lunes a viernes");
+    esperar(b[1].dias).igual("sábado");
+  });
+
+  test("y dice qué días está CERRADO, para ahorrar la repregunta", () => {
+    esperar(comoSeCuentaElHorario(H).includes("Cerrado: domingo.")).verdadero(
+      "dejó de decir los días cerrados",
+    );
+  });
+
+  test("SIN horario configurado NO dice «cerrado toda la semana»", () => {
+    /* EL caso que importa. Devolver «cerrado» porque el negocio todavía no lo
+     * configuró espanta a un cliente con un dato que nadie puso. */
+    esperar(comoSeCuentaElHorario({})).igual("");
+    esperar(comoSeCuentaElHorario(null)).igual("");
+    esperar(comoSeCuentaElHorario({ mon: { open: "09:00", close: "18:00", enabled: false } })).igual("");
+  });
+
+  test("y entonces el bot tiene instrucciones de NO inventárselo", () => {
+    esperar(SIN_HORARIO.toLowerCase().includes("no te lo inventes")).verdadero(
+      "el aviso dejó de prohibirle inventar el horario",
+    );
+  });
+
+  test("un dato roto se calla, no se cuenta al revés", () => {
+    // Abrir a las 18:00 y cerrar a las 09:00 no es horario nocturno: es un
+    // dato mal puesto. Este formato no puede expresar cruzar medianoche.
+    esperar(comoSeCuentaElHorario({ mon: { open: "18:00", close: "09:00", enabled: true } })).igual("");
+    esperar(comoSeCuentaElHorario({ mon: { open: "banana", close: "18:00", enabled: true } })).igual("");
+  });
+
+  test("si quien pregunta está en otro huso, se dice de qué hora hablamos", () => {
+    const t = comoSeCuentaElHorario(H, " (hora de México)");
+    esperar(t.includes("hora de México")).verdadero("no dice de qué huso habla");
+    // Y se calla cuando coinciden: el ruido que sale siempre se deja de leer.
+    esperar(comoSeCuentaElHorario(H, "").includes("Horario del negocio,")).falso(
+      "ensucia la respuesta cuando no hace falta",
+    );
+  });
+
+  test("«¿están abiertos ahora?»: sí, no, o NO SE SABE", () => {
+    /* El tercer caso es el que suele faltar. Sin zona del negocio no se puede
+     * calcular, y afirmar cualquiera de las dos sería inventar. */
+    esperar(abiertoAhora(H, null)).igual(null);
+    esperar(abiertoAhora(H, "Marte/Olympus")).igual(null);
+    esperar(abiertoAhora({}, "America/Mexico_City")).igual(null);
+    // Un domingo, con el domingo apagado, está cerrado pase lo que pase.
+    esperar(abiertoAhora(H, "America/Mexico_City", new Date("2026-09-20T18:00:00Z"))).igual(false);
+    // Un martes a las 10:00 de México (16:00 UTC) está abierto.
+    esperar(abiertoAhora(H, "America/Mexico_City", new Date("2026-09-15T16:00:00Z"))).igual(true);
+    // Ese mismo martes a las 20:00 de México ya cerró.
+    esperar(abiertoAhora(H, "America/Mexico_City", new Date("2026-09-16T02:00:00Z"))).igual(false);
   });
 });
 
