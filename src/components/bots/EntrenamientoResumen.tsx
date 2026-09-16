@@ -43,7 +43,6 @@ export function EntrenamientoResumen({ botId }: { botId: string }) {
       accion: "Subir archivos",
       icono: <FileText className="h-4 w-4" />,
       color: "bg-violet-500/15 text-violet-600",
-      pronto: true,
     },
     {
       clave: "faqs",

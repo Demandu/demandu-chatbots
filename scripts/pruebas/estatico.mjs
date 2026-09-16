@@ -593,6 +593,47 @@ describe("Ninguna cita vuelve a durar 30 a fuego", () => {
   });
 });
 
+describe("El entrenamiento no promete dos cosas distintas", () => {
+  /* ── PASÓ EL 16 SEP 2026 ──────────────────────────────────────────────────
+   *
+   * «Archivos» se encendió en las PESTAÑAS y se quedó en «Muy pronto» en las
+   * TARJETAS del resumen. La función existía, funcionaba y estaba publicada, y
+   * el cliente seguía leyendo «Disponible muy pronto» en la primera pantalla
+   * que abre. Dos listas diciendo lo mismo: la clásica. */
+  const leer = (r) => sinComentarios(ARCHIVOS.find((a) => a.ruta === r)?.texto ?? "");
+  const nav = leer("src/components/bots/EntrenamientoNav.tsx");
+  const cards = leer("src/components/bots/EntrenamientoResumen.tsx");
+
+  /**
+   * Las claves marcadas «pronto», en orden.
+   *
+   * SE CORTA POR ENTRADA, no por ventana de caracteres: con un `{0,420}` la
+   * búsqueda saltaba de una entrada a la siguiente y decía que «resumen»
+   * estaba pendiente porque el `pronto: true` de OTRA caía dentro del margen.
+   * Una regla que lee mal es peor que no tenerla.
+   */
+  const prontos = (t) =>
+    t
+      .split(/clave: "/)
+      .slice(1)
+      .map((trozo) => ({ clave: trozo.slice(0, trozo.indexOf('"')), cuerpo: trozo.split(/clave: "/)[0] }))
+      .filter((e) => /pronto: true/.test(e.cuerpo))
+      .map((e) => e.clave)
+      .sort();
+
+  test("las pestañas y las tarjetas coinciden en qué falta", () => {
+    esperar(prontos(nav).join(",")).igual(
+      prontos(cards).join(","),
+      "una pantalla dice que algo está listo y la otra que viene «muy pronto»",
+    );
+  });
+
+  test("y Archivos NO está entre lo que falta: ya funciona", () => {
+    esperar(prontos(nav).includes("archivos")).falso("las pestañas volvieron a esconder Archivos");
+    esperar(prontos(cards).includes("archivos")).falso("la tarjeta volvió a decir «muy pronto»");
+  });
+});
+
 describe("Motor de WhatsApp desplegado", () => {
   test("el archivo del repo declara su versión, para poder comparar con producción", () => {
     const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
