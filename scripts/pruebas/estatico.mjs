@@ -542,6 +542,55 @@ describe("Ninguna cita vuelve a durar 30 a fuego", () => {
       "el modelo ya no ve los servicios: no puede elegir de un catálogo que no conoce",
     );
   });
+
+  /* ── ESTA REGLA NACIÓ COJA, Y ASÍ SE DESCUBRIÓ ────────────────────────────
+   *
+   * La primera versión solo miraba `src/`. El motor de WhatsApp se quedó con
+   * `duracion: 30` a fuego y las pruebas pasaban en verde — o sea que la
+   * plataforma respetaba el servicio y WhatsApp no, que es JUSTO el canal donde
+   * agenda la clínica. La deriva entre motores que este repo ya pagó tres
+   * veces, creada en la misma sesión que la arreglaba. */
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const motor = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/app/api/motor/agenda/route.ts")?.texto ?? "");
+
+  test("el motor de WhatsApp tampoco decide la duración", () => {
+    esperar(/duracion:\s*30\b/.test(wa)).falso(
+      "volvió el 30 a fuego al motor: WhatsApp agendaría distinto que el panel",
+    );
+    esperar(/servicio: args\?\.servicio/.test(wa)).verdadero(
+      "el motor dejó de mandar el servicio: la plataforma no puede saber cuánto dura",
+    );
+  });
+
+  test("y NO se copió la regla: la resuelve la plataforma", () => {
+    /* Copiar `servicioQuePidio` al motor habría sido la tercera copia de la
+     * misma regla. El motor es cartero; quien decide es `/api/motor/agenda`. */
+    esperar(/servicioQuePidio/.test(wa)).falso(
+      "se copió la elección del servicio al motor: ya son dos implementaciones",
+    );
+    esperar(/servicioQuePidio\(/.test(motor)).verdadero(
+      "la puerta del motor dejó de resolver el servicio",
+    );
+    esperar(/congelado/.test(motor)).verdadero(
+      "lo que se agenda desde WhatsApp ya no congela su servicio",
+    );
+  });
+
+  test("el bloque del constructor sigue mandando sobre todo", () => {
+    /* Ahí el negocio ya eligió la duración a mano: no se le puede pisar. Se
+     * miran LOS DOS caminos por separado —los huecos y el agendar— porque
+     * contar apariciones dejaba pasar que se rompiera uno de los dos. */
+    const iHor = motor.indexOf('b.accion === "horarios"');
+    const iAg = motor.indexOf('b.accion === "agendar"');
+    esperar(iHor >= 0 && iAg >= 0).verdadero("no encontré las dos acciones");
+    esperar(/Number\(b\.duracion\) \|\|/.test(motor.slice(iHor, iAg))).verdadero(
+      "los HUECOS dejaron de respetar la duración que el negocio puso en el bloque",
+    );
+    esperar(/Number\(b\.duracion\) \|\|/.test(motor.slice(iAg, iAg + 1400))).verdadero(
+      "AGENDAR dejó de respetar la duración que el negocio puso en el bloque",
+    );
+  });
 });
 
 describe("Motor de WhatsApp desplegado", () => {

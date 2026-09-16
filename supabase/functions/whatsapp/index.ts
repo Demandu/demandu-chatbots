@@ -19,7 +19,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "43";
+const VERSION_MOTOR = "44";
 
 // ─── La firma de Meta ────────────────────────────────────────────────────────
 //
@@ -1308,7 +1308,13 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
         type: "object",
         properties: {
           dias: { type: "integer", description: "Cuántos días hacia adelante mirar. Por defecto 14." },
-          duracion: { type: "integer", description: "Duración de la cita en minutos. Por defecto 30." },
+          servicio: {
+            type: "string",
+            description:
+              "El servicio que pidió, con el NOMBRE TAL CUAL de la lista. Decide cuánto duran los " +
+              "huecos: sin él se ofrecen con la duración de fábrica del negocio, y una cita larga " +
+              "acabaría encima de la siguiente.",
+          },
         },
       },
     });
@@ -1324,6 +1330,12 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
         type: "object",
         properties: {
           inicio: { type: "string", description: "La fecha y hora exacta que devolvió ver_horarios." },
+          servicio: {
+            type: "string",
+            description:
+              "El servicio que pidió, con el NOMBRE TAL CUAL de la lista de servicios. " +
+              "Decide cuánto dura la cita. Si dudas entre dos, pregúntale antes de agendar.",
+          },
           nombre: { type: "string", description: "Nombre de quien reserva, si lo sabes." },
           correo: { type: "string", description: "Su correo, si lo sabes. Le llega la invitación." },
         },
@@ -1601,6 +1613,24 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
 
   // Los criterios del cliente, en su idioma. Esto es LA pieza que hace que el
   // mismo código sirva para una clínica y para una inmobiliaria.
+  /* SIN LA LISTA, EL PARÁMETRO `servicio` ES UN ADORNO: el modelo no puede
+   * elegir de un catálogo que no ha visto, e inventaría nombres que la
+   * plataforma descarta — el fallo silencioso de siempre con otra cara. */
+  if (quiere.includes("agendar_cita") || quiere.includes("ver_horarios")) {
+    const { data: servs, error: errServ } = await ctx.db
+      .from("servicios")
+      .select("nombre, duracion_min")
+      .eq("org_id", ctx.orgId).eq("activo", true).order("orden");
+    if (errServ) console.error("[agenda] no pude leer los servicios:", errServ.message);
+    const lista = (servs ?? []) as any[];
+    if (lista.length) {
+      notas.push(
+        "Servicios de este negocio (usa el nombre TAL CUAL al agendar):\n" +
+          lista.map((x) => `- ${x.nombre} → ${x.duracion_min} min`).join("\n"),
+      );
+    }
+  }
+
   if (ai.criterios) notas.push(`Criterios del negocio:\n${ai.criterios}`);
 
   // ── LA LISTA DE VERDAD, Y VA LA ÚLTIMA ──────────────────────────────────
@@ -1741,7 +1771,13 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           accion: "agendar",
           org_id: ctx.orgId,
           inicio,
-          duracion: 30,
+          /* LA DURACIÓN YA NO SE DECIDE AQUÍ. Se manda lo que la persona dijo
+           * y la plataforma resuelve cuánto dura ese servicio: una sola
+           * implementación, la misma que usa el panel. Copiar la tabla de
+           * servicios a este archivo habría sido la tercera copia de la misma
+           * regla, y este repo ya pagó esa factura con los tres motores de
+           * flujos. Ver `/api/motor/agenda`. */
+          servicio: args?.servicio || undefined,
           titulo: `Cita con ${nombreDeLaCita}`,
           descripcion: "Cita agendada por el agente de IA.",
           correo: args?.correo || undefined,
@@ -3299,6 +3335,8 @@ async function sayCalendario(ctx: any, node: any) {
   const r = await pedirAgenda({
     accion: "horarios",
     org_id: ctx.orgId,
+    // Lo que dijo la persona; la duración la decide la plataforma.
+    servicio: (d as any)?.servicio || undefined,
     // LA ELECCIÓN DEL BLOQUE VIAJA ENTERA, y cada agenda con su propio campo.
     // Antes había uno solo para las dos y por eso un calendario de Google
     // acabó pidiéndosele a Calendly, que devolvió cero horarios.

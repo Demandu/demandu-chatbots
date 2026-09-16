@@ -2,6 +2,9 @@ import {
   horariosLibres, agendar, proximaCita, moverCita, cancelarCita, citasDePersona,
 } from "@/lib/agenda";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  cuantoDura, loQueSeCongela, servicioQuePidio, POR_DEFECTO_MIN, type Servicio,
+} from "@/lib/duracionDeLaCita";
 import { esDelMotor } from "@/lib/motor/autorizado";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +32,34 @@ export async function POST(req: Request) {
   const orgId = String(b.org_id ?? "");
   if (!orgId) return Response.json({ error: "falta org_id" }, { status: 400 });
 
+  /* ── EL SERVICIO SE RESUELVE AQUÍ, NO EN EL MOTOR ─────────────────────────
+   *
+   * El motor de WhatsApp corre en Deno y no puede importar de `src/`, así que
+   * la tentación era copiarle `servicioQuePidio` y la tabla de servicios. Eso
+   * habría sido una TERCERA copia de la misma regla — y este repo ya pagó esa
+   * factura con los tres motores de flujos, donde el tercero se quedó atrás y
+   * le enseñaba a los negocios una respuesta escrita a mano.
+   *
+   * El motor es cartero: manda lo que la persona DIJO (`servicio`) y aquí se
+   * decide cuánto dura. Una sola implementación, la misma que usa el panel. */
+  const resolverServicio = async (dicho: unknown) => {
+    const { data, error } = await createAdminClient()
+      .from("servicios")
+      .select("id, nombre, duracion_min, buffer_antes_min, buffer_despues_min, precio_centavos, moneda, activo")
+      .eq("org_id", orgId).eq("activo", true).order("orden");
+    // Si esto falla se agenda con la duración de fábrica en vez de dejar al
+    // cliente sin cita, pero queda dicho por qué.
+    if (error) console.error("[motor/agenda] no pude leer los servicios:", error.message);
+
+    const { data: org, error: errOrg } = await createAdminClient()
+      .from("organizations").select("duracion_cita_min").eq("id", orgId).maybeSingle();
+    if (errOrg) console.error("[motor/agenda] no pude leer la duración por defecto:", errOrg.message);
+
+    const porDefecto = Number((org as any)?.duracion_cita_min) || POR_DEFECTO_MIN;
+    const elegido = servicioQuePidio(dicho as string, (data as Servicio[]) ?? []);
+    return { elegido, porDefecto };
+  };
+
   if (b.accion === "horarios") {
     const r = await horariosLibres(orgId, {
       calendarId: b.calendario,
@@ -36,7 +67,13 @@ export async function POST(req: Request) {
       // cuenta: el id de Google acabó viajando a Calendly como tipo de cita.
       calendlyTipo: b.calendly_tipo,
       agendaProveedor: b.agenda,
-      durationMin: b.duracion,
+      /* LOS HUECOS DURAN LO QUE LA CITA. Con 30 a fuego se ofrecían las 12:00
+       * Y las 12:30 de una cita de dos horas: el segundo no existía. El bloque
+       * del constructor sigue mandando su `duracion`, y manda sobre todo lo
+       * demás porque ahí el negocio ya eligió a mano. */
+      durationMin:
+        Number(b.duracion) ||
+        (await resolverServicio(b.servicio).then((x) => cuantoDura(x.elegido, x.porDefecto).minutos)),
       days: b.dias,
       maxSlots: b.cuantos,
     });
@@ -44,9 +81,16 @@ export async function POST(req: Request) {
   }
 
   if (b.accion === "agendar") {
+    const { elegido, porDefecto } = await resolverServicio(b.servicio);
+    const congelado = loQueSeCongela(elegido, porDefecto);
     const r = await agendar(orgId, {
       inicioISO: String(b.inicio ?? ""),
-      durationMin: b.duracion,
+      // El bloque del constructor manda: ahí el negocio ya eligió a mano.
+      durationMin: Number(b.duracion) || congelado.duracion_min,
+      // Lo que pasó, copiado. Ver la migración 0126.
+      congelado: Number(b.duracion)
+        ? { ...congelado, duracion_min: Number(b.duracion) }
+        : congelado,
       calendarId: b.calendario,
       calendlyTipo: b.calendly_tipo,
       agendaProveedor: b.agenda,
