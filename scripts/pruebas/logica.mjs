@@ -5,6 +5,9 @@
  *   node --experimental-strip-types scripts/pruebas/logica.mjs
  */
 import fs from "node:fs";
+import {
+  cuantoDura, minutosQueOcupa, loQueSeCongela, servicioQuePidio, comoSeLosOfrezco,
+} from "../../src/lib/duracionDeLaCita.ts";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
@@ -8350,6 +8353,101 @@ describe("De qué hora estamos hablando", () => {
     // El mismo instante, contado al negocio: otra hora, y sin coletilla.
     esperar(comoSeLoDigo(iso, MX, MX)?.hora).igual("10:00");
     esperar(comoSeLoDigo(iso, MX, MX)?.zona).igual("");
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * UNA CITA DURA LO QUE DURA EL SERVICIO
+ *
+ * Hasta el 16 sep 2026 todas duraban 30 minutos, a fuego en `herramientas.ts`.
+ * Una clínica fetal no puede dar 30 minutos a un ultrasonido de tercer
+ * trimestre y 30 a un embarazo gemelar, que necesita dos horas. Y los huecos
+ * se ofrecían en rejilla de 30: el bot ofrecía las 12:00 Y las 12:30 de una
+ * cita de dos horas — el segundo hueco no existía.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Una cita dura lo que dura el servicio", () => {
+  const GEMELAR = {
+    id: "1", nombre: "Ultrasonido gemelar", duracion_min: 120,
+    buffer_despues_min: 15, precio_centavos: 250000, activo: true,
+  };
+  const TERCERO = { id: "2", nombre: "Ultrasonido de tercer trimestre", duracion_min: 45, activo: true };
+  const APAGADO = { id: "3", nombre: "Consulta", duracion_min: 30, activo: false };
+  const TODOS = [GEMELAR, TERCERO, APAGADO];
+
+  test("el servicio manda sobre el negocio, y el negocio sobre nosotros", () => {
+    /* El orden es deliberado: el valor de fábrica existe para cuando nadie
+     * decidió, no para pisar a quien sí decidió. */
+    esperar(cuantoDura(GEMELAR, 45).minutos).igual(120);
+    esperar(cuantoDura(GEMELAR, 45).deDonde).igual("servicio");
+    esperar(cuantoDura(null, 45).deDonde).igual("negocio");
+    esperar(cuantoDura(null, null).deDonde).igual("plataforma");
+  });
+
+  test("de fábrica son 60, no los 30 de antes", () => {
+    esperar(cuantoDura(null, null).minutos).igual(60);
+  });
+
+  test("una duración disparatada NO vacía la agenda", () => {
+    // 9999 minutos dejaría el calendario sin un solo hueco y nadie entendería
+    // por qué. Se cae al valor del negocio.
+    esperar(cuantoDura({ id: "x", nombre: "x", duracion_min: 9999 }, 45).minutos).igual(45);
+    esperar(cuantoDura({ id: "x", nombre: "x", duracion_min: 0 }, 45).minutos).igual(45);
+  });
+
+  test("lo que OCUPA incluye los buffers, lo que dura no", () => {
+    /* Limpiar la sala ocupa agenda y no es la cita. Sin separarlos, el negocio
+     * pone «135 minutos» en un servicio de 120 y al cliente se le dice una
+     * duración que es mentira. */
+    esperar(minutosQueOcupa(GEMELAR)).igual(135);
+    esperar(cuantoDura(GEMELAR, null).minutos).igual(120);
+  });
+
+  test("LA CITA CONGELA lo que pasó", () => {
+    /* Misma lección que `pedido_lineas`: si la cita solo apuntara al servicio,
+     * subir el precio mañana reescribiría el reporte del mes pasado. */
+    const c = loQueSeCongela(GEMELAR, 45);
+    esperar(c.servicio_nombre).igual("Ultrasonido gemelar");
+    esperar(c.duracion_min).igual(120);
+    esperar(c.precio_centavos).igual(250000);
+  });
+
+  test("sin servicio, se congela la duración igual", () => {
+    const c = loQueSeCongela(null, 90);
+    esperar(c.servicio_id).igual(null);
+    esperar(c.duracion_min).igual(90);
+    esperar(c.precio_centavos).igual(null);
+  });
+
+  test("elegir el servicio: exacto, sin tildes y sin mayúsculas", () => {
+    esperar(servicioQuePidio("ultrasonido gemelar", TODOS)?.id).igual("1");
+    esperar(servicioQuePidio("  ULTRASONIDO GEMELAR ", TODOS)?.id).igual("1");
+    esperar(servicioQuePidio("Ultrasonido de tercer trimestre", TODOS)?.id).igual("2");
+  });
+
+  test("SI ENCAJAN DOS, NO ADIVINA", () => {
+    /* La guarda que más vale. Elegir mal agenda dos horas donde iban cuarenta
+     * y cinco minutos, o al revés — y entonces la paciente llega a un hueco
+     * que no le alcanza. Devolver null hace que el bot pregunte, que es
+     * barato. */
+    esperar(servicioQuePidio("ultrasonido", TODOS)).igual(null);
+  });
+
+  test("el servicio apagado no se ofrece ni se elige", () => {
+    esperar(servicioQuePidio("consulta", TODOS)).igual(null);
+    esperar(comoSeLosOfrezco(TODOS).includes("Consulta")).falso("ofreció un servicio apagado");
+  });
+
+  test("lo que el modelo ve lleva la duración", () => {
+    // Sin la duración delante no puede decidir nada, y el parámetro `servicio`
+    // se convierte en un adorno.
+    const t = comoSeLosOfrezco(TODOS);
+    esperar(t.includes("120 min")).verdadero("la lista no dice cuánto dura cada uno");
+    esperar(t.includes("45 min")).verdadero("la lista no dice cuánto dura cada uno");
+  });
+
+  test("sin servicios, no se le enseña una lista vacía", () => {
+    esperar(comoSeLosOfrezco([])).igual("");
+    esperar(comoSeLosOfrezco(null)).igual("");
   });
 });
 

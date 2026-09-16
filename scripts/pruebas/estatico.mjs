@@ -503,6 +503,47 @@ describe("La hora dice de qué huso habla", () => {
   });
 });
 
+describe("Ninguna cita vuelve a durar 30 a fuego", () => {
+  const herr = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/herramientas.ts")?.texto ?? "");
+  const ag = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/agenda.ts")?.texto ?? "");
+
+  test("la duración sale del servicio, no de un número escrito", () => {
+    /* `durationMin: 30` estuvo a fuego para todos los negocios y para siempre.
+     * Una clínica fetal no puede dar 30 minutos a un embarazo gemelar. */
+    esperar(/durationMin:\s*\d+/.test(herr)).falso(
+      "volvió un número de minutos escrito a mano en las herramientas",
+    );
+    esperar(/cuantoDura\(/.test(herr)).verdadero("la duración dejó de salir del servicio");
+  });
+
+  test("los HUECOS también duran lo que la cita", () => {
+    /* Con 30 a fuego en la rejilla, el bot ofrecía las 12:00 y las 12:30 de una
+     * cita de dos horas: el segundo hueco no existía y alguien lo reservaba. */
+    const i = herr.indexOf("case \"ver_horarios\"");
+    esperar(i >= 0).verdadero("no encontré ver_horarios");
+    esperar(/durationMin: cuantoDura\(/.test(herr.slice(i, i + 1800))).verdadero(
+      "la rejilla de huecos volvió a ignorar cuánto dura el servicio",
+    );
+  });
+
+  test("la cita CONGELA el servicio, no lo apunta", () => {
+    /* Si solo apuntara, subir un precio mañana reescribiría el reporte del mes
+     * pasado. Es la lección de `pedido_lineas`, con otra cara. */
+    for (const campo of ["servicio_nombre:", "duracion_min:", "precio_centavos:"]) {
+      esperar(ag.includes(campo)).verdadero(`la fila de la cita perdió ${campo}`);
+    }
+    esperar(/congelado: d\.congelado/.test(ag)).verdadero(
+      "lo congelado dejó de viajar hasta la fila: la cita nace sin servicio",
+    );
+  });
+
+  test("y el modelo VE el catálogo, o el parámetro es un adorno", () => {
+    esperar(/comoSeLosOfrezco\(/.test(herr)).verdadero(
+      "el modelo ya no ve los servicios: no puede elegir de un catálogo que no conoce",
+    );
+  });
+});
+
 describe("Motor de WhatsApp desplegado", () => {
   test("el archivo del repo declara su versión, para poder comparar con producción", () => {
     const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");

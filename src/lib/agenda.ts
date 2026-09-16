@@ -265,6 +265,13 @@ export async function horariosLibres(
     /** Qué agenda pidió el bloque. Ausente = la que use la cuenta. */
     agendaProveedor?: EleccionDelBloque | null;
     durationMin?: number;
+    /** Lo que se congela en la cita. Ver `duracionDeLaCita.ts`. */
+    congelado?: {
+      servicio_id: string | null;
+      servicio_nombre: string | null;
+      duracion_min: number;
+      precio_centavos: number | null;
+    } | null;
     days?: number;
     maxSlots?: number;
   } = {},
@@ -425,6 +432,13 @@ export async function agendar(
   d: {
     inicioISO: string;
     durationMin?: number;
+    /** Lo que se congela en la cita. Ver `duracionDeLaCita.ts`. */
+    congelado?: {
+      servicio_id: string | null;
+      servicio_nombre: string | null;
+      duracion_min: number;
+      precio_centavos: number | null;
+    } | null;
     calendarId?: string;
     calendlyTipo?: string;
     agendaProveedor?: EleccionDelBloque | null;
@@ -523,6 +537,9 @@ export async function agendar(
       correo: d.correoInvitado ?? null,
       contactoId: d.contactoId ?? null,
       conversacionId: d.conversacionId ?? null,
+      // Lo que pasó, copiado. Sin esta línea la fila nace sin servicio ni
+      // duración y el reporte del mes que viene no puede contar nada.
+      congelado: d.congelado ?? null,
     });
 
     return {
@@ -603,6 +620,9 @@ export async function agendar(
       correo: correoInvitado || null,
       contactoId: d.contactoId ?? null,
       conversacionId: d.conversacionId ?? null,
+      // Lo que pasó, copiado. Sin esta línea la fila nace sin servicio ni
+      // duración y el reporte del mes que viene no puede contar nada.
+      congelado: d.congelado ?? null,
     });
     const cuando = new Date(Date.parse(inicio));
     return {
@@ -689,6 +709,13 @@ export async function apuntarCita(
     correo?: string | null;
     contactoId?: string | null;
     conversacionId?: string | null;
+    /** Lo que se congela en la cita. Ver `duracionDeLaCita.ts` y la 0126. */
+    congelado?: {
+      servicio_id: string | null;
+      servicio_nombre: string | null;
+      duracion_min: number;
+      precio_centavos: number | null;
+    } | null;
   },
 ): Promise<void> {
   try {
@@ -712,6 +739,13 @@ export async function apuntarCita(
           correo: d.correo ?? null,
           contact_id: d.contactoId ?? null,
           conversation_id: d.conversacionId ?? null,
+          /* SE COPIA, NO SE APUNTA. Misma lección que `pedido_lineas`: si la
+           * cita solo apuntara al servicio, subir un precio reescribiría el
+           * reporte del mes pasado. Ver la migración 0126. */
+          servicio_id: d.congelado?.servicio_id ?? null,
+          servicio_nombre: d.congelado?.servicio_nombre ?? null,
+          duracion_min: d.congelado?.duracion_min ?? null,
+          precio_centavos: d.congelado?.precio_centavos ?? null,
           estado: "agendada",
           updated_at: new Date().toISOString(),
         },

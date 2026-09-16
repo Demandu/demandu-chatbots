@@ -16,6 +16,10 @@ import {
 import { zonaDelTelefono } from "@/lib/zonaHoraria";
 import { emitir } from "@/lib/salidas";
 import { prometioUnaPersona, prometioUnaCita, LA_CITA_NO_QUEDO } from "@/lib/ai/promesas";
+import {
+  cuantoDura, loQueSeCongela, servicioQuePidio, comoSeLosOfrezco, POR_DEFECTO_MIN,
+  type Servicio,
+} from "@/lib/duracionDeLaCita";
 import { correoParaLaCita } from "@/lib/ai/correoDeLaCita";
 import {
   tiendaDelBot, enlaceDelBot, productosQueSePuedenOfrecer, precioDelBot,
@@ -188,6 +192,42 @@ async function comoLoDigo(ctx: ContextoAgente, iso: string): Promise<string> {
   const delNegocio = comoSeLoDigo(iso, await zonaDelNegocio(ctx.orgId));
   if (delNegocio) return `${delNegocio.dia} a las ${delNegocio.hora}`;
   return "(no puedo decirte la hora: a este negocio le falta configurar su zona horaria)";
+}
+
+/**
+ * Los servicios de este negocio y cuánto dura cada uno.
+ *
+ * UNA SOLA CONSULTA POR RESPUESTA: en un mismo turno la piden `ver_horarios`,
+ * `agendar_cita` y el contexto del modelo. Preguntar tres veces por lo mismo
+ * era el coste que hacía tentador escribir la duración a fuego.
+ */
+async function serviciosDelNegocio(ctx: ContextoAgente): Promise<Servicio[]> {
+  if ((ctx as any)._servicios) return (ctx as any)._servicios;
+  const { data, error } = await ctx.admin
+    .from("servicios")
+    .select("id, nombre, duracion_min, buffer_antes_min, buffer_despues_min, precio_centavos, moneda, activo")
+    .eq("org_id", ctx.orgId)
+    .eq("activo", true)
+    .order("orden");
+  // Si esto falla, se agenda con la duración de fábrica en vez de dejar al
+  // cliente sin cita. Pero se dice, que es la diferencia entre un fallo y un
+  // misterio.
+  if (error) console.error("[agenda] no pude leer los servicios:", error.message);
+  (ctx as any)._servicios = (data as Servicio[]) ?? [];
+  return (ctx as any)._servicios;
+}
+
+/** Lo que dura una cita en este negocio cuando no se eligió servicio. */
+async function duracionPorDefecto(ctx: ContextoAgente): Promise<number> {
+  if ((ctx as any)._duracionDefecto !== undefined) return (ctx as any)._duracionDefecto;
+  const { data, error } = await ctx.admin
+    .from("organizations").select("duracion_cita_min").eq("id", ctx.orgId).maybeSingle();
+  // «No tiene duración puesta» y «no pude leerla» acaban los dos en 60, pero
+  // se distinguen en los registros: si no, un fallo de la base se ve igual que
+  // una cuenta recién creada y nadie lo investiga nunca.
+  if (error) console.error("[agenda] no pude leer la duración por defecto:", error.message);
+  (ctx as any)._duracionDefecto = Number((data as any)?.duracion_cita_min) || POR_DEFECTO_MIN;
+  return (ctx as any)._duracionDefecto;
 }
 
 /**
@@ -367,7 +407,13 @@ export async function armarHerramientas(
         type: "object",
         properties: {
           dias: { type: "integer", description: "Cuántos días hacia adelante mirar. Por defecto 14." },
-          duracion: { type: "integer", description: "Duración de la cita en minutos. Por defecto 30." },
+          servicio: {
+            type: "string",
+            description:
+              "El servicio que pidió, con el NOMBRE TAL CUAL de la lista. Decide cuánto duran " +
+              "los huecos: sin él se ofrecen huecos de la duración de fábrica del negocio, y " +
+              "una cita larga acabaría encima de la siguiente.",
+          },
         },
       },
     });
@@ -385,6 +431,12 @@ export async function armarHerramientas(
         type: "object",
         properties: {
           inicio: { type: "string", description: "La fecha y hora exacta que devolvió ver_horarios." },
+          servicio: {
+            type: "string",
+            description:
+              "El servicio que pidió, con el NOMBRE TAL CUAL aparece en la lista de servicios. " +
+              "Decide cuánto dura la cita. Si no estás seguro de cuál de dos es, pregúntale antes.",
+          },
           nombre: { type: "string", description: "Nombre de quien reserva, si lo sabes." },
           correo: {
             type: "string",
@@ -673,6 +725,15 @@ export async function armarHerramientas(
 
   // Los criterios del cliente, en su idioma. Esto es LA pieza que hace que el
   // mismo código sirva para una clínica y para una inmobiliaria.
+  /* SIN LA LISTA, EL PARÁMETRO `servicio` NO SIRVE DE NADA: el modelo no puede
+   * elegir de un catálogo que no ha visto, y acabaría inventándose nombres que
+   * `servicioQuePidio` descarta — que es el fallo silencioso de siempre, pero
+   * con otra cara. */
+  if (quiere.includes("agendar_cita") || quiere.includes("ver_horarios")) {
+    const catalogo = comoSeLosOfrezco(await serviciosDelNegocio(ctx));
+    if (catalogo) notas.push(catalogo);
+  }
+
   if (ai.criterios) notas.push(`Criterios del negocio:\n${ai.criterios}`);
 
   // ── LA LISTA DE VERDAD, Y VA LA ÚLTIMA ──────────────────────────────────
@@ -856,7 +917,13 @@ export async function ejecutarHerramienta(
 
       case "ver_horarios": {
         const r = await horariosLibres(ctx.orgId, {
-          durationMin: Number(args?.duracion) || 30,
+          /* LA REJILLA TIENE QUE DURAR LO QUE LA CITA. Con 30 a fuego, el bot
+           * ofrecía las 12:00 Y las 12:30 de una cita de dos horas: el segundo
+           * hueco no existía y alguien lo iba a reservar. */
+          durationMin: cuantoDura(
+            servicioQuePidio(args?.servicio, await serviciosDelNegocio(ctx)),
+            await duracionPorDefecto(ctx),
+          ).minutos,
           days: Number(args?.dias) || 14,
           maxSlots: 8,
         });
@@ -930,9 +997,15 @@ export async function ejecutarHerramienta(
         });
         if (!elCorreo.ok) return elCorreo.motivo;
 
+        const elServicio = servicioQuePidio(args?.servicio, await serviciosDelNegocio(ctx));
+        const congelado = loQueSeCongela(elServicio, await duracionPorDefecto(ctx));
+
         const r = await agendar(ctx.orgId, {
           inicioISO: inicio,
-          durationMin: 30,
+          durationMin: congelado.duracion_min,
+          // Lo que pasó, copiado: el servicio se puede renombrar, encarecer o
+          // borrar y esta cita tiene que seguir contando lo de hoy.
+          congelado,
           titulo: `Cita con ${nombreDeLaCita}`,
           descripcion: "Cita agendada por el agente de IA.",
           correoInvitado: elCorreo.correo,
