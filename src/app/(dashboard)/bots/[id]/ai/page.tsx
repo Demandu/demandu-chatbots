@@ -5,6 +5,7 @@ import { BotTitle } from "@/components/BotTitle";
 import { LanaSays } from "@/components/Lana";
 import { AiTester } from "@/components/ai/AiTester";
 import { EditorDePrompt } from "@/components/EditorDePrompt";
+import { ElegirPlantilla } from "@/components/ai/ElegirPlantilla";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { AI_DEFAULTS, aiConfigured } from "@/lib/ai/answer";
@@ -285,6 +286,11 @@ export default async function BotAiPage({
               </label>
 
               <div className="space-y-4">
+                {/* Va ARRIBA del cuadro, no debajo: quien llega aquí sin saber
+                    qué escribir tiene que topárselo antes de enfrentarse a un
+                    recuadro en blanco, que es donde la gente abandona. */}
+                <ElegirPlantilla hayAlgoEscrito={Boolean(String(ai.persona ?? "").trim())} />
+
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-ink-2">¿Quién es tu asistente?</label>
                   {/* Un prompt de personalidad real ocupa varios párrafos. Con

@@ -6,6 +6,9 @@
  */
 import fs from "node:fs";
 import {
+  PLANTILLAS_DE_RUBRO, plantillaPorClave, pareceLlevarDatos, NUNCA_INVENTES,
+} from "../../src/lib/ai/plantillasDeRubro.ts";
+import {
   cuantoDura, minutosQueOcupa, loQueSeCongela, servicioQuePidio, comoSeLosOfrezco,
 } from "../../src/lib/duracionDeLaCita.ts";
 import path from "node:path";
@@ -8448,6 +8451,91 @@ describe("Una cita dura lo que dura el servicio", () => {
   test("sin servicios, no se le enseña una lista vacía", () => {
     esperar(comoSeLosOfrezco([])).igual("");
     esperar(comoSeLosOfrezco(null)).igual("");
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PLANTILLAS DE PERSONALIDAD POR RUBRO
+ *
+ * Antes había UN prompt de fábrica para todos: «Eres Lana, la asistente
+ * virtual del negocio». Un dentista y una taquería arrancaban idénticos, y el
+ * dueño —que no escribe prompts— se quedaba con eso o escribía algo peor.
+ *
+ * LA REGLA QUE LAS HACE SERVIR: una plantilla lleva TONO Y REGLAS, nunca
+ * DATOS. Un horario dentro de un prompt es una segunda copia de la verdad: el
+ * negocio lo cambia en Configuración, nadie toca el prompt, y el bot dice una
+ * cosa y ofrece otra.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Las plantillas llevan tono, no datos", () => {
+  test("NINGUNA trae un horario, un precio ni una hora dentro", () => {
+    /* La que de verdad protege. Escribir «abrimos de 9 a 6» en una plantilla
+     * se siente útil y es exactamente lo que crea la segunda copia. */
+    const sucias = [];
+    for (const p of PLANTILLAS_DE_RUBRO) {
+      const d = pareceLlevarDatos(`${p.persona} ${p.style} ${p.descripcion}`);
+      if (d.length) sucias.push(`${p.clave}: ${d.join(", ")}`);
+    }
+    esperar(sucias.join(" | ")).igual("", "una plantilla trae datos escritos dentro");
+  });
+
+  test("y el detector NO es un adorno: caza lo que tiene que cazar", () => {
+    // Una regla que no puede fallar no está protegiendo nada.
+    esperar(pareceLlevarDatos("Abrimos de 9:00 a 18:00").length > 0).verdadero("se le escapó una hora");
+    esperar(pareceLlevarDatos("La consulta cuesta $500").length > 0).verdadero("se le escapó un precio");
+    esperar(pareceLlevarDatos("son 800 pesos").length > 0).verdadero("se le escapó un precio en palabras");
+    esperar(pareceLlevarDatos("Lunes a viernes de 9 a 6").length > 0).verdadero("se le escapó un horario");
+    // Y no grita con texto legítimo.
+    esperar(pareceLlevarDatos("Eres la asistente de la clínica. No des diagnósticos.")).igual([]);
+  });
+
+  test("TODAS le prohíben al modelo inventarse los datos", () => {
+    /* Sin esta frase el modelo rellena el hueco con algo verosímil, que es
+     * peor que no contestar: suena seguro y es falso. */
+    for (const p of PLANTILLAS_DE_RUBRO) {
+      esperar(p.persona.includes("NUNCA inventes")).verdadero(
+        `la plantilla «${p.clave}» perdió el aviso de no inventar`,
+      );
+    }
+  });
+
+  test("y ninguna promete una cita sin agendarla", () => {
+    // Es el fallo que ya salió en producción en una clínica.
+    esperar(NUNCA_INVENTES.toLowerCase().includes("cita")).verdadero(
+      "el aviso dejó de cubrir las citas confirmadas de mentira",
+    );
+  });
+
+  test("las claves son únicas y hay una General", () => {
+    const claves = PLANTILLAS_DE_RUBRO.map((p) => p.clave);
+    esperar([...new Set(claves)].length).igual(claves.length, "hay dos plantillas con la misma clave");
+    esperar(claves.includes("general")).verdadero("se fue la plantilla General: no hay por dónde empezar");
+    esperar(plantillaPorClave("CLINICA")?.clave).igual("clinica");
+    esperar(plantillaPorClave("no-existe")).igual(null);
+  });
+
+  test("las de salud y taller NO opinan de lo que no deben", () => {
+    /* No es estilo: una asistente que opina de un síntoma o cotiza una falla a
+     * ojo mete al negocio en un problema de verdad. */
+    esperar(plantillaPorClave("clinica")?.persona.includes("NO DAS DIAGNÓSTICOS")).verdadero(
+      "la plantilla de clínica dejó de prohibir los diagnósticos",
+    );
+    esperar(plantillaPorClave("taller")?.persona.includes("NO DES DIAGNÓSTICOS")).verdadero(
+      "la plantilla de taller dejó de prohibir cotizar a ojo",
+    );
+  });
+
+  test("cada una sugiere herramientas que EXISTEN", () => {
+    // Sugerir una herramienta que no existe deja al cliente buscando una
+    // casilla que no está en ninguna pantalla.
+    const reales = new Set([
+      "ver_horarios", "agendar_cita", "reagendar_cita", "cancelar_cita", "ver_mis_citas",
+      "pasar_a_humano", "etiquetar", "estado_de_pedido", "consultar_sistema",
+    ]);
+    const malas = [];
+    for (const p of PLANTILLAS_DE_RUBRO) {
+      for (const h of p.herramientas) if (!reales.has(h)) malas.push(`${p.clave}: ${h}`);
+    }
+    esperar(malas.join(", ")).igual("", "una plantilla sugiere una herramienta que no existe");
   });
 });
 
