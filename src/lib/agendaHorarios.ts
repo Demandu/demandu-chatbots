@@ -548,12 +548,21 @@ function zonaUsable(zona: string | null | undefined): boolean {
  * Tiene que ser idéntico al de `computeSlots` o `horarioQuePidio` dejaría de
  * reconocer lo que la persona repite — la etiqueta es lo que se compara.
  */
-export function etiquetaEnZona(iso: string, zona: string): string {
-  return new Intl.DateTimeFormat("es-MX", {
+export function etiquetaEnZona(
+  iso: string,
+  zona: string,
+  /** La del negocio. Si difiere de verdad, la etiqueta lo dice. */
+  zonaDelNegocio?: string | null,
+): string {
+  const base = new Intl.DateTimeFormat("es-MX", {
     timeZone: zona,
     weekday: "short", day: "2-digit", month: "short",
     hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(iso));
+  /* SIN ESTO, EL BOT DICE «11:00» Y EL CORREO «10:00» SIENDO LO MISMO.
+   * Pasó el 16 sep 2026: negocio en México, cliente en Panamá. Ver
+   * `hayQueDecirLaZona`. */
+  return base + deQueHoraHablamos(zona, zonaDelNegocio, new Date(iso));
 }
 
 /**
@@ -566,7 +575,9 @@ export function etiquetaEnZona(iso: string, zona: string): string {
 export function comoSeLoDigo(
   iso: string | null | undefined,
   zona: string | null | undefined,
-): { dia: string; hora: string; etiqueta: string } | null {
+  /** La del negocio. Ver `hayQueDecirLaZona`. */
+  zonaDelNegocio?: string | null,
+): { dia: string; hora: string; etiqueta: string; zona: string } | null {
   const t = String(iso ?? "").trim();
   if (!t || !zonaUsable(zona)) return null;
   const cuando = new Date(t);
@@ -579,7 +590,11 @@ export function comoSeLoDigo(
     hora: new Intl.DateTimeFormat("es-MX", {
       timeZone: z, hour: "2-digit", minute: "2-digit", hour12: false,
     }).format(cuando),
-    etiqueta: etiquetaEnZona(t, z),
+    etiqueta: etiquetaEnZona(t, z, zonaDelNegocio),
+    /* «(hora de Panamá)» o cadena vacía. Va suelto para que quien arma la
+     * frase lo pegue donde toca: la confirmación lo quiere detrás de la hora,
+     * el recordatorio detrás del día. */
+    zona: deQueHoraHablamos(z, zonaDelNegocio, cuando),
   };
 }
 
@@ -597,9 +612,107 @@ export function comoSeLoDigo(
 export function enLaZonaDelCliente<T extends { startISO: string; label: string }>(
   slots: T[] | null | undefined,
   zona: string | null | undefined,
+  /** La del negocio, para poder decir de qué hora se habla cuando difieren. */
+  zonaDelNegocio?: string | null,
 ): T[] {
   const lista = slots ?? [];
   if (!zonaUsable(zona)) return [...lista];
   const z = String(zona);
-  return lista.map((s) => (s?.startISO ? { ...s, label: etiquetaEnZona(s.startISO, z) } : s));
+  return lista.map((s) =>
+    s?.startISO ? { ...s, label: etiquetaEnZona(s.startISO, z, zonaDelNegocio) } : s,
+  );
+}
+
+/**
+ * EL NOMBRE CORTO DE UNA ZONA, PARA METERLO EN UNA FRASE.
+ *
+ * `comoSeLee` en `zonaHoraria.ts` devuelve «Panamá (GMT-5) — ahí son las 15:40»,
+ * que es perfecto para el aviso donde se pide confirmar y demasiado largo para
+ * pegarlo detrás de cada hueco. Aquí sale «Panamá» a secas.
+ *
+ * HAY UN MAPA Y NO SOLO EL TROZO DE LA CADENA porque `America/Mexico_City`
+ * partido da «Mexico City», que en español se lee raro, y `America/Argentina/
+ * Buenos_Aires` da «Buenos Aires» cuando lo que la persona reconoce es
+ * «Argentina». Para lo que no esté en el mapa se usa la ciudad, que es mejor
+ * que no decir nada.
+ */
+const NOMBRE_DE_ZONA: Record<string, string> = {
+  "America/Mexico_City": "México",
+  "America/Panama": "Panamá",
+  "America/Bogota": "Colombia",
+  "America/Lima": "Perú",
+  "America/Santiago": "Chile",
+  "America/Argentina/Buenos_Aires": "Argentina",
+  "America/Sao_Paulo": "Brasil",
+  "America/Guatemala": "Guatemala",
+  "America/Costa_Rica": "Costa Rica",
+  "America/El_Salvador": "El Salvador",
+  "America/Tegucigalpa": "Honduras",
+  "America/Managua": "Nicaragua",
+  "America/Santo_Domingo": "República Dominicana",
+  "America/Caracas": "Venezuela",
+  "America/La_Paz": "Bolivia",
+  "America/Guayaquil": "Ecuador",
+  "America/Asuncion": "Paraguay",
+  "America/Montevideo": "Uruguay",
+  "America/Havana": "Cuba",
+  "Europe/Madrid": "España",
+};
+
+export function nombreCortoDeZona(zona: string | null | undefined): string {
+  const z = String(zona ?? "").trim();
+  if (!z) return "";
+  return NOMBRE_DE_ZONA[z] ?? (z.split("/").pop() ?? z).replace(/_/g, " ");
+}
+
+/**
+ * ¿HAY QUE DECIR DE QUÉ HORA ESTAMOS HABLANDO?
+ *
+ * ── EL FALLO QUE ARREGLA ───────────────────────────────────────────────────
+ *
+ * 16 sep 2026. Un negocio en México, un cliente en Panamá. El bot le ofreció
+ * «11:00» —su hora, correcta— y el correo de confirmación le dijo «10:00» —la
+ * del negocio, también correcta—. El mismo instante, dos números, y **ninguno
+ * de los dos decía de qué huso hablaba**. Desde fuera, la plataforma se
+ * contradijo a sí misma.
+ *
+ * Eso en una clínica es un paciente que no llega.
+ *
+ * ── Y POR QUÉ NO SE DICE SIEMPRE ───────────────────────────────────────────
+ *
+ * «10:00 (hora de México)» a un mexicano hablando con un negocio mexicano es
+ * ruido, y el ruido que sale en todos los mensajes se deja de leer. Se dice
+ * solo cuando de verdad hay dos husos en juego.
+ *
+ * Se compara la HORA REAL, no el nombre de la zona: `America/Bogota` y
+ * `America/Lima` se escriben distinto y marcan lo mismo, y avisar ahí sería
+ * inventarse una diferencia que la persona no ve en su reloj.
+ */
+export function hayQueDecirLaZona(
+  zonaDeQuienLee: string | null | undefined,
+  zonaDelNegocio: string | null | undefined,
+  cuando: Date = new Date(),
+): boolean {
+  const a = String(zonaDeQuienLee ?? "").trim();
+  const b = String(zonaDelNegocio ?? "").trim();
+  if (!a || !b || a === b) return false;
+  if (!zonaUsable(a) || !zonaUsable(b)) return false;
+
+  const hora = (z: string) =>
+    new Intl.DateTimeFormat("es-MX", {
+      timeZone: z, hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(cuando);
+
+  return hora(a) !== hora(b);
+}
+
+/** «(hora de Panamá)», o nada cuando no hace falta. Ver `hayQueDecirLaZona`. */
+export function deQueHoraHablamos(
+  zonaDeQuienLee: string | null | undefined,
+  zonaDelNegocio: string | null | undefined,
+  cuando: Date = new Date(),
+): string {
+  if (!hayQueDecirLaZona(zonaDeQuienLee, zonaDelNegocio, cuando)) return "";
+  const nombre = nombreCortoDeZona(zonaDeQuienLee);
+  return nombre ? ` (hora de ${nombre})` : "";
 }

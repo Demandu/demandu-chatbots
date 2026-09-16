@@ -180,8 +180,11 @@ async function zonaDeQuienEscribe(ctx: ContextoAgente): Promise<string | null> {
  * de nadie.
  */
 async function comoLoDigo(ctx: ContextoAgente, iso: string): Promise<string> {
-  const suya = comoSeLoDigo(iso, await zonaDeQuienEscribe(ctx));
-  if (suya) return `${suya.dia} a las ${suya.hora}`;
+  const delNegocio0 = await zonaDelNegocio(ctx.orgId);
+  const suya = comoSeLoDigo(iso, await zonaDeQuienEscribe(ctx), delNegocio0);
+  // `suya.zona` es «(hora de Panamá)» o nada. Sin eso, el bot decía «11:00» y
+  // el correo «10:00» siendo el mismo instante. Ver `hayQueDecirLaZona`.
+  if (suya) return `${suya.dia} a las ${suya.hora}${suya.zona}`;
   const delNegocio = comoSeLoDigo(iso, await zonaDelNegocio(ctx.orgId));
   if (delNegocio) return `${delNegocio.dia} a las ${delNegocio.hora}`;
   return "(no puedo decirte la hora: a este negocio le falta configurar su zona horaria)";
@@ -870,7 +873,11 @@ export async function ejecutarHerramienta(
          * Y se guardan YA TRADUCIDOS: `horarioQuePidio` compara contra estas
          * etiquetas, así que si se guardaran las del negocio, alguien que
          * repitiera la hora que acaba de leer no sería reconocido. */
-        const slots = enLaZonaDelCliente(r.slots, await zonaDeQuienEscribe(ctx));
+        const slots = enLaZonaDelCliente(
+          r.slots,
+          await zonaDeQuienEscribe(ctx),
+          await zonaDelNegocio(ctx.orgId),
+        );
 
         /* ── LA PLATAFORMA SE ACUERDA DE LO QUE OFRECIÓ ───────────────────
          *
@@ -958,7 +965,11 @@ export async function ejecutarHerramienta(
          * que su equipo y su Google Calendar necesitan. Pero a quien escribe se
          * le acaba de ofrecer la lista en SU reloj: confirmarle una hora
          * distinta de la que eligió es la peor forma posible de terminar. */
-        const suyo = comoSeLoDigo(r.inicioISO, await zonaDeQuienEscribe(ctx));
+        const suyo = comoSeLoDigo(
+          r.inicioISO,
+          await zonaDeQuienEscribe(ctx),
+          await zonaDelNegocio(ctx.orgId),
+        );
         const diaDicho = suyo?.dia ?? r.dia;
         const horaDicha = suyo?.hora ?? r.hora;
 
@@ -1038,7 +1049,11 @@ export async function ejecutarHerramienta(
           return `No se pudo mover: ${r.error}. Ofrécele otra hora.`;
         }
 
-        const movida = comoSeLoDigo(r.inicioISO, await zonaDeQuienEscribe(ctx));
+        const movida = comoSeLoDigo(
+          r.inicioISO,
+          await zonaDeQuienEscribe(ctx),
+          await zonaDelNegocio(ctx.orgId),
+        );
         ctx.citaAgendada = true;
         ctx.vars.cita_inicio = r.inicioISO;
         ctx.vars.cita_dia = movida?.dia ?? r.dia;

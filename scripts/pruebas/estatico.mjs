@@ -463,6 +463,46 @@ describe("El bot no puede decir que agendó sin agendar", () => {
   });
 });
 
+describe("La hora dice de qué huso habla", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const lib = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/agendaHorarios.ts")?.texto ?? "");
+
+  test("los DOS motores saben decirlo", () => {
+    /* WhatsApp corre en Deno y no puede importar de `src/`, así que hay dos
+     * cuerpos. Y WhatsApp es justo el canal donde ocurrió. */
+    for (const [donde, t] of [["la plataforma", lib], ["el motor", wa]]) {
+      esperar(/function hayQueDecirLaZona/.test(t)).verdadero(`${donde} dejó de decir la zona`);
+      esperar(/function deQueHoraHablamos/.test(t)).verdadero(`${donde} perdió la etiqueta de la zona`);
+    }
+  });
+
+  test("se compara la HORA, no el nombre de la zona", () => {
+    /* Bogotá y Lima se escriben distinto y marcan lo mismo: comparar nombres
+     * inventaría una diferencia que la persona no ve en su reloj. */
+    for (const [donde, t] of [["la plataforma", lib], ["el motor", wa]]) {
+      const i = t.indexOf("function hayQueDecirLaZona");
+      esperar(/hora\(a\) !== hora\(b\)/.test(t.slice(i, i + 900))).verdadero(
+        `${donde} volvió a comparar el nombre de la zona en vez de la hora`,
+      );
+    }
+  });
+
+  test("el motor de WhatsApp SÍ lee la zona del negocio", () => {
+    /* No la leía en ninguna parte: hablaba siempre en la del cliente sin saber
+     * si coincidían, que es exactamente cómo salieron «11:00» y «10:00». */
+    esperar(/from\("organizations"\)\.select\("timezone"\)/.test(wa)).verdadero(
+      "el motor volvió a no saber en qué huso vive el negocio",
+    );
+  });
+
+  test("y la pide UNA vez, no una por cita", () => {
+    esperar(/_zonaNegocio !== undefined/.test(wa)).verdadero(
+      "se quitó la memoria: ahora es una consulta por cada hora que se escribe",
+    );
+  });
+});
+
 describe("Motor de WhatsApp desplegado", () => {
   test("el archivo del repo declara su versión, para poder comparar con producción", () => {
     const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");

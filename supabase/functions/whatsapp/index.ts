@@ -1711,7 +1711,7 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         // etiqueta. Y se guardan ya traducidas, porque `horarioQuePidio`
         // compara contra ellas: guardar las del negocio haría que repetir la
         // hora que acaba de leer no se reconociera.
-        const slots = enLaZonaDelCliente(r?.slots ?? [], zonaDelTelefono(ctx.to));
+        const slots = enLaZonaDelCliente(r?.slots ?? [], zonaDelTelefono(ctx.to), await zonaDelNegocio(ctx));
         if (!slots.length) {
           return "No hay horarios libres o la agenda no está conectada. Dile que le pasarás con una persona.";
         }
@@ -1757,7 +1757,7 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         // SE CONFIRMA EN EL MISMO RELOJ EN QUE SE OFRECIÓ. La web devuelve el
         // día y la hora en la zona del NEGOCIO, que es lo que necesita su
         // equipo; a quien escribe se le acaba de ofrecer la lista en la suya.
-        const suyo = comoSeLoDigo(r.inicioISO ?? inicio, zonaDelTelefono(ctx.to));
+        const suyo = comoSeLoDigo(r.inicioISO ?? inicio, zonaDelTelefono(ctx.to), await zonaDelNegocio(ctx));
         ctx.citaAgendada = true;
         ctx.vars.cita_inicio = r.inicioISO ?? inicio;
         ctx.vars.cita_dia = suyo?.dia ?? r.dia ?? "";
@@ -1793,9 +1793,12 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           return "Esta persona NO tiene ninguna cita por delante. Díselo con esas palabras y ofrécele agendar una.";
         }
         const zona = zonaDelTelefono(ctx.to);
+        // Se pide UNA vez, fuera del recorrido: dentro sería una consulta por
+        // cita, y además `map` no acepta una función asíncrona.
+        const zonaNeg = await zonaDelNegocio(ctx);
         const lineas = citas.map((c: any) => {
-          const suya = comoSeLoDigo(c?.inicio, zona);
-          const cuando = suya ? `${suya.dia} a las ${suya.hora}` : String(c?.cuando ?? "");
+          const suya = comoSeLoDigo(c?.inicio, zona, zonaNeg);
+          const cuando = suya ? `${suya.dia} a las ${suya.hora}${suya.zona}` : String(c?.cuando ?? "");
           return `- ${cuando} (${c?.titulo ?? "cita"})`;
         });
         return (
@@ -1825,15 +1828,15 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         });
         if (r?.sin_cita) return "Esta persona no tiene ninguna cita por delante. Ofrécele agendar una.";
         if (r?.cuando || r?.cuando_iso) {
-          const suya = comoSeLoDigo(r?.cuando_iso, zonaDelTelefono(ctx.to));
-          const cuando = suya ? `${suya.dia} a las ${suya.hora}` : String(r?.cuando ?? "");
+          const suya = comoSeLoDigo(r?.cuando_iso, zonaDelTelefono(ctx.to), await zonaDelNegocio(ctx));
+          const cuando = suya ? `${suya.dia} a las ${suya.hora}${suya.zona}` : String(r?.cuando ?? "");
           return `Su cita es el ${cuando}. Llama a ver_horarios y pregúntale a qué hora la quiere mover.`;
         }
         if (!r?.ok) {
           if (r?.enlace) return `No se puede mover desde aquí. Dale este enlace tal cual: ${r.enlace}`;
           return `No se pudo mover: ${r?.error ?? "error desconocido"}. Ofrécele otra hora.`;
         }
-        const movida = comoSeLoDigo(r.inicioISO, zonaDelTelefono(ctx.to));
+        const movida = comoSeLoDigo(r.inicioISO, zonaDelTelefono(ctx.to), await zonaDelNegocio(ctx));
         ctx.citaAgendada = true;
         ctx.vars.cita_inicio = r.inicioISO ?? "";
         ctx.vars.cita_dia = movida?.dia ?? r.dia ?? "";
@@ -2991,12 +2994,99 @@ function zonaUsable(zona: string | null | undefined): boolean {
  * Tiene que ser idéntico al de `computeSlots` o `horarioQuePidio` dejaría de
  * reconocer lo que la persona repite — la etiqueta es lo que se compara.
  */
-function etiquetaEnZona(iso: string, zona: string): string {
-  return new Intl.DateTimeFormat("es-MX", {
+/* ── GEMELAS de `src/lib/agendaHorarios.ts` ────────────────────────────────
+ * El porqué completo y las pruebas están allí. Resumen del 16 sep 2026:
+ * negocio en México, cliente en Panamá. El bot ofreció «11:00» —su hora, bien—
+ * y el correo dijo «10:00» —la del negocio, también bien—. Mismo instante, dos
+ * números, y ninguno decía de qué huso hablaba. Una regla estática compara los
+ * dos cuerpos. */
+const NOMBRE_DE_ZONA: Record<string, string> = {
+  "America/Mexico_City": "México",
+  "America/Panama": "Panamá",
+  "America/Bogota": "Colombia",
+  "America/Lima": "Perú",
+  "America/Santiago": "Chile",
+  "America/Argentina/Buenos_Aires": "Argentina",
+  "America/Sao_Paulo": "Brasil",
+  "America/Guatemala": "Guatemala",
+  "America/Costa_Rica": "Costa Rica",
+  "America/El_Salvador": "El Salvador",
+  "America/Tegucigalpa": "Honduras",
+  "America/Managua": "Nicaragua",
+  "America/Santo_Domingo": "República Dominicana",
+  "America/Caracas": "Venezuela",
+  "America/La_Paz": "Bolivia",
+  "America/Guayaquil": "Ecuador",
+  "America/Asuncion": "Paraguay",
+  "America/Montevideo": "Uruguay",
+  "America/Havana": "Cuba",
+  "Europe/Madrid": "España",
+};
+
+function nombreCortoDeZona(zona: string | null | undefined): string {
+  const z = String(zona ?? "").trim();
+  if (!z) return "";
+  return NOMBRE_DE_ZONA[z] ?? (z.split("/").pop() ?? z).replace(/_/g, " ");
+}
+
+/* Se compara la HORA REAL, no el nombre: Bogotá y Lima se escriben distinto y
+ * marcan lo mismo, y avisar ahí sería inventarse una diferencia. */
+function hayQueDecirLaZona(
+  zonaDeQuienLee: string | null | undefined,
+  zonaDelNegocio: string | null | undefined,
+  cuando: Date = new Date(),
+): boolean {
+  const a = String(zonaDeQuienLee ?? "").trim();
+  const b = String(zonaDelNegocio ?? "").trim();
+  if (!a || !b || a === b) return false;
+  if (!zonaUsable(a) || !zonaUsable(b)) return false;
+  const hora = (z: string) =>
+    new Intl.DateTimeFormat("es-MX", {
+      timeZone: z, hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(cuando);
+  return hora(a) !== hora(b);
+}
+
+function deQueHoraHablamos(
+  zonaDeQuienLee: string | null | undefined,
+  zonaDelNegocio: string | null | undefined,
+  cuando: Date = new Date(),
+): string {
+  if (!hayQueDecirLaZona(zonaDeQuienLee, zonaDelNegocio, cuando)) return "";
+  const nombre = nombreCortoDeZona(zonaDeQuienLee);
+  return nombre ? ` (hora de ${nombre})` : "";
+}
+
+/**
+ * La zona del negocio, una sola consulta por respuesta.
+ *
+ * El motor no la leía en ninguna parte: hablaba siempre en la del cliente sin
+ * saber si coincidían. Se guarda en `ctx` porque en un mismo turno la piden
+ * hasta cuatro sitios y no tiene sentido preguntar cuatro veces.
+ */
+async function zonaDelNegocio(ctx: any): Promise<string | null> {
+  if (ctx._zonaNegocio !== undefined) return ctx._zonaNegocio;
+  try {
+    const { data } = await ctx.db.from("organizations").select("timezone").eq("id", ctx.orgId).maybeSingle();
+    ctx._zonaNegocio = (data as any)?.timezone ?? null;
+  } catch (e) {
+    console.error("[agenda] no pude leer la zona del negocio:", e);
+    ctx._zonaNegocio = null;
+  }
+  return ctx._zonaNegocio;
+}
+
+function etiquetaEnZona(
+  iso: string,
+  zona: string,
+  zonaDelNegocio?: string | null,
+): string {
+  const base = new Intl.DateTimeFormat("es-MX", {
     timeZone: zona,
     weekday: "short", day: "2-digit", month: "short",
     hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(iso));
+  return base + deQueHoraHablamos(zona, zonaDelNegocio, new Date(iso));
 }
 
 /**
@@ -3009,7 +3099,8 @@ function etiquetaEnZona(iso: string, zona: string): string {
 function comoSeLoDigo(
   iso: string | null | undefined,
   zona: string | null | undefined,
-): { dia: string; hora: string; etiqueta: string } | null {
+  zonaDelNegocio?: string | null,
+): { dia: string; hora: string; etiqueta: string; zona: string } | null {
   const t = String(iso ?? "").trim();
   if (!t || !zonaUsable(zona)) return null;
   const cuando = new Date(t);
@@ -3022,7 +3113,8 @@ function comoSeLoDigo(
     hora: new Intl.DateTimeFormat("es-MX", {
       timeZone: z, hour: "2-digit", minute: "2-digit", hour12: false,
     }).format(cuando),
-    etiqueta: etiquetaEnZona(t, z),
+    etiqueta: etiquetaEnZona(t, z, zonaDelNegocio),
+    zona: deQueHoraHablamos(z, zonaDelNegocio, cuando),
   };
 }
 
@@ -3040,11 +3132,14 @@ function comoSeLoDigo(
 function enLaZonaDelCliente<T extends { startISO: string; label: string }>(
   slots: T[] | null | undefined,
   zona: string | null | undefined,
+  zonaDelNegocio?: string | null,
 ): T[] {
   const lista = slots ?? [];
   if (!zonaUsable(zona)) return [...lista];
   const z = String(zona);
-  return lista.map((s) => (s?.startISO ? { ...s, label: etiquetaEnZona(s.startISO, z) } : s));
+  return lista.map((s) =>
+    s?.startISO ? { ...s, label: etiquetaEnZona(s.startISO, z, zonaDelNegocio) } : s,
+  );
 }
 
 type HorarioOfrecido = { iso: string; label: string };

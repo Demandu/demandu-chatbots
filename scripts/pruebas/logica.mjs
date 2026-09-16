@@ -60,6 +60,7 @@ import {
   TITULO_MAX,
   horarioQuePidio, diaQueDijo, horasQueDijo, horaDeLaEtiqueta, comoRecordarLosHorarios,
   comoSeLoDigo, enLaZonaDelCliente, etiquetaEnZona,
+  hayQueDecirLaZona, deQueHoraHablamos, nombreCortoDeZona,
 } from "../../src/lib/agendaHorarios.ts";
 import { loQueFaltaParaAgendar } from "../../src/lib/ai/agenda.ts";
 import {
@@ -8278,6 +8279,77 @@ describe("Decir que agendó sin agendar", () => {
     esperar(/confirmas|d[íi]a|hora/i.test(LA_CITA_NO_QUEDO)).verdadero(
       "no vuelve a pedir el día y la hora: deja la conversación muerta",
     );
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * DECIR DE QUÉ HORA ESTAMOS HABLANDO
+ *
+ * 16 sep 2026. Negocio en México, cliente en Panamá. El bot le ofreció «11:00»
+ * —su hora, correcta— y el correo de confirmación le dijo «10:00» —la del
+ * negocio, también correcta—. El mismo instante, dos números, y NINGUNO decía
+ * de qué huso hablaba. Desde fuera, la plataforma se contradijo a sí misma.
+ *
+ * En una clínica eso es un paciente que no llega.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("De qué hora estamos hablando", () => {
+  const MX = "America/Mexico_City";
+  const PA = "America/Panama";
+  const BO = "America/Bogota";
+  const LI = "America/Lima";
+
+  test("con dos husos de verdad, se dice", () => {
+    esperar(hayQueDecirLaZona(PA, MX)).verdadero("volvió a callarse la zona del caso real");
+    esperar(deQueHoraHablamos(PA, MX)).igual(" (hora de Panamá)");
+  });
+
+  test("con el mismo huso, SE CALLA", () => {
+    /* «10:00 (hora de México)» a un mexicano hablando con un negocio mexicano
+     * es ruido, y el ruido que sale en todos los mensajes se deja de leer. */
+    esperar(hayQueDecirLaZona(MX, MX)).falso("dice la zona cuando no hace falta");
+    esperar(deQueHoraHablamos(MX, MX)).igual("");
+  });
+
+  test("dos zonas con NOMBRE distinto y la MISMA hora tampoco se avisan", () => {
+    /* Bogotá y Lima marcan lo mismo. Comparar el nombre en vez de la hora
+     * inventaría una diferencia que la persona no ve en su reloj. */
+    esperar(hayQueDecirLaZona(BO, LI)).falso("inventó una diferencia que no existe");
+  });
+
+  test("sin saber una de las dos, no se inventa nada", () => {
+    for (const par of [[PA, null], [null, MX], ["", ""], [PA, "Marte/Olympus"]]) {
+      esperar(hayQueDecirLaZona(par[0], par[1])).falso(`se inventó una zona con ${JSON.stringify(par)}`);
+    }
+  });
+
+  test("el nombre es el que la gente reconoce, no el de la cadena", () => {
+    /* `America/Mexico_City` partido da «Mexico City», que en español se lee
+     * raro; y `America/Argentina/Buenos_Aires` da la ciudad cuando lo que la
+     * persona reconoce es el país. */
+    esperar(nombreCortoDeZona(MX)).igual("México");
+    esperar(nombreCortoDeZona(PA)).igual("Panamá");
+    esperar(nombreCortoDeZona("America/Argentina/Buenos_Aires")).igual("Argentina");
+    // Lo que no está en el mapa cae a la ciudad: mejor eso que no decir nada.
+    esperar(nombreCortoDeZona("Asia/Tokyo")).igual("Tokyo");
+    esperar(nombreCortoDeZona(null)).igual("");
+  });
+
+  test("la etiqueta del hueco lo lleva pegado", () => {
+    const iso = "2026-09-17T16:00:00.000Z"; // 11:00 en Panamá, 10:00 en México
+    esperar(etiquetaEnZona(iso, PA, MX).includes("hora de Panamá")).verdadero(
+      "el hueco vuelve a salir sin decir de qué huso es",
+    );
+    esperar(etiquetaEnZona(iso, MX, MX).includes("hora de")).falso("ensucia cuando no hace falta");
+  });
+
+  test("y la confirmación de la cita también", () => {
+    const iso = "2026-09-17T16:00:00.000Z";
+    const suyo = comoSeLoDigo(iso, PA, MX);
+    esperar(suyo?.hora).igual("11:00");
+    esperar(suyo?.zona).igual(" (hora de Panamá)");
+    // El mismo instante, contado al negocio: otra hora, y sin coletilla.
+    esperar(comoSeLoDigo(iso, MX, MX)?.hora).igual("10:00");
+    esperar(comoSeLoDigo(iso, MX, MX)?.zona).igual("");
   });
 });
 
