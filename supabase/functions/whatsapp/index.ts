@@ -986,6 +986,39 @@ function prometioUnaPersona(texto: string | null | undefined): boolean {
   return false;
 }
 
+/* ── GEMELO de `prometioUnaCita` en `src/lib/ai/promesas.ts` ────────────────
+ * Ahí está el porqué completo y las pruebas. Resumen: el 16 sep 2026 el modelo
+ * llamó a `agendar_cita` con una fecha inventada (enero de 2025), la
+ * plataforma la rechazó DOS VECES, y el modelo le escribió al paciente «Ahora
+ * sí, confirmando tu cita… ✅». Una regla estática compara los dos cuerpos. */
+const PROM_LA_CITA = "(?:cita|reserva|turno|consulta|espacio|lugar)";
+const PROM_YA_ESTA =
+  "(?:agendad[ao]|reservad[ao]|confirmad[ao]|registrad[ao]|apartad[ao]|" +
+  "separad[ao]|programad[ao]|list[ao]|qued[óo]|anot[ée]|" +
+  "agendando|reservando|confirmando|registrando|apartando|programando)";
+const PROM_YO_LA_HICE =
+  "(?:te|le|lo|la)\\s+(?:agend|reserv|confirm|registr|apart|separ|program)[ée]";
+const PROM_PATRONES_CITA = [
+  new RegExp(`${PROM_LA_CITA}[^.!?\\n]{0,70}${PROM_YA_ESTA}`, "i"),
+  new RegExp(`${PROM_YA_ESTA}[^.!?\\n]{0,70}${PROM_LA_CITA}`, "i"),
+  new RegExp(PROM_YO_LA_HICE, "i"),
+];
+
+const LA_CITA_NO_QUEDO =
+  "Perdón, me equivoqué: la cita **no** quedó registrada. 🙏\n\n" +
+  "¿Me confirmas otra vez el día y la hora que quieres? Así la dejo agendada de verdad y te llega la confirmación.";
+
+function prometioUnaCita(texto: string | null | undefined): boolean {
+  const t = String(texto ?? "").trim();
+  if (!t) return false;
+  for (const frase of t.split(/(?<=[.!?\n])/)) {
+    const f = frase.trim();
+    if (!f || PROM_SOLO_OFRECE.test(f)) continue;
+    if (PROM_PATRONES_CITA.some((p) => p.test(f))) return true;
+  }
+  return false;
+}
+
 const CASILLA_DE_LA_FICHA: Record<string, string> = {
   nombre: "name", name: "name", nombre_completo: "name",
   correo: "email", email: "email", mail: "email", correo_electronico: "email",
@@ -1725,6 +1758,7 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         // día y la hora en la zona del NEGOCIO, que es lo que necesita su
         // equipo; a quien escribe se le acaba de ofrecer la lista en la suya.
         const suyo = comoSeLoDigo(r.inicioISO ?? inicio, zonaDelTelefono(ctx.to));
+        ctx.citaAgendada = true;
         ctx.vars.cita_inicio = r.inicioISO ?? inicio;
         ctx.vars.cita_dia = suyo?.dia ?? r.dia ?? "";
         ctx.vars.cita_hora = suyo?.hora ?? r.hora ?? "";
@@ -1800,6 +1834,7 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           return `No se pudo mover: ${r?.error ?? "error desconocido"}. Ofrécele otra hora.`;
         }
         const movida = comoSeLoDigo(r.inicioISO, zonaDelTelefono(ctx.to));
+        ctx.citaAgendada = true;
         ctx.vars.cita_inicio = r.inicioISO ?? "";
         ctx.vars.cita_dia = movida?.dia ?? r.dia ?? "";
         ctx.vars.cita_hora = movida?.hora ?? r.hora ?? "";
@@ -2107,6 +2142,38 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
  * acción, el pase no es algo que se pueda hacer.
  */
 async function cumplirLoPrometido(ctx: any, texto: string, tools: any[]): Promise<string> {
+  /* SI DIJO QUE AGENDÓ Y NO AGENDÓ, SE DESMIENTE ANTES DE QUE SALGA.
+   *
+   * A diferencia del pase a humano, esto NO se puede cumplir: no sabemos qué
+   * hueco quería, y agendar el equivocado es peor que no agendar — el paciente
+   * llega un jueves que no era.
+   *
+   * Se SUSTITUYE el mensaje entero, no se le añade nada: un texto que dice
+   * «confirmada ✅» y tres líneas más abajo «perdón, no quedó» deja a la
+   * persona sin saber si tiene cita. Y se pasa a alguien del equipo, porque ya
+   * le dijimos a un paciente que tenía una cita que no existe. */
+  if (
+    !ctx.citaAgendada &&
+    tools.some((t: any) => t.name === "agendar_cita" || t.name === "reagendar_cita") &&
+    prometioUnaCita(texto)
+  ) {
+    console.log("[agente] dijo que agendó una cita SIN haberla agendado; se desmiente");
+    try {
+      await ctx.db.from("conversations").update({
+        status: "assigned",
+        handoff_requested_at: new Date().toISOString(),
+        handoff_reason: "El asistente dijo que agendó una cita y no se agendó",
+      }).eq("id", ctx.convId);
+      ctx.finMotivo = "agente";
+      ctx.pasoAHumano = true;
+    } catch (e) {
+      // Que falle el pase no puede impedir el desmentido: lo que no se
+      // negocia es que la mentira no salga.
+      console.error("[agente] no pude pasar la cita fallida a una persona:", e);
+    }
+    return LA_CITA_NO_QUEDO;
+  }
+
   if (ctx.pasoAHumano) return texto;
   if (!tools.some((t: any) => t.name === "pasar_a_humano")) return texto;
   if (!prometioUnaPersona(texto)) return texto;
@@ -3239,7 +3306,8 @@ async function agendarElegido(ctx: any, node: any, inicioISO: string): Promise<b
   });
 
   if (r?.ok) {
-    ctx.vars.cita_inicio = r.inicioISO ?? inicioISO;
+    ctx.citaAgendada = true;
+        ctx.vars.cita_inicio = r.inicioISO ?? inicioISO;
     ctx.vars.cita_enlace = r.enlace ?? "";
     ctx.vars.cita_ok = "true";
     // ── LO QUE SOBRA DEL INTENTO ANTERIOR SE BORRA ─────────────────────────

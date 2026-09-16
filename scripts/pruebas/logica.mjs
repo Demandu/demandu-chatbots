@@ -135,7 +135,7 @@ import { estadoDelCobro, VENTANA_COBRO_MIN } from "../../src/lib/tienda/cobro.ts
 import { aWhatsapp, telefonoUtil } from "../../src/lib/tienda/telefono.ts";
 import { metricasDeCliente, comoFrecuencia, SIN_COMPRAS } from "../../src/lib/tienda/metricas.ts";
 import { claveDeLinea, precioUnitario, totalDeLinea, totalDelCarrito, cuantasUnidades, faltaElegir, faltaContestar, textoDelPedido, enlaceDeWhatsapp } from "../../src/lib/tienda/pedido.ts";
-import { prometioUnaPersona } from "../../src/lib/ai/promesas.ts";
+import { prometioUnaPersona, prometioUnaCita, LA_CITA_NO_QUEDO } from "../../src/lib/ai/promesas.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
 import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
 import { paisDesdeTelefono, bandera, nombrePais } from "../../src/lib/phoneCountry.ts";
@@ -8214,6 +8214,70 @@ describe("La cabecera dice quién pasó la conversación", () => {
         miUserId: null, miMemberId: null, nombreDeQuienPaso: "Darwin",
       }),
     ).igual("la asignó Darwin");
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * EL BOT NO PUEDE DECIR QUE AGENDÓ SI NO AGENDÓ
+ *
+ * 16 sep 2026, en vivo, clínica fetal. El modelo llamó a `agendar_cita` con
+ * `2025-01-17T12:00:00` —enero de 2025, año y ocho meses en el pasado— porque
+ * se inventó la fecha. La plataforma la rechazó DOS VECES. Y el modelo le
+ * escribió al paciente: «Ahora sí, confirmando tu cita para el jueves 17 a las
+ * 12:00 ✅», y después le echó la culpa al correo por no llegar.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Decir que agendó sin agendar", () => {
+  test("caza la frase EXACTA que salió en producción", () => {
+    esperar(prometioUnaCita("Ahora sí, confirmando tu cita para el jueves 17 de septiembre a las 12:00. ✅")).verdadero(
+      "vuelve a pasar la mentira que ya le salió a un paciente",
+    );
+  });
+
+  test("el gerundio cuenta como hecho consumado", () => {
+    /* Se escapó en la primera versión de la regla, y era justo el caso real:
+     * «confirmando» en boca de un modelo no es una acción en curso. */
+    for (const t of [
+      "Perfecto, agendando tu consulta para mañana.",
+      "Listo, registrando tu cita.",
+    ]) {
+      esperar(prometioUnaCita(t)).verdadero(`se escapó: ${t}`);
+    }
+  });
+
+  test("y las formas normales de decirlo", () => {
+    for (const t of [
+      "Listo, tu cita quedó agendada para el jueves.",
+      "Te agendé el jueves a las 12.",
+      "Tu reserva está confirmada.",
+      "Ya te aparté el espacio.",
+    ]) {
+      esperar(prometioUnaCita(t)).verdadero(`se escapó: ${t}`);
+    }
+  });
+
+  test("NO desmiente lo que solo ofrece o pregunta", () => {
+    /* El fallo contrario cuesta igual: desmentir una cita buena hace que el
+     * paciente cancele una cita que sí existía. */
+    for (const t of [
+      "¿Quieres que te agende el jueves a las 12?",
+      "¿Confirmas tu cita para el jueves?",
+      "Puedo agendarte una cita si me dices la hora.",
+      "Voy a agendarte en cuanto me des tu correo.",
+      "Tenemos disponibilidad el jueves 17: 10:30, 11:00, 12:00.",
+      "Voy a consultar la disponibilidad para el ultrasonido.",
+      "",
+    ]) {
+      esperar(prometioUnaCita(t)).falso(`desmintió de más: ${t}`);
+    }
+  });
+
+  test("el desmentido no deja al paciente colgado", () => {
+    /* Un «no se pudo» a secas deja a alguien sin cita y sin saber qué hacer,
+     * que es exactamente donde se pierde. */
+    esperar(LA_CITA_NO_QUEDO.toLowerCase().includes("no")).verdadero("no dice que NO quedó");
+    esperar(/confirmas|d[íi]a|hora/i.test(LA_CITA_NO_QUEDO)).verdadero(
+      "no vuelve a pedir el día y la hora: deja la conversación muerta",
+    );
   });
 });
 

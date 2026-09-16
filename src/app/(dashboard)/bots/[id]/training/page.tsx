@@ -4,7 +4,7 @@ import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
 import { LanaSays } from "@/components/Lana";
 import { createClient } from "@/lib/supabase/server";
-import { addKnowledge, addKnowledgeSimple, deleteKnowledge, toggleKnowledge, updateKnowledge, importFromUrl, deleteSource } from "./actions";
+import { addKnowledge, addKnowledgeSimple, deleteKnowledge, toggleKnowledge, updateKnowledge, importFromUrl, importFromFile, deleteSource } from "./actions";
 import { AgregarConocimiento } from "@/components/bots/AgregarConocimiento";
 import { EntrenamientoNav, PESTANAS } from "@/components/bots/EntrenamientoNav";
 import { EntrenamientoResumen } from "@/components/bots/EntrenamientoResumen";
@@ -12,7 +12,8 @@ import { LoQueNoSupo, type Pregunta } from "@/components/settings/LoQueNoSupo";
 import { embeddingsConfigured } from "@/lib/ai/ingest";
 import { getStorage, formatBytes } from "@/lib/billing/quota";
 import { getCurrentOrgId } from "@/lib/org";
-import { BookOpen, Plus, Trash2, Globe, Download } from "lucide-react";
+import { BookOpen, Plus, Trash2, Globe, Download, FileText } from "lucide-react";
+import { SubirDocumento } from "@/components/bots/SubirDocumento";
 
 export const dynamic = "force-dynamic";
 
@@ -91,7 +92,10 @@ export default async function BotTrainingPage({
     });
     f.trozos++;
   }
-  const listaFuentes = Object.values(fuentes);
+  // Las web van a su pestaña y los documentos a la suya: mezclarlos hacía que
+  // borrar «el PDF de precios» hubiera que buscarlo entre quince páginas.
+  const listaFuentes = Object.values(fuentes).filter((f) => f.tipo !== "file");
+  const documentos = Object.values(fuentes).filter((f) => f.tipo === "file");
 
   // Solo las preguntas de ESTE chatbot: las de los demás distraen de lo que
   // hay que enseñarle a este.
@@ -198,6 +202,45 @@ export default async function BotTrainingPage({
         )}
 
         {/* ── Sitio web ─────────────────────────────────────────────────── */}
+        {activa === "archivos" && (
+          <div className="card-l max-w-3xl p-5">
+            <div className="mb-1 flex items-center gap-2">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet/15 text-violet">
+                <FileText className="h-4 w-4" />
+              </span>
+              <h3 className="font-display text-base font-semibold text-ink">Aprender de tus documentos</h3>
+            </div>
+            <p className="mb-3 text-xs text-ink-3">
+              Sube el PDF de precios, el Word de tus politicas o el CSV de tu catalogo. Tu chatbot lo lee y lo usa para
+              responder. Si vuelves a subir un archivo con el MISMO nombre, reemplaza al anterior.
+            </p>
+
+            <SubirDocumento botId={bot.id} orgId={await getCurrentOrgId()} accion={importFromFile} />
+
+            {documentos.length > 0 ? (
+              <div className="mt-4 border-t border-linea pt-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-3">Documentos cargados</p>
+                <div className="space-y-1.5">
+                  {documentos.map((f) => (
+                    <div key={f.nombre} className="flex items-center gap-2 rounded-lg bg-suave px-3 py-2">
+                      <FileText className="h-3.5 w-3.5 flex-none text-ink-3" />
+                      <span className="min-w-0 flex-1 truncate text-xs text-ink">{f.nombre}</span>
+                      <span className="flex-none text-[11px] text-ink-3">{f.trozos} fragmentos</span>
+                      <form action={deleteSource} className="flex-none">
+                        <input type="hidden" name="bot_id" value={bot.id} />
+                        <input type="hidden" name="source_name" value={f.nombre} />
+                        <button className="text-ink-3 transition hover:text-danger" title="Quitar este documento">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </form>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+
         {activa === "web" && (
           <div className="card-l max-w-3xl p-5">
             <div className="mb-1 flex items-center gap-2">

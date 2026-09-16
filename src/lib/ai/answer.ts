@@ -346,7 +346,7 @@ async function pensarRespuesta(opts: {
       // escribirlas — pero cuando por lo que sea no las tiene, las escribe, y
       // el cliente recibe «/agendar_cita hora: 9:00 AM…». Pasó en una demo.
       // Ver `sinMarcadores`.
-      const text = sinMarcadores(
+      let text = sinMarcadores(
         bloques
           .filter((c: any) => c?.type === "text")
           .map((c: any) => c.text)
@@ -371,7 +371,10 @@ async function pensarRespuesta(opts: {
       const pedidas = bloques.filter((c: any) => c?.type === "tool_use");
       if (j?.stop_reason !== "tool_use" || !pedidas.length || !opts.agente) {
         // Si prometió una persona y no la llamó, se cumple igual.
-        if (opts.agente) await cumplirLoPrometido(opts.agente, text, tools);
+        // Si prometió una persona y no la llamó, se cumple igual. Y si dijo
+        // que agendó una cita sin agendarla, se DESMIENTE: por eso ahora
+        // devuelve el texto —posiblemente otro— en vez de no devolver nada.
+        if (opts.agente) text = await cumplirLoPrometido(opts.agente, text, tools);
         // SIN TEXTO NO ES «no lo sé»: el modelo terminó sin decir nada, que es
         // una avería. Decirle al cliente «esa no me la sé» esconde el fallo.
         return text || caida("el modelo terminó sin escribir nada");

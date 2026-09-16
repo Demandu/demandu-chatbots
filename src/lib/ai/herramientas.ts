@@ -15,7 +15,7 @@ import {
 } from "@/lib/agendaHorarios";
 import { zonaDelTelefono } from "@/lib/zonaHoraria";
 import { emitir } from "@/lib/salidas";
-import { prometioUnaPersona } from "@/lib/ai/promesas";
+import { prometioUnaPersona, prometioUnaCita, LA_CITA_NO_QUEDO } from "@/lib/ai/promesas";
 import { correoParaLaCita } from "@/lib/ai/correoDeLaCita";
 import {
   tiendaDelBot, enlaceDelBot, productosQueSePuedenOfrecer, precioDelBot,
@@ -60,6 +60,8 @@ export type ContextoAgente = {
    * cara que puede poner un bot.
    */
   pasoAHumano: boolean;
+  /** Se enciende SOLO cuando el calendario confirmó. Ver `desmentirLaCita`. */
+  citaAgendada?: boolean;
   /**
    * La tienda que eligió el agente, si eligió alguna.
    *
@@ -713,10 +715,11 @@ export async function cumplirLoPrometido(
   ctx: ContextoAgente,
   texto: string,
   tools: any[],
-): Promise<void> {
-  if (ctx.pasoAHumano) return;
-  if (!tools.some((t) => t.name === "pasar_a_humano")) return;
-  if (!prometioUnaPersona(texto)) return;
+): Promise<string> {
+  const corregido = await desmentirLaCita(ctx, texto, tools);
+  if (ctx.pasoAHumano) return corregido;
+  if (!tools.some((t) => t.name === "pasar_a_humano")) return corregido;
+  if (!prometioUnaPersona(corregido)) return corregido;
 
   console.log("[agente] prometió una persona sin llamar a la herramienta; se hace el pase");
   try {
@@ -734,6 +737,45 @@ export async function cumplirLoPrometido(
   } catch (e) {
     console.error("[agente] no pude cumplir la promesa de pase:", e);
   }
+  return corregido;
+}
+
+/**
+ * SI DIJO QUE AGENDÓ Y NO AGENDÓ, SE DESMIENTE ANTES DE QUE SALGA.
+ *
+ * A diferencia del pase a humano, esto NO se puede cumplir: no sabemos qué
+ * hueco quería, y agendar el equivocado es peor que no agendar — el paciente
+ * llega un jueves que no era. Ver la cabecera de `prometioUnaCita`.
+ *
+ * Se devuelve un texto DISTINTO, no un añadido: un mensaje que dice
+ * «confirmada ✅» y tres líneas más abajo «perdón, no quedó» deja a la persona
+ * sin saber si tiene cita o no. Se sustituye entero.
+ *
+ * Y se pasa a una persona, porque a alguien ya le dijimos que tenía una cita.
+ */
+async function desmentirLaCita(
+  ctx: ContextoAgente,
+  texto: string,
+  tools: any[],
+): Promise<string> {
+  if (ctx.citaAgendada) return texto;
+  if (!tools.some((t) => t.name === "agendar_cita" || t.name === "reagendar_cita")) return texto;
+  if (!prometioUnaCita(texto)) return texto;
+
+  console.log("[agente] dijo que agendó una cita SIN haberla agendado; se desmiente");
+  try {
+    await ctx.admin.from("conversations").update({
+      status: "assigned",
+      handoff_requested_at: new Date().toISOString(),
+      handoff_reason: "El asistente dijo que agendó una cita y no se agendó",
+    }).eq("id", ctx.conversationId).eq("org_id", ctx.orgId);
+    ctx.pasoAHumano = true;
+  } catch (e) {
+    // Que falle el pase no puede impedir el desmentido: lo que no se negocia
+    // es que la mentira no salga.
+    console.error("[agente] no pude pasar la cita fallida a una persona:", e);
+  }
+  return LA_CITA_NO_QUEDO;
 }
 
 export async function ejecutarHerramienta(
@@ -920,6 +962,7 @@ export async function ejecutarHerramienta(
         const diaDicho = suyo?.dia ?? r.dia;
         const horaDicha = suyo?.hora ?? r.hora;
 
+        ctx.citaAgendada = true;
         ctx.vars.cita_inicio = r.inicioISO;
         ctx.vars.cita_dia = diaDicho;
         ctx.vars.cita_hora = horaDicha;
@@ -996,6 +1039,7 @@ export async function ejecutarHerramienta(
         }
 
         const movida = comoSeLoDigo(r.inicioISO, await zonaDeQuienEscribe(ctx));
+        ctx.citaAgendada = true;
         ctx.vars.cita_inicio = r.inicioISO;
         ctx.vars.cita_dia = movida?.dia ?? r.dia;
         ctx.vars.cita_hora = movida?.hora ?? r.hora;

@@ -66,3 +66,85 @@ export function prometioUnaPersona(texto: string | null | undefined): boolean {
   }
   return false;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ¿EL BOT ACABA DE DECIR QUE AGENDÓ UNA CITA?
+ *
+ * 16 sep 2026, visto en producción en una clínica fetal. El modelo llamó a
+ * `agendar_cita` con `2025-01-17T12:00:00` —enero de 2025, año y ocho meses en
+ * el pasado— porque se inventó la fecha. La plataforma hizo lo correcto: no
+ * reconoció esa hora entre las ofrecidas y se lo dijo. DOS VECES. Y el modelo,
+ * en vez de corregirse, le escribió al paciente:
+ *
+ *     «Ahora sí, confirmando tu cita para el jueves 17 a las 12:00. ✅»
+ *
+ * Y cuando el paciente contestó que no le llegaba el correo, el bot le echó la
+ * culpa al correo: «a veces tardan o caen en spam».
+ *
+ * ── POR QUÉ ESTO NO SE ARREGLA COMO EL PASE A HUMANO ───────────────────────
+ *
+ * Con `prometioUnaPersona` la salida es CUMPLIR: se hace el pase y ya. Aquí no
+ * se puede. No sabemos qué hueco quería, y agendar el equivocado es peor que no
+ * agendar: el paciente llega un jueves que no era y la agenda del negocio
+ * queda con basura. Lo único honesto es DESMENTIRLO antes de que salga.
+ *
+ * ── ES DELIBERADAMENTE ESTRECHO ────────────────────────────────────────────
+ *
+ * Desmentir una cita que SÍ se agendó sería el fallo contrario y igual de caro:
+ * el paciente cancelaría una cita buena. Por eso se exige una afirmación en
+ * pasado o presente sobre una cita —«quedó agendada», «tu cita está
+ * confirmada»— y se descarta todo lo que sea pregunta u ofrecimiento.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** La cosa: una cita, una reserva, un turno. */
+const LA_CITA = "(?:cita|reserva|turno|consulta|espacio|lugar)";
+
+/**
+ * Que ya está hecha. «Voy a agendarte» NO entra: eso es intención, no hecho.
+ *
+ * EL GERUNDIO SÍ ENTRA, y es el que se escapó en la primera versión de esta
+ * regla. La frase que de verdad salió en producción fue «Ahora sí, CONFIRMANDO
+ * tu cita para el jueves 17 a las 12:00 ✅» — que en boca de un modelo no es
+ * una acción en curso, es un hecho consumado. Sin el gerundio, esta regla no
+ * habría atrapado el único caso que ya sabemos que ocurrió.
+ */
+const YA_ESTA =
+  "(?:agendad[ao]|reservad[ao]|confirmad[ao]|registrad[ao]|apartad[ao]|" +
+  "separad[ao]|programad[ao]|list[ao]|qued[óo]|anot[ée]|" +
+  "agendando|reservando|confirmando|registrando|apartando|programando)";
+
+/** «Te agendé», «la confirmé»: el hecho en primera persona. */
+const YO_LA_HICE =
+  "(?:te|le|lo|la)\\s+(?:agend|reserv|confirm|registr|apart|separ|program)[ée]";
+
+const PATRONES_CITA = [
+  new RegExp(`${LA_CITA}[^.!?\\n]{0,70}${YA_ESTA}`, "i"),
+  new RegExp(`${YA_ESTA}[^.!?\\n]{0,70}${LA_CITA}`, "i"),
+  new RegExp(YO_LA_HICE, "i"),
+];
+
+/**
+ * Lo que dice la plataforma cuando el bot mintió.
+ *
+ * NO SE DISCULPA Y YA: vuelve a abrir la puerta. Un «no se pudo» a secas deja
+ * al paciente sin cita y sin saber qué hacer, que es justo donde se pierde.
+ */
+export const LA_CITA_NO_QUEDO =
+  "Perdón, me equivoqué: la cita **no** quedó registrada. 🙏\n\n" +
+  "¿Me confirmas otra vez el día y la hora que quieres? Así la dejo agendada de verdad y te llega la confirmación.";
+
+/**
+ * @param texto Lo que el bot acaba de escribir.
+ */
+export function prometioUnaCita(texto: string | null | undefined): boolean {
+  const t = String(texto ?? "").trim();
+  if (!t) return false;
+
+  for (const frase of t.split(/(?<=[.!?\n])/)) {
+    const f = frase.trim();
+    // Misma guarda que en el pase: una pregunta no afirma nada.
+    if (!f || SOLO_OFRECE.test(f)) continue;
+    if (PATRONES_CITA.some((p) => p.test(f))) return true;
+  }
+  return false;
+}

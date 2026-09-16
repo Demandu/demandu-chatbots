@@ -415,6 +415,54 @@ describe("La app tiene icono", () => {
   });
 });
 
+describe("El bot no puede decir que agendó sin agendar", () => {
+  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const lib = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/promesas.ts")?.texto ?? "");
+  const herr = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/herramientas.ts")?.texto ?? "");
+
+  test("los DOS motores saben detectarlo", () => {
+    /* WhatsApp corre en Deno y no puede importar de `src/`, así que hay dos
+     * cuerpos. Que uno se arregle y el otro no es exactamente cómo el fallo
+     * vuelve por el canal donde de verdad ocurrió. */
+    esperar(/function prometioUnaCita/.test(lib)).verdadero("la plataforma dejó de detectarlo");
+    esperar(/function prometioUnaCita/.test(wa)).verdadero("el motor de WhatsApp dejó de detectarlo");
+  });
+
+  test("y los dos detectan el GERUNDIO, que es el caso real", () => {
+    // «Ahora sí, CONFIRMANDO tu cita…» fue la frase que salió a un paciente.
+    for (const [donde, t] of [["la plataforma", lib], ["el motor", wa]]) {
+      esperar(/confirmando/.test(t)).verdadero(`${donde} volvió a dejar fuera el gerundio`);
+    }
+  });
+
+  test("la bandera se enciende SOLO cuando el calendario confirmó", () => {
+    /* Encenderla antes de llamar al calendario haría que la regla no pudiera
+     * detectar nada: todo sería «sí se agendó». */
+    for (const [donde, t] of [["la plataforma", herr], ["el motor", wa]]) {
+      esperar(/citaAgendada = true;\s*\n\s*ctx\.vars\.cita_inicio/.test(t)).verdadero(
+        `${donde} enciende la bandera lejos de donde el calendario respondió`,
+      );
+    }
+  });
+
+  test("se SUSTITUYE el mensaje, no se le añade una coletilla", () => {
+    /* «Confirmada ✅ … perdón, no quedó» deja a la persona sin saber si tiene
+     * cita. Por eso se devuelve el desmentido y nada más. */
+    for (const [donde, t] of [["la plataforma", herr], ["el motor", wa]]) {
+      esperar(/return LA_CITA_NO_QUEDO;/.test(t)).verdadero(`${donde} ya no sustituye el mensaje`);
+    }
+  });
+
+  test("y se pasa a una persona: a alguien le dijimos que tenía cita", () => {
+    for (const [donde, t] of [["la plataforma", herr], ["el motor", wa]]) {
+      esperar(/dijo que agend[óo] una cita y no se agend[óo]/.test(t)).verdadero(
+        `${donde} ya no avisa al equipo de la cita que no fue`,
+      );
+    }
+  });
+});
+
 describe("Motor de WhatsApp desplegado", () => {
   test("el archivo del repo declara su versión, para poder comparar con producción", () => {
     const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");

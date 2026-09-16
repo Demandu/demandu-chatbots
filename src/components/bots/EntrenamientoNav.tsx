@@ -24,7 +24,7 @@ export type Pestana = {
 export const PESTANAS: Pestana[] = [
   { clave: "resumen", titulo: "Resumen" },
   { clave: "web", titulo: "Sitio web" },
-  { clave: "archivos", titulo: "Archivos", pronto: true },
+  { clave: "archivos", titulo: "Archivos" },
   { clave: "sheets", titulo: "Google Sheets", pronto: true },
   { clave: "faqs", titulo: "Preguntas frecuentes", pronto: true },
   { clave: "fragmentos", titulo: "Fragmentos" },
