@@ -57,6 +57,7 @@ const GRUPOS: {
       { href: "/settings/states", label: "embudo", icon: KanbanSquare },
       { href: "/settings/tags", label: "etiquetas", icon: Tags },
       { href: "/settings/attributes", label: "atributos", icon: ListTree },
+      { href: "/settings/servicios", label: "servicios", icon: Clock },
       { href: "/settings/lead-groups", label: "gruposLeads", icon: UsersRound },
     ],
   },
