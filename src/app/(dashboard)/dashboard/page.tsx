@@ -5,20 +5,38 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { getUsage } from "@/lib/billing/usage";
 import { UsagePanel } from "@/components/billing/UsagePanel";
+import { ConfirmarZona } from "@/components/ConfirmarZona";
 import { Bot, MessagesSquare, BarChart3, Plus, ArrowRight } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function InicioPage() {
   const sb = createClient();
-  const [{ count: bots }, { count: convs }, { count: contacts }, { count: msgs }, usage] =
+  const orgId = await getCurrentOrgId();
+  const [
+    { count: bots },
+    { count: convs },
+    { count: contacts },
+    { count: msgs },
+    usage,
+    { data: org, error: errOrg },
+  ] =
     await Promise.all([
       sb.from("bots").select("id", { count: "exact", head: true }),
       sb.from("conversations").select("id", { count: "exact", head: true }),
       sb.from("contacts").select("id", { count: "exact", head: true }),
       sb.from("messages").select("id", { count: "exact", head: true }),
-      getUsage(sb, await getCurrentOrgId()),
+      getUsage(sb, orgId),
+      // Para el aviso de zona horaria de abajo. Ver el comentario de ahi.
+      orgId
+        ? sb.from("organizations").select("timezone, zona_confirmada").eq("id", orgId).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
     ]);
+
+  // Si esta consulta falla, el aviso de zona horaria no se pinta y el negocio
+  // se queda sin saber por que su bot no agenda. Callarlo aqui seria dejar el
+  // fallo original escondido detras de un segundo fallo mudo.
+  if (errOrg) console.error("[inicio] no pude leer la zona del negocio:", errOrg.message);
 
   const noBots = (bots ?? 0) === 0;
 
@@ -57,6 +75,27 @@ export default async function InicioPage() {
     <>
       <Topbar crumb={<span className="font-semibold text-white">Inicio</span>} />
       <div className="min-h-0 flex-1 overflow-auto pb-[env(safe-area-inset-bottom)] bg-canvas p-4 sm:p-6 lg:p-8 text-ink">
+        {/* ── ¿EN QUÉ HORA ESTÁN TUS CITAS? ─────────────────────────────────
+            El aviso existía desde hace semanas, pero SOLO se pintaba dentro de
+            Chatbots → IA → Agenda. Cuatro de seis cuentas llegaron a producción
+            con `timezone` en null porque nunca entraron a esa pantalla.
+
+            Sin zona, `horariosLibres` devuelve SIN_ZONA y el asistente no
+            ofrece ni agenda nada — que es lo correcto, pero es silencioso: el
+            negocio ve un bot que «no agenda» y no tiene dónde enterarse de por
+            qué. Por eso el aviso se pide AQUÍ, que es donde aterriza todo el
+            mundo al entrar, y no en una pantalla a la que hay que saber ir.
+
+            No hace falta condicionarlo: el propio componente se esconde solo en
+            cuanto la zona está confirmada, y esa decisión vive en un único
+            sitio a propósito. */}
+        {org && (
+          <ConfirmarZona
+            guardada={((org as any).timezone as string) ?? null}
+            confirmada={(org as any).zona_confirmada === true}
+          />
+        )}
+
         {/* Hero con Lana */}
         <div className="mb-7 flex flex-wrap items-center justify-between gap-6 rounded-3xl border border-[#e7e2fb] bg-gradient-to-br from-white to-[#f3efff] p-7">
           <div className="max-w-xl">

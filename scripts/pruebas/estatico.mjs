@@ -10465,4 +10465,80 @@ describe("Las herramientas de la IA existen de verdad", () => {
   });
 });
 
+
+// ─── La zona horaria llega a quien no la ha puesto ───────────────────────────
+describe("El aviso de zona horaria llega a quien todavía no la puso", () => {
+  /* ── VISTO EN PRODUCCIÓN EL 17 SEP 2026 ───────────────────────────────────
+   *
+   * CUATRO de las SEIS cuentas de producción tenían `timezone` en null. El
+   * aviso que la pregunta llevaba semanas escrito y funcionaba perfectamente:
+   * lo que estaba mal era DÓNDE vivía. Solo se pintaba dentro de
+   * Chatbots → IA → Agenda, y a esa pantalla no entra quien todavía no tiene
+   * un chatbot con agenda — que es justo la cuenta a la que hay que
+   * preguntarle.
+   *
+   * La otra mitad del asunto: sin zona, `agenda.ts` devuelve SIN_ZONA y el
+   * asistente NO ofrece ni agenda nada. Eso es lo correcto —una hora inventada
+   * es peor que un silencio— pero es MUDO: el negocio ve un bot que «no
+   * agenda» y no tiene dónde enterarse de por qué.
+   *
+   * Las dos mitades se sostienen la una a la otra. Si se cae el aviso, el
+   * silencio no tiene explicación. Si se cae la negativa, volvemos al bug de
+   * Panamá: citas ofrecidas una hora corridas. Por eso las dos se prueban
+   * aquí, juntas. */
+  const leer = (r) => ARCHIVOS.find((a) => a.ruta === r)?.texto ?? "";
+  const inicio = sinComentarios(leer("src/app/(dashboard)/dashboard/page.tsx"));
+  const comp = sinComentarios(leer("src/components/ConfirmarZona.tsx"));
+  const agenda = sinComentarios(leer("src/lib/agenda.ts"));
+
+  test("se pide en Inicio, que es donde aterriza todo el mundo", () => {
+    esperar(/<ConfirmarZona\b/.test(inicio)).verdadero(
+      "Inicio dejó de pedir la zona horaria: una cuenta nueva ya no tiene dónde enterarse",
+    );
+  });
+
+  test("y los dos datos salen de la base, no escritos a mano", () => {
+    /* Sin `zona_confirmada` el aviso saldría en CADA visita a Inicio y pasaría
+     * a ser decorado —y entonces tampoco serviría para el siguiente problema—.
+     * Sin `timezone` no podría avisar de que la guardada no es la de este
+     * equipo, que es el caso que de verdad hace daño. */
+    esperar(/select\(\s*["']timezone,\s*zona_confirmada["']\s*\)/.test(inicio)).verdadero(
+      "Inicio ya no lee timezone y zona_confirmada de organizations",
+    );
+    esperar(/confirmada=\{\s*\(org as any\)\.zona_confirmada === true\s*\}/.test(inicio)).verdadero(
+      "la confirmación de Inicio dejó de salir de la base: el aviso se esconde o se queda pegado",
+    );
+    esperar(/guardada=\{/.test(inicio)).verdadero("Inicio dejó de pasarle la zona guardada");
+  });
+
+  test("y si la consulta falla, se dice: un aviso que no sale sin motivo es peor", () => {
+    esperar(/errOrg/.test(inicio)).verdadero(
+      "la lectura de la zona en Inicio volvió a tragarse su error",
+    );
+  });
+
+  test("el aviso se esconde solo al confirmarlo, que es lo que permite ponerlo en Inicio", () => {
+    esperar(/if\s*\(confirmada\s*\|\|\s*listo\)\s*return null;/.test(comp)).verdadero(
+      "ConfirmarZona dejó de esconderse solo: en Inicio saldría en todas las visitas",
+    );
+  });
+
+  test("la agenda sigue negándose a ofrecer y a agendar sin zona, en TODOS sus caminos", () => {
+    /* Se cuenta CADA CAMINO, no el patrón una vez. Con un solo `includes` se
+     * pueden romper cuatro de los cinco y la regla seguiría en verde — que es
+     * exactamente como una regla deja de proteger algo sin avisar.
+     *
+     * Si añades un camino nuevo a la agenda, este número sube a mano y a
+     * propósito: te obliga a mirar si el camino nuevo también se niega. */
+    esperar((agenda.match(/sinZona:\s*true/g) ?? []).length).igual(
+      2,
+      "un camino de «ver horarios» dejó de negarse cuando no hay zona horaria",
+    );
+    esperar((agenda.match(/return SIN_ZONA/g) ?? []).length).igual(
+      3,
+      "un camino de «agendar» o «mover» dejó de negarse cuando no hay zona horaria",
+    );
+  });
+});
+
 process.exit(await correrPruebas());
