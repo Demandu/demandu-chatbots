@@ -10541,4 +10541,140 @@ describe("El aviso de zona horaria llega a quien todavía no la puso", () => {
   });
 });
 
+
+// ─── Las tareas programadas llaman a alguien que las reconoce ──────────────
+describe("Cada tarea programada llama a una ruta que la reconoce", () => {
+  /* ── YA PASÓ, Y COSTÓ CUATRO MESES ───────────────────────────────
+   *
+   * La tarea de Google Sheets estuvo desde el 22 de agosto llamando cada dos
+   * minutos con el texto de ejemplo «PEGA_AQUI_TU_SECRETO»: 4.859 intentos,
+   * 4.859 rechazos — y el registro del cron decía «succeeded» cada vez, porque
+   * el SQL sí corría. Lo que fallaba era la petición HTTP, y eso no se ve.
+   *
+   * El propósito del ticket es ahora la pieza que puede desalinearse igual: la
+   * base manda «recordatorios_cita» y la ruta espera «recordatorio_citas», todo
+   * devuelve 401 para siempre, y NADIE se entera — porque lo que falta no es un
+   * error, es un mensaje que nunca sale.
+   *
+   * Se lee la ÚLTIMA migración que programa cada tarea, que es la que manda. */
+  const MIGR = path.join(RAIZ, "supabase/migrations");
+  const archivosSql = fs.existsSync(MIGR)
+    ? fs.readdirSync(MIGR).filter((f) => f.endsWith(".sql")).sort()
+    : [];
+
+  // Por nombre de tarea, y gana la migración más nueva.
+  const porNombre = new Map();
+  for (const f of archivosSql) {
+    const texto = fs.readFileSync(path.join(MIGR, f), "utf8");
+    for (const m of texto.matchAll(
+      /cron\.schedule\(\s*'([^']+)'[\s\S]{0,600}?url\s*:=\s*'([^']+)'[\s\S]{0,400}?nuevo_ticket_de_cron\('([^']+)'\)/g,
+    )) {
+      porNombre.set(m[1], { tarea: m[1], url: m[2], proposito: m[3], migracion: f });
+    }
+  }
+  const tareas = [...porNombre.values()];
+
+  test("hay tareas con ticket que revisar", () => {
+    // Sin esto, el día que el patrón del SQL cambie la regla se quedaría
+    // revisando una lista vacía y diciendo que todo está bien.
+    esperar(tareas.length >= 3).verdadero(
+      `solo encontré ${tareas.length} tareas con ticket: el patrón del SQL cambió y esta regla dejó de mirar nada`,
+    );
+  });
+
+  test("la ruta existe y espera EXACTAMENTE el mismo propósito", () => {
+    const malas = [];
+    for (const t of tareas) {
+      let camino;
+      try {
+        camino = new URL(t.url).pathname;
+      } catch {
+        malas.push(`${t.tarea}: la url «${t.url}» no se entiende`);
+        continue;
+      }
+      const ruta = `src/app${camino}/route.ts`;
+      const archivo = ARCHIVOS.find((a) => a.ruta === ruta);
+      if (!archivo) {
+        malas.push(`${t.tarea} (${t.migracion}): llama a ${camino} y no existe ${ruta}`);
+        continue;
+      }
+      const m = /llamadaDeTareaProgramada\(\s*req\s*,\s*["']([^"']+)["']/.exec(
+        sinComentarios(archivo.texto),
+      );
+      if (!m) {
+        malas.push(`${ruta}: no comprueba el ticket, así que la puede llamar cualquiera`);
+        continue;
+      }
+      if (m[1] !== t.proposito) {
+        malas.push(`${ruta}: espera «${m[1]}» y el cron manda «${t.proposito}»`);
+      }
+    }
+    esperar(malas.join(" | ")).igual("", "una tarea programada llama a una puerta que no le abre");
+  });
+});
+
+// ─── El recordatorio se manda desde un solo sitio ──────────────────────
+describe("El recordatorio de una cita se manda desde un solo sitio", () => {
+  /* Lo mandan DOS: el botón del calendario y la tarea programada. Copiar el
+   * envío habría dado dos recordatorios distintos — uno que comprueba el
+   * teléfono y otro que se olvida, uno que apunta el fallo y otro que se lo
+   * traga. Es la familia de fallo que más veces ha costado algo en este repo. */
+  const leer = (r) => sinComentarios(ARCHIVOS.find((a) => a.ruta === r)?.texto ?? "");
+  const boton = leer("src/app/(dashboard)/calendario/recordar.ts");
+  const tarea = leer("src/app/api/citas/recordar/route.ts");
+  const remitente = leer("src/lib/agenda/mandarElRecordatorio.ts");
+
+  test("los dos caminos llaman al MISMO remitente", () => {
+    esperar(/mandarElRecordatorio\(/.test(boton)).verdadero(
+      "el botón del calendario dejó de usar el remitente común",
+    );
+    esperar(/mandarElRecordatorio\(/.test(tarea)).verdadero(
+      "la tarea programada dejó de usar el remitente común",
+    );
+  });
+
+  test("y NINGUNO de los dos vuelve a hablar con Meta por su cuenta", () => {
+    /* Es lo que de verdad caza la copia: se puede seguir llamando al remitente
+     * y haber pegado el envío al lado «solo para este caso». */
+    esperar(/enviarPlantilla\(/.test(boton)).falso(
+      "el botón del calendario volvió a mandar la plantilla por su cuenta",
+    );
+    esperar(/enviarPlantilla\(/.test(tarea)).falso(
+      "la tarea programada volvió a mandar la plantilla por su cuenta",
+    );
+    esperar(/enviarPlantilla\(/.test(remitente)).verdadero(
+      "el remitente común dejó de mandar la plantilla",
+    );
+  });
+
+  test("la ventana no se escribe dos veces: la tarea importa los números", () => {
+    /* Con las 24 horas escritas a mano en la consulta, cambiar `AVISO_HORAS`
+     * dejaría el SQL trayendo unas citas y la regla descartando otras — y el
+     * negocio vería recordatorios a horas que nadie eligió. */
+    esperar(/from "@\/lib\/agenda\/cuandoRecordar"/.test(tarea)).verdadero(
+      "la tarea dejó de sacar la ventana de cuandoRecordar",
+    );
+    esperar(/ventanaDeLaTarea\(/.test(tarea)).verdadero("la tarea se calcula la ventana por su cuenta");
+    esperar(/interval\s*'|24\s*\*\s*60|hours?'/.test(tarea)).falso(
+      "la tarea tiene una ventana escrita a mano en vez de importarla",
+    );
+  });
+
+  test("el tope de intentos y el candado siguen en su sitio", () => {
+    /* Sin tope, una plantilla no aprobada convierte esto en una tormenta de
+     * rechazos cada diez minutos y Meta le baja la calidad al número — lo que
+     * afecta a TODOS los mensajes del negocio, no solo a estos.
+     *
+     * Y el candado: subir el contador comparando contra lo leído es lo que
+     * impide que dos vueltas solapadas manden dos veces a la misma persona. */
+    esperar(/TOPE_INTENTOS/.test(tarea)).verdadero("la tarea dejó de limitar los intentos");
+    esperar(/\.eq\("recordatorio_intentos", intentosLeidos\)/.test(remitente)).verdadero(
+      "el candado de intentos se cayó: dos vueltas solapadas mandarían dos recordatorios",
+    );
+    esperar(/\.is\("recordatorio_enviado_at", null\)/.test(remitente)).verdadero(
+      "el remitente dejó de comprobar que no estuviera ya mandado al tomarla",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

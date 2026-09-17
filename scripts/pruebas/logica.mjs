@@ -14,6 +14,10 @@ import {
 import {
   cuantoDura, minutosQueOcupa, loQueSeCongela, servicioQuePidio, comoSeLosOfrezco,
 } from "../../src/lib/duracionDeLaCita.ts";
+import {
+  porQueNoSeRecuerda, tocaRecordar, ventanaDeLaTarea, EN_PALABRAS,
+  AVISO_HORAS, MARGEN_MINIMO_MIN, REPOSO_MIN, TOPE_INTENTOS,
+} from "../../src/lib/agenda/cuandoRecordar.ts";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
@@ -8620,6 +8624,142 @@ describe("El horario lo dice la configuración, no el entrenamiento", () => {
     esperar(abiertoAhora(H, "America/Mexico_City", new Date("2026-09-15T16:00:00Z"))).igual(true);
     // Ese mismo martes a las 20:00 de México ya cerró.
     esperar(abiertoAhora(H, "America/Mexico_City", new Date("2026-09-16T02:00:00Z"))).igual(false);
+  });
+});
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * ¿A QUIÉN LE TOCA RECORDATORIO?
+ *
+ * La máquina del recordatorio estaba entera menos QUIÉN la dispara: había doce
+ * tareas programadas y ninguna miraba `citas`. Ahora hay una, y lo único que de
+ * verdad puede equivocarse es a quién elige — y se equivoca en silencio. Una
+ * cita recordada de más molesta; una recordada de menos deja a alguien
+ * plantado.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("A quién le toca el recordatorio de su cita", () => {
+  const AHORA = new Date("2026-09-17T15:00:00Z");
+  const enHoras = (h) => new Date(AHORA.getTime() + h * 3_600_000).toISOString();
+  // Una cita normal: mañana, agendada hace tres días.
+  const cita = (extra = {}) => ({
+    inicio: enHoras(20),
+    creada_at: enHoras(-72),
+    estado: "agendada",
+    recordatorio_enviado_at: null,
+    recordatorio_intentos: 0,
+    ...extra,
+  });
+
+  test("a la de mañana sí, y a la de la semana que viene todavía no", () => {
+    esperar(tocaRecordar(cita(), AHORA)).verdadero("no recuerda una cita de dentro de 20 horas");
+    esperar(porQueNoSeRecuerda(cita({ inicio: enHoras(72) }), AHORA)).igual("todavia_falta");
+  });
+
+  test("EL BORDE DE LAS 24 HORAS, por los dos lados", () => {
+    /* Una regla que solo se prueba por el centro no prueba nada: el fallo vive
+     * siempre en el minuto de antes y el de después. */
+    esperar(tocaRecordar(cita({ inicio: enHoras(AVISO_HORAS) }), AHORA)).verdadero(
+      "justo a las 24 horas debería tocarle",
+    );
+    const unPocoMas = new Date(AHORA.getTime() + AVISO_HORAS * 3_600_000 + 60_000).toISOString();
+    esperar(porQueNoSeRecuerda(cita({ inicio: unPocoMas }), AHORA)).igual("todavia_falta");
+  });
+
+  test("y el borde de «ya casi empieza»", () => {
+    // A 40 minutos, quien iba a ir ya va de camino: el mensaje solo gasta
+    // un envío y la paciencia de la persona.
+    esperar(porQueNoSeRecuerda(cita({ inicio: enHoras(0.66) }), AHORA)).igual("ya_casi_empieza");
+    const justo = new Date(AHORA.getTime() + MARGEN_MINIMO_MIN * 60_000).toISOString();
+    esperar(tocaRecordar(cita({ inicio: justo }), AHORA)).verdadero(
+      "justo a los 60 minutos debería tocarle",
+    );
+  });
+
+  test("a la que se acaba de agendar NO se le recuerda a los dos minutos", () => {
+    /* EL CASO QUE SE ESCAPA SOLO. Quien agenda hoy para esta tarde entra en la
+     * ventana de 24 horas al instante, y recibiría «te recordamos tu cita» dos
+     * minutos después de agendarla. Se lee como un error del sistema, y lo es. */
+    esperar(
+      porQueNoSeRecuerda(cita({ inicio: enHoras(5), creada_at: enHoras(-0.1) }), AHORA),
+    ).igual("recien_agendada");
+    // Pasada la hora de reposo, ya sí.
+    const reposada = new Date(AHORA.getTime() - REPOSO_MIN * 60_000 - 1000).toISOString();
+    esperar(tocaRecordar(cita({ inicio: enHoras(5), creada_at: reposada }), AHORA)).verdadero(
+      "pasada la hora de reposo debería tocarle",
+    );
+  });
+
+  test("sin fecha de alta NO se frena: las citas viejas no la tienen", () => {
+    // Callarse para siempre con las citas anteriores a esta columna sería
+    // cambiar un fallo por otro peor.
+    esperar(tocaRecordar(cita({ creada_at: null }), AHORA)).verdadero(
+      "una cita sin fecha de alta dejó de recordarse",
+    );
+  });
+
+  test("cancelada, ya recordada, o ya pasada: no", () => {
+    esperar(porQueNoSeRecuerda(cita({ estado: "cancelada" }), AHORA)).igual("cancelada");
+    esperar(porQueNoSeRecuerda(cita({ estado: "CANCELADA " }), AHORA)).igual(
+      "cancelada",
+      "el estado con mayúsculas o espacios debería contar igual",
+    );
+    esperar(porQueNoSeRecuerda(cita({ recordatorio_enviado_at: enHoras(-1) }), AHORA)).igual("ya_se_mando");
+    esperar(porQueNoSeRecuerda(cita({ inicio: enHoras(-2) }), AHORA)).igual("ya_paso");
+  });
+
+  test("EL TOPE DE INTENTOS FRENA, y eso protege el número del negocio", () => {
+    /* Si la plantilla no está aprobada en Meta, TODOS los envíos fallan igual.
+     * Sin tope, una tarea cada diez minutos es una tormenta de rechazos, y Meta
+     * le baja la calidad al número — lo que afecta a todos sus mensajes. */
+    esperar(tocaRecordar(cita({ recordatorio_intentos: TOPE_INTENTOS - 1 }), AHORA)).verdadero(
+      "con un intento de margen todavía debería intentarlo",
+    );
+    esperar(porQueNoSeRecuerda(cita({ recordatorio_intentos: TOPE_INTENTOS }), AHORA)).igual("muchos_intentos");
+    esperar(porQueNoSeRecuerda(cita({ recordatorio_intentos: 99 }), AHORA)).igual("muchos_intentos");
+  });
+
+  test("una fecha rota se calla, no se cuenta como «ya pasó»", () => {
+    // Tratarla como pasada la escondería; con su propio nombre se puede buscar.
+    esperar(porQueNoSeRecuerda(cita({ inicio: "banana" }), AHORA)).igual("fecha_rota");
+    esperar(porQueNoSeRecuerda(cita({ inicio: "" }), AHORA)).igual("fecha_rota");
+  });
+
+  test("EL BOTÓN DEL CALENDARIO manda ahora, pero no se salta lo que protege", () => {
+    /* Quien pulsa el botón eligió: que falten tres días o que la cita se acabe
+     * de agendar es asunto suyo. Lo que NO puede saltarse es lo que protege a la
+     * otra persona o al número. */
+    const aMano = { aMano: true };
+    esperar(porQueNoSeRecuerda(cita({ inicio: enHoras(72) }), AHORA, aMano)).igual(null);
+    esperar(porQueNoSeRecuerda(cita({ inicio: enHoras(2), creada_at: enHoras(-0.05) }), AHORA, aMano)).igual(null);
+    esperar(porQueNoSeRecuerda(cita({ inicio: enHoras(0.2) }), AHORA, aMano)).igual(null);
+    // Y lo que sigue frenando igual:
+    esperar(porQueNoSeRecuerda(cita({ estado: "cancelada" }), AHORA, aMano)).igual("cancelada");
+    esperar(porQueNoSeRecuerda(cita({ recordatorio_enviado_at: enHoras(-1) }), AHORA, aMano)).igual("ya_se_mando");
+    esperar(porQueNoSeRecuerda(cita({ inicio: enHoras(-2) }), AHORA, aMano)).igual("ya_paso");
+    esperar(porQueNoSeRecuerda(cita({ recordatorio_intentos: TOPE_INTENTOS }), AHORA, aMano)).igual("muchos_intentos");
+  });
+
+  test("la ventana que pide la tarea a la base cuadra con la regla", () => {
+    /* SI SE SEPARAN, la consulta trae unas citas y la regla descarta otras — y
+     * el negocio ve recordatorios a horas que nadie eligió. */
+    const { desde, hasta } = ventanaDeLaTarea(AHORA);
+    esperar(tocaRecordar(cita({ inicio: desde }), AHORA)).verdadero("el borde de abajo de la ventana se cae");
+    esperar(tocaRecordar(cita({ inicio: hasta }), AHORA)).verdadero("el borde de arriba de la ventana se cae");
+    // Y justo fuera, por los dos lados, no.
+    const antes = new Date(Date.parse(desde) - 60_000).toISOString();
+    const despues = new Date(Date.parse(hasta) + 60_000).toISOString();
+    esperar(tocaRecordar(cita({ inicio: antes }), AHORA)).falso("trae citas que empiezan demasiado pronto");
+    esperar(tocaRecordar(cita({ inicio: despues }), AHORA)).falso("trae citas de pasado mañana");
+  });
+
+  test("cada «no» tiene palabras, porque el negocio va a preguntar", () => {
+    // «No tocaba» no es una respuesta a «¿por qué a esta no le llegó?».
+    const motivos = [
+      "fecha_rota", "cancelada", "ya_se_mando", "muchos_intentos",
+      "ya_paso", "ya_casi_empieza", "recien_agendada", "todavia_falta",
+    ];
+    const sinTexto = motivos.filter((m) => !EN_PALABRAS[m] || EN_PALABRAS[m].length < 10);
+    esperar(sinTexto.join(", ")).igual("", "un motivo se quedó sin explicación legible");
   });
 });
 
