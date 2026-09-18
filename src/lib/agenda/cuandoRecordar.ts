@@ -55,6 +55,47 @@ export const REPOSO_MIN = 60;
  */
 export const TOPE_INTENTOS = 3;
 
+/**
+ * La ventana en la que WhatsApp deja escribir sin plantilla.
+ *
+ * Son 24 horas desde el ÚLTIMO MENSAJE DE LA PERSONA, no desde el último
+ * nuestro: contestarle no la reabre.
+ */
+export const VENTANA_LIBRE_MIN = 24 * 60;
+
+/**
+ * ¿Este recordatorio sale como mensaje normal o como plantilla?
+ *
+ * ── POR QUÉ MERECE LA PENA DISTINGUIRLO ───────────────────────────────────
+ *
+ * Si la persona escribió hace menos de 24 horas, se le puede mandar un mensaje
+ * normal con los mismos dos botones. Eso:
+ *
+ *   · cubre las citas del MISMO DÍA, que son las que más se olvidan;
+ *   · funciona aunque Meta todavía no haya aprobado la plantilla — que es
+ *     justo el hueco en el que se cae un cliente recién dado de alta;
+ *   · y sale más barato, porque dentro de la ventana no es un mensaje iniciado
+ *     por el negocio.
+ *
+ * ── ANTE LA DUDA, PLANTILLA ───────────────────────────────────────────────
+ *
+ * Sin fecha del último mensaje, o con una fecha que no se entiende, se manda
+ * plantilla. Equivocarse hacia la plantilla cuesta unos milésimos de dólar;
+ * equivocarse hacia el mensaje libre es un rechazo de Meta y un recordatorio
+ * que no sale.
+ */
+export function comoSeManda(
+  ultimoEntranteISO: string | null | undefined,
+  ahora: Date = new Date(),
+): "libre" | "plantilla" {
+  const t = Date.parse(String(ultimoEntranteISO ?? ""));
+  if (!Number.isFinite(t)) return "plantilla";
+  const pasado = ahora.getTime() - t;
+  // Un mensaje con fecha futura es un reloj mal puesto, no una ventana abierta.
+  if (pasado < 0) return "plantilla";
+  return pasado < VENTANA_LIBRE_MIN * 60_000 ? "libre" : "plantilla";
+}
+
 export type CitaParaRecordar = {
   inicio: string;
   creada_at?: string | null;

@@ -10677,4 +10677,118 @@ describe("El recordatorio de una cita se manda desde un solo sitio", () => {
   });
 });
 
+
+// ─── Las plantillas de la casa se aseguran solas ─────────────────────
+describe("El estado de las plantillas no vuelve a ser una foto vieja", () => {
+  /* ── MEDIDO EN PRODUCCIÓN EL 17 SEP 2026 ─────────────────────────
+   *
+   * `whatsapp_templates` solo se llenaba cuando una PERSONA abría la pantalla
+   * de Difusiones y pulsaba «sincronizar». Nadie lo hace. Resultado: una cuenta
+   * tenía SIETE plantillas guardadas como PENDING desde hacía seis días que en
+   * Meta llevaban seis días aprobadas, y la del recordatorio de cita —aprobada
+   * en Meta— no estaba guardada siquiera.
+   *
+   * Un estado que miente es peor que no tenerlo: la plataforma decide con él si
+   * puede mandar, y el negocio lee en pantalla algo que no es. */
+  const leer = (r) => sinComentarios(ARCHIVOS.find((a) => a.ruta === r)?.texto ?? "");
+  const motor = sinComentarios(
+    fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+  );
+  const sinc = leer("src/lib/whatsapp/sincronizarPlantillas.ts");
+  const tarea = leer("src/app/api/plantillas/asegurar/route.ts");
+  const casa = leer("src/lib/whatsapp/mandarDeLaCasa.ts");
+  const pantalla = leer("src/lib/whatsapp/comoVanLasPlantillas.ts");
+
+  test("el motor atiende el aviso de Meta cuando cambia una plantilla", () => {
+    esperar(/handleEstadoDePlantilla\(/.test(motor)).verdadero(
+      "el motor dejó de escuchar los avisos de plantillas de Meta",
+    );
+    esperar(/campo\.startsWith\("message_template_"\)/.test(motor)).verdadero(
+      "el motor ya no reparte los avisos de plantilla",
+    );
+  });
+
+  test("Y SE REPARTE ANTES DE BUSCAR UN MENSAJE, que es donde se perdían", () => {
+    /* Estos avisos no traen ningún mensaje. Puestos después, caen en el
+     * `if (!msg) return ok` y se pierden en silencio — que es exactamente lo
+     * que pasaba hasta hoy. El orden ES la corrección. */
+    const reparto = motor.indexOf('campo.startsWith("message_template_")');
+    const salida = motor.indexOf("if (!msg) return json({ ok: true });");
+    esperar(reparto > 0 && salida > 0).verdadero("no encuentro los dos puntos que comparar");
+    esperar(reparto < salida).verdadero(
+      "el aviso de plantilla se reparte DESPUÉS de descartar por falta de mensaje: se pierde",
+    );
+  });
+
+  test("y no se inventa un estado que Meta no mandó", () => {
+    // Un aviso de categoría no trae estado. Rellenarlo con lo que hubiera es
+    // adivinar, y adivinar es justo lo que esto vino a arreglar.
+    esperar(/message_template_category_update/.test(motor)).verdadero(
+      "el motor dejó de enterarse de las recategorizaciones de Meta, que cuestan dinero",
+    );
+  });
+
+  test("traerse la lista de Meta se hace en UN solo sitio", () => {
+    /* El botón de la pantalla y la tarea programada hacen lo mismo. Dos copias
+     * se separan, y la que se quede atrás seguirá escribiendo estados viejos
+     * encima de los buenos. */
+    const culpables = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta === "src/lib/whatsapp/sincronizarPlantillas.ts") continue;
+      const t = sinComentarios(texto);
+      // Pedir la lista Y guardarla: eso es una segunda copia del sincronizador.
+      if (/message_templates\?/.test(t) && /from\("whatsapp_templates"\)[\s\S]{0,200}upsert/.test(t)) {
+        culpables.push(ruta);
+      }
+    }
+    esperar(culpables.join(", ")).igual(
+      "",
+      "hay otro sitio que se trae la lista de Meta y la guarda por su cuenta",
+    );
+  });
+
+  test("el botón de la pantalla usa ese mismo sincronizador", () => {
+    esperar(/sincronizarPlantillas\(/.test(leer("src/app/(dashboard)/campaigns/actions.ts"))).verdadero(
+      "el botón de sincronizar volvió a hacerlo por su cuenta",
+    );
+    esperar(/sincronizarPlantillas\(/.test(tarea)).verdadero(
+      "la tarea programada dejó de sincronizar antes de mandar lo que falta",
+    );
+  });
+
+  test("la tarea NO reintenta lo que Meta ya rechazó", () => {
+    /* Reintentar cada cuarto de hora es pedirle a Meta cien veces al día que
+     * conteste lo mismo — y sobre todo esconde el problema, porque el cliente
+     * vería «enviándose» para siempre en vez de «Meta lo rechazó». */
+    esperar(/lasQueFaltan\(/.test(tarea)).verdadero("la tarea manda sin mirar qué falta");
+    esperar(/lasQueFaltan/.test(casa)).verdadero("se fue `lasQueFaltan` de las plantillas de la casa");
+    // Y si no se pudo mirar qué hay, no se manda nada.
+    esperar(/if \(error\) \{[\s\S]{0,200}return \[\];/.test(casa)).verdadero(
+      "un fallo al mirar qué plantillas hay vuelve a mandarlas todas en cada vuelta",
+    );
+  });
+
+  test("el nombre de la plantilla NO se escribe dos veces", () => {
+    /* La pantalla busca la fila por nombre e idioma. Si los repitiera, el día
+     * que cambie el idioma buscaría una fila que no existe y diría
+     * «preparándolo» para siempre sobre algo ya aprobado. */
+    esperar(/recordatorio_cita/.test(pantalla)).falso(
+      "comoVanLasPlantillas.ts volvió a escribir el nombre de la plantilla a mano",
+    );
+    esperar(/RECORDATORIO_CITA\.nombre/.test(leer("src/app/(dashboard)/bots/[id]/ai/page.tsx"))).verdadero(
+      "la pantalla de la IA dejó de sacar el nombre de la plantilla de verdad",
+    );
+  });
+
+  test("y la ventana de 24 h la decide un solo sitio", () => {
+    const remitente = leer("src/lib/agenda/mandarElRecordatorio.ts");
+    esperar(/comoSeManda\(/.test(remitente)).verdadero(
+      "el remitente decide por su cuenta si usar plantilla",
+    );
+    esperar(/24 \* 60 \* 60|86_?400|24 \* 3600/.test(remitente)).falso(
+      "el remitente tiene las 24 horas escritas a mano en vez de importarlas",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

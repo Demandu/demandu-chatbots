@@ -1,9 +1,10 @@
 import "server-only";
-import { enviarPlantilla } from "@/lib/canales/whatsappEnviar";
+import { enviarPlantilla, enviarConRespuestas } from "@/lib/canales/whatsappEnviar";
 import { zonaDelNegocio } from "@/lib/agenda";
 import { cuandoEnPalabras, valoresDelRecordatorio } from "@/lib/agenda/recordatorio";
-import { RECORDATORIO_CITA } from "@/lib/whatsapp/plantillasDeLaCasa";
-import { porQueNoSeRecuerda, EN_PALABRAS } from "@/lib/agenda/cuandoRecordar";
+import { RECORDATORIO_CITA, BOTON_CONFIRMA, BOTON_CAMBIA } from "@/lib/whatsapp/plantillasDeLaCasa";
+import { conEjemplos } from "@/lib/whatsapp/plantillas";
+import { porQueNoSeRecuerda, EN_PALABRAS, comoSeManda } from "@/lib/agenda/cuandoRecordar";
 
 /**
  * MANDAR EL RECORDATORIO DE UNA CITA. UN SOLO SITIO.
@@ -47,7 +48,7 @@ export async function mandarElRecordatorio(
   const { data: cita, error: errCita } = await admin
     .from("citas")
     .select(
-      "id, org_id, contact_id, inicio, creada_at, nombre, estado, " +
+      "id, org_id, contact_id, conversation_id, inicio, creada_at, nombre, estado, " +
         "recordatorio_enviado_at, recordatorio_intentos",
     )
     .eq("id", citaId)
@@ -115,10 +116,49 @@ export async function mandarElRecordatorio(
     cuando: cuandoEnPalabras(cita.inicio, zona),
   });
 
-  const envio = await enviarPlantilla(
-    canal.phone_number_id, canal.access_token, telefono,
-    RECORDATORIO_CITA.nombre, RECORDATORIO_CITA.idioma, valores,
-  );
+  /* ── DENTRO DE LAS 24 HORAS NO HACE FALTA PLANTILLA ────────────────────────
+   *
+   * Si la persona escribió hace poco, se le manda un mensaje normal con los
+   * mismos dos botones. Cubre las citas del MISMO DÍA, sale más barato, y
+   * —lo que más importa— funciona aunque Meta todavía no haya aprobado la
+   * plantilla, que es justo el hueco en el que se cae un cliente recién dado
+   * de alta.
+   *
+   * EL TEXTO NO SE ESCRIBE OTRA VEZ: se rellenan los huecos de la plantilla
+   * aprobada con los mismos valores. Dos textos distintos para lo mismo se
+   * separan, y entonces el cliente recibe una cosa u otra según la hora a la
+   * que le tocara el recordatorio.
+   *
+   * La fecha sale de la conversación de la cita. Sin conversación no hay
+   * ventana que valer: se manda plantilla, que es el camino seguro. */
+  let ultimoEntrante: string | null = null;
+  if (cita.conversation_id) {
+    const { data: entrante, error: errEntrante } = await admin
+      .from("messages")
+      .select("created_at")
+      .eq("org_id", orgId)
+      .eq("conversation_id", cita.conversation_id)
+      .eq("direction", "inbound")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    // Un fallo aquí NO para el recordatorio: solo significa que va por
+    // plantilla, que es lo que habría pasado sin esta optimización.
+    if (errEntrante) console.error("[recordatorio] no pude ver la ventana:", errEntrante.message);
+    else ultimoEntrante = (entrante?.created_at as string) ?? null;
+  }
+
+  const envio =
+    comoSeManda(ultimoEntrante) === "libre"
+      ? await enviarConRespuestas(
+          canal.phone_number_id, canal.access_token, telefono,
+          conEjemplos(RECORDATORIO_CITA.cuerpo, valores),
+          [BOTON_CONFIRMA, BOTON_CAMBIA],
+        )
+      : await enviarPlantilla(
+          canal.phone_number_id, canal.access_token, telefono,
+          RECORDATORIO_CITA.nombre, RECORDATORIO_CITA.idioma, valores,
+        );
 
   if (!envio.ok) {
     // El motivo de Meta, tal cual, para que se pueda arreglar. El más común es

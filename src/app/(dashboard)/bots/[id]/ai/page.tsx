@@ -19,6 +19,9 @@ import { saveAiSettings, elegirTiendaDelAgente, usarOtroAgente } from "./actions
 import { Sparkles, BookOpen } from "lucide-react";
 import { EstadoDeAgenda } from "@/components/bots/EstadoDeAgenda";
 import { ConfirmarZona } from "@/components/ConfirmarZona";
+import { EstadoDeLosRecordatorios } from "@/components/agenda/EstadoDeLosRecordatorios";
+import { comoVanLosRecordatorios } from "@/lib/whatsapp/comoVanLasPlantillas";
+import { RECORDATORIO_CITA } from "@/lib/whatsapp/plantillasDeLaCasa";
 import { loQueFaltaParaAgendar, type DiaLaboral } from "@/lib/ai/agenda";
 
 export const dynamic = "force-dynamic";
@@ -81,10 +84,31 @@ export default async function BotAiPage({
    * aquí para poder enseñar en pantalla por qué cada casilla está como está:
    * sin esa explicación, el usuario ve casillas marcadas que él no marcó.
    * ────────────────────────────────────────────────────────────────────── */
-  const [{ data: calendly }, { data: tiendasActivas }] = await Promise.all([
+  const [
+    { data: calendly },
+    { data: tiendasActivas },
+    { data: canalWa },
+    { data: avisoDeRecordatorio, error: errAviso },
+  ] = await Promise.all([
     supabase.from("integrations").select("provider").eq("provider", "calendly").maybeSingle(),
     supabase.from("tiendas").select("id").eq("activa", true).limit(1),
+    supabase.from("whatsapp_channels").select("phone_number_id").eq("bot_id", params.id).maybeSingle(),
+    /* CÓMO VA EL AVISO DE RECORDATORIO EN META. El nombre y el idioma salen de
+     * la plantilla de verdad, no escritos aquí: si se repitieran, el día que
+     * cambie el idioma esta pantalla buscaría una fila que no existe y diría
+     * «preparando» para siempre sobre algo ya aprobado. */
+    supabase
+      .from("whatsapp_templates")
+      .select("status, rejected_reason")
+      .eq("bot_id", params.id)
+      .eq("name", RECORDATORIO_CITA.nombre)
+      .eq("language", RECORDATORIO_CITA.idioma)
+      .maybeSingle(),
   ]);
+
+  // Sin esto, un fallo de lectura se lee en pantalla como «estamos
+  // preparándolos» — o sea, un problema disfrazado de progreso.
+  if (errAviso) console.error("[ia] no pude ver cómo va el recordatorio:", errAviso.message);
 
   /* RESERVAS PIDE LAS DOS COSAS: mesas Y turnos. Con salón y sin turnos no hay
    * a qué hora sentar a nadie; con turnos y sin salón no hay dónde. Se mira
@@ -353,6 +377,19 @@ export default async function BotAiPage({
                   <ConfirmarZona
                     guardada={(org?.timezone as string) ?? null}
                     confirmada={(org as any)?.zona_confirmada === true}
+                  />
+
+                  {/* ── ¿VAN A RECIBIR EL RECORDATORIO? ─────────────────────
+                      Es la única pregunta que el negocio se hace sobre esto, y
+                      hasta ahora no había dónde responderla: la plataforma
+                      mandaba el aviso a Meta en silencio y nadie volvía a mirar
+                      si lo habían aprobado. El texto no dice «plantilla» en
+                      ningún caso — eso es problema nuestro, no suyo. */}
+                  <EstadoDeLosRecordatorios
+                    estado={comoVanLosRecordatorios(
+                      avisoDeRecordatorio,
+                      Boolean((canalWa as any)?.phone_number_id),
+                    )}
                   />
 
                   {/* ── CONECTAR LA AGENDA, AQUÍ MISMO ──────────────────────

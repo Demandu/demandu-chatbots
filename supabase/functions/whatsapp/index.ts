@@ -19,7 +19,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "45";
+const VERSION_MOTOR = "46";
 
 // ─── La firma de Meta ────────────────────────────────────────────────────────
 //
@@ -6153,6 +6153,95 @@ function motivoDeEntrega(code: number, crudo: string): string {
   }
 }
 
+/**
+ * META AVISA CUANDO UNA PLANTILLA CAMBIA DE ESTADO. HASTA HOY NO LO ESCUCHÁBAMOS.
+ *
+ * ── LO QUE PASABA ──────────────────────────────────────────────────────────
+ *
+ * `whatsapp_templates` solo se llenaba cuando una PERSONA abría la pantalla de
+ * plantillas y sincronizaba. Nadie la abre. Resultado medido el 17 sep 2026:
+ * una cuenta tenía siete plantillas guardadas como PENDING desde hacía seis
+ * días que en Meta llevaban seis días aprobadas, y la del recordatorio de cita
+ * —aprobada en Meta— no estaba guardada siquiera.
+ *
+ * Un estado que miente es peor que no tenerlo: la plataforma decide con él si
+ * puede mandar, y el negocio lee en pantalla algo que no es.
+ *
+ * ── Y LA RECATEGORIZACIÓN, QUE CUESTA DINERO ───────────────────────────────
+ *
+ * `template_category_update` es el aviso de que Meta movió una plantilla de
+ * «utilidad» a «promoción» POR SU CUENTA. Promoción cuesta varias veces más y
+ * se le puede desactivar al negocio si la gente la marca como no deseada. Meta
+ * no avisa de otra forma: sin escuchar esto, el negocio se entera en la
+ * factura. Visto ya en una cuenta con plantillas de citas cobrándose como
+ * promoción.
+ *
+ * ── NO SE INVENTA UN ESTADO QUE META NO MANDÓ ──────────────────────────────
+ *
+ * Solo se escribe lo que viene en el aviso. Un aviso de categoría no toca el
+ * estado y uno de estado no toca la categoría: rellenar el hueco con lo que
+ * había sería adivinar, y aquí adivinar es exactamente lo que estamos
+ * arreglando.
+ */
+async function handleEstadoDePlantilla(db: any, wabaId: string, campo: string, value: any) {
+  const nombre = String(value?.message_template_name ?? "").trim();
+  const idioma = String(value?.message_template_language ?? "").trim();
+  if (!wabaId || !nombre || !idioma) return;
+
+  // El aviso trae la WABA, no la organización. Y trae el bot, que hace falta
+  // porque la clave de la tabla es (bot_id, name, language).
+  const { data: canal, error: errCanal } = await db
+    .from("whatsapp_channels")
+    .select("org_id, bot_id")
+    .eq("waba_id", wabaId)
+    .maybeSingle();
+  if (errCanal) {
+    console.error("[plantillas] no pude leer el canal de la WABA", wabaId, errCanal.message);
+    return;
+  }
+  // Una WABA que no es de ningún cliente nuestro no es un error: Meta manda
+  // avisos de todo lo que cuelga de la app.
+  if (!canal?.org_id || !canal?.bot_id) return;
+
+  const fila: Record<string, unknown> = {
+    org_id: canal.org_id,
+    bot_id: canal.bot_id,
+    waba_id: wabaId,
+    name: nombre,
+    language: idioma,
+    updated_at: new Date().toISOString(),
+  };
+  if (value?.message_template_id) fila.meta_id = String(value.message_template_id);
+
+  if (campo === "message_template_status_update") {
+    const estado = String(value?.event ?? "").trim().toUpperCase();
+    if (!estado) return;
+    fila.status = estado;
+    // «NONE» es lo que manda Meta cuando no hay motivo: guardarlo como si lo
+    // fuera pintaría «Rechazada: NONE» en la pantalla del cliente.
+    const motivo = String(value?.reason ?? "").trim();
+    fila.rejected_reason = motivo && motivo.toUpperCase() !== "NONE" ? motivo : null;
+  } else if (campo === "message_template_category_update") {
+    const nueva = String(value?.new_category ?? "").trim().toUpperCase();
+    if (!nueva) return;
+    fila.category = nueva;
+    console.error(
+      `[plantillas] META RECATEGORIZÓ «${nombre}» de ${value?.previous_category ?? "?"} a ${nueva} (org ${canal.org_id})`,
+    );
+  } else if (campo === "message_template_quality_update") {
+    const cal = String(value?.new_quality_score ?? "").trim();
+    if (!cal) return;
+    fila.quality = cal;
+  } else {
+    return;
+  }
+
+  const { error } = await db
+    .from("whatsapp_templates")
+    .upsert(fila, { onConflict: "bot_id,name,language" });
+  if (error) console.error("[plantillas] no pude guardar el aviso de Meta:", error.message);
+}
+
 async function handleStatuses(db: any, statuses: any[]) {
   for (const st of statuses) {
     const wamid = st?.id;
@@ -6537,11 +6626,21 @@ Deno.serve(async (req: Request) => {
 
     try {
       const value = body?.entry?.[0]?.changes?.[0]?.value;
+      const campo = String(body?.entry?.[0]?.changes?.[0]?.field ?? "");
 
       // 1) Estados de entrega de difusiones (sent/delivered/read/failed)
       const statuses = value?.statuses;
       if (Array.isArray(statuses) && statuses.length) {
         await handleStatuses(admin(), statuses);
+        return json({ ok: true });
+      }
+
+      // 1.b) Meta cambió el estado, la categoría o la calidad de una plantilla.
+      //      VA ANTES DE BUSCAR UN MENSAJE porque estos avisos no traen
+      //      ninguno: hasta hoy caían en el `if (!msg) return ok` de abajo y
+      //      se perdían en silencio. `entry[0].id` es la WABA, no un teléfono.
+      if (campo.startsWith("message_template_")) {
+        await handleEstadoDePlantilla(admin(), String(body?.entry?.[0]?.id ?? ""), campo, value);
         return json({ ok: true });
       }
 

@@ -48,6 +48,42 @@ export type Resultado = {
 /** Meta: «ya existe una plantilla con ese nombre e idioma». */
 const YA_EXISTE = 2388023;
 
+/**
+ * ¿Cuáles de estas plantillas NO tiene todavía este negocio?
+ *
+ * Se mira contra `whatsapp_templates`, que es lo que la tarea acaba de traerse
+ * de Meta. Compara nombre E IDIOMA: para Meta son plantillas distintas, y
+ * mandar `recordatorio_cita` en `es` teniendo la de `es_MX` crea una segunda
+ * que nadie usa y que sale en la cuenta del cliente.
+ *
+ * UNA RECHAZADA CUENTA COMO QUE ESTÁ. Se ve en pantalla con su motivo y se
+ * arregla a mano; volver a mandarla cada cuarto de hora es pedirle a Meta cien
+ * veces al día que conteste lo mismo — y sobre todo esconde el problema, porque
+ * el cliente vería «enviándose» para siempre en vez de «Meta la rechazó».
+ */
+export async function lasQueFaltan(
+  db: any,
+  orgId: string,
+  borradores: Borrador[],
+): Promise<Borrador[]> {
+  const { data, error } = await db
+    .from("whatsapp_templates")
+    .select("name, language")
+    .eq("org_id", orgId);
+
+  // SIN SABER QUÉ HAY, NO SE MANDA NADA. Devolver «faltan todas» porque la
+  // consulta falló las mandaría de nuevo en cada vuelta de la tarea.
+  if (error) {
+    console.error("[plantillas de la casa] no pude ver cuáles ya están:", error.message);
+    return [];
+  }
+
+  const hay = new Set(
+    ((data ?? []) as any[]).map((t) => `${String(t.name ?? "")}|${String(t.language ?? "")}`),
+  );
+  return borradores.filter((b) => !hay.has(`${b.nombre}|${b.idioma}`));
+}
+
 export async function asegurarPlantillas(
   admin: any,
   orgId: string,

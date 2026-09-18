@@ -141,6 +141,52 @@ export async function enviarConBoton(
 }
 
 /**
+ * Manda un mensaje con BOTONES DE RESPUESTA, sin plantilla.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SOLO FUNCIONA DENTRO DE LAS 24 HORAS desde el último mensaje de la persona.
+ * Fuera de esa ventana WhatsApp no deja escribir de ninguna forma que no sea
+ * una plantilla aprobada, y quien llama a esto tiene que haberlo comprobado
+ * antes — aquí no se adivina.
+ *
+ * Es distinto de `enviarConBoton`, que manda UN botón que abre un enlace. Estos
+ * son botones que la persona pulsa para CONTESTAR, y lo que vuelve es el texto
+ * del botón tal cual — el mismo que lee `queQuisoDecir`.
+ *
+ * ── EL TÍTULO SE CORTA A 20 Y ESO IMPORTA MÁS DE LO QUE PARECE ────────────
+ *
+ * Meta corta a 20 caracteres sin avisar. Un botón que se llama «Necesito
+ * cambiarla» y llega cortado deja de coincidir con lo que la plataforma compara,
+ * y la respuesta de esa persona no se apunta. Se corta aquí para que al menos
+ * sea el mismo corte en los dos lados.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function enviarConRespuestas(
+  pnid: string, token: string, to: string,
+  body: string, botones: string[],
+): Promise<ResultadoEnvio> {
+  const tres = botones.filter(Boolean).slice(0, 3); // Meta no acepta más de tres.
+  if (!tres.length) return enviarTexto(pnid, token, to, body);
+
+  return waPost(pnid, token, {
+    to,
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: body.slice(0, 1024) },
+      action: {
+        buttons: tres.map((t, i) => ({
+          type: "reply",
+          // El identificador no se usa para decidir nada —se lee el texto— pero
+          // Meta lo exige y tiene que ser único dentro del mensaje.
+          reply: { id: `r${i + 1}`, title: t.slice(0, 20) },
+        })),
+      },
+    },
+  });
+}
+
+/**
  * Manda una plantilla aprobada.
  *
  * ES LA ÚNICA FORMA DE REABRIR UNA CONVERSACIÓN. Pasadas 24 horas desde el

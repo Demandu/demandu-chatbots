@@ -16,8 +16,9 @@ import {
 } from "../../src/lib/duracionDeLaCita.ts";
 import {
   porQueNoSeRecuerda, tocaRecordar, ventanaDeLaTarea, EN_PALABRAS,
-  AVISO_HORAS, MARGEN_MINIMO_MIN, REPOSO_MIN, TOPE_INTENTOS,
+  AVISO_HORAS, MARGEN_MINIMO_MIN, REPOSO_MIN, TOPE_INTENTOS, comoSeManda, VENTANA_LIBRE_MIN,
 } from "../../src/lib/agenda/cuandoRecordar.ts";
+import { comoVanLosRecordatorios } from "../../src/lib/whatsapp/comoVanLasPlantillas.ts";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
@@ -8760,6 +8761,113 @@ describe("A quién le toca el recordatorio de su cita", () => {
     ];
     const sinTexto = motivos.filter((m) => !EN_PALABRAS[m] || EN_PALABRAS[m].length < 10);
     esperar(sinTexto.join(", ")).igual("", "un motivo se quedó sin explicación legible");
+  });
+});
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * DENTRO DE LAS 24 HORAS NO HACE FALTA PLANTILLA
+ *
+ * Es el hueco por el que se cae un cliente recién dado de alta: Meta tarda de
+ * minutos a un día en aprobar, y mientras tanto sus citas del mismo día no se
+ * recordaban. Si la persona escribió hace poco, se le puede mandar un mensaje
+ * normal con los mismos dos botones.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Mensaje normal o plantilla", () => {
+  const AHORA = new Date("2026-09-17T15:00:00Z");
+  const haceMin = (m) => new Date(AHORA.getTime() - m * 60_000).toISOString();
+
+  test("si escribió hace un rato, va sin plantilla", () => {
+    esperar(comoSeManda(haceMin(30), AHORA)).igual("libre");
+    esperar(comoSeManda(haceMin(60 * 12), AHORA)).igual("libre");
+  });
+
+  test("EL BORDE DE LAS 24 HORAS, por los dos lados", () => {
+    esperar(comoSeManda(haceMin(VENTANA_LIBRE_MIN - 1), AHORA)).igual("libre");
+    esperar(comoSeManda(haceMin(VENTANA_LIBRE_MIN), AHORA)).igual(
+      "plantilla",
+      "justo en las 24 horas la ventana ya está cerrada",
+    );
+    esperar(comoSeManda(haceMin(VENTANA_LIBRE_MIN + 1), AHORA)).igual("plantilla");
+  });
+
+  test("ANTE LA DUDA, PLANTILLA", () => {
+    /* Equivocarse hacia la plantilla cuesta unos milésimos de dólar;
+     * equivocarse hacia el mensaje libre es un rechazo de Meta y un
+     * recordatorio que no sale. */
+    esperar(comoSeManda(null, AHORA)).igual("plantilla");
+    esperar(comoSeManda(undefined, AHORA)).igual("plantilla");
+    esperar(comoSeManda("", AHORA)).igual("plantilla");
+    esperar(comoSeManda("banana", AHORA)).igual("plantilla");
+    // Una fecha futura es un reloj mal puesto, no una ventana abierta.
+    esperar(comoSeManda(new Date(AHORA.getTime() + 60_000).toISOString(), AHORA)).igual("plantilla");
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * LO QUE LEE EL NEGOCIO SOBRE SUS RECORDATORIOS
+ *
+ * Un dentista no tiene por qué saber que Meta exige aprobar un texto antes de
+ * poder mandarlo. Pero tampoco se le miente: cuando Meta rechaza, se dice.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Cómo se le cuenta al negocio", () => {
+  test("LA PALABRA «PLANTILLA» NO APARECE NUNCA", () => {
+    /* La que de verdad protege esta pantalla. Es facílisimo colar la palabra
+     * al editar un texto, y en cuanto aparece el cliente tiene que aprender un
+     * concepto de Meta para entender su propia pantalla. */
+    const casos = [
+      comoVanLosRecordatorios(null, false),
+      comoVanLosRecordatorios(null, true),
+      comoVanLosRecordatorios({ status: "PENDING" }, true),
+      comoVanLosRecordatorios({ status: "APPROVED" }, true),
+      comoVanLosRecordatorios({ status: "REJECTED", rejected_reason: "INVALID_FORMAT" }, true),
+    ];
+    const sucios = [];
+    for (const c of casos) {
+      const todo = `${c.titulo} ${c.detalle} ${c.queHacer}`.toLowerCase();
+      if (todo.includes("plantilla")) sucios.push(c.como);
+    }
+    esperar(sucios.join(", ")).igual("", "un texto de la pantalla dice «plantilla»");
+  });
+
+  test("sin WhatsApp se dice eso, y no «preparándolo»", () => {
+    const r = comoVanLosRecordatorios({ status: "APPROVED" }, false);
+    esperar(r.como).igual("sin_whatsapp");
+    esperar(r.queHacer.length > 0).verdadero("no le dice qué hacer");
+  });
+
+  test("aprobada es «listos», y sin nada que hacer", () => {
+    const r = comoVanLosRecordatorios({ status: "approved" }, true);
+    esperar(r.como).igual("listo", "el estado con minúsculas debería contar igual");
+    esperar(r.queHacer).igual("", "le pide algo cuando ya está todo hecho");
+  });
+
+  test("UN RECHAZO SE DICE, con su motivo y sin echarle la culpa al cliente", () => {
+    const r = comoVanLosRecordatorios({ status: "REJECTED", rejected_reason: "INVALID_FORMAT" }, true);
+    esperar(r.como).igual("rechazado");
+    esperar(r.detalle.includes("INVALID_FORMAT")).verdadero("se comó el motivo de Meta");
+    // El texto lo escribimos nosotros: arreglarlo es nuestro trabajo.
+    esperar(r.queHacer.toLowerCase().includes("estamos")).verdadero(
+      "le pasa al cliente un problema que es nuestro",
+    );
+    // Y se le dice lo que SÍ funciona mientras tanto.
+    esperar(r.detalle.includes("24 horas")).verdadero("no dice qué sí sigue saliendo");
+  });
+
+  test("«NONE» no se pinta como si fuera un motivo", () => {
+    const r = comoVanLosRecordatorios({ status: "REJECTED", rejected_reason: "NONE" }, true);
+    esperar(r.detalle.includes("NONE")).falso("pinta «Rechazada: NONE» en la pantalla del cliente");
+  });
+
+  test("pausada o desactivada cuentan como rechazada: tampoco sale nada", () => {
+    esperar(comoVanLosRecordatorios({ status: "PAUSED" }, true).como).igual("rechazado");
+    esperar(comoVanLosRecordatorios({ status: "DISABLED" }, true).como).igual("rechazado");
+  });
+
+  test("sin fila todavía, se dice que se está preparando — no que esté listo", () => {
+    const r = comoVanLosRecordatorios(null, true);
+    esperar(r.como).igual("preparando");
+    esperar(r.como === "listo").falso("dice que está listo algo que no se ha mandado");
   });
 });
 

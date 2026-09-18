@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { esChoqueDeUnico, esRepetidaPorTiempo } from "@/lib/campanas/repetida";
+import { sincronizarPlantillas } from "@/lib/whatsapp/sincronizarPlantillas";
 
 const GRAPH = "https://graph.facebook.com/v20.0";
 /**
@@ -37,14 +38,6 @@ async function getChannel(supabase: ReturnType<typeof createClient>, botId: stri
     | null;
 }
 
-/** Del arreglo de components de Meta saca el texto del BODY y cuántas variables tiene. */
-function parseTemplate(components: any[]): { body: string; variables: number } {
-  const body = (components ?? []).find((c) => c.type === "BODY");
-  const text: string = body?.text ?? "";
-  const matches = text.match(/\{\{\s*\d+\s*\}\}/g);
-  return { body: text, variables: matches ? matches.length : 0 };
-}
-
 /** Sincroniza las plantillas de la WABA de ESE bot desde Meta. */
 export async function syncTemplates(formData: FormData) {
   const orgId = await getCurrentOrgId();
@@ -60,44 +53,18 @@ export async function syncTemplates(formData: FormData) {
     return;
   }
 
-  let errParam = "";
-  try {
-    // Se piden los campos a mano: por defecto Meta NO devuelve `rejected_reason`
-    // ni `quality_score`, y sin ellos el cliente ve un "Rechazada" mudo.
-    const campos = "id,name,language,category,status,components,rejected_reason,quality_score";
-    const res = await fetch(
-      `${GRAPH}/${ch.waba_id}/message_templates?limit=200&fields=${campos}&access_token=${ch.access_token}`,
-    );
-    const j = await res.json();
-    if (!res.ok || !Array.isArray(j?.data)) {
-      errParam = j?.error?.message ?? "meta_error";
-    } else {
-      for (const t of j.data) {
-        const { body, variables } = parseTemplate(t.components);
-        await supabase.from("whatsapp_templates").upsert(
-          {
-            org_id: orgId,
-            bot_id: botId,
-            waba_id: ch.waba_id,
-            meta_id: String(t.id ?? ""),
-            name: t.name,
-            language: t.language ?? "es",
-            category: t.category ?? null,
-            status: t.status ?? "PENDING",
-            body,
-            components: t.components ?? null,
-            variables,
-            rejected_reason: t.rejected_reason ?? null,
-            quality: t?.quality_score?.score ?? null,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "bot_id,name,language" },
-        );
-      }
-    }
-  } catch {
-    errParam = "red";
-  }
+  /* LA SINCRONIZACIÓN NO VIVE AQUÍ. La comparte con la tarea programada
+   * `/api/plantillas/asegurar`, que es la que de verdad mantiene esto al día —
+   * este botón es solo el «ahora mismo» para quien está mirando la pantalla.
+   * Dos copias se habrían separado, y la que se quedara atrás seguiría
+   * escribiendo estados viejos encima de los buenos. */
+  const r = await sincronizarPlantillas(supabase, {
+    orgId,
+    botId,
+    wabaId: ch.waba_id,
+    token: ch.access_token,
+  });
+  const errParam = r.error ?? "";
 
   revalidatePath(`/bots/${botId}/templates`);
   if (errParam) redirect(`/bots/${botId}/templates?error=${encodeURIComponent(errParam)}`);
