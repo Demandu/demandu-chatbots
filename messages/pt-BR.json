@@ -117,5 +117,42 @@
     "crear": "Criar grupo",
     "eliminar": "Excluir",
     "vacio": "Você ainda não tem grupos de leads. Crie o primeiro aí em cima 👆"
+  },
+  "reservas": {
+    "noPudeIdentificarCuenta": "Não consegui identificar sua conta.",
+    "dibujaSalonDefineTus": "Monte o seu salão e defina os seus turnos. Assim o seu assistente sabe quantas pessoas cabem em cada mesa, quais dá para juntar e a que horas — e não aceita uma reserva que não cabe.",
+    "noSePudoLeer": "Não consegui carregar o seu salão."
+  },
+  "reservasMapa": {
+    "cuantas": "Quantas",
+    "anadirAlPlano": "Adicionar ao salão",
+    "aparecenAcomodadasEspacioLibre": "Elas aparecem no espaço livre. Depois é só arrastar para o lugar certo.",
+    "personasAforo": "lugares no total",
+    "salonEstaVacio": "Seu salão está vazio.",
+    "diCuantasMesasTienes": "Diga quantas mesas você tem aí em cima e elas aparecem sozinhas.",
+    "arrastraMesasColocarlasComo": "Arraste as mesas para deixar igual ao seu salão de verdade. Salva sozinho quando você solta.",
+    "pulsaMesaPlanoCambiar": "Toque em uma mesa do salão para mudar o nome, quantas pessoas cabem e com quais dá para juntar.",
+    "nombre": "Nome",
+    "guardarCambios": "Salvar alterações",
+    "sePuedeJuntar": "Dá para juntar com",
+    "marcaSoloVerdadCaben": "Marque só as que realmente cabem juntas no seu salão. A Lana vai juntar apenas essas.",
+    "terrazaSalon": "Varanda, Salão…",
+    "terrazaSalonBarra": "Varanda, Salão, Bar…"
+  },
+  "reservasTurnos": {
+    "todaviaNoTienesMesas": "Você ainda não tem mesas no salão. Turno sem mesa não aceita reserva: monte o seu salão primeiro.",
+    "todaviaNoTienesTurnos": "Você ainda não tem turnos. Crie o primeiro aí à direita: por exemplo “Primeiro turno”, 19h.",
+    "cancelar": "Cancelar",
+    "nombre": "Nome",
+    "dias": "Quais dias",
+    "sinNingunDiaMarcado": "Sem nenhum dia marcado, este turno nunca aceitaria uma reserva.",
+    "dejaloApagadoTusHoras": "Deixe desligado nos seus horários de pico. Num turno cheio, uma mesa a mais é gente de pé na porta. Desligado, a Lana segura a mesa e avisa você para confirmar.",
+    "esteTurnoEstaUso": "Este turno está em uso",
+    "comoTrabajaLana": "Como a Lana trabalha",
+    "grupoGrandePartir": "Grupo grande, a partir de",
+    "ahiArribaLanaNo": "Daí para cima a Lana não decide: ela avisa você para combinar.",
+    "mesasSePuedenJuntar": "Mesas que dá para juntar",
+    "cuantasComoMaximoMismo": "No máximo quantas para um mesmo grupo. Juntar muitas é mexer cadeira e travar corredor.",
+    "guardarAjustes": "Salvar ajustes"
   }
 }

@@ -117,5 +117,42 @@
     "crear": "Crear grupo",
     "eliminar": "Eliminar",
     "vacio": "Aún no tienes grupos de leads. Crea el primero arriba 👆"
+  },
+  "reservas": {
+    "noPudeIdentificarCuenta": "No pude identificar tu cuenta.",
+    "dibujaSalonDefineTus": "Dibuja tu salón y define tus turnos. Con eso, tu asistente sabe cuántas personas caben en cada mesa, cuáles se pueden juntar y a qué hora, y no acepta una reserva que no cabe.",
+    "noSePudoLeer": "No se pudo leer tu salón."
+  },
+  "reservasMapa": {
+    "cuantas": "Cuántas",
+    "anadirAlPlano": "Añadir al plano",
+    "aparecenAcomodadasEspacioLibre": "Aparecen acomodadas en el espacio libre. Después las arrastras donde van.",
+    "personasAforo": "personas de aforo",
+    "salonEstaVacio": "Tu salón está vacío.",
+    "diCuantasMesasTienes": "Dí cuántas mesas tienes arriba y aparecen solas.",
+    "arrastraMesasColocarlasComo": "Arrastra las mesas para colocarlas como están en tu salón. Se guarda solo al soltar.",
+    "pulsaMesaPlanoCambiar": "Pulsa una mesa del plano para cambiar su nombre, cuánta gente cabe y con cuáles se puede juntar.",
+    "nombre": "Nombre",
+    "guardarCambios": "Guardar cambios",
+    "sePuedeJuntar": "Se puede juntar con",
+    "marcaSoloVerdadCaben": "Marca solo las que de verdad caben juntas en tu salón. Lana únicamente juntará estas.",
+    "terrazaSalon": "Terraza, Salón…",
+    "terrazaSalonBarra": "Terraza, Salón, Barra…"
+  },
+  "reservasTurnos": {
+    "todaviaNoTienesMesas": "Todavía no tienes mesas en el plano. Los turnos sin mesas no aceptan reservas: dibuja tu salón primero.",
+    "todaviaNoTienesTurnos": "Todavía no tienes turnos. Crea el primero a la derecha: por ejemplo «Primer turno», 7:00 p.m.",
+    "cancelar": "Cancelar",
+    "nombre": "Nombre",
+    "dias": "Qué días",
+    "sinNingunDiaMarcado": "Sin ningún día marcado, este turno no aceptaría reservas nunca.",
+    "dejaloApagadoTusHoras": "Déjalo apagado en tus horas pico. En un turno lleno, una mesa de más significa gente de pie en la puerta. Apagado, Lana aparta la mesa y te avisa para que confirmes tú.",
+    "esteTurnoEstaUso": "Este turno está en uso",
+    "comoTrabajaLana": "Cómo trabaja Lana",
+    "grupoGrandePartir": "Grupo grande, a partir de",
+    "ahiArribaLanaNo": "De ahí para arriba Lana no decide: te avisa para que lo coordines tú.",
+    "mesasSePuedenJuntar": "Mesas que se pueden juntar",
+    "cuantasComoMaximoMismo": "Cuántas como máximo para un mismo grupo. Juntar muchas es mover sillas y bloquear un pasillo.",
+    "guardarAjustes": "Guardar ajustes"
   }
 }

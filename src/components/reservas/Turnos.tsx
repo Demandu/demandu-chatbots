@@ -8,6 +8,7 @@ import {
 import {
   crearTurno, editarTurno, borrarTurno, guardarAjustes, type Turno,
 } from "@/app/(dashboard)/reservas/acciones";
+import { useTranslations } from "next-intl";
 
 /**
  * LOS TURNOS DEL SALÓN Y LOS AJUSTES DEL COMPLEMENTO.
@@ -45,6 +46,7 @@ export function Turnos({
   ajustes: Ajustes;
   hayMesas: boolean;
 }) {
+  const t = useTranslations("reservasTurnos");
   const [turnos, setTurnos] = useState<Turno[]>(iniciales);
   const [editando, setEditando] = useState<Turno | null>(null);
   const [aviso, setAviso] = useState<{ mal: boolean; texto: string } | null>(null);
@@ -99,8 +101,7 @@ export function Turnos({
 
       {!hayMesas && (
         <div className="rounded-xl bg-[#fff6e5] px-4 py-3 text-sm text-[#8a5a00]">
-          Todavía no tienes mesas en el plano. Los turnos sin mesas no aceptan reservas:
-          dibuja tu salón primero.
+          {t("todaviaNoTienesMesas")}
         </div>
       )}
 
@@ -109,8 +110,7 @@ export function Turnos({
         <div className="space-y-3">
           {enOrden.length === 0 && (
             <div className="card-l p-6 text-center text-sm text-ink-3">
-              Todavía no tienes turnos. Crea el primero a la derecha:
-              por ejemplo «Primer turno», 7:00 p.m.
+              {t("todaviaNoTienesTurnos")}
             </div>
           )}
 
@@ -151,7 +151,7 @@ export function Turnos({
             </h3>
             {editando && (
               <button onClick={() => setEditando(null)} className="text-xs text-ink-3 underline">
-                Cancelar
+                {t("cancelar")}
               </button>
             )}
           </div>
@@ -160,7 +160,7 @@ export function Turnos({
             <input type="hidden" name="id" value={editando?.id ?? ""} />
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-ink-2">Nombre</label>
+              <label className="mb-1 block text-xs font-semibold text-ink-2">{t("nombre")}</label>
               <input
                 name="nombre" required className="input-l" placeholder="Primer turno"
                 defaultValue={editando?.nombre ?? ""}
@@ -185,7 +185,7 @@ export function Turnos({
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-ink-2">Qué días</label>
+              <label className="mb-1 block text-xs font-semibold text-ink-2">{t("dias")}</label>
               <div className="flex flex-wrap gap-1.5">
                 {/* Lunes primero, como se lee una semana. El valor sigue siendo
                     el número de Postgres (0 = domingo). */}
@@ -203,7 +203,7 @@ export function Turnos({
                 ))}
               </div>
               <p className="mt-1 text-[11px] text-ink-3">
-                Sin ningún día marcado, este turno no aceptaría reservas nunca.
+                {t("sinNingunDiaMarcado")}
               </p>
             </div>
 
@@ -215,16 +215,14 @@ export function Turnos({
               <span>
                 <strong className="text-ink">Lana confirma sola en este turno</strong>
                 <span className="mt-0.5 block text-[11px] text-ink-3">
-                  Déjalo apagado en tus horas pico. En un turno lleno, una mesa de más
-                  significa gente de pie en la puerta. Apagado, Lana aparta la mesa y te
-                  avisa para que confirmes tú.
+                  {t("dejaloApagadoTusHoras")}
                 </span>
               </span>
             </label>
 
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input type="checkbox" name="activo" value="si" defaultChecked={editando?.activo ?? true} />
-              Este turno está en uso
+              {t("esteTurnoEstaUso")}
             </label>
 
             <div className="flex gap-2">
@@ -249,7 +247,7 @@ export function Turnos({
 
       {/* ── Ajustes del complemento ────────────────────────────────────── */}
       <div className="card-l p-5">
-        <h3 className="mb-3 font-display text-lg font-semibold text-ink">Cómo trabaja Lana</h3>
+        <h3 className="mb-3 font-display text-lg font-semibold text-ink">{t("comoTrabajaLana")}</h3>
         <form
           action={(fd) => {
             empezar(async () => {
@@ -278,33 +276,32 @@ export function Turnos({
 
           <div>
             <label className="mb-1 block text-xs font-semibold text-ink-2">
-              Grupo grande, a partir de
+              {t("grupoGrandePartir")}
             </label>
             <input
               name="grupo_grande" type="number" min={2} max={100} className="input-l"
               defaultValue={ajustesIniciales.grupo_grande}
             />
             <p className="mt-1 text-[11px] text-ink-3">
-              De ahí para arriba Lana no decide: te avisa para que lo coordines tú.
+              {t("ahiArribaLanaNo")}
             </p>
           </div>
 
           <div>
             <label className="mb-1 block text-xs font-semibold text-ink-2">
-              Mesas que se pueden juntar
+              {t("mesasSePuedenJuntar")}
             </label>
             <input
               name="max_mesas_juntas" type="number" min={1} max={4} className="input-l"
               defaultValue={ajustesIniciales.max_mesas_juntas}
             />
             <p className="mt-1 text-[11px] text-ink-3">
-              Cuántas como máximo para un mismo grupo. Juntar muchas es mover sillas
-              y bloquear un pasillo.
+              {t("cuantasComoMaximoMismo")}
             </p>
           </div>
 
           <div className="sm:col-span-3">
-            <button className="btn-primary" disabled={guardando}>Guardar ajustes</button>
+            <button className="btn-primary" disabled={guardando}>{t("guardarAjustes")}</button>
           </div>
         </form>
       </div>

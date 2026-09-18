@@ -13,6 +13,9 @@ import path from "node:path";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 
 import { escanear, leerLineaBase } from "./consultasSinMirar.mjs";
+import {
+  medirPorZona, leerLineaBase as leerBaseDeEspanol,
+} from "./medirEspanol.mjs";
 
 const RAIZ = path.resolve(import.meta.dirname, "../..");
 const SRC = path.join(RAIZ, "src");
@@ -10036,6 +10039,10 @@ describe("Los idiomas no se desincronizan", () => {
       "avisos.silenciar30", "avisos.silenciar60", "avisos.silenciar240",
       // «Toc toc» y «Suave» son portugués correcto; «Color» se escribe igual en inglés.
       "avisos.tonos.toc", "avisos.tonos.suave", "gruposLeads.color",
+      // Reservas: «Cancelar» y «Grupo grande, a partir de» se escriben igual en
+      // español y en portugués. Se comprobó frase por frase al traducir la
+      // pantalla, no se dieron por buenas porque coincidieran.
+      "reservasTurnos.cancelar", "reservasTurnos.grupoGrandePartir",
     ];
     const es = leer("es") ?? {};
     const valor = (o, k) => k.split(".").reduce((a, p) => a?.[p], o);
@@ -10787,6 +10794,77 @@ describe("El estado de las plantillas no vuelve a ser una foto vieja", () => {
     );
     esperar(/24 \* 60 \* 60|86_?400|24 \* 3600/.test(remitente)).falso(
       "el remitente tiene las 24 horas escritas a mano en vez de importarlas",
+    );
+  });
+});
+
+
+// ─── El trinquete del idioma ─────────────────────────────────────
+describe("El español escrito a mano solo puede bajar", () => {
+  /* ── POR QUÉ HACE FALTA UN TRINQUETE Y NO UNA META ──────────────────
+   *
+   * Medido el 18 sep 2026: 103 textos traducidos contra 3.874 escritos a mano.
+   * El 2,7%. Y la maquinaria funcionaba desde hacía semanas — el idioma sale de
+   * la base, el de la persona manda sobre el de la organización, todo bien.
+   * Lo que falló no fue el mecanismo: fue que cada pantalla nueva nació con el
+   * español dentro y nadie lo notaba, porque no había nada que lo notara.
+   *
+   * Traducir 2.800 textos lleva semanas. Durante esas semanas se siguen
+   * escribiendo pantallas. Sin esto, se traduce por un lado y entra español
+   * nuevo por el otro, y el número no baja nunca — que es exactamente la
+   * historia de los últimos meses.
+   *
+   * ── SE CUENTA POR ZONA, NO EN TOTAL ────────────────────────────
+   *
+   * Un solo número dejaría esconder que alguien tradujo veinte textos de la
+   * tienda mientras metía veinte nuevos en el constructor. El trinquete tiene
+   * que apretar en cada sitio.
+   *
+   * La cuenta la hace `medirEspanol.mjs`, el MISMO módulo que usa el informe de
+   * `scripts/medir-idiomas.mjs`. Con dos cuentas distintas, el informe diría
+   * una cosa y la regla otra, y mandaría la que nadie mira. */
+  const BASE = path.join(RAIZ, "scripts/pruebas/espanol-sin-traducir.txt");
+  const base = leerBaseDeEspanol(BASE);
+  const ahora = medirPorZona(RAIZ);
+
+  test("la línea base existe y tiene zonas", () => {
+    /* Sin este, borrar el archivo dejaría la regla comparando contra nada y
+     * diciendo que todo está bien — una regla que no puede fallar. */
+    esperar(base.size >= 5).verdadero(
+      `la línea base tiene ${base.size} zonas: se borró o se vació, y esta regla dejó de proteger nada. ` +
+        "Regenérala con: node scripts/medir-idiomas.mjs --guardar",
+    );
+  });
+
+  test("NINGUNA ZONA SUBE", () => {
+    const subieron = [];
+    for (const [zona, cuantos] of ahora) {
+      const antes = base.get(zona);
+      if (antes === undefined) {
+        subieron.push(`${zona}: zona nueva con ${cuantos} textos sin traducir`);
+      } else if (cuantos > antes) {
+        subieron.push(`${zona}: ${antes} → ${cuantos} (+${cuantos - antes})`);
+      }
+    }
+    esperar(subieron.join(" | ")).igual(
+      "",
+      "entró español escrito a mano. Tradúcelo, o si el texto nuevo hacía falta: " +
+        "node scripts/medir-idiomas.mjs --guardar (y explícalo en el commit)",
+    );
+  });
+
+  test("y la línea base no se queda vieja hacia abajo", () => {
+    /* Si se traduce una zona y nadie baja el número, el trinquete se afloja:
+     * queda hueco para meter español nuevo sin que salte. Se avisa con margen
+     * para no dar guerra por uno o dos. */
+    const flojas = [];
+    for (const [zona, antes] of base) {
+      const cuantos = ahora.get(zona) ?? 0;
+      if (antes - cuantos >= 25) flojas.push(`${zona}: dice ${antes} y hay ${cuantos}`);
+    }
+    esperar(flojas.join(" | ")).igual(
+      "",
+      "la línea base aflojó: corre node scripts/medir-idiomas.mjs --guardar para apretarla",
     );
   });
 });

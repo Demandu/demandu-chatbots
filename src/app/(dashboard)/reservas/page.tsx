@@ -6,6 +6,7 @@ import { MapaDelSalon } from "@/components/reservas/MapaDelSalon";
 import { Turnos, type Ajustes } from "@/components/reservas/Turnos";
 import type { MesaEnElMapa, Par } from "@/lib/reservas/mapa";
 import type { Turno } from "./acciones";
+import { getTranslations } from "next-intl/server";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,7 @@ export default async function Reservas({
 }: {
   searchParams?: { ver?: string };
 }) {
+  const t = await getTranslations("reservas");
   const orgId = await getCurrentOrgId();
   const cabecera = <Topbar crumb={<span className="font-semibold text-white">Reservas</span>} />;
 
@@ -45,7 +47,7 @@ export default async function Reservas({
       <>
         {cabecera}
         <div className="min-h-0 flex-1 overflow-auto bg-canvas p-4 text-ink sm:p-6 lg:p-8">
-          <p className="text-sm text-ink-3">No pude identificar tu cuenta.</p>
+          <p className="text-sm text-ink-3">{t("noPudeIdentificarCuenta")}</p>
         </div>
       </>
     );
@@ -113,9 +115,7 @@ export default async function Reservas({
         <div>
           <h2 className="font-display text-xl font-semibold text-ink">Reservas</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-2">
-            Dibuja tu salón y define tus turnos. Con eso, tu asistente sabe cuántas personas
-            caben en cada mesa, cuáles se pueden juntar y a qué hora, y no acepta una reserva
-            que no cabe.
+            {t("dibujaSalonDefineTus")}
           </p>
         </div>
 
@@ -126,7 +126,7 @@ export default async function Reservas({
 
         {noSePudo ? (
           <div className="card-l p-5">
-            <p className="text-sm font-medium text-[#c0392b]">No se pudo leer tu salón.</p>
+            <p className="text-sm font-medium text-[#c0392b]">{t("noSePudoLeer")}</p>
             <p className="mt-1 text-sm text-ink-2">
               No es que esté vacío: no se pudo consultar. Recarga la página; si sigue igual,
               escríbenos antes de volver a dibujarlo.

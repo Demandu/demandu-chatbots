@@ -117,5 +117,42 @@
     "crear": "Create group",
     "eliminar": "Delete",
     "vacio": "You don't have any lead groups yet. Create the first one above 👆"
+  },
+  "reservas": {
+    "noPudeIdentificarCuenta": "We couldn't identify your account.",
+    "dibujaSalonDefineTus": "Lay out your dining room and set your seatings. That way your assistant knows how many people fit at each table, which ones can be joined and when — and never takes a booking that doesn't fit.",
+    "noSePudoLeer": "We couldn't load your dining room."
+  },
+  "reservasMapa": {
+    "cuantas": "How many",
+    "anadirAlPlano": "Add to layout",
+    "aparecenAcomodadasEspacioLibre": "They appear in the free space. Drag them wherever they belong.",
+    "personasAforo": "seats in total",
+    "salonEstaVacio": "Your dining room is empty.",
+    "diCuantasMesasTienes": "Enter how many tables you have above and they'll appear on their own.",
+    "arrastraMesasColocarlasComo": "Drag the tables to match your real dining room. It saves as soon as you drop them.",
+    "pulsaMesaPlanoCambiar": "Tap a table on the layout to change its name, how many people fit, and which ones it can be joined with.",
+    "nombre": "Name",
+    "guardarCambios": "Save changes",
+    "sePuedeJuntar": "Can be joined with",
+    "marcaSoloVerdadCaben": "Only tick the ones that really fit together in your room. Lana will join these and no others.",
+    "terrazaSalon": "Patio, Main room…",
+    "terrazaSalonBarra": "Patio, Main room, Bar…"
+  },
+  "reservasTurnos": {
+    "todaviaNoTienesMesas": "You don't have any tables in the layout yet. A seating with no tables can't take bookings — lay out your dining room first.",
+    "todaviaNoTienesTurnos": "You don't have any seatings yet. Create the first one on the right: for example “First seating”, 7:00 p.m.",
+    "cancelar": "Cancel",
+    "nombre": "Name",
+    "dias": "Which days",
+    "sinNingunDiaMarcado": "With no day ticked, this seating would never take a booking.",
+    "dejaloApagadoTusHoras": "Leave it off during your busiest hours. In a full seating, one table too many means people standing at the door. With it off, Lana holds the table and checks with you first.",
+    "esteTurnoEstaUso": "This seating is in use",
+    "comoTrabajaLana": "How Lana works",
+    "grupoGrandePartir": "Large party, from",
+    "ahiArribaLanaNo": "Above that, Lana doesn't decide: she lets you know so you can handle it.",
+    "mesasSePuedenJuntar": "Tables that can be joined",
+    "cuantasComoMaximoMismo": "The most you'd join for a single party. Joining too many means moving chairs and blocking an aisle.",
+    "guardarAjustes": "Save settings"
   }
 }

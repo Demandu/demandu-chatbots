@@ -6,6 +6,7 @@ import {
   LIENZO, REJILLA, acomodar, aforoDelSalon, conUnibles, lasQueSePisan,
   type MesaEnElMapa, type Par,
 } from "@/lib/reservas/mapa";
+import { useTranslations } from "next-intl";
 import { crearTanda, moverMesa, editarMesa, borrarMesa, guardarUniones } from
   "@/app/(dashboard)/reservas/acciones";
 
@@ -37,6 +38,7 @@ export function MapaDelSalon({
   mesas: MesaEnElMapa[];
   pares: Par[];
 }) {
+  const t = useTranslations("reservasMapa");
   const [mesas, setMesas] = useState<MesaEnElMapa[]>(inicial);
   const [pares, setPares] = useState<Par[]>(paresIniciales);
   const [elegida, setElegida] = useState<string | null>(null);
@@ -214,7 +216,7 @@ export function MapaDelSalon({
             cuánta gente y de qué forma, y aparecen acomodadas solas. */}
         <form action={anadirTanda} className="card-l mb-3 flex flex-wrap items-end gap-3 p-4">
           <div className="w-20">
-            <label className="mb-1 block text-xs font-semibold text-ink-2">Cuántas</label>
+            <label className="mb-1 block text-xs font-semibold text-ink-2">{t("cuantas")}</label>
             <input name="cuantas" type="number" min={1} max={60} defaultValue={4} required className="input-l" />
           </div>
           <div className="w-24">
@@ -231,20 +233,20 @@ export function MapaDelSalon({
           </div>
           <div className="w-40">
             <label className="mb-1 block text-xs font-semibold text-ink-2">Zona (opcional)</label>
-            <input name="zona" className="input-l" placeholder="Terraza, Salón…" />
+            <input name="zona" className="input-l" placeholder={t("terrazaSalon")} />
           </div>
           <button className="btn-primary" disabled={guardando}>
-            <Plus className="h-4 w-4" /> Añadir al plano
+            <Plus className="h-4 w-4" />{t("anadirAlPlano")}
           </button>
           <p className="w-full text-[11px] text-ink-3">
-            Aparecen acomodadas en el espacio libre. Después las arrastras donde van.
+            {t("aparecenAcomodadasEspacioLibre")}
           </p>
         </form>
 
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <span className="text-sm text-ink-2">
             <strong className="text-ink">{mesas.filter((m) => m.activa !== false).length}</strong> mesas ·{" "}
-            <strong className="text-ink">{aforo}</strong> personas de aforo
+            <strong className="text-ink">{aforo}</strong>{t("personasAforo")}
           </span>
           {sePisan.size > 0 && (
             <span className="rounded-full bg-[#fdecec] px-3 py-1 text-xs font-medium text-[#c0392b]">
@@ -319,8 +321,8 @@ export function MapaDelSalon({
             {mesas.length === 0 && (
               <div className="absolute inset-0 grid place-items-center text-center text-sm text-ink-3">
                 <div>
-                  Tu salón está vacío.<br />
-                  Dí cuántas mesas tienes arriba y aparecen solas.
+                  {t("salonEstaVacio")}<br />
+                  {t("diCuantasMesasTienes")}
                 </div>
               </div>
             )}
@@ -328,7 +330,7 @@ export function MapaDelSalon({
         </div>
 
         <p className="mt-2 text-[11px] text-ink-3">
-          Arrastra las mesas para colocarlas como están en tu salón. Se guarda solo al soltar.
+          {t("arrastraMesasColocarlasComo")}
         </p>
       </div>
 
@@ -336,14 +338,14 @@ export function MapaDelSalon({
       <div className="card-l p-5">
         {!laElegida ? (
           <p className="text-sm text-ink-3">
-            Pulsa una mesa del plano para cambiar su nombre, cuánta gente cabe y con cuáles se puede juntar.
+            {t("pulsaMesaPlanoCambiar")}
           </p>
         ) : (
           <div className="space-y-4">
             <form action={guardarFicha} className="space-y-3">
               <input type="hidden" name="id" value={laElegida.id} />
               <div>
-                <label className="mb-1 block text-xs font-semibold text-ink-2">Nombre</label>
+                <label className="mb-1 block text-xs font-semibold text-ink-2">{t("nombre")}</label>
                 <input name="nombre" defaultValue={laElegida.nombre} key={`n-${laElegida.id}`} className="input-l" required />
               </div>
               <div className="flex gap-3">
@@ -367,7 +369,7 @@ export function MapaDelSalon({
                 <label className="mb-1 block text-xs font-semibold text-ink-2">Zona (opcional)</label>
                 <input
                   name="zona" defaultValue={laElegida.zona ?? ""} key={`z-${laElegida.id}`}
-                  className="input-l" placeholder="Terraza, Salón, Barra…"
+                  className="input-l" placeholder={t("terrazaSalonBarra")}
                 />
               </div>
               <label className="flex items-center gap-2 text-sm text-ink-2">
@@ -375,14 +377,14 @@ export function MapaDelSalon({
                 {laElegida.activa !== false ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                 Se puede reservar
               </label>
-              <button className="btn-primary w-full" disabled={guardando}>Guardar cambios</button>
+              <button className="btn-primary w-full" disabled={guardando}>{t("guardarCambios")}</button>
             </form>
 
             {/* ── Con cuáles se junta ────────────────────────────────── */}
             <div className="border-t border-linea pt-4">
-              <div className="mb-1 text-xs font-semibold text-ink-2">Se puede juntar con</div>
+              <div className="mb-1 text-xs font-semibold text-ink-2">{t("sePuedeJuntar")}</div>
               <p className="mb-2 text-[11px] text-ink-3">
-                Marca solo las que de verdad caben juntas en tu salón. Lana únicamente juntará estas.
+                {t("marcaSoloVerdadCaben")}
               </p>
               <div className="max-h-44 space-y-1 overflow-auto">
                 {conSusUniones.filter((m) => m.id !== laElegida.id).length === 0 && (

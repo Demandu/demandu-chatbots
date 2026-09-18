@@ -1,0 +1,21 @@
+# CUÁNTO ESPAÑOL ESCRITO A MANO QUEDA, POR ZONA.
+#
+# Esto es un TRINQUETE: la regla de estatico.mjs se pone roja si algún número
+# SUBE. Se puede bajar todo lo que se quiera —eso es traducir— pero no subir.
+#
+# Si un número sube porque de verdad hacía falta texto nuevo, se baja otro tanto
+# traduciendo algo, o se sube este archivo a mano Y se explica en el commit.
+#
+# Se regenera con:  node scripts/medir-idiomas.mjs --guardar
+Textos dentro de la lógica: 767
+Constructor de flujos: 605
+Tienda: 508
+Componentes sueltos: 432
+Chatbots: 391
+Superadmin (interno): 320
+Configuración: 263
+Resto del panel: 231
+Bandeja: 115
+Reservas: 80
+Agenda: 73
+CRM y campañas: 52
