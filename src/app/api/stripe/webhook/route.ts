@@ -24,6 +24,46 @@ export const runtime = "nodejs";
 const DIAS_DE_GRACIA = 7;
 
 /**
+ * LOS EVENTOS QUE MUEVEN DINERO.
+ *
+ * Se listan a propósito en vez de tratarlos todos igual: en esta misma cuenta
+ * de Stripe viven otros productos de la casa, y sus avisos llegan a esta misma
+ * dirección. Uno de esos sin organización NO es un fallo nuestro. Uno de
+ * ESTOS sin organización sí lo es: quiere decir que alguien pagó y su cuenta
+ * no se enteró.
+ *
+ * Quien añada un `case` nuevo al switch tiene que añadirlo aquí también: hay
+ * una prueba estática que lo exige.
+ */
+const EVENTOS_DE_DINERO = new Set<string>([
+  "checkout.session.completed",
+  "customer.subscription.created",
+  "customer.subscription.updated",
+  "customer.subscription.deleted",
+  "invoice.paid",
+  "invoice.payment_succeeded",
+  "invoice.payment_failed",
+]);
+
+/**
+ * Lo que se apunta cuando un evento de dinero no encuentra su organización.
+ *
+ * Lleva con qué buscarlo a mano en Stripe —cliente, correo, factura— porque
+ * quien lo lea va a tener que ir a mirar allá.
+ */
+function sinOrganizacion(tipo: string, obj: any): string {
+  const customer = typeof obj?.customer === "string" ? obj.customer : obj?.customer?.id;
+  const pistas = [
+    `tipo=${tipo}`,
+    customer ? `customer=${customer}` : null,
+    obj?.customer_email ? `email=${obj.customer_email}` : null,
+    obj?.subscription ? `subscription=${obj.subscription}` : null,
+    obj?.id ? `objeto=${obj.id}` : null,
+  ].filter(Boolean).join(" ");
+  return `sin_organizacion · ${pistas}`.slice(0, 500);
+}
+
+/**
  * ¿Esto lo mandó Stripe de verdad?
  *
  * La dirección del webhook es pública: cualquiera puede mandarle un JSON
@@ -60,18 +100,54 @@ function firmaValida(cuerpo: string, cabecera: string | null, secreto: string): 
   });
 }
 
-/** De un objeto de Stripe, la organización a la que pertenece. */
+/**
+ * De un objeto de Stripe, la organización a la que pertenece.
+ *
+ * SE BUSCA POR TRES CAMINOS, de más fiable a menos, porque perder este dato es
+ * perder el cobro entero: el aviso llega, no se sabe de quién es, y el cliente
+ * paga sin que su cuenta se entere.
+ *
+ *   1. La metadata que dejamos nosotros al abrir el pago (`suscripcion.ts`).
+ *      Las facturas la reciben copiada en `subscription_details`; las versiones
+ *      nuevas de la API de Stripe la cuelgan además de `parent`.
+ *   2. El cliente de Stripe, que se guarda en la organización ANTES de cobrar.
+ *   3. La suscripción. Un cobro mensual de una suscripción que YA conocemos es
+ *      nuestro aunque el identificador de cliente se haya perdido por el
+ *      camino — y es justo el caso de una suscripción dada de alta a mano desde
+ *      el panel de Stripe, que no lleva metadata ninguna.
+ */
 async function orgDelEvento(admin: any, obj: any): Promise<string | null> {
-  const porMetadata = obj?.metadata?.org_id ?? obj?.subscription_details?.metadata?.org_id;
+  const porMetadata =
+    obj?.metadata?.org_id ??
+    obj?.subscription_details?.metadata?.org_id ??
+    obj?.parent?.subscription_details?.metadata?.org_id;
   if (porMetadata) return porMetadata as string;
   if (obj?.client_reference_id) return obj.client_reference_id as string;
 
-  // Las facturas no siempre traen la metadata: se busca por el cliente.
+  // UN FALLO DE LA BASE NO ES «NO EXISTE». Si no se mira el error, un corte de
+  // un segundo se lee igual que un cliente ajeno y el cobro se da por perdido.
+  const buscar = async (columna: string, valor: string): Promise<string | null> => {
+    const { data, error } = await admin
+      .from("organizations").select("id").eq(columna, valor).maybeSingle();
+    // Se usa la misma etiqueta corta que el resto de los avisos de este
+    // archivo: el dato que hace falta es la columna y el mensaje de la base.
+    if (error) console.error("[stripe webhook]", columna, error.message);
+    return (data as any)?.id ?? null;
+  };
+
   const customer = typeof obj?.customer === "string" ? obj.customer : obj?.customer?.id;
-  if (!customer) return null;
-  const { data } = await admin
-    .from("organizations").select("id").eq("stripe_customer_id", customer).maybeSingle();
-  return (data as any)?.id ?? null;
+  if (customer) {
+    const porCliente = await buscar("stripe_customer_id", customer);
+    if (porCliente) return porCliente;
+  }
+
+  const suscripcion =
+    (typeof obj?.subscription === "string" ? obj.subscription : obj?.subscription?.id) ??
+    obj?.parent?.subscription_details?.subscription ??
+    (typeof obj?.id === "string" && obj.id.startsWith("sub_") ? obj.id : null);
+  if (suscripcion) return await buscar("stripe_subscription_id", suscripcion);
+
+  return null;
 }
 
 /** Trae la suscripción completa desde Stripe (los eventos vienen recortados). */
@@ -165,66 +241,82 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, repetido: true });
   }
 
-  let fallo: string | null = null;
-  try {
-    switch (evento.type) {
-      // El cliente terminó de pagar en la pantalla de Stripe.
-      case "checkout.session.completed": {
-        if (!orgId) break;
-        // El pago de complementos también cae aquí; se distingue por el modo.
-        if (obj.mode === "subscription" && obj.subscription) {
-          const sub = await leerSuscripcion(obj.subscription);
-          if (sub) await aplicarSuscripcion(admin, orgId, sub);
-        } else if (obj.mode === "payment" || obj.mode === "subscription") {
-          await activarComplementos(admin, orgId, obj);
+  // UN EVENTO DE DINERO SIN ORGANIZACIÓN NO SE DA POR BUENO.
+  //
+  // Antes esto era un `if (!orgId) break;` dentro de cada `case`: sin registro,
+  // sin marca de fallo y con un 200 de vuelta. El evento quedaba guardado como
+  // procesado correctamente, Stripe lo daba por entregado y no lo reintentaba
+  // nunca más. Si quien pagó era un cliente nuestro, pagó y su cuenta se quedó
+  // igual — y no había forma de enterarse.
+  //
+  // SE SIGUE CONTESTANDO 200 a propósito: el aviso de otro producto de la casa
+  // no se va a arreglar por reintentarlo, y Stripe desactiva la dirección
+  // entera cuando una serie de avisos falla. Lo que cambia es que queda
+  // apuntado en `error` y sale en el panel de estado, que es lo que faltaba.
+  const sinDuenio =
+    !orgId && EVENTOS_DE_DINERO.has(evento.type) ? sinOrganizacion(evento.type, obj) : null;
+  if (sinDuenio) console.error("[stripe webhook]", evento.id, sinDuenio);
+
+  let fallo: string | null = sinDuenio;
+
+  // Sin organización no hay a quién aplicarle nada; el porqué ya quedó escrito.
+  if (orgId) {
+    try {
+      switch (evento.type) {
+        // El cliente terminó de pagar en la pantalla de Stripe.
+        case "checkout.session.completed": {
+          // El pago de complementos también cae aquí; se distingue por el modo.
+          if (obj.mode === "subscription" && obj.subscription) {
+            const sub = await leerSuscripcion(obj.subscription);
+            if (sub) await aplicarSuscripcion(admin, orgId, sub);
+          } else if (obj.mode === "payment" || obj.mode === "subscription") {
+            await activarComplementos(admin, orgId, obj);
+          }
+          // El cliente de Stripe se guarda siempre: es lo que abre el portal.
+          if (obj.customer) {
+            await admin.from("organizations")
+              .update({ stripe_customer_id: obj.customer })
+              .eq("id", orgId);
+          }
+          break;
         }
-        // El cliente de Stripe se guarda siempre: es lo que abre el portal.
-        if (obj.customer) {
-          await admin.from("organizations")
-            .update({ stripe_customer_id: obj.customer })
-            .eq("id", orgId);
+
+        // Cambios de la suscripción: renovación, cambio de plan, cancelación.
+        case "customer.subscription.created":
+        case "customer.subscription.updated":
+        case "customer.subscription.deleted": {
+          await aplicarSuscripcion(admin, orgId, obj);
+          break;
         }
-        break;
-      }
 
-      // Cambios de la suscripción: renovación, cambio de plan, cancelación.
-      case "customer.subscription.created":
-      case "customer.subscription.updated":
-      case "customer.subscription.deleted": {
-        if (!orgId) break;
-        await aplicarSuscripcion(admin, orgId, obj);
-        break;
-      }
+        // Se cobró el mes. Es la confirmación de que sigue todo bien.
+        case "invoice.paid": {
+          await admin.from("organizations").update({
+            estado_cobro: "activa",
+            gracia_termina_at: null,
+            periodo_termina_at: aFecha(obj?.lines?.data?.[0]?.period?.end) ?? undefined,
+          }).eq("id", orgId);
+          break;
+        }
 
-      // Se cobró el mes. Es la confirmación de que sigue todo bien.
-      case "invoice.paid": {
-        if (!orgId) break;
-        await admin.from("organizations").update({
-          estado_cobro: "activa",
-          gracia_termina_at: null,
-          periodo_termina_at: aFecha(obj?.lines?.data?.[0]?.period?.end) ?? undefined,
-        }).eq("id", orgId);
-        break;
-      }
+        // Falló la tarjeta. Empiezan los días de gracia.
+        case "invoice.payment_failed": {
+          await admin.from("organizations").update({
+            estado_cobro: "pago_fallido",
+            gracia_termina_at: new Date(Date.now() + DIAS_DE_GRACIA * 86400000).toISOString(),
+          }).eq("id", orgId);
+          break;
+        }
 
-      // Falló la tarjeta. Empiezan los días de gracia.
-      case "invoice.payment_failed": {
-        if (!orgId) break;
-        await admin.from("organizations").update({
-          estado_cobro: "pago_fallido",
-          gracia_termina_at: new Date(Date.now() + DIAS_DE_GRACIA * 86400000).toISOString(),
-        }).eq("id", orgId);
-        break;
+        default:
+          // Los demás eventos se guardan y ya. Tener el registro cuesta nada y
+          // el día que haga falta uno nuevo, el historial ya está ahí.
+          break;
       }
-
-      default:
-        // Los demás eventos se guardan y ya. Tener el registro cuesta nada y
-        // el día que haga falta uno nuevo, el historial ya está ahí.
-        break;
+    } catch (e: any) {
+      fallo = String(e?.message ?? e).slice(0, 500);
+      console.error("[stripe webhook]", evento.type, fallo);
     }
-  } catch (e: any) {
-    fallo = String(e?.message ?? e).slice(0, 500);
-    console.error("[stripe webhook]", evento.type, fallo);
   }
 
   await admin.from("billing_events")

@@ -6107,6 +6107,73 @@ describe("Los complementos y Stripe", () => {
 });
 
 
+// ─── Un aviso de dinero no se descarta en silencio ───────────────────────────
+//
+// PASÓ DE VERDAD. El 9 de septiembre llegaron tres avisos de cobro de Stripe de
+// una misma factura de $64. El webhook hacía `if (!orgId) break;`: sin registro,
+// sin marca de fallo y contestando 200. Los tres quedaron guardados como
+// «procesado correctamente», Stripe los dio por entregados y no los reintentó
+// nunca. Resultaron ser de otro producto de la casa, así que no costó un
+// cliente — pero EL CÓDIGO NO SABÍA ESO. El pago de un cliente nuestro se
+// habría perdido igual, de la misma forma y sin que nadie se enterara.
+describe("Un aviso de dinero no se descarta en silencio", () => {
+  const RUTA = "src/app/api/stripe/webhook/route.ts";
+  const WH = sinComentarios(fs.readFileSync(path.join(RAIZ, RUTA), "utf8"));
+
+  test("ningún evento sin organización se tira sin decir nada", () => {
+    const mudos = [...WH.matchAll(/if\s*\(\s*!\s*orgId\s*\)\s*(?:break|return)[^\n]*/g)]
+      .map((m) => m[0].trim());
+    esperar(mudos).igual([], `${RUTA}: se descarta un evento sin apuntarlo en ninguna parte`);
+  });
+
+  test("sin organización, el evento de dinero queda marcado como fallo", () => {
+    // `fallo` es lo que acaba en la columna `error` de `billing_events`. Si
+    // nace en `null` cuando no hay organización, la fila queda idéntica a la de
+    // un cobro que sí se aplicó, y la consulta que los busca no encuentra nada.
+    const m = WH.match(/let\s+fallo\s*:\s*string\s*\|\s*null\s*=\s*([^;]+);/);
+    esperar(!!m).verdadero(`${RUTA}: no encuentro dónde nace \`fallo\`, revisa esta prueba`);
+    esperar(m[1].trim() !== "null").verdadero(
+      `${RUTA}: \`fallo\` nace en null — un evento sin dueño se vuelve a guardar como procesado correctamente`,
+    );
+    // Y ese valor tiene que venir de comprobar que NO hay organización.
+    esperar(/!\s*orgId\s*&&\s*EVENTOS_DE_DINERO\.has\(/.test(WH)).verdadero(
+      `${RUTA}: ya no se comprueba que un evento de dinero tenga organización`,
+    );
+    esperar(/error:\s*fallo/.test(WH)).verdadero(
+      `${RUTA}: el fallo no se escribe en billing_events.error, así que no lo ve nadie`,
+    );
+  });
+
+  test("todo `case` que se atiende cuenta como dinero", () => {
+    // EL TRINQUETE. Quien añada mañana un cobro nuevo al switch y se olvide de
+    // la lista deja otra vez un camino por donde el dinero se pierde callado.
+    const i = WH.indexOf("const EVENTOS_DE_DINERO");
+    esperar(i > 0).verdadero(`${RUTA}: desapareció la lista de eventos de dinero`);
+    const lista = WH.slice(i, WH.indexOf("]);", i));
+    const j = WH.indexOf("switch (evento.type)");
+    esperar(j > 0).verdadero(`${RUTA}: cambió la forma del archivo, revisa esta prueba`);
+    const atendidos = [...WH.slice(j).matchAll(/case\s+"([^"]+)"/g)].map((x) => x[1]);
+    esperar(atendidos.length).mayorQue(0, `${RUTA}: el switch se quedó sin casos`);
+    esperar(atendidos.filter((t) => !lista.includes(`"${t}"`))).igual(
+      [],
+      `${RUTA}: eventos que se atienden y no están en EVENTOS_DE_DINERO`,
+    );
+  });
+
+  test("los cobros sin dueño salen en una pantalla", () => {
+    // Apuntarlo en la base y que nadie lo mire es el mismo silencio con más
+    // pasos. El panel de estado del superadmin es donde se ve.
+    const EST = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/estado/page.tsx"), "utf8"));
+    esperar(/from\("billing_events"\)/.test(EST)).verdadero(
+      "el panel de estado ya no mira los cobros sin dueño: vuelven a ser invisibles",
+    );
+    esperar(/sin_organizacion/.test(EST)).verdadero(
+      "el panel de estado no filtra por los eventos que se quedaron sin organización",
+    );
+  });
+});
+
+
 // ─── El aviso fuera de las 24 horas ──────────────────────────────────────────
 //
 // Los avisos salían SIEMPRE como texto libre, y WhatsApp solo lo entrega dentro

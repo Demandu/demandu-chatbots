@@ -50,15 +50,28 @@ function estaVieja(v: string | null | undefined): boolean {
 export default async function EstadoPage() {
   const admin = createAdminClient();
 
-  const [{ data: servicios }, { data: salud }, { data: orgs }] = await Promise.all([
+  const [{ data: servicios }, { data: salud }, { data: orgs }, { data: huerfanos }] = await Promise.all([
     admin.from("estado_servicios").select("*"),
     admin.from("meta_salud").select("*").order("riesgo", { ascending: false, nullsFirst: false }),
     admin.from("organizations").select("id, name"),
+    // PAGOS QUE NO ENCONTRARON SU CUENTA. Un aviso de dinero de Stripe al que
+    // no se le pudo poner dueño se apunta con `error` en `billing_events`
+    // (`src/app/api/stripe/webhook/route.ts`). Antes se descartaba en silencio
+    // y se contestaba 200: alguien podía pagar y no enterarse nadie.
+    admin
+      .from("billing_events")
+      .select("stripe_event_id, tipo, error, created_at")
+      .is("org_id", null)
+      .like("error", "sin_organizacion%")
+      .order("created_at", { ascending: false })
+      .limit(20),
   ]);
 
   const nombreDe = new Map<string, string>(((orgs as any[]) ?? []).map((o) => [o.id, o.name]));
   const lista = (servicios as any[]) ?? [];
   const metas = (salud as any[]) ?? [];
+
+  const pagosSinDuenio = (huerfanos as any[]) ?? [];
 
   const orden = Object.keys(NOMBRE);
   lista.sort((a, b) => orden.indexOf(a.servicio) - orden.indexOf(b.servicio));
@@ -104,6 +117,30 @@ export default async function EstadoPage() {
               </>
             )}
           </span>
+        </div>
+      )}
+
+      {/* Dinero que llegó y no se supo de quién era. Va ARRIBA de todo lo
+          demás: un servicio caído se nota solo, esto no se nota nunca. */}
+      {pagosSinDuenio.length > 0 && (
+        <div className="mb-5 rounded-xl border border-danger/50 bg-danger/5 px-4 py-3 text-sm text-ink-2">
+          <div className="flex items-start gap-2">
+            <TriangleAlert className="mt-0.5 h-4 w-4 flex-none text-danger" />
+            <div className="min-w-0">
+              <b className="text-ink">
+                {pagosSinDuenio.length} aviso(s) de cobro de Stripe sin cuenta a la que aplicarlos.
+              </b>{" "}
+              Alguien pagó y la plataforma no supo de quién era. Hay que mirarlo en Stripe con las
+              pistas de abajo y, si es un cliente nuestro, ponerle el plan a mano.
+              <ul className="mt-2 space-y-1 font-mono text-[11px] leading-relaxed text-ink-3">
+                {pagosSinDuenio.map((e) => (
+                  <li key={e.stripe_event_id} className="break-all">
+                    {haceCuanto(e.created_at)} · {e.error}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       )}
 
