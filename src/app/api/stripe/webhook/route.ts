@@ -60,7 +60,38 @@ function sinOrganizacion(tipo: string, obj: any): string {
     obj?.subscription ? `subscription=${obj.subscription}` : null,
     obj?.id ? `objeto=${obj.id}` : null,
   ].filter(Boolean).join(" ");
-  return `sin_organizacion · ${pistas}`.slice(0, 500);
+
+  /* ── AJENO NO ES AVERÍA, Y MEZCLARLOS ES PEOR QUE NO APUNTAR NADA ────────
+   *
+   * Esta cuenta de Stripe la comparten varias actividades, así que aquí caen
+   * avisos que esta plataforma nunca originó. Antes todos se apuntaban igual,
+   * como `sin_organizacion`. El problema no es el dinero: es que ruido con
+   * pinta de incidente entrena a no mirar. Tres avisos por semana que
+   * resultan ser de otra cosa y nadie revisa el cuarto — que sí lo era.
+   *
+   * CÓMO SE DISTINGUEN, sin adivinar: `src/lib/billing/stripe.ts` pone
+   * SIEMPRE `metadata[org_id]` al abrir un pago nuestro, y el checkout deja
+   * `client_reference_id`. Si un aviso no trae ninguno de los dos, no salió
+   * de aquí.
+   *
+   *   · trae dueño y no lo encontramos → INCIDENTE. Alguien pagó con nuestro
+   *     botón y su cuenta no se enteró. Eso es lo único que debe dar la
+   *     alarma.
+   *   · no trae dueño ninguno → `ajeno`. Se apunta para tener el historial,
+   *     no para despertar a nadie.
+   */
+  const decíaDeQuiénEra =
+    obj?.metadata?.org_id ??
+    obj?.subscription_details?.metadata?.org_id ??
+    obj?.parent?.subscription_details?.metadata?.org_id ??
+    obj?.client_reference_id ??
+    null;
+
+  return (
+    decíaDeQuiénEra
+      ? `sin_organizacion · decia org_id=${decíaDeQuiénEra} y no existe · ${pistas}`
+      : `ajeno · ${pistas}`
+  ).slice(0, 500);
 }
 
 /**
@@ -117,13 +148,6 @@ function firmaValida(cuerpo: string, cabecera: string | null, secreto: string): 
  *      el panel de Stripe, que no lleva metadata ninguna.
  */
 async function orgDelEvento(admin: any, obj: any): Promise<string | null> {
-  const porMetadata =
-    obj?.metadata?.org_id ??
-    obj?.subscription_details?.metadata?.org_id ??
-    obj?.parent?.subscription_details?.metadata?.org_id;
-  if (porMetadata) return porMetadata as string;
-  if (obj?.client_reference_id) return obj.client_reference_id as string;
-
   // UN FALLO DE LA BASE NO ES «NO EXISTE». Si no se mira el error, un corte de
   // un segundo se lee igual que un cliente ajeno y el cobro se da por perdido.
   const buscar = async (columna: string, valor: string): Promise<string | null> => {
@@ -134,6 +158,25 @@ async function orgDelEvento(admin: any, obj: any): Promise<string | null> {
     if (error) console.error("[stripe webhook]", columna, error.message);
     return (data as any)?.id ?? null;
   };
+
+  /* ── LA METADATA DICE DE QUIÉN ES; LA BASE DICE SI EXISTE ────────────────
+   *
+   * Antes se devolvía el `org_id` de la metadata TAL CUAL, sin comprobar
+   * nada. Si esa organización ya no está —se borró la cuenta, o el
+   * identificador viene de una prueba vieja— el resto del archivo hacía su
+   * `update ... where id = <ese uuid>`, que afecta a CERO filas y no falla.
+   * El cobro quedaba dado por aplicado y nadie se enteraba.
+   *
+   * Es el mismo agujero que cerró H-01, entrando por otra puerta: el evento
+   * se marcaba procesado y sin error. Devolver `null` aquí lo manda al
+   * camino de «sin organización», que sí deja rastro.
+   */
+  const porMetadata =
+    obj?.metadata?.org_id ??
+    obj?.subscription_details?.metadata?.org_id ??
+    obj?.parent?.subscription_details?.metadata?.org_id ??
+    obj?.client_reference_id;
+  if (porMetadata) return await buscar("id", String(porMetadata));
 
   const customer = typeof obj?.customer === "string" ? obj.customer : obj?.customer?.id;
   if (customer) {
@@ -255,7 +298,13 @@ export async function POST(req: Request) {
   // apuntado en `error` y sale en el panel de estado, que es lo que faltaba.
   const sinDuenio =
     !orgId && EVENTOS_DE_DINERO.has(evento.type) ? sinOrganizacion(evento.type, obj) : null;
-  if (sinDuenio) console.error("[stripe webhook]", evento.id, sinDuenio);
+  // UN AVISO AJENO NO SE GRITA. Va a `log` y no a `error` para que lo que
+  // llegue a la bandeja de errores sea solo lo que hay que mirar hoy; el
+  // historial completo sigue en `billing_events`.
+  if (sinDuenio) {
+    if (sinDuenio.startsWith("ajeno")) console.log("[stripe webhook]", evento.id, sinDuenio);
+    else console.error("[stripe webhook]", evento.id, sinDuenio);
+  }
 
   let fallo: string | null = sinDuenio;
 

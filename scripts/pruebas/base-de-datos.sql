@@ -364,6 +364,31 @@ begin
   perform set_config('role','postgres', true);
   r := r || E'\n26. Un visitante no se lleva identificadores ... ' || v;
 
+  -- == 27. UNA TABLA SIN POLITICAS TAMPOCO REPARTE PERMISOS ============
+  -- Con RLS activo y cero politicas, Postgres deniega: los GRANT no sirven
+  -- de nada... hasta el dia que alguien anade una politica «para probar» o
+  -- apaga el RLS un momento. Entonces los permisos que quedaron sueltos
+  -- deciden, y `correos_enviados` tenia DELETE y TRUNCATE para `anon`.
+  --
+  -- Las otras diez tablas iguales no tienen ningun GRANT. Esta regla exige
+  -- que sigan siendo doce de doce.
+  select coalesce(string_agg(distinct s.relname || '.' || tp.grantee, ', '), 'ninguna')
+    into v
+  from (
+    select c.relname from pg_class c
+      join pg_namespace ns3 on ns3.oid = c.relnamespace
+     where ns3.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity
+       and not exists (
+         select 1 from pg_policies p
+          where p.schemaname = 'public' and p.tablename = c.relname)
+  ) s
+  join information_schema.role_table_grants tp
+    on tp.table_name = s.relname
+   and tp.table_schema = 'public'
+   and tp.grantee in ('anon','authenticated');
+  r := r || E'\n27. Tabla sin politicas con permisos sueltos .. '
+         || case when v = 'ninguna' then 'OK' else 'FALLO: ' || v end;
+
   -- Limpieza y salida (el ERROR es a proposito: deshace todo)
   delete from memberships where user_id = usr_a;
   delete from auth.users where id = usr_a;

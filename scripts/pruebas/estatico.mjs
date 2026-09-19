@@ -6203,6 +6203,35 @@ describe("Un aviso de dinero no se descarta en silencio", () => {
       "el panel de estado no filtra por los eventos que se quedaron sin organización",
     );
   });
+
+  test("UN AVISO AJENO NO SE CONFUNDE CON UN INCIDENTE", () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * Esta cuenta de Stripe la comparten varias actividades: aquí caen avisos
+     * que la plataforma nunca originó. Si todos se apuntan como
+     * `sin_organizacion`, el panel de estado se llena de cosas que no son
+     * nuestras — y ruido con pinta de incidente entrena a no mirar. El día
+     * que uno sea de verdad tendrá exactamente la misma pinta.
+     *
+     * Se distinguen por lo que SIEMPRE ponemos nosotros: `metadata[org_id]`
+     * (`src/lib/billing/stripe.ts`) o `client_reference_id`.
+     * ───────────────────────────────────────────────────────────────────── */
+    const WH = sinComentarios(fs.readFileSync(path.join(SRC, "app/api/stripe/webhook/route.ts"), "utf8"));
+
+    esperar(/`ajeno · /.test(WH)).verdadero(
+      "el webhook de Stripe ya no marca como `ajeno` lo que no originó esta plataforma: " +
+        "el panel de estado se vuelve a llenar de avisos de otra cosa",
+    );
+
+    /* Y LA MITAD QUE NADIE MIRABA: la metadata decía de quién era el cobro y
+     * se devolvía TAL CUAL, sin comprobar que esa organización existiera. El
+     * `update ... where id = <uuid>` afectaba a cero filas, no fallaba, y el
+     * evento quedaba procesado y sin error. El agujero de H-01 por otra
+     * puerta. */
+    esperar(/return porMetadata as string/.test(WH)).falso(
+      "`orgDelEvento` vuelve a devolver el org_id de la metadata sin comprobar que exista: " +
+        "un cobro de una organización borrada se dará por aplicado y nadie se enterará",
+    );
+  });
 });
 
 
