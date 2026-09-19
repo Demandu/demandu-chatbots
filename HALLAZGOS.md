@@ -51,6 +51,50 @@ llevan `whatsapp_channels`, `integrations` y `tienda_cobros`.
 
 ## 🟠 Arreglo escrito, pendiente de publicar
 
+### H-08 · Siete funciones `definer` más no comprobaban quién llamaba
+**Origen:** revisión de las 71 funciones `security definer`, 19 sep 2026 ·
+migración `0130` · **aplicada a la base, código sin publicar**
+
+Continuación de la 0114. Se revisaron las **71 firmas** `security definer` del
+esquema `public` una por una (68 nombres: `auth_puede`, `crm_elegir_agente` y
+`etiqueta_automatica` están repetidas con distintos parámetros). Salieron
+**siete** que recibían un identificador y no miraban de quién era:
+
+| Función | Lo que dejaba hacer a una cuenta gratuita |
+|---|---|
+| `emitir_evento` | Meter eventos falsos en el Zoho/CRM de otro negocio |
+| `poner_etiqueta` | Etiquetar contactos ajenos (y con eso mover su embudo) |
+| `guardar_origen` | Falsear de dónde le vienen los clientes a otro |
+| `crm_elegir_agente` | **Sin iniciar sesión**: sacar un agente de cualquier negocio y descuadrar su turno de reparto |
+| `cancelar_esperas_de` | Cancelar los seguimientos programados de una conversación ajena |
+| `tomar_turno_respuesta_privada` | Robar el turno de un comentario de Instagram ajeno: su respuesta no sale nunca |
+| `anotar_paso_del_equipo` | Falsificar la asistencia del equipo de Demandu |
+
+Las siete se reprodujeron contra la base real, en una transacción que revierte,
+**antes** de arreglarlas. Las siete quedaron cortadas después, y se comprobó que
+ni el dueño legítimo ni el motor (llave de servicio) se rompen.
+
+**Comprobado en la base (ya no devuelve nada):**
+
+```sql
+select coalesce(string_agg(p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', ', '), 'ninguna')
+  from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
+ where ns.nspname='public' and p.prosecdef
+   and p.prorettype <> 'trigger'::regtype
+   and pg_get_function_identity_arguments(p.oid) <> ''
+   and (has_function_privilege('anon', p.oid,'execute') or has_function_privilege('authenticated', p.oid,'execute'))
+   and pg_get_functiondef(p.oid) !~* 'auth_org_ids|auth\.uid\s*\(|auth_puede\s*\(';
+```
+
+**Qué falta:** publicar. La base ya lleva el candado; el repo tiene sin publicar
+la migración `0130`, el trinquete de `estatico.mjs`, el módulo
+`scripts/pruebas/definerRevisadas.mjs`, la lista
+`scripts/pruebas/funciones-definer.txt` y los bloques 24–25 de
+`scripts/pruebas/base-de-datos.sql`.
+
+---
+
+
 ### H-01 · Tres avisos de cobro de Stripe se descartaron con un 200 mudo
 **Origen:** auditoría 8 sep, punto 1.9 · `src/app/api/stripe/webhook/route.ts`
 **Investigado y escrito:** 18 sep 2026. **Sin publicar.**
@@ -193,6 +237,42 @@ su identificador: el cobro sale y el aviso vuelve sin dueño. Es uno de los ~250
 sitios de «consultas que no miran su error», pero este está en el camino del
 dinero. **No reproducido.**
 
+### H-09 · Hay funciones donde el `grant` es lo ÚNICO que protege
+**Origen:** revisión de las 71 `definer`, 19 sep 2026
+
+De las 71, **36 están a salvo solo porque no se las concedieron a `anon` ni a
+`authenticated`** — por dentro no comprueban nada. Entre ellas:
+
+- `purgar_datos_de_org(p_org_id)` — borra los datos de un cliente entero.
+- `campanas_tomar_lote(p_limite)` — devuelve el `access_token` de WhatsApp.
+- `consumo_de_clientes()` — el consumo y el plan de TODOS los clientes.
+- `api_key_resolver(p_hash)` — resuelve una llave de API a su organización.
+- `provisionar_negocio(...)`, `etiqueta_automatica(...)`, `org_features(...)`.
+
+Está bien hoy: se comprobó que ninguna tiene ACL nula (ninguna cae en el
+`EXECUTE` a PUBLIC por defecto de Postgres) y que `anon`/`authenticated` no
+heredan ningún rol que amplíe. Pero **un `grant` de más y es un incidente**, y un
+`grant` de más no lo caza ninguna prueba de hoy: el trinquete nuevo vigila el
+código de las funciones, no sus permisos.
+
+**No es un hallazgo reproducido** — nadie ha visto ese `grant` ocurrir. Es el
+sitio donde el siguiente fallo va a salir.
+
+**Comprobar:**
+
+```sql
+select p.proname, p.proacl::text
+  from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+ where n.nspname='public' and p.prosecdef
+   and p.proname in ('purgar_datos_de_org','campanas_tomar_lote','consumo_de_clientes','api_key_resolver');
+```
+
+**Arreglo conocido:** una línea base de permisos igual que la de funciones —
+nombre + quién puede ejecutarla — y una prueba en `base-de-datos.sql` que la
+compare contra `has_function_privilege`. Que el `grant` de más salga rojo.
+
+---
+
 ### H-05 · Las migraciones no reconstruyen la base
 **Origen:** auditoría 8 sep, sección 4
 
@@ -240,6 +320,8 @@ where n.nspname='public'
   and p.proname in ('buscar_conocimiento','calificar_contacto','elegir_por_etiqueta','puedo_llamar');
 ```
 
-⚠️ **Sin regla que lo vigile.** Está arreglado, pero nada impide que la próxima
-función `definer` nazca igual. Eso lo deja a medio cerrar según las reglas del
-cazador.
+✅ **Ya hay regla que lo vigila** (19 sep 2026, ver H-08). El trinquete de
+`estatico.mjs` — «Ninguna funcion definer nueva sin revisar» — sale rojo si nace
+una función `definer` que no esté en `scripts/pruebas/funciones-definer.txt`, y
+también si a una de las marcadas `candado` le quitan la comprobación. Se vio
+roja con las dos mutaciones antes de darla por buena.

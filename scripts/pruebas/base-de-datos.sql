@@ -13,6 +13,7 @@ declare
   org_a uuid; org_b uuid; bot_a uuid; bot_b uuid; cont uuid; conv uuid;
   usr_a uuid; n int; v text; u record; r text := '';
   flw uuid; st_gana uuid; st_pierde uuid; tm uuid; res jsonb;
+  cont_b uuid; conv_b uuid;
   t0 timestamptz := now() - interval '3 hours';
   v_emb vector(1024) := array_fill(0.1::real, array[1024])::vector;
 begin
@@ -240,6 +241,128 @@ begin
                        'conv_asignar_bot')
      and has_function_privilege('anon', p.oid, 'execute');
   r := r || E'\n23. Funciones internas abiertas a visitantes ... ' || case when v='ninguna' then 'OK' else 'FALLO: '||v end;
+
+  -- ── 24. El candado de la 0130: siete funciones mas ───────────────────
+  -- Las cuatro de la 0114 se prueban arriba (8a, 8e, 8f). Estas son las que
+  -- se cerraron en la 0130. Cada una recibia un identificador y no miraba de
+  -- quien era. Ver claude/candado-en-las-funciones-definer.md.
+  insert into salidas (org_id, nombre, url, secreto) values (org_b,'ZZ salida B','https://b.test/h','s');
+  insert into contacts (org_id, name, phone, channel) values (org_b,'ZZ de B','5210000000077','whatsapp') returning id into cont_b;
+  insert into conversations (org_id, contact_id, bot_id, channel, status)
+    values (org_b, cont_b, bot_b,'whatsapp','open') returning id into conv_b;
+  insert into tags (org_id, name) values (org_b,'zz-vip-b');
+  insert into esperas_pendientes (org_id, conversation_id, nodo_id, ejecutar_at)
+    values (org_b, conv_b,'n1', now()+interval '1 hour');
+  insert into team_members (org_id, name, email, available, last_seen_at)
+    values (org_b,'ZZ Ag B','zz_ab@demandu.test', true, now());
+  insert into assignment_settings (org_id, enabled, solo_en_linea) values (org_b, true, false);
+
+  perform set_config('role','authenticated', true);
+  perform set_config('request.jwt.claims', json_build_object('sub', usr_a, 'role','authenticated')::text, true);
+
+  begin perform emitir_evento(org_b,'pedido.pagado','{}'::jsonb); v := 'FUGA(encolo en el webhook de B)';
+  exception when others then v := 'OK(lo corto)'; end;
+  r := r || E'\n24a. emitir_evento en la org ajena ............. ' || v;
+
+  begin perform poner_etiqueta(org_b, cont_b,'zz-vip-b'); v := 'FUGA(etiqueto ajeno)';
+  exception when others then v := 'OK(lo corto)'; end;
+  r := r || E'\n24b. poner_etiqueta en contacto ajeno .......... ' || v;
+
+  begin perform guardar_origen(org_b, cont_b, conv_b,'{"utm_source":"zz"}'::jsonb); v := 'FUGA(escribio ajeno)';
+  exception when others then v := 'OK(lo corto)'; end;
+  r := r || E'\n24c. guardar_origen en contacto ajeno .......... ' || v;
+
+  begin perform crm_elegir_agente(org_b, null); v := 'FUGA(revelo agente de B)';
+  exception when others then v := 'OK(lo corto)'; end;
+  r := r || E'\n24d. crm_elegir_agente de la org ajena ......... ' || v;
+
+  begin perform cancelar_esperas_de(conv_b); v := 'FUGA(cancelo seguimientos de B)';
+  exception when others then v := 'OK(lo corto)'; end;
+  r := r || E'\n24e. cancelar_esperas_de conversacion ajena .... ' || v;
+
+  begin perform tomar_turno_respuesta_privada(org_b,'ig','zz-com-b'); v := 'FUGA(le robo el turno)';
+  exception when others then v := 'OK(lo corto)'; end;
+  r := r || E'\n24f. tomar_turno_respuesta_privada ajeno ....... ' || v;
+
+  begin perform anotar_paso_del_equipo(gen_random_uuid()); v := 'FUGA(anoto por otro)';
+  exception when others then v := 'OK(lo corto)'; end;
+  r := r || E'\n24g. anotar_paso_del_equipo de otro usuario .... ' || v;
+
+  -- Y LO IMPORTANTE: que el motor siga pudiendo. Si el candado cortara a
+  -- quien llama con la llave de servicio, el bot dejaria de funcionar para
+  -- TODOS los clientes a la vez. Esa es la forma de romper esto.
+  perform set_config('role','postgres', true);
+  perform set_config('request.jwt.claims','', true);
+
+  begin
+    select emitir_evento(org_b,'pedido.pagado','{}'::jsonb) into n;
+    v := case when n=1 then 'OK' else 'FALLO(encolo '||n||')' end;
+  exception when others then v := 'FALLO(corto al motor)'; end;
+  r := r || E'\n24h. El motor SI puede emitir en cualquier org . ' || v;
+
+  begin perform poner_etiqueta(org_b, cont_b,'zz-vip-b'); v := 'OK';
+  exception when others then v := 'FALLO(corto al motor)'; end;
+  r := r || E'\n24i. El motor SI puede etiquetar ............... ' || v;
+
+  begin
+    select cancelar_esperas_de(conv_b) into n;
+    v := case when n=1 then 'OK' else 'FALLO(cancelo '||n||')' end;
+  exception when others then v := 'FALLO(corto al motor)'; end;
+  r := r || E'\n24j. El motor SI puede cancelar esperas ........ ' || v;
+
+  -- ── 25. Y NINGUNA definer nueva se cuela sin comprobar ───────────────
+  -- Es el trinquete de estatico.mjs, pero contra la base de verdad: una
+  -- funcion que se salta el RLS, esta concedida a quien tiene cuenta, recibe
+  -- parametros y no mira de quien son los datos. Asi nacieron las ocho.
+  select coalesce(string_agg(p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', ', '), 'ninguna')
+    into v
+    from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
+   where ns.nspname='public'
+     and p.prosecdef
+     and p.prorettype <> 'trigger'::regtype
+     and pg_get_function_identity_arguments(p.oid) <> ''
+     and (has_function_privilege('anon', p.oid,'execute') or has_function_privilege('authenticated', p.oid,'execute'))
+     and pg_get_functiondef(p.oid) !~* 'auth_org_ids|auth\.uid\s*\(|auth_puede\s*\(';
+  r := r || E'\n25. Definer abiertas que no comprueban ........ ' || case when v='ninguna' then 'OK' else 'FALLO: '||v end;
+
+  -- == 26. UN VISITANTE SIN CUENTA NO SE LLEVA IDENTIFICADORES ==========
+  -- El escaparate publico es la unica superficie anonima del producto. Que
+  -- exista no da derecho a repartir las llaves del negocio: con un `org_id` y
+  -- un `bot_id` en la mano, varias funciones y tablas dejan de ser anonimas.
+  --
+  -- La regla no mira los GRANT por si solos: casi todas las tablas conceden
+  -- columnas a `anon` por el reparto por defecto de Supabase, y lo que las
+  -- protege es el RLS. Mira lo que importa: de lo que un visitante PUEDE
+  -- LEER de verdad, que no salga ningun identificador.
+  perform set_config('role','anon', true);
+  perform set_config('request.jwt.claims','', true);
+  declare
+    tb record; cn bigint; fugas text := '';
+  begin
+    for tb in select c.relname from pg_class c
+                join pg_namespace ns2 on ns2.oid = c.relnamespace
+               where ns2.nspname = 'public' and c.relkind = 'r'
+               order by c.relname
+    loop
+      begin
+        execute format('select count(*) from public.%I', tb.relname) into cn;
+        if cn > 0 then
+          begin
+            execute format('select org_id from public.%I limit 1', tb.relname);
+            fugas := fugas || tb.relname || '.org_id ';
+          exception when others then null; end;
+          begin
+            execute format('select bot_id from public.%I limit 1', tb.relname);
+            fugas := fugas || tb.relname || '.bot_id ';
+          exception when others then null; end;
+        end if;
+      exception when others then null;
+      end;
+    end loop;
+    v := case when fugas = '' then 'OK' else 'FALLO: ' || fugas end;
+  end;
+  perform set_config('role','postgres', true);
+  r := r || E'\n26. Un visitante no se lleva identificadores ... ' || v;
 
   -- Limpieza y salida (el ERROR es a proposito: deshace todo)
   delete from memberships where user_id = usr_a;

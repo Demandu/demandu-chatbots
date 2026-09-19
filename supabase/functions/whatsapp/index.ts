@@ -6833,7 +6833,20 @@ Deno.serve(async (req: Request) => {
       if (contact?.created_at && Date.now() - Date.parse(contact.created_at) < 10_000) {
         contarFuera(db, cfg.org_id, "lead.nuevo", {
           telefono: from,
-          nombre: name ?? null,
+          /* EL NOMBRE NUNCA VA VACÍO, Y NO ES UN CAPRICHO DE ESTILO.
+           *
+           * Zoho exige apellido para crear un lead —y Salesforce y HubSpot
+           * igual—. Si llega vacío RECHAZA el registro, contesta un error que
+           * nadie lee, y el lead se pierde sin que se entere ni el negocio ni
+           * nosotros. Y WhatsApp no siempre manda el nombre: quien lo tiene
+           * oculto en su perfil llega sin `name`.
+           *
+           * El respaldo va AQUÍ y no en el CRM de cada cliente: un sitio, no
+           * uno por cada integración que alguien conecte mañana.
+           *
+           * `.trim() ||` y no `??`: Meta manda cadena vacía, no `null`, y
+           * `?? ` deja pasar el "" tan contento. */
+          nombre: (name ?? "").trim() || from,
           canal: "whatsapp",
           primer_mensaje: visible ?? text ?? "",
           contacto_id: contact.id,

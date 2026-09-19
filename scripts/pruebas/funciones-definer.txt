@@ -1,0 +1,114 @@
+# LAS FUNCIONES `security definer` REVISADAS, UNA POR UNA.
+#
+# QUÉ ES ESTO. Una función `security definer` se salta el RLS por diseño: corre
+# con los permisos de quien la escribió, no de quien la llama. Es la herramienta
+# correcta para dejar hacer una cosa concreta que de otro modo estaría
+# prohibida. Pero al saltarse el RLS, la función se queda como ÚNICO guardia:
+# si recibe un identificador por parámetro y no comprueba que sea de quien
+# llama, cualquiera con una cuenta gratuita la llama desde la consola del
+# navegador con el identificador de otro negocio.
+#
+# Pasó OCHO veces: cuatro en la 0114 (sep 2026) y cuatro más en la 0130, al
+# revisar las 71 firmas del esquema `public` una por una. Por eso existe este
+# archivo: para que la novena no llegue a producción.
+#
+# CÓMO SE LEE. Una función por renglón, `nombre | veredicto`. Son 68 nombres
+# (71 firmas: `auth_puede`, `crm_elegir_agente` y `etiqueta_automatica` están
+# repetidas con distintos parámetros).
+#
+#   candado        Comprueba quién llama — con `auth_org_ids()`, `auth.uid()`
+#                  o `auth_puede(...)`. El trinquete EXIGE que siga
+#                  comprobando: si alguien le quita la comprobación, sale rojo.
+#   solo-servicio  No está concedida a `anon` ni a `authenticated`: solo la
+#                  llave de servicio. Aquí el permiso es lo ÚNICO que protege
+#                  —`purgar_datos_de_org` borra un cliente entero de una
+#                  llamada— así que un `grant` de más es un incidente.
+#   disparador     Devuelve `trigger`. Postgres se niega a llamarla
+#                  directamente («trigger functions can only be called as
+#                  triggers»); está comprobado contra producción.
+#   deriva         No recibe identificador: lo saca de la sesión.
+#
+# CÓMO SE AÑADE UNA. Si escribes una función `definer` nueva, la prueba estática
+# saldrá roja hasta que la metas aquí. Antes de meterla, contesta: ¿recibe un
+# identificador? ¿comprueba que sea de quien llama? ¿a quién se la concedes?
+# Si la respuesta es «recibe un org_id y está concedida a authenticated sin
+# comprobar», no la apuntes: arréglala. El candado de la casa es el de la 0114:
+#
+#     if auth.uid() is not null and p_org not in (select auth_org_ids()) then
+#       raise exception 'sin acceso a esa organización';
+#     end if;
+#
+# Lo que hace que no rompa a los motores es `auth.uid() is not null`: quien
+# llama con la llave de servicio no tiene `sub`, así que pasa de largo. Muerde
+# en un solo caso — alguien CON SESIÓN pidiendo lo que no es suyo.
+#
+# Revisado el 19 de septiembre de 2026. 28 candado · 24 solo-servicio · 16 disparador.
+
+anotar_paso_del_equipo        | candado
+api_key_resolver              | solo-servicio
+auth_org_ids                  | candado
+auth_puede                    | candado
+auth_tiene                    | candado
+buscar_conocimiento           | candado
+calificar_al_cambiar_datos    | disparador
+calificar_contacto            | candado
+campanas_cerrar_terminadas    | solo-servicio
+campanas_tomar_lote           | solo-servicio
+cancelar_esperas_de           | candado
+cita_cuenta_lo_que_pasa       | disparador
+consumo_de_clientes           | solo-servicio
+conv_asignar_bot              | disparador
+conv_contar_no_leidos         | disparador
+conversacion_marca_asignacion | candado
+crear_mi_negocio              | candado
+crm_elegir_agente             | candado
+crm_enganchar_conversacion    | disparador
+crm_estado_desde_etapa        | disparador
+crm_etapa_a_conversacion      | disparador
+crm_etiqueta_de_etapa         | disparador
+crm_evento_mueve_tarjeta      | solo-servicio
+crm_pedido_al_embudo          | disparador
+crm_registrar_evento          | disparador
+crm_repartir                  | disparador
+crm_repartir_pendientes       | solo-servicio
+crm_sigo_aqui                 | candado
+crm_titulo_sigue_al_contacto  | disparador
+despachar_esperas             | solo-servicio
+drip_dispatch                 | solo-servicio
+drip_enroll                   | solo-servicio
+drip_reconcile                | solo-servicio
+drip_tick                     | solo-servicio
+elegir_por_etiqueta           | candado
+emitir_evento                 | candado
+estado_de_cobro               | candado
+etiqueta_automatica           | solo-servicio
+guardar_origen                | candado
+handle_new_user               | disparador
+invitar_persona               | candado
+limpiar_eventos_salientes     | solo-servicio
+limpiar_mensajes_vistos       | solo-servicio
+limpiar_tickets_de_cron       | solo-servicio
+lo_que_no_supo                | candado
+nuevo_ticket_de_cron          | solo-servicio
+org_en_horario                | candado
+org_features                  | solo-servicio
+org_features_mias             | candado
+org_puede                     | solo-servicio
+org_puede_enviar              | solo-servicio
+persona_borrar                | candado
+persona_guardar_acceso        | candado
+personas_de_la_org            | candado
+poner_etiqueta                | candado
+provisionar_negocio           | solo-servicio
+puedo_llamar                  | candado
+purgar_datos_de_org           | solo-servicio
+rescatar_esperas_colgadas     | solo-servicio
+secreto_de_salida             | candado
+sheets_encolar                | disparador
+siguiente_numero_pedido       | solo-servicio
+tienda_cuenta_lo_que_pasa     | disparador
+tienda_enlazar_pedido         | disparador
+tiendas_que_se_cobran         | candado
+token_de_whatsapp             | candado
+tomar_turno_respuesta_privada | candado
+usar_ticket_de_cron           | solo-servicio

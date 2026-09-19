@@ -16,6 +16,7 @@ import { escanear, leerLineaBase } from "./consultasSinMirar.mjs";
 import {
   medirPorZona, leerLineaBase as leerBaseDeEspanol,
 } from "./medirEspanol.mjs";
+import { escanearDefiner, leerBaseDefiner, VEREDICTOS } from "./definerRevisadas.mjs";
 
 const RAIZ = path.resolve(import.meta.dirname, "../..");
 const SRC = path.join(RAIZ, "src");
@@ -1817,6 +1818,37 @@ describe("Los eventos que la plataforma cuenta", () => {
     esperar(faltan.join(", ")).igual(
       "",
       "desapareció un evento que ya salió al mundo: hay integraciones de clientes escritas contra ese nombre, y reglas de embudo apuntando a él",
+    );
+  });
+
+  test("UN LEAD NUNCA SALE SIN NOMBRE", () => {
+    /* ─────────────────────────────────────────────────────────────────────
+     * Zoho —y Salesforce, y HubSpot— EXIGEN apellido para crear un lead. Si
+     * `nombre` llega vacío, el CRM rechaza el registro, contesta un error que
+     * no lee nadie, y el lead se pierde en silencio: el negocio no sabe que
+     * le faltó un cliente.
+     *
+     * Y llega vacío de verdad: WhatsApp no manda `name` cuando la persona
+     * tiene el nombre oculto en su perfil.
+     *
+     * Por eso el respaldo vive en el motor y no en el CRM de cada cliente.
+     * Esta regla existe para que nadie lo devuelva a `?? null` limpiando
+     * código, que es exactamente como se rompería sin que salte nada.
+     * ───────────────────────────────────────────────────────────────────── */
+    const motor = fs.readFileSync(
+      path.join(RAIZ, "supabase/functions/whatsapp/index.ts"),
+      "utf8",
+    );
+    const i = motor.indexOf('contarFuera(db, cfg.org_id, "lead.nuevo"');
+    esperar(i > 0).verdadero("no encontré dónde se emite `lead.nuevo` en el motor");
+
+    const bloque = motor.slice(i, i + 1800);
+    const linea = bloque.split("\n").find((l) => l.trim().startsWith("nombre:")) ?? "";
+
+    esperar(/\|\|\s*from/.test(linea)).verdadero(
+      "`lead.nuevo` puede salir con el nombre vacío y el CRM del cliente lo " +
+        "rechazará sin avisar. La línea `nombre:` tiene que llevar un respaldo " +
+        "(`(name ?? \"\").trim() || from`), no `?? null`",
     );
   });
 
@@ -10935,5 +10967,103 @@ describe("El español escrito a mano solo puede bajar", () => {
     );
   });
 });
+
+
+// ─── El trinquete de las funciones `security definer` ────────────────
+describe("Ninguna funcion definer nueva sin revisar", () => {
+  /* ── POR QUÉ HACE FALTA ─────────────────────────────────────────────
+   *
+   * Una función `security definer` se salta el RLS por diseño: corre con los
+   * permisos de quien la escribió, no de quien la llama. Eso la deja como
+   * ÚNICO guardia. Si recibe un identificador por parámetro (`p_org_id`,
+   * `p_contact_id`, `p_bot_id`…) y está concedida a `authenticated`, entonces
+   * cualquiera con una cuenta gratuita la llama desde la consola del navegador
+   * con el identificador de OTRO negocio. Y la base le contesta.
+   *
+   * No es una hipótesis: pasó OCHO veces. Cuatro se cerraron en la 0114
+   * (`buscar_conocimiento` repartía el conocimiento —el producto— de cualquier
+   * cliente) y cuatro más en la 0130 (`emitir_evento` metía eventos falsos en
+   * el Zoho de otro; `crm_elegir_agente` contestaba SIN INICIAR SESIÓN).
+   *
+   * Las ocho se escribieron en momentos distintos, por el mismo camino: alguien
+   * necesitaba saltarse el RLS para una cosa concreta, lo hizo bien, y se
+   * olvidó de que al saltárselo se quedaba de guardia. No hay forma de acordarse
+   * a base de buena voluntad. Por eso esto es una regla y no una nota.
+   *
+   * ── QUÉ VIGILA, EXACTAMENTE ────────────────────────────────────
+   *
+   * Dos cosas, y las dos tienen que poder fallar:
+   *
+   *   1. Que no aparezca una `definer` que no esté en la lista revisada. Una
+   *      función nueva empieza siendo sospechosa: hay que mirarla y apuntarla.
+   *   2. Que a las marcadas `candado` no se les quite la comprobación. Sin
+   *      esto, la lista protegería solo contra lo nuevo y no contra deshacer
+   *      lo arreglado — que es como volvió a abrirse más de una vez.
+   *
+   * La lista vive en `funciones-definer.txt` y el escaneo lo hace
+   * `definerRevisadas.mjs`, el mismo módulo, para que no haya dos cuentas. */
+  const BASE = path.join(RAIZ, "scripts/pruebas/funciones-definer.txt");
+  const base = leerBaseDefiner(BASE);
+  const vivas = escanearDefiner(RAIZ);
+
+  test("la lista revisada existe y no esta vacia", () => {
+    /* Sin este, borrar el archivo dejaría la regla comparando contra nada y
+     * diciendo que todo está bien — una regla que no puede fallar. */
+    esperar(base.size >= 50).verdadero(
+      `la lista de funciones definer tiene ${base.size} entradas: se borró o se vació, ` +
+        "y esta regla dejó de proteger nada. Está en scripts/pruebas/funciones-definer.txt",
+    );
+  });
+
+  test("todos los veredictos de la lista son de los que existen", () => {
+    const raros = [...base].filter(([, v]) => !VEREDICTOS.includes(v)).map(([n, v]) => `${n}: "${v}"`);
+    esperar(raros.join(" | ")).igual(
+      "",
+      `veredictos inventados. Los que valen son: ${VEREDICTOS.join(", ")}`,
+    );
+  });
+
+  test("NINGUNA FUNCION DEFINER NUEVA SIN REVISAR", () => {
+    const sinRevisar = [];
+    for (const [nombre, f] of vivas) {
+      if (!base.has(nombre)) sinRevisar.push(`${nombre} (${f.migracion})`);
+    }
+    esperar(sinRevisar.join(" | ")).igual(
+      "",
+      "función `security definer` nueva que nadie ha revisado. Antes de apuntarla en " +
+        "scripts/pruebas/funciones-definer.txt contesta: ¿recibe un identificador " +
+        "(p_org_id, p_contact_id, p_bot_id…)? ¿comprueba que sea de quien llama? " +
+        "¿a quién se la concedes? Si recibe un org_id, está concedida a `authenticated` " +
+        "y no comprueba, NO la apuntes: arréglala con el candado de la 0114",
+    );
+  });
+
+  test("A NINGUN CANDADO SE LE QUITA LA COMPROBACION", () => {
+    const aflojadas = [];
+    for (const [nombre, veredicto] of base) {
+      if (veredicto !== "candado") continue;
+      const f = vivas.get(nombre);
+      if (!f) continue; // ya no existe: lo caza la prueba de abajo
+      if (!f.comprueba) aflojadas.push(`${nombre} (${f.migracion})`);
+    }
+    esperar(aflojadas.join(" | ")).igual(
+      "",
+      "a una función que SÍ comprobaba quién llama le quitaron la comprobación. " +
+        "Tiene que volver a llevar `auth_org_ids()`, `auth.uid()` o `auth_puede(...)`",
+    );
+  });
+
+  test("y la lista no se queda vieja: nada que ya no exista", () => {
+    /* Una lista con funciones muertas se vuelve ruido, y el ruido es lo que
+     * hace que nadie mire cuando salta de verdad. */
+    const fantasmas = [...base.keys()].filter((n) => !vivas.has(n));
+    esperar(fantasmas.join(" | ")).igual(
+      "",
+      "la lista nombra funciones definer que ya no existen: quítalas de " +
+        "scripts/pruebas/funciones-definer.txt",
+    );
+  });
+});
+
 
 process.exit(await correrPruebas());
