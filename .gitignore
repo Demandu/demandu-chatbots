@@ -47,3 +47,8 @@ _entrega/
 # Llaves privadas de Apple. NUNCA al repositorio.
 *.p8
 AuthKey_*
+
+# Restos del montaje remoto de archivos: cuando se reescribe un archivo que
+# estaba abierto, el sistema deja una copia `.fuse_hidden...` al lado. No es
+# nuestro codigo y no tiene por que viajar al repositorio.
+.fuse_hidden*

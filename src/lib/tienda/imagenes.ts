@@ -136,3 +136,52 @@ export function instruccionesDeImagenes(): string {
     "Formato JPG o PNG, menos de 1 MB cada una.",
   ].join("\n");
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * ¿ESTO ES UN ENLACE A UNA IMAGEN, O ES TEXTO QUE ALGUIEN ESCRIBIÓ AHÍ?
+ *
+ * El editor del escaparate acepta cualquier cosa no vacía como enlace de una
+ * imagen. Y lo que un negocio escribe en un campo que dice «Banners — uno por
+ * línea» es, la mitad de las veces, «banner de verano» o el nombre del archivo
+ * que tiene en el escritorio.
+ *
+ * Entonces la tienda pública pinta un `<img>` con eso dentro, y el visitante ve
+ * el icono de imagen rota en la cabecera del negocio. No hay ningún error, ni
+ * en la pantalla del dueño ni en ningún registro: la tienda simplemente se ve
+ * mal, y el dueño se entera cuando se lo dice un cliente.
+ *
+ * QUÉ SE ACEPTA:
+ *   · `https://…`  — lo normal, y lo único que recomendamos.
+ *   · `http://…`   — se acepta y la pantalla lo avisa: en una página https el
+ *                    navegador lo bloquea de todas formas, así que decir que
+ *                    «no es un enlace» sería mentir sobre el motivo.
+ *   · `/algo`      — una ruta de la propia plataforma.
+ *   · `data:image/…` — una imagen pegada dentro del propio enlace.
+ *
+ * TODO LO DEMÁS SE CAE, en `leerConfig`, antes de llegar a la pantalla. No se
+ * guarda tampoco: la pantalla del editor dice cuántas se cayeron y por qué, y
+ * eso es la diferencia entre un dato mal puesto y una tienda rota en silencio.
+ * ══════════════════════════════════════════════════════════════════════════ */
+export function esEnlaceDeImagen(v: unknown): boolean {
+  const t = String(v ?? "").trim();
+  if (!t) return false;
+  // Un espacio en medio no aparece en ningún enlace de verdad y sí en todas
+  // las frases: es lo que separa «banner de verano» de una dirección.
+  if (/\s/.test(t)) return false;
+  if (t.startsWith("/")) return !t.startsWith("//");
+  if (/^data:image\//i.test(t)) return true;
+  if (!/^https?:\/\//i.test(t)) return false;
+  try {
+    const u = new URL(t);
+    // Sin punto no hay dominio: `https://banner` no lleva a ninguna parte.
+    return u.hostname.includes(".") && u.hostname.length > 3;
+  } catch {
+    return false;
+  }
+}
+
+/** Lo mismo, pero devolviendo el valor limpio o nada. */
+export function enlaceDeImagen(v: unknown): string | undefined {
+  const t = String(v ?? "").trim();
+  return esEnlaceDeImagen(t) ? t : undefined;
+}

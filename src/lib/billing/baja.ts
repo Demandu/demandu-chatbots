@@ -110,6 +110,62 @@ export async function exportarConversaciones(admin: any, orgId: string): Promise
  * suponga: alguien que cree que borró su WhatsApp y no lo hizo se lleva una
  * sorpresa muy fea después.
  */
+/**
+ * TODO LO QUE HA CONTESTADO UN LEAD A UN BLOQUE, EN UNA HOJA.
+ *
+ * Esto es lo que hace auditable la captura de datos. La ficha del lead guarda
+ * el último valor de cada campo; esta hoja guarda que la respuesta entró, qué
+ * bloque la pidió y cuándo — aunque después se pisara.
+ *
+ * Sin ella, comprobar que un flujo captura de verdad obliga a abrir fichas una
+ * por una, y eso es exactamente cómo se llega a no comprobarlo nunca.
+ *
+ * SE ABRE EN EXCEL O EN GOOGLE SHEETS, que es donde el negocio ya trabaja: no
+ * hay que conectar nada ni dar permisos a nadie.
+ */
+export async function exportarRespuestas(admin: any, orgId: string): Promise<string> {
+  /* AQUÍ EL ERROR NO SE TRAGA. Un fallo de la consulta devolvería `data`
+   * vacío y el negocio se bajaría una hoja con la cabecera y nada más: se
+   * creería que su flujo no captura nada cuando lo que falló fue la lectura.
+   * Un archivo vacío miente mejor que un error. */
+  const { data, error } = await admin
+    .from("respuestas_de_flujo")
+    .select(
+      "created_at, canal, variable, valor, etiqueta, node_id, " +
+        "contacto:contacts(name, phone, email)",
+    )
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false })
+    .limit(50000);
+
+  if (error) throw new Error(`no pude leer las respuestas: ${error.message}`);
+
+  return aCsv(
+    ((data as any[]) ?? []).map((r) => ({
+      created_at: r.created_at ? new Date(r.created_at).toLocaleString("es-MX") : "",
+      canal: r.canal ?? "",
+      nombre: r.contacto?.name ?? "",
+      telefono: r.contacto?.phone ?? "",
+      email: r.contacto?.email ?? "",
+      etiqueta: r.etiqueta ?? "",
+      variable: r.variable ?? "",
+      valor: r.valor ?? "",
+      node_id: r.node_id ?? "",
+    })),
+    [
+      { key: "created_at", titulo: "Fecha" },
+      { key: "canal", titulo: "Canal" },
+      { key: "nombre", titulo: "Lead" },
+      { key: "telefono", titulo: "Teléfono" },
+      { key: "email", titulo: "Correo" },
+      { key: "etiqueta", titulo: "Bloque" },
+      { key: "variable", titulo: "Dato" },
+      { key: "valor", titulo: "Respuesta" },
+      { key: "node_id", titulo: "Id del bloque" },
+    ],
+  );
+}
+
 export async function soltarWhatsapp(admin: any, orgId: string): Promise<{ soltada: boolean }> {
   const { data: canal } = await admin
     .from("whatsapp_channels")

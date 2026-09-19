@@ -9,6 +9,9 @@
  *   node --experimental-strip-types scripts/pruebas/correr.mjs scripts/pruebas/estatico.mjs
  */
 import fs from "node:fs";
+// Para poder probar `revisar-motor.sh` sin un Deno instalado. Ver la regla
+// «La puerta del motor ve los errores que dice ver».
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
 
@@ -29,7 +32,9 @@ function listar(dir, filtro = /\.(ts|tsx)$/) {
   });
 }
 const ARCHIVOS = listar(SRC).map((f) => ({ ruta: path.relative(RAIZ, f), texto: fs.readFileSync(f, "utf8") }));
-const sinComentarios = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+// Una sola definición, en `medirEspanol.mjs`. Ver por qué el `/*` lleva
+// guarda: una cadena con un comodín MIME dentro escondía medio archivo.
+import { sinComentarios } from "./medirEspanol.mjs";
 
 // ─── Imports ─────────────────────────────────────────────────────────────────
 describe("Imports", () => {
@@ -281,13 +286,17 @@ describe("Registro de recorridos de flujo", () => {
  * ═══════════════════════════════════════════════════════════════════════════ */
 describe("El adjunto del cliente no se tira", () => {
   const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
-  const motor = wa.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const motor = sinComentarios(wa);
 
   test("el motor BAJA el archivo y lo guarda en el almacén", () => {
     esperar(/function guardarMedioEntrante/.test(motor)).verdadero(
       "desapareció la bajada del adjunto: el cliente manda una foto y no queda en ninguna parte",
     );
-    esperar(/storage\.from\("media"\)\.upload/.test(motor)).verdadero(
+    /* ANTES ESTA REGLA DECÍA `from("media")`, con el almacén escrito a mano, y
+     * al mover el adjunto al almacén privado se puso roja sin que nada se
+     * hubiera roto. Lo que hay que proteger es que el archivo SE GUARDE; en
+     * cuál de los dos almacén vive lo vigila la regla de más abajo. */
+    esperar(/storage\.from\([^)]+\)\.upload/.test(motor)).verdadero(
       "ya no se guarda el archivo: el enlace de Meta caduca, así que esto es perderlo",
     );
   });
@@ -420,8 +429,7 @@ describe("La app tiene icono", () => {
 });
 
 describe("El bot no puede decir que agendó sin agendar", () => {
-  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
   const lib = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/promesas.ts")?.texto ?? "");
   const herr = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/herramientas.ts")?.texto ?? "");
 
@@ -468,8 +476,7 @@ describe("El bot no puede decir que agendó sin agendar", () => {
 });
 
 describe("La hora dice de qué huso habla", () => {
-  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
   const lib = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/agendaHorarios.ts")?.texto ?? "");
 
   test("los DOS motores saben decirlo", () => {
@@ -554,8 +561,7 @@ describe("Ninguna cita vuelve a durar 30 a fuego", () => {
    * plataforma respetaba el servicio y WhatsApp no, que es JUSTO el canal donde
    * agenda la clínica. La deriva entre motores que este repo ya pagó tres
    * veces, creada en la misma sesión que la arreglaba. */
-  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
   const motor = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/app/api/motor/agenda/route.ts")?.texto ?? "");
 
   test("el motor de WhatsApp tampoco decide la duración", () => {
@@ -639,8 +645,7 @@ describe("El entrenamiento no promete dos cosas distintas", () => {
 });
 
 describe("El horario no se contesta de memoria", () => {
-  const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
   const herr = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/herramientas.ts")?.texto ?? "");
   const puerta = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/app/api/motor/agenda/route.ts")?.texto ?? "");
 
@@ -2201,6 +2206,48 @@ describe("WhatsApp: quién puede llamar al webhook", () => {
     );
     esperar(/MODO_FIRMA === "exigir"/.test(wa)).verdadero(
       "solo se rechaza en modo exigir",
+    );
+  });
+
+  test("EN «EXIGIR» SE CORTA DE VERDAD, no solo se entra en el if", () => {
+    /* ── LA REGLA 2.1 DE LA AUDITORÍA DEL 8 DE SEPTIEMBRE, QUE SEGUÍA HUECA ──
+     *
+     * Lo de arriba comprueba que exista `MODO_FIRMA === "exigir"`. Eso es la
+     * CONDICIÓN, no el corte. Se probó el mutante exacto que describía la
+     * auditoría —borrar `return new Response("firma inválida", { status: 401 })`
+     * dejando el `if` vacío— y las 670 pruebas siguieron en verde con el
+     * endpoint abierto a internet.
+     *
+     * Y este endpoint es el único que no puede apoyarse en nada más: está
+     * desplegado con `verify_jwt: false` porque Meta no manda credenciales de
+     * Supabase. La firma no es «una» barrera, es la única.
+     *
+     * Se exige el corte, y que vaya DENTRO del `if` de la firma mala: un 401
+     * colgado en otro sitio del archivo no rechaza nada. */
+    const iFirmaMala = wa.indexOf("if (!(await firmaDeMetaValida(crudo");
+    esperar(iFirmaMala > 0).verdadero(
+      "no encuentro la comprobación de la firma en el motor",
+    );
+
+    // El bloque que va de la firma mala hasta que se empieza a leer el cuerpo.
+    const bloque = wa.slice(iFirmaMala, wa.indexOf("const value = body?.entry", iFirmaMala));
+    esperar(bloque.length > 50 && bloque.length < 1200).verdadero(
+      `el bloque de la firma mide ${bloque.length}: el archivo se reordenó y esta regla ` +
+        "está mirando otra cosa. Vuelve a apuntarla antes de fiarte de ella",
+    );
+
+    esperar(/return new Response\([^)]*\{\s*status:\s*401\s*\}\)/.test(bloque)).verdadero(
+      "el motor entra en «exigir» y NO corta: un webhook sin JWT que no rechaza la firma " +
+        "mala está abierto a internet. Cualquiera inventa mensajes entrantes de cualquier " +
+        "cliente, dispara sus flujos y gasta la cuota de IA que pagas tú",
+    );
+
+    // Y se anota ANTES de contestar: un 401 solo en consola es invisible, y
+    // Meta acaba desactivando la suscripción del cliente sin avisar a nadie.
+    const iAnota = bloque.indexOf("anotarFirmaMala");
+    const iCorta = bloque.search(/return new Response\([^)]*401/);
+    esperar(iAnota >= 0 && iAnota < iCorta).verdadero(
+      "hay que dejar constancia ANTES de contestar 401",
     );
   });
 
@@ -11090,6 +11137,611 @@ describe("Ninguna funcion definer nueva sin revisar", () => {
       "",
       "la lista nombra funciones definer que ya no existen: quítalas de " +
         "scripts/pruebas/funciones-definer.txt",
+    );
+  });
+});
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * EL PASE A HUMANO NO PUEDE DEPENDER DE CÓMO SE PIDA
+ *
+ * Observado en producción: misma cuenta, mismo bot, misma herramienta
+ * encendida, dos personas pidiendo hablar con alguien con otras palabras, y
+ * solo una acabó con un agente. La diferencia no estuvo en la configuración:
+ * estuvo en si al modelo le dio por llamar a la herramienta.
+ *
+ * El prompt ya lo dice. Decirlo más fuerte no es un arreglo.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("El pase a humano se dispara con la petición, no solo con la promesa", () => {
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const lib = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/promesas.ts")?.texto ?? "");
+  const herr = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/ai/herramientas.ts")?.texto ?? "");
+  const web = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/flow/webRuntime.ts")?.texto ?? "");
+
+  test("LOS DOS MOTORES SABEN LEER LA PETICIÓN", () => {
+    /* WhatsApp corre en Deno y no puede importar de `src/`, así que hay dos
+     * cuerpos. Que uno se arregle y el otro no es exactamente cómo vuelve el
+     * fallo por el canal donde de verdad ocurrió. */
+    esperar(/function pidioUnaPersona/.test(lib)).verdadero(
+      "la plataforma dejó de detectar que el cliente pide una persona",
+    );
+    esperar(/function pidioUnaPersona/.test(wa)).verdadero(
+      "el motor de WhatsApp dejó de detectar que el cliente pide una persona",
+    );
+  });
+
+  test("Y LOS DOS HACEN EL PASE CON ELLA", () => {
+    /* Detectarlo sin usarlo sería peor que no detectarlo: daría la sensación
+     * de estar cubierto. */
+    esperar(/pidioUnaPersona\(ctx\.lastUserText\)/.test(wa)).verdadero(
+      "el motor detecta la petición pero no la usa para pasar la conversación",
+    );
+    esperar(/pidioUnaPersona\(ctx\.ultimoTexto\)/.test(herr)).verdadero(
+      "la plataforma detecta la petición pero no la usa para pasar la conversación",
+    );
+  });
+
+  test("y el texto del cliente LLEGA al contexto del agente", () => {
+    /* Sin esto, `pidioUnaPersona` recibiría `undefined` en el canal web y la
+     * regla de arriba seguiría verde mientras el pase no ocurre nunca. */
+    const veces = (web.match(/ultimoTexto: ctx\.lastUserText/g) ?? []).length;
+    esperar(veces).igual(
+      2,
+      "el canal web arma el contexto del agente en dos sitios —el bloque de IA y " +
+        "el desvío— y los dos tienen que llevar el texto del cliente, o la misma " +
+        "petición llega a una persona por un camino y no por el otro",
+    );
+  });
+
+  test("la petición se mira ANTES que la promesa", () => {
+    /* No es estética: si se mirara después, una respuesta del bot que además
+     * promete una persona apuntaría el motivo «lo prometió el asistente» y en
+     * la Bandeja nadie sabría que el cliente lo había pedido. */
+    for (const [donde, t] of [["el motor", wa], ["la plataforma", herr]]) {
+      const iPide = t.indexOf("pidioUnaPersona(ctx.");
+      /* La LLAMADA, no el import: en la plataforma `prometioUnaPersona`
+       * aparece arriba del archivo y el import siempre ganar\u00eda. */
+      const iPromete = t.search(/prometioUnaPersona\(\s*(?:texto|corregido)\s*\)/);
+      esperar(iPide > 0 && iPromete > 0 && iPide < iPromete).verdadero(
+        `en ${donde} la promesa se mira antes que la petición: el motivo del pase saldría mal`,
+      );
+    }
+  });
+
+  test("EL PASE SE HACE EN UN SOLO SITIO, no en cuatro copias", () => {
+    /* Eran dos copias de las mismas siete líneas y con esto harían falta tres.
+     * El día que el pase tenga que tocar una columna más, la copia que se
+     * olvide deja conversaciones a medio pasar sin que nadie se entere. */
+    esperar(/async function elPaseAUnaPersona\(/.test(wa)).verdadero(
+      "el motor volvió a repartir el pase en varias copias",
+    );
+    esperar(/async function hacerElPase\(/.test(herr)).verdadero(
+      "la plataforma volvió a repartir el pase en varias copias",
+    );
+  });
+
+  test("y lo que ya pasó no se confunde con lo que se pide", () => {
+    /* «Ya hablé con un asesor» es contexto. Sin esta guarda, cada cliente que
+     * cuente su historia acaba en la cola de un agente. */
+    for (const [donde, t] of [["el motor", wa], ["la plataforma", lib]]) {
+      esperar(/PIDE_YA_PASO/.test(t)).verdadero(
+        `${donde} dejó de descartar el pasado: «ya hablé con un asesor» dispararía el pase`,
+      );
+      esperar(/PIDE_NEGADO/.test(t)).verdadero(
+        `${donde} dejó de descartar la negación: «no quiero un asesor» dispararía el pase`,
+      );
+    }
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * LO QUE CONTESTA UN LEAD NO SE QUEDA EN LA MEMORIA DEL TURNO
+ *
+ * La respuesta de un bloque de pregunta iba a `vars[...]` y se moría con el
+ * recorrido. El único sitio que escribía en la ficha era `guardar_dato`, la
+ * herramienta de la IA: capturar datos dependía de tener la IA encendida y de
+ * que al modelo le diera por llamarla.
+ *
+ * Esto es comportamiento BASE de los nodos, para las cuentas de hoy y las de
+ * mañana. No hay nada que configurar, y por eso hace falta una regla: lo que
+ * nadie enciende, nadie echa de menos cuando desaparece.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Lo que contesta un lead queda en su ficha", () => {
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const web = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/flow/webRuntime.ts")?.texto ?? "");
+  const baja = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/billing/baja.ts")?.texto ?? "");
+  const ruta = sinComentarios(
+    ARCHIVOS.find((a) => a.ruta === "src/app/api/billing/exportar/route.ts")?.texto ?? "",
+  );
+
+  test("LOS DOS CANALES GUARDAN, no solo WhatsApp", () => {
+    /* Que uno guarde y el otro no es peor que si ninguno guardara: la misma
+     * cuenta capturaría o no según por dónde entrara la persona, y eso desde
+     * fuera es indistinguible de un fallo intermitente. */
+    esperar(/await guardarLoQueContesto\(ctx, node, node\.data\.variable/.test(wa)).verdadero(
+      "el motor de WhatsApp volvió a dejar la respuesta del bloque solo en `vars`",
+    );
+    esperar(/await guardarLoQueContestoWeb\(ctx, node, node\.data\.variable/.test(web)).verdadero(
+      "el canal web volvió a dejar la respuesta del bloque solo en `vars`",
+    );
+  });
+
+  /* EL CUERPO DE LA FUNCI\u00d3N, NO EL ARCHIVO ENTERO.
+   *
+   * Mirar el archivo dejaba pasar los mutantes: `guardar_dato` \u2014la
+   * herramienta de la IA\u2014 tiene las mismas dos l\u00edneas, as\u00ed que se pod\u00eda
+   * vaciar la funci\u00f3n nueva entera y la regla segu\u00eda verde leyendo la vieja.
+   * Una regla que mira en el sitio equivocado no protege nada. */
+  function cuerpoDe(texto, nombre) {
+    const i = texto.indexOf(`async function ${nombre}(`);
+    return i < 0 ? "" : texto.slice(i, i + 2600);
+  }
+  const CUERPOS = [
+    ["el motor", cuerpoDe(wa, "guardarLoQueContesto")],
+    ["el canal web", cuerpoDe(web, "guardarLoQueContestoWeb")],
+  ];
+
+  test("la funci\u00f3n que guarda existe en los dos canales", () => {
+    /* Sin esto, `cuerpoDe` devolver\u00eda cadena vac\u00eda y las tres reglas de
+     * abajo se pondr\u00edan rojas por el motivo equivocado \u2014o peor, alguien las
+     * har\u00eda pasar comprobando sobre vac\u00edo. */
+    for (const [donde, cuerpo] of CUERPOS) {
+      esperar(cuerpo.length > 500).verdadero(
+        `no encuentro la funci\u00f3n que guarda la respuesta en ${donde}`,
+      );
+    }
+  });
+
+  test("y la escriben en la ficha Y en el registro", () => {
+    for (const [donde, t] of CUERPOS) {
+      esperar(/from\("contacts"\)\s*\n?\s*\.update\(cambios\)/.test(t)).verdadero(
+        `${donde} apunta la respuesta pero ya no la escribe en la ficha del lead`,
+      );
+      esperar(/from\("respuestas_de_flujo"\)\.insert\(/.test(t)).verdadero(
+        `${donde} escribe la ficha pero no deja rastro auditable de la respuesta`,
+      );
+    }
+  });
+
+  test("la casilla propia se rellena, no solo los atributos", () => {
+    /* El caso que ya pasó: el bot pidió el correo, la persona lo dio, y la
+     * casilla «Correo» de la ficha seguía vacía. Para el agente que abre esa
+     * ficha, el dato no existe. */
+    for (const [donde, t] of CUERPOS) {
+      esperar(/const casilla = CASILLA_DE_LA_FICHA\[campo\.toLowerCase\(\)\];/.test(t)).verdadero(
+        `${donde} guarda el dato como un atributo más y deja la casilla vacía`,
+      );
+    }
+  });
+
+  test("UNA RESPUESTA VACÍA NO BORRA LA BUENA", () => {
+    /* Un turno en blanco no es un dato. Guardarlo pisaría el valor que la
+     * persona dio dos preguntas antes con una cadena vacía. */
+    for (const [donde, t] of CUERPOS) {
+      esperar(/if \(!campo \|\| !texto\) return;/.test(t)).verdadero(
+        `en ${donde} una respuesta vacía vuelve a escribirse encima de la buena`,
+      );
+    }
+  });
+
+  test("guardar el dato NO puede costarle la respuesta al cliente", () => {
+    /* La base puede estar lenta o la ficha puede no existir. Nada de eso
+     * puede dejar a una persona esperando un mensaje que no llega. */
+    for (const [donde, cuerpo] of CUERPOS) {
+      esperar(cuerpo.includes("try {")).verdadero(
+        `en ${donde} un fallo guardando el dato tumba el turno entero`,
+      );
+    }
+  });
+
+  test("y el negocio se lo puede DESCARGAR", () => {
+    /* Una tabla que solo se puede mirar con SQL no es auditable por quien
+     * tiene que auditarla, que es el negocio. */
+    esperar(/export async function exportarRespuestas/.test(baja)).verdadero(
+      "desapareció la hoja de respuestas: la captura de datos vuelve a comprobarse ficha por ficha",
+    );
+    esperar(/que === "respuestas"/.test(ruta)).verdadero(
+      "la ruta de exportar ya no sabe servir la hoja de respuestas",
+    );
+    const contactos = sinComentarios(
+      ARCHIVOS.find((a) => a.ruta === "src/app/(dashboard)/contacts/page.tsx")?.texto ?? "",
+    );
+    esperar(/exportar\?que=respuestas/.test(contactos)).verdadero(
+      "el botón de descarga dejó de estar en Contactos, que es donde el negocio lo busca",
+    );
+  });
+
+  test("nadie con sesión puede escribir en el registro", () => {
+    /* Es un registro de auditoría: si se puede escribir desde el navegador,
+     * deja de servir para lo único que sirve. Lo escribe la llave de
+     * servicio, que no pasa por los permisos. */
+    const mig = fs.readFileSync(
+      path.join(RAIZ, "supabase/migrations/0137_lo_que_contesta_un_lead_queda_en_su_ficha.sql"),
+      "utf8",
+    );
+    esperar(/revoke all on public\.respuestas_de_flujo from anon, authenticated;/.test(mig)).verdadero(
+      "la migración dejó de quitarle los permisos al navegador",
+    );
+    esperar(/grant select on public\.respuestas_de_flujo to authenticated;/.test(mig)).verdadero(
+      "sin el SELECT, el panel no puede leer su propio registro",
+    );
+    esperar(/for select to authenticated/.test(mig)).verdadero(
+      "la política dejó de ser de solo lectura",
+    );
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * UNA PANTALLA QUE NO CONTESTA ESTÁ ROTA, AUNQUE EL SERVIDOR HAGA LO CORRECTO
+ *
+ * Dos fallos del mismo tipo, los dos vistos en producción el 19 de septiembre:
+ *
+ *  · «Enviar a tu CRM» aceptó una dirección PEGADA DOS VECES (292 caracteres)
+ *    y, cuando la dirección no valía, la acción devolvía `void`: se pulsaba
+ *    «Conectar» y no pasaba nada. Ni salida, ni error, ni una pista.
+ *
+ *  · El escaparate de «Zapatería Maxi» tenía dos banners cuyo enlace era una
+ *    DIRECCIÓN POSTAL. La tienda pintaba dos imágenes rotas en la cabecera y
+ *    en ninguna pantalla había ningún aviso.
+ *
+ * En los dos casos el dato malo se guardó sin decir nada. Esa es la regla.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Lo que no se puede guardar se dice, no se traga", () => {
+  const acciones = sinComentarios(
+    ARCHIVOS.find((a) => a.ruta === "src/app/(dashboard)/settings/integrations/salidas.ts")?.texto ?? "",
+  );
+  const pantalla = sinComentarios(
+    ARCHIVOS.find((a) => a.ruta === "src/components/integrations/SalidasCrm.tsx")?.texto ?? "",
+  );
+  const config = sinComentarios(
+    ARCHIVOS.find((a) => a.ruta === "src/lib/tienda/config.ts")?.texto ?? "",
+  );
+  const diseno = sinComentarios(
+    ARCHIVOS.find((a) => a.ruta === "src/app/(dashboard)/tienda/[id]/actions.ts")?.texto ?? "",
+  );
+
+  test("LAS TRES ACCIONES DEL CRM CONTESTAN, ninguna devuelve void", () => {
+    for (const fn of ["crearSalida", "editarSalida", "quitarSalida"]) {
+      const i = acciones.indexOf(`export async function ${fn}(`);
+      esperar(i >= 0 && acciones.slice(i, i + 200).includes("): Promise<Resultado>")).verdadero(
+        `${fn} volvió a devolver \`void\`: la pantalla se queda igual y parece que no hizo nada`,
+      );
+    }
+  });
+
+  test("y la pantalla PINTA lo que contestan", () => {
+    /* Que el servidor conteste y nadie lo enseñe es el mismo fallo con un
+     * paso más. */
+    esperar(/useFormState\(crearSalida/.test(pantalla)).verdadero(
+      "el formulario de conectar dejó de recoger la respuesta del servidor",
+    );
+    esperar(/function Aviso\(/.test(pantalla) && /<Aviso resultado=/.test(pantalla)).verdadero(
+      "desapareció el sitio donde se pinta lo que contestó el servidor",
+    );
+  });
+
+  test("la dirección se revisa en el SERVIDOR, no en el navegador", () => {
+    /* El `type="url"` del navegador da por buena `https://a.com/https://b.com`
+     * —para él la segunda mitad es la ruta— y encima no explica nada cuando
+     * rechaza algo. Fue exactamente lo que dejó pasar el caso real. */
+    esperar(/revisarDireccion\(/.test(acciones)).verdadero(
+      "la acción volvió a guardar la dirección sin revisarla",
+    );
+    esperar(/type="url"/.test(pantalla)).falso(
+      'volvió el `type="url"`: da por buena una dirección pegada dos veces y no dice por qué rechaza',
+    );
+  });
+
+  test("SE PUEDE CORREGIR SIN PERDER EL SECRETO", () => {
+    /* Sin editar, arreglar una errata era borrar y volver a crear — y eso
+     * cambia el secreto de firma, así que hay que ir también al otro sistema
+     * a cambiarlo. Una letra mal costaba tocar dos plataformas. */
+    esperar(/export async function editarSalida/.test(acciones)).verdadero(
+      "desapareció la edición: corregir una dirección vuelve a ser borrar y crear",
+    );
+    const j = acciones.indexOf("export async function editarSalida");
+    /* SE BUSCA LA COLUMNA, NO LA PALABRA: el mensaje que devuelve dice «el
+     * secreto sigue siendo el mismo», y buscar «secreto» a secas ponía esta
+     * regla roja por su propia explicación. */
+    esperar(/\bsecreto:/.test(acciones.slice(j, j + 1400))).falso(
+      "editar volvió a tocar el secreto de firma: el cliente tendría que cambiarlo en su CRM",
+    );
+  });
+
+  test("UN ENLACE QUE NO ES ENLACE NO LLEGA AL ESCAPARATE", () => {
+    esperar(/logo_url: enlaceDeImagen\(/.test(config)).verdadero(
+      "el logo vuelve a pintarse sea lo que sea: una imagen rota en la cabecera del negocio",
+    );
+    esperar(/portada_url: enlaceDeImagen\(/.test(config)).verdadero("la portada vuelve a no revisarse");
+    esperar(/\.filter\(\(b\) => b && esEnlaceDeImagen\(b\.imagen_url\)\)/.test(config)).verdadero(
+      "los banners vuelven a aceptar cualquier texto. Pasó de verdad: dos banners con una dirección postal dentro",
+    );
+  });
+
+  test("y el negocio se entera de que se cayó", () => {
+    /* Tirarlo en silencio cambia un problema visible por uno invisible: el
+     * dueño guarda, no ve ningún error, y su banner no aparece. */
+    /* SE MIRA LA CUENTA, NO EL NOMBRE. Con `/bannersCaidos/` bastaba con que
+     * la palabra apareciera en el texto del aviso: se pod\u00eda apagar el `if`
+     * entero y la regla segu\u00eda verde. Lo que hay que exigir es la resta. */
+    esperar(/banners\.length - nueva\.banners\.length/.test(diseno)).verdadero(
+      "guardar el dise\u00f1o volvi\u00f3 a tirar los enlaces malos sin contar cu\u00e1ntos",
+    );
+    esperar(/avisos\.push\(/.test(diseno)).verdadero(
+      "se cuentan los que se cayeron pero ya no se le dice al negocio",
+    );
+    esperar(/ok: true,/.test(diseno.slice(diseno.indexOf("bannersCaidos")))).verdadero(
+      "un enlace malo no puede hacer fallar el guardado entero: lo demás sí se guardó",
+    );
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * EL BLOQUE MULTIMEDIA MANDA EL ARCHIVO, NO SU DIRECCIÓN
+ *
+ * El canal web hacía `push(ctx, node.data.mediaUrl)`: al visitante le llegaba
+ * un globo de chat con la URL del almacén escrita dentro. El mismo bloque, por
+ * WhatsApp, manda la imagen. El negocio monta el flujo, lo prueba por WhatsApp,
+ * lo ve bien y no vuelve a mirar la web — así que esto se queda roto meses.
+ *
+ * El widget ya sabía pintar `adjunto`: es como le llegan los archivos que manda
+ * un agente desde la Bandeja. No faltaba nada en el navegador; faltaba mandarlo
+ * con la forma que ya entiende.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("El bloque Multimedia manda el archivo, no su dirección", () => {
+  const web = sinComentarios(ARCHIVOS.find((a) => a.ruta === "src/lib/flow/webRuntime.ts")?.texto ?? "");
+  const widget = fs.readFileSync(path.join(RAIZ, "public/widget.js"), "utf8");
+
+  test("LA URL YA NO SALE COMO TEXTO", () => {
+    esperar(/push\(ctx, node\.data\.mediaUrl\)/.test(web)).falso(
+      "volvió a mandarse la dirección del almacén escrita dentro de un globo de chat",
+    );
+    esperar(/pushAdjunto\(ctx, \{/.test(web)).verdadero(
+      "el bloque de multimedia dejó de mandar el archivo como adjunto",
+    );
+  });
+
+  test("y el mensaje puede llevar archivo, no solo texto y botones", () => {
+    esperar(/adjunto\?: \{ url: string/.test(web)).verdadero(
+      "`OutMsg` volvió a no tener sitio para un archivo: el flujo no puede mandar ninguno",
+    );
+  });
+
+  test("EL WIDGET LO PINTA, que es de donde viene la forma", () => {
+    /* Si el widget dejara de leerlo, mandarlo sería mandarlo a la nada — y la
+     * regla de arriba seguiría verde. */
+    esperar(/function bubble\(text, mine, adjunto\)/.test(widget)).verdadero(
+      "el widget dejó de aceptar adjuntos: el flujo los manda y no se ven",
+    );
+    esperar(/adjunto\.url/.test(widget)).verdadero("el widget ya no mira la dirección del adjunto");
+  });
+
+  test("y se guarda con el mensaje, o el historial pierde la imagen", () => {
+    /* El visitante la ve en el momento; el agente que abre la conversación
+     * mañana vería un globo vacío. Y el propio widget, al recargar la página,
+     * lee de la Bandeja: sin esto, la imagen desaparece al refrescar. */
+    esperar(/\.\.\.\(m\.adjunto \? \{ adjunto: m\.adjunto \} : \{\}\),/.test(web)).verdadero(
+      "el adjunto del bot ya no se guarda con el mensaje",
+    );
+  });
+
+
+  test("LIMPIAR COMENTARIOS NO SE TRAGA MEDIO ARCHIVO", () => {
+    /* ── ESTA REGLA ES SOBRE LAS DEMÁS REGLAS ─────────────────────────
+     *
+     * Casi todas las reglas de este archivo miran el código después de quitarle
+     * los comentarios. Esa limpieza no es un analizador: es una expresión
+     * regular. Y el comodín de tipo MIME —el que pide el atributo `accept` de
+     * un campo de archivo— lleva dentro la secuencia que abre un comentario.
+     *
+     * PASÓ AL ARREGLAR H-04: se escribió uno en `webRuntime.ts` y desaparecieron
+     * doscientas líneas. Una regla se puso roja contando 1 donde había 2; las
+     * otras cinco NO se pusieron rojas, simplemente dejaron de mirar. Una regla
+     * que deja de mirar en silencio es peor que no tenerla.
+     *
+     * Ahora el `/*` exige ir precedido de espacio o puntuación, como va uno de
+     * verdad. Esto lo comprueba. */
+    const trampa = [
+      'const ACCEPT = { image: "image' + "/*" + '", video: "video' + "/*" + '" };',
+      "const loQueSigue = 1;",
+      "/* un comentario de verdad */",
+      "const yEsto = 2;",
+    ].join("\n");
+
+    const limpio = sinComentarios(trampa);
+    esperar(limpio.includes("const loQueSigue = 1;")).verdadero(
+      "la limpieza de comentarios volvió a tragarse el código que hay detrás de un " +
+        "comodín MIME: a partir de ahí, las reglas de este archivo miran un vacío",
+    );
+    esperar(limpio.includes("const yEsto = 2;")).verdadero("se comió también lo de después");
+    esperar(limpio.includes("un comentario de verdad")).falso(
+      "ahora ya no quita los comentarios de verdad, que es para lo que está",
+    );
+  });
+
+  test("el pie va en el MISMO globo que la imagen", () => {
+    /* En dos mensajes separados, el texto puede pintarse antes que la foto y
+     * el pie queda descolocado. Es el mismo motivo por el que WhatsApp manda
+     * el caption dentro del media. */
+    const i = web.indexOf('case "media": {');
+    esperar(i >= 0).verdadero("no encuentro el bloque de multimedia del canal web");
+    const cuerpo = web.slice(i, i + 900);
+    esperar(/texto: node\.data\.caption/.test(cuerpo)).verdadero(
+      "el pie volvió a mandarse como un mensaje aparte",
+    );
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * LA PUERTA DEL MOTOR VE LOS ERRORES QUE DICE VER
+ *
+ * `revisar-motor.sh` es lo único que hay entre un motor roto y todos los
+ * clientes a la vez: `supabase/functions/` no entra en el `tsc` del proyecto y
+ * no lo importa ninguna prueba.
+ *
+ * Y durante meses solo leyó los errores de TIPOS, que son los que Deno numera
+ * con un `TS<n>`. El fallo que hizo nacer el script —`const AFIRMACIONES`
+ * declarado dos veces, el 8 de septiembre— es un error de SINTAXIS, y esos
+ * llegan sin código:
+ *
+ *     error: The module's source code could not be parsed: …
+ *
+ * O sea: la puerta escrita para cazar ese fallo no lo cazaba. Hoy no se nota
+ * porque la línea base está vacía y salta el guardián del guardián; en cuanto
+ * la lista tenga un solo error de tipos conocido —que es su estado previsto—
+ * el error de sintaxis pasa sin que nadie lo vea.
+ *
+ * Esto no se podía probar sin un Deno instalado, así que el script aprendió a
+ * filtrar por la entrada (`--filtrar`) y aquí se le dan salidas de ejemplo.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("La puerta del motor ve los errores que dice ver", () => {
+  const filtrar = (salida) => {
+    try {
+      return execFileSync("bash", [path.join(RAIZ, "revisar-motor.sh"), "--filtrar"], {
+        input: salida,
+        encoding: "utf8",
+        cwd: RAIZ,
+      }).trim();
+    } catch (e) {
+      return `(el script falló: ${e.message})`;
+    }
+  };
+
+  test("un error de TIPOS se ve, y sin su número de línea", () => {
+    /* Sin línea ni ruta: mover una función arriba no puede convertir un error
+     * viejo en uno nuevo y tumbar una publicación por nada. */
+    const h = filtrar(
+      "Check file:///tmp/x/index.ts\n" +
+        "TS2532 [ERROR]: Object is possibly undefined.\n" +
+        "    at file:///tmp/x/index.ts:120:5\n",
+    );
+    esperar(h.includes("TS2532: Object is possibly undefined.")).verdadero(
+      `la puerta dejó de ver los errores de tipos. Devolvió: ${h}`,
+    );
+    esperar(/:120:5/.test(h)).falso("la huella no puede llevar el número de línea");
+  });
+
+  test("UN ERROR DE SINTAXIS TAMBIÉN, que es el que motivó el script", () => {
+    // La frase exacta que escribe Deno ante el `AFIRMACIONES` duplicado.
+    const h = filtrar(
+      "error: The module's source code could not be parsed: Identifier " +
+        "'AFIRMACIONES' has already been declared at file:///tmp/x/index.ts:2594:7\n",
+    );
+    esperar(h.includes("could not be parsed")).verdadero(
+      "la puerta volvió a leer SOLO los errores con código TS. Un motor que no compila " +
+        `pasaría diciendo «se puede publicar». Devolvió: ${h}`,
+    );
+    esperar(/file:\/\//.test(h)).falso("la huella no puede llevar la ruta del archivo");
+  });
+
+  test("y con el motor limpio no se inventa ninguno", () => {
+    /* Una puerta que siempre ve errores acaba apagada, y ese es el final de
+     * todas las puertas que gritan. */
+    esperar(filtrar("Check file:///tmp/x/index.ts\n")).igual(
+      "",
+      "la puerta ve errores donde no los hay",
+    );
+  });
+
+  test("la lista de errores conocidos vive en el repositorio", () => {
+    /* En un clon limpio sin ese archivo, `revisar-motor.sh` sale con código 2
+     * y `publicar-motor.sh` se niega a publicar — culpando a un problema de red
+     * que no ocurrió. */
+    const lista = path.join(RAIZ, "supabase/functions/whatsapp/errores-conocidos.txt");
+    esperar(fs.existsSync(lista)).verdadero(
+      "falta supabase/functions/whatsapp/errores-conocidos.txt: sin él, un clon limpio " +
+        "no puede publicar el motor",
+    );
+    const ignorado = fs.readFileSync(path.join(RAIZ, ".gitignore"), "utf8");
+    esperar(/errores-conocidos/.test(ignorado)).falso(
+      "alguien puso la lista en .gitignore: entonces no viaja al repositorio y estamos igual",
+    );
+  });
+});
+
+// ─── Los adjuntos y sus dos almacenes ─────────────────────────────────
+//
+// Lo que un cliente le manda a un negocio —un recibo, una receta, el parte del
+// coche— vivía en un almacén público con una dirección eterna que abría
+// cualquiera. Ahora vive en `privado` y se firma al vuelo. Estas reglas existen
+// para que no vuelva a salir por la puerta de atrás sin que nadie lo note.
+describe("Un adjunto de una conversación no es contenido público", () => {
+  const CENTINELA_INI = "\u2550\u2550\u2550 COPIA LITERAL COMPARTIDA (src/lib/adjuntos.ts \u2194 motor) \u00b7 INICIO";
+  const CENTINELA_FIN = "\u2550\u2550\u2550 COPIA LITERAL COMPARTIDA (src/lib/adjuntos.ts \u2194 motor) \u00b7 FIN";
+
+  const MOTOR = path.join(RAIZ, "supabase/functions/whatsapp/index.ts");
+  const WEB = path.join(RAIZ, "src/lib/adjuntos.ts");
+
+  /** El trozo entre centinelas, o null si el archivo no los tiene. */
+  function copiaDe(ruta) {
+    const t = fs.readFileSync(ruta, "utf8");
+    const i = t.indexOf(CENTINELA_INI);
+    const j = t.indexOf(CENTINELA_FIN);
+    if (i < 0 || j < 0 || j <= i) return null;
+    return t.slice(t.indexOf("\n", i) + 1, t.lastIndexOf("\n", j) + 1);
+  }
+
+  test("LAS DOS COPIAS DICEN LO MISMO, CARÁCTER POR CARÁCTER", () => {
+    const web = copiaDe(WEB);
+    const motor = copiaDe(MOTOR);
+    esperar(web !== null && motor !== null).verdadero(
+      "falta el bloque entre centinelas en src/lib/adjuntos.ts o en el motor: sin él " +
+        "esta regla no compara nada y las dos lecturas pueden separarse en silencio",
+    );
+    /* Sin esto, dos archivos con el bloque vacío pasarían encantados. */
+    esperar((web ?? "").length > 400).verdadero(
+      `el bloque compartido tiene ${(web ?? "").length} caracteres: se vació y la regla dejó de proteger nada`,
+    );
+    esperar(motor).igual(
+      web,
+      "el motor y la pantalla leen de distinta manera dónde vive un adjunto. Copia el " +
+        "bloque de src/lib/adjuntos.ts tal cual dentro de los centinelas del motor: si no, " +
+        "el archivo que ve el agente no es el que sale por WhatsApp",
+    );
+  });
+
+  test("EL ADJUNTO QUE ENTRA NO NACE PÚBLICO", () => {
+    /* Sin comentarios: el que explica este cambio nombra `getPublicUrl` para
+     * contar de dónde se viene, y una regla que lee comentarios se pone roja
+     * por una explicación. */
+    const wa = sinComentarios(fs.readFileSync(MOTOR, "utf8"));
+    esperar(/getPublicUrl/.test(wa)).falso(
+      "el motor vuelve a guardar una dirección pública para el adjunto de un cliente: " +
+        "esa dirección la abre cualquiera que la tenga, sin sesión y para siempre. " +
+        "Se guarda `comoSeGuarda(ALMACEN_PRIVADO, ruta)` y se firma al servirlo",
+    );
+    esperar(/from\(ALMACEN_PRIVADO\)\.upload\(/.test(wa)).verdadero(
+      "el adjunto entrante tiene que subirse al almacén privado, no a `media`",
+    );
+  });
+
+  test("LO QUE SALE PARA META VA FIRMADO", () => {
+    const wa = sinComentarios(fs.readFileSync(MOTOR, "utf8"));
+    esperar(/const origen = await firmarParaMandar\(/.test(wa)).verdadero(
+      "el motor baja el adjunto sin firmarlo: con el almacén privado eso es un 400 y " +
+        "el cliente se queda sin su archivo",
+    );
+    esperar(/\{ link: url \}/.test(wa)).falso(
+      "el envío por enlace le pasa a Meta la ruta guardada. Meta la baja desde sus " +
+        "propios servidores, sin sesión: tiene que ir firmada",
+    );
+  });
+
+  test("LA PANTALLA NO PINTA LA DIRECCIÓN DEL ALMACÉN", () => {
+    const malos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta.endsWith("src/components/builder/MediaUpload.tsx")) continue; // el público a propósito
+      if (/getPublicUrl/.test(sinComentarios(texto))) malos.push(ruta);
+    }
+    esperar(malos.join(" | ")).igual(
+      "",
+      "alguien volvió a pedir una dirección pública del almacén. Para un adjunto de una " +
+        "conversación se usa `enlaceDeAdjunto()` (pantalla) o `urlParaMandar()` (servidor)",
     );
   });
 });

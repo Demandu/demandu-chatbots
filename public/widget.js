@@ -237,7 +237,10 @@
     // mayoría de lo que se manda son fotos, y obligar a abrir una pestaña por
     // cada una haría el chat incómodo.
     if (adjunto && adjunto.url) {
-      var esImagen = (adjunto.tipo || "").indexOf("image/") === 0;
+      // SIN LA BARRA: así vale tanto `image/png` —lo que trae un adjunto de la
+      // Bandeja— como `image` a secas, que es lo que manda el bloque de
+      // multimedia del constructor.
+      var esImagen = (adjunto.tipo || "").indexOf("image") === 0;
       var a = document.createElement("a");
       a.href = adjunto.url;
       a.target = "_blank";

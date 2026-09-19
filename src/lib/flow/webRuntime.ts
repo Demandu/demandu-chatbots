@@ -13,6 +13,8 @@ import {
 import type { MensajeChat } from "@/lib/tienda/conversacionDePedido";
 import { esElReciboDeUnPedido } from "@/lib/tienda/pedidoQueLlega";
 import { historialParaLaIA } from "@/lib/ai/historial";
+import { CASILLA_DE_LA_FICHA } from "@/lib/leads/casillas";
+import { emitir } from "@/lib/salidas";
 import type { CarritoChat } from "@/lib/tienda/pedirPorChat";
 
 /**
@@ -22,7 +24,19 @@ import type { CarritoChat } from "@/lib/tienda/pedirPorChat";
  * Bandeja igual que WhatsApp, así el equipo ve y contesta desde un solo lugar.
  */
 
-export type OutMsg = { text: string; buttons?: { id: string; label: string }[] };
+/**
+ * Un mensaje del bot hacia el visitante.
+ *
+ * EL ADJUNTO NO ES NUEVO EN EL WIDGET: `public/widget.js` ya pinta `adjunto`
+ * —con imagen si es una foto y con enlace de descarga si no— porque es como
+ * le llegan los archivos que manda un agente desde la Bandeja. Lo que faltaba
+ * era que el FLUJO pudiera mandar uno.
+ */
+export type OutMsg = {
+  text: string;
+  buttons?: { id: string; label: string }[];
+  adjunto?: { url: string; nombre?: string; tipo?: string };
+};
 /**
  * Lo que el bot está esperando.
  *
@@ -160,6 +174,24 @@ function push(ctx: Ctx, text: string, buttons?: FlowButton[]) {
   const opts = (buttons ?? []).map((b) => ({ id: b.id, label: b.label ?? "Opción" }));
   if (!body && !opts.length) return;
   ctx.out.push(opts.length ? { text: body || "Elige una opción", buttons: opts } : { text: body });
+}
+
+/**
+ * Mete en la cola un mensaje CON archivo.
+ *
+ * No pasa por `push` porque `push` descarta lo que no tiene texto, y un
+ * adjunto sin pie es un mensaje perfectamente válido —es la mayoría de las
+ * veces, de hecho—.
+ */
+function pushAdjunto(
+  ctx: Ctx,
+  a: { texto: string; url: string; nombre?: string; tipo?: string },
+) {
+  if (!a.url) return;
+  ctx.out.push({
+    text: interp(a.texto, ctx.vars),
+    adjunto: { url: a.url, ...(a.nombre ? { nombre: a.nombre } : {}), ...(a.tipo ? { tipo: a.tipo } : {}) },
+  });
 }
 
 /**
@@ -854,6 +886,78 @@ async function pasoDeCitaWeb(
   return await volverAOfrecer();
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * GEMELO de `guardarLoQueContesto` en el motor de WhatsApp.
+ *
+ * El porqué completo está allí y en la migración 0137. Resumen: la respuesta
+ * de un bloque de pregunta vivía en `vars[...]` y se moría con el recorrido,
+ * así que capturar datos dependía de tener la IA encendida.
+ *
+ * LA DIFERENCIA CON EL MOTOR DE WHATSAPP es a quién se le escribe: allí la
+ * identidad es el teléfono; aquí un visitante de una web no tiene ninguna, y
+ * la conversación es lo único que existe en los dos casos.
+ *
+ * Una regla estática comprueba que los dos canales guardan.
+ * ══════════════════════════════════════════════════════════════════════════ */
+async function guardarLoQueContestoWeb(
+  ctx: Ctx, node: any, variable: string, valor: string,
+): Promise<void> {
+  const campo = String(variable ?? "").trim();
+  const texto = String(valor ?? "").trim();
+  if (!campo || !texto) return;
+
+  try {
+    const { data: conv, error: eConv } = await ctx.admin
+      .from("conversations").select("contact_id")
+      .eq("id", ctx.conversationId).eq("org_id", ctx.orgId)
+      .maybeSingle();
+    // «No hay ficha» y «no pude preguntarlo» acaban igual aquí —la respuesta
+    // se apunta sin contacto— pero no son lo mismo, y sin esta línea el
+    // segundo caso sería invisible.
+    if (eConv) console.error("[flujo] no pude leer la conversación:", eConv.message);
+
+    let contactId: string | null = conv?.contact_id ?? null;
+    if (contactId) {
+      const { data: c, error: eCont } = await ctx.admin
+        .from("contacts").select("id, attributes")
+        .eq("id", contactId).eq("org_id", ctx.orgId)
+        .maybeSingle();
+      if (eCont) console.error("[flujo] no pude leer la ficha:", eCont.message);
+      if (c) {
+        const cambios: Record<string, unknown> = {
+          attributes: { ...(c.attributes ?? {}), [campo]: texto },
+        };
+        const casilla = CASILLA_DE_LA_FICHA[campo.toLowerCase()];
+        if (casilla) cambios[casilla] = texto;
+        const { error } = await ctx.admin.from("contacts").update(cambios).eq("id", c.id);
+        if (error) console.error("[flujo] no pude escribir la ficha:", error.message);
+      } else {
+        contactId = null;
+      }
+    }
+
+    const { error: eReg } = await ctx.admin.from("respuestas_de_flujo").insert({
+      org_id: ctx.orgId,
+      bot_id: ctx.botId ?? null,
+      conversation_id: ctx.conversationId,
+      contact_id: contactId,
+      flow_id: ctx.flowIdNuevo ?? null,
+      node_id: node?.id ?? null,
+      etiqueta: String(node?.data?.label ?? "").slice(0, 120) || null,
+      variable: campo,
+      valor: texto.slice(0, 2000),
+      canal: "web",
+    });
+    if (eReg) console.error("[flujo] no pude apuntar la respuesta:", eReg.message);
+
+    emitir(ctx.orgId, "lead.datos", {
+      campo, valor: texto, conversacion_id: ctx.conversationId, por: "nodo",
+    });
+  } catch (e) {
+    console.error("[flujo] fallo guardando la respuesta del bloque:", e);
+  }
+}
+
 async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting> {
   let current = startId;
   let guard = 0;
@@ -1056,11 +1160,46 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
         await ctx.admin.from("conversations").update({ status: "closed" }).eq("id", ctx.conversationId);
         ctx.finMotivo = "completado";
         return null;
-      case "media":
-        if (node.data.mediaUrl) push(ctx, node.data.mediaUrl);
-        if (node.data.caption) push(ctx, node.data.caption);
+      case "media": {
+        /* ── LA URL DEJA DE SALIR COMO TEXTO ──────────────────────────────
+         *
+         * Esto hacía `push(ctx, node.data.mediaUrl)`: al visitante le llegaba
+         * un globo de chat con
+         * `https://…supabase.co/storage/v1/object/public/media/8237…/1786….png`
+         * escrito dentro. En WhatsApp el mismo bloque manda la imagen; en el
+         * widget mandaba su dirección. El negocio monta el flujo, lo prueba
+         * por WhatsApp, se ve bien, y no vuelve a mirar la web.
+         *
+         * El widget YA sabe pintar `adjunto` —así le llegan los archivos que
+         * manda un agente—, así que no hacía falta nada nuevo en el navegador:
+         * hacía falta mandarlo con la forma que ya entiende. */
+        if (node.data.mediaUrl) {
+          const kind = node.data.mediaType ?? "image";
+          pushAdjunto(ctx, {
+            // El pie va DENTRO del mismo globo que la imagen, como en
+            // WhatsApp. En dos mensajes, el texto puede adelantar a la foto.
+            texto: node.data.caption ?? "",
+            url: node.data.mediaUrl,
+            nombre: node.data.mediaName || undefined,
+            /* EL TIPO VA CORTO —`image`, `video`, `file`— Y NO COMO
+             * `image` barra asterisco. Esa cadena lleva dentro la secuencia
+             * que ABRE un comentario, y media docena de reglas estáticas
+             * limpian comentarios con una expresión regular antes de mirar el
+             * archivo: escribirla aquí dejaba invisibles doscientas líneas de
+             * este archivo para esas reglas. Se vio pasar.
+             *
+             * El widget compara con `indexOf("image") === 0`, que acierta con
+             * esto y con los tipos de verdad (`image/png`) que trae un adjunto
+             * de la Bandeja. */
+            tipo: kind,
+          });
+        } else if (node.data.caption) {
+          // Sin archivo cargado todavía: al menos sale el texto.
+          push(ctx, node.data.caption);
+        }
         current = defaultNext(ctx.flow, node);
         break;
+      }
       case "ai": {
         // Responde con IA usando la info del negocio (Bot Training).
         // Si no hay pregunta todavía, muestra el texto del nodo y espera.
@@ -1083,6 +1222,10 @@ async function runFrom(startId: string | undefined, ctx: Ctx): Promise<Awaiting>
           conversationId: ctx.conversationId,
           vars: ctx.vars,
           pasoAHumano: false,
+          // Lo que acaba de escribir la persona. `cumplirLoPrometido` lo mira:
+          // si pidió hablar con alguien y el modelo no llamó a la herramienta,
+          // el pase se hace igual. Ver `pidioUnaPersona`.
+          ultimoTexto: ctx.lastUserText,
           // Sin esto, las herramientas de la tienda (`ver_catalogo`,
           // `estado_de_pedido`) seguirían resolviendo por orden alfabético
           // aunque el agente hubiera elegido tienda. La elección tiene que
@@ -1212,6 +1355,11 @@ async function guardarSalida(
       // ven idénticos desde fuera y son dos problemas completamente distintos.
       payload: {
         ...(m.buttons ? { buttons: m.buttons } : {}),
+        // SIN ESTO, EL HISTORIAL PIERDE LA IMAGEN. El visitante la ve en su
+        // pantalla en el momento, pero el agente que abre la conversación
+        // mañana ve un globo vacío —y el sondeo del propio widget, que lee
+        // de la Bandeja, tampoco la encontraría al recargar la página.
+        ...(m.adjunto ? { adjunto: m.adjunto } : {}),
         ...((m as any).falloIA ? { fallo_ia: (m as any).falloIA } : {}),
       },
     })),
@@ -1410,6 +1558,9 @@ export async function runWebFlow(opts: {
       conversationId: ctx.conversationId,
       vars: ctx.vars,
       pasoAHumano: false,
+      // Igual que en el bloque de IA: si aquí faltara, la misma petición
+      // llegaría a una persona por un camino y no por el otro.
+      ultimoTexto: ctx.lastUserText,
       tiendaElegida: ctx.tiendaElegida,
     };
     const respuesta = await responderDuda(ctx, agenteDelDesvio);
@@ -1467,7 +1618,12 @@ export async function runWebFlow(opts: {
       if (node?.type === "ai") {
         startId = node.id;
       } else {
-        if (node?.data.variable) vars[node.data.variable] = opts.text;
+        if (node?.data.variable) {
+          vars[node.data.variable] = opts.text;
+          // Y no solo en la memoria del turno: en la ficha del lead y en el
+          // registro que se puede descargar. Ver `guardarLoQueContestoWeb`.
+          await guardarLoQueContestoWeb(ctx, node, node.data.variable, opts.text ?? "");
+        }
         startId = node ? defaultNext(opts.flow, node) : undefined;
       }
     } else if (

@@ -40,6 +40,62 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
+# ── EL FILTRO, EN UNA FUNCION, PARA PODER PROBARLO ──────────────────────
+#
+# `./revisar-motor.sh --filtrar` lee por la entrada una salida de Deno y escribe
+# la huella, sin llamar a Deno ni tocar nada. Existe porque probar esta puerta
+# de verdad exige un Deno instalado, y sin poder probarla nadie supo durante
+# meses que se le escapaban los errores de sintaxis — justo los que motivaron
+# escribirla.
+huella() {
+  # ── SE QUITAN LOS COLORES ANTES DE LEER NADA ───────────────────────
+  #
+  # Deno colorea su salida, y un color es un caracter invisible al principio de
+  # la linea. Buscar lineas que EMPIECEN por «TS» no encontraba ninguna: los
+  # veinte errores estaban ahi y el filtro devolvia cero. Eso guardo una linea
+  # base VACIA, y con ella la puerta se quedo ciega — habria dejado pasar
+  # cualquier cosa diciendo «sin errores nuevos».
+  local entrada
+  entrada=$(cat | sed $'s/\033\\[[0-9;]*[a-zA-Z]//g')
+
+  # ── LA HUELLA DE UN ERROR, INCLUIDOS LOS QUE NO TRAEN CÓDIGO ────────────────
+  #
+  # Antes esto era una sola línea: `grep -oE 'TS[0-9]+ \[ERROR\]: .*$'`. Solo veía
+  # los errores de TIPOS, que son los que Deno numera. Y el fallo que hizo nacer
+  # este script —`const AFIRMACIONES` declarado dos veces, el 8 de septiembre— no
+  # es un error de tipos: es un error de SINTAXIS, y esos Deno los escribe así:
+  #
+  #     error: The module's source code could not be parsed: Identifier
+  #     'AFIRMACIONES' has already been declared at file:///…/index.ts:2594:7
+  #
+  # Sin código TS, o sea invisible para el filtro viejo. La puerta escrita para
+  # cazar ese fallo no lo cazaba.
+  #
+  # HOY NO SE NOTA, Y MAÑANA SÍ. Con la línea base vacía, un error de sintaxis
+  # deja `AHORA` vacío y salta el guardián de más abajo. Pero en cuanto la lista
+  # tenga un solo error de tipos conocido —que es su estado previsto, la lista es
+  # una deuda que se va bajando— `AHORA` deja de estar vacío, el guardián no
+  # salta, y el error de sintaxis pasa sin que nadie lo vea.
+  #
+  # LA HUELLA NO LLEVA NI LÍNEA NI RUTA: mover una función arriba no puede
+  # convertir un error viejo en uno nuevo.
+  TIPOS=$(printf '%s\n' "$entrada" | grep -oE 'TS[0-9]+ \[ERROR\]: .*$' | sed 's/ \[ERROR\]:/:/')
+  SIN_CODIGO=$(printf '%s\n' "$entrada" \
+    | grep -E '^error: ' \
+    | grep -vE 'TS[0-9]+ \[ERROR\]' \
+    | sed -E 's/ at file:\/\/[^ ]*//; s/^error: /SIN-CODIGO: /')
+  AHORA=$(printf '%s\n%s\n' "$TIPOS" "$SIN_CODIGO" | grep -v '^[[:space:]]*$' \
+    | sort | uniq -c | awk '{$1=$1};1' | sort)
+
+  printf '%s\n' "$AHORA"
+}
+
+if [ "${1:-}" = "--filtrar" ]; then
+  huella
+  exit 0
+fi
+
+
 MOTOR="supabase/functions/whatsapp/index.ts"
 CONOCIDOS="supabase/functions/whatsapp/errores-conocidos.txt"
 TMP="${TMPDIR:-/tmp}/chequeo-motor-demandu"
@@ -73,22 +129,7 @@ if echo "$SALIDA" | grep -qiE "failed to load|failed to fetch|error sending requ
   exit 2
 fi
 
-# ── SE QUITAN LOS COLORES ANTES DE LEER NADA ─────────────────────────────────
-#
-# Deno colorea su salida, y un color es un carácter invisible al principio de la
-# línea. Buscar líneas que EMPIECEN por «TS» no encontraba ninguna: los veinte
-# errores estaban ahí y el filtro devolvía cero.
-#
-# Eso guardó una línea base VACÍA, y con ella la puerta se quedó ciega — habría
-# dejado pasar cualquier cosa diciendo «sin errores nuevos». Peor que no tener
-# puerta: da tranquilidad falsa.
-# `\x1b` NO lo entiende el sed de macOS. Con las comillas $'...' de bash se
-# escribe el ESC de verdad, y eso sí lo entienden los dos.
-LIMPIA=$(printf '%s\n' "$SALIDA" | sed $'s/\033\\[[0-9;]*[a-zA-Z]//g')
-
-# La huella de un error es su CÓDIGO y su MENSAJE, sin el número de línea:
-# mover una función arriba no puede convertir un error viejo en uno nuevo.
-AHORA=$(printf '%s\n' "$LIMPIA" | grep -oE 'TS[0-9]+ \[ERROR\]: .*$' | sed 's/ \[ERROR\]:/:/' | sort | uniq -c | awk '{$1=$1};1' | sort)
+AHORA=$(printf '%s\n' "$SALIDA" | huella)
 
 # ── EL GUARDIÁN DEL GUARDIÁN ─────────────────────────────────────────────────
 #

@@ -21,8 +21,25 @@
 import fs from "node:fs";
 import path from "node:path";
 
+/**
+ * El archivo sin sus comentarios.
+ *
+ * ── POR QUÉ EL COMIENZO DE UN COMENTARIO LLEVA GUARDA ──────────────────────
+ *
+ * Antes era `/` asterisco a secas. El problema: la cadena `"image/` asterisco
+ * `"` —el comodín de tipo MIME que pide el atributo `accept` de un campo de
+ * archivo— lleva dentro esa misma secuencia. Para esta función eso ABRÍA un
+ * comentario, y todo lo que iba desde ahí hasta el siguiente cierre
+ * desaparecía: en `webRuntime.ts` se comieron doscientas líneas y una regla
+ * que ya existía empezó a contar 1 donde había 2. Las demás no se pusieron
+ * rojas —simplemente dejaron de mirar—, que es lo peligroso.
+ *
+ * Un comentario de verdad viene después de un espacio, un salto de línea o un
+ * signo de puntuación; nunca pegado a una letra. Con eso basta para no
+ * confundirlo con una cadena, sin tener que escribir un analizador entero.
+ */
 export const sinComentarios = (t) =>
-  t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  t.replace(/(^|[\s(=,;{[:])\/\*[\s\S]*?\*\//g, "$1").replace(/^\s*\/\/.*$/gm, "");
 
 export function listar(dir, filtro = /\.(ts|tsx)$/) {
   if (!fs.existsSync(dir)) return [];

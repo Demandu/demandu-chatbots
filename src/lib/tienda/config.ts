@@ -28,6 +28,8 @@
  */
 
 import { sanearAvisos, AVISOS_POR_DEFECTO, type AvisosTienda } from "./avisos";
+// Qué es un enlace de imagen y qué es texto que alguien escribió en el campo.
+import { esEnlaceDeImagen, enlaceDeImagen } from "./imagenes";
 
 /**
  * `ubicacion` ES EL TIPO QUE HACE POSIBLE EL DOMICILIO.
@@ -332,14 +334,20 @@ export function leerConfig(crudo: unknown): ConfigTienda {
 
   return {
     titulo: String(c.titulo ?? "").trim(),
-    logo_url: c.logo_url ? String(c.logo_url) : undefined,
+    /* LO QUE NO ES UN ENLACE NO LLEGA A LA PANTALLA.
+     *
+     * Antes bastaba con que no estuviera vac\u00edo, as\u00ed que \u00abbanner de verano\u00bb
+     * acababa dentro de un `<img src>` y el visitante ve\u00eda el icono de imagen
+     * rota en la cabecera del negocio. Sin ning\u00fan error en ninguna parte: la
+     * tienda simplemente se ve\u00eda mal. Ver `esEnlaceDeImagen`. */
+    logo_url: enlaceDeImagen(c.logo_url),
     logo_llena: c.logo_llena === true,
-    portada_url: c.portada_url ? String(c.portada_url) : undefined,
+    portada_url: enlaceDeImagen(c.portada_url),
     banners: Array.isArray(c.banners)
       ? (c.banners as BannerTienda[])
-          .filter((b) => b && typeof b.imagen_url === "string" && b.imagen_url.trim())
+          .filter((b) => b && esEnlaceDeImagen(b.imagen_url))
           .map((b) => ({
-            imagen_url: b.imagen_url.trim(),
+            imagen_url: String(b.imagen_url).trim(),
             ...(b.enlace ? { enlace: String(b.enlace) } : {}),
             ...(b.alt ? { alt: String(b.alt) } : {}),
           }))
@@ -349,7 +357,9 @@ export function leerConfig(crudo: unknown): ConfigTienda {
           .filter((x) => x && typeof x.nombre === "string" && x.nombre.trim())
           .map((x) => ({
             nombre: x.nombre.trim(),
-            ...(x.imagen_url ? { imagen_url: String(x.imagen_url).trim() } : {}),
+            // Una categor\u00eda SIN imagen se ve bien; con una rota, no. Si el
+            // enlace no vale, la categor\u00eda se queda, la imagen no.
+            ...(enlaceDeImagen(x.imagen_url) ? { imagen_url: String(x.imagen_url).trim() } : {}),
           }))
       : [],
     colores: {

@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Plug, Trash2, CircleCheck, TriangleAlert, Copy, Check } from "lucide-react";
+import { useFormState, useFormStatus } from "react-dom";
+import { Plug, Trash2, CircleCheck, TriangleAlert, Copy, Check, Pencil, X } from "lucide-react";
 import { EVENTOS } from "@/lib/salidas-eventos";
-import { crearSalida, quitarSalida } from "@/app/(dashboard)/settings/integrations/salidas";
+import {
+  crearSalida, editarSalida, quitarSalida, type Resultado,
+} from "@/app/(dashboard)/settings/integrations/salidas";
 
 export type SalidaFila = {
   id: string;
@@ -17,6 +20,8 @@ export type SalidaFila = {
   ultimo_error: string | null;
 };
 
+const SIN_DECIR_NADA: Resultado = { ok: false, mensaje: "" };
+
 /**
  * Conectar Demandu con el CRM del cliente.
  *
@@ -28,9 +33,19 @@ export type SalidaFila = {
  * una credencial para entrar a Demandu: es lo que el OTRO lado necesita para
  * comprobar que el aviso viene de nosotros. Esconderlo obligaría a rehacer la
  * salida cada vez que alguien cambia de sistema, sin ganar nada.
+ *
+ * ── LO QUE CAMBIÓ Y POR QUÉ ────────────────────────────────────────────────
+ *
+ * 1. AHORA CONTESTA. Antes se pulsaba «Conectar» con una dirección mala y la
+ *    pantalla se quedaba igual: ni salida, ni error, ni una pista.
+ * 2. Y SE PUEDE CORREGIR. Antes, cambiar una letra de la dirección obligaba a
+ *    borrar y volver a crear — y eso cambia el secreto de firma, así que había
+ *    que ir también al otro sistema a cambiarlo.
  */
 export function SalidasCrm({ salidas }: { salidas: SalidaFila[] }) {
   const [copiado, setCopiado] = useState<string | null>(null);
+  const [editando, setEditando] = useState<string | null>(null);
+  const [nueva, crear] = useFormState(crearSalida, SIN_DECIR_NADA);
 
   const copiar = async (id: string, texto: string) => {
     try {
@@ -60,15 +75,20 @@ export function SalidasCrm({ salidas }: { salidas: SalidaFila[] }) {
 
       {salidas.length > 0 && (
         <div className="mb-4 space-y-2.5">
-          {salidas.map((s) => {
-            const fallando = s.ultimo_error !== null;
-            return (
+          {salidas.map((s) =>
+            editando === s.id ? (
+              <FormularioDeSalida
+                key={s.id}
+                salida={s}
+                onCerrar={() => setEditando(null)}
+              />
+            ) : (
               <div key={s.id} className="rounded-xl border border-linea bg-tarjeta p-3">
                 <div className="flex items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-semibold text-ink">{s.nombre}</span>
-                      {fallando ? (
+                      {s.ultimo_error !== null ? (
                         <span className="inline-flex flex-none items-center gap-1 rounded-full bg-danger/15 px-2 py-0.5 text-[11px] font-semibold text-danger">
                           <TriangleAlert className="h-3 w-3" /> No está recibiendo
                         </span>
@@ -88,7 +108,7 @@ export function SalidasCrm({ salidas }: { salidas: SalidaFila[] }) {
                         ? "Le mandamos todo"
                         : `Solo: ${s.eventos.join(", ")}`}
                     </p>
-                    {fallando && (
+                    {s.ultimo_error !== null && (
                       <p className="mt-1 text-[11px] text-danger">
                         Último error: {s.ultimo_error}
                       </p>
@@ -113,59 +133,144 @@ export function SalidasCrm({ salidas }: { salidas: SalidaFila[] }) {
                     </p>
                   </div>
 
-                  <form action={quitarSalida} className="flex-none">
-                    <input type="hidden" name="id" value={s.id} />
-                    <button className="text-ink-3 transition hover:text-danger" title="Quitar">
-                      <Trash2 className="h-4 w-4" />
+                  <div className="flex flex-none items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditando(s.id)}
+                      className="text-ink-3 transition hover:text-ink"
+                      title="Cambiar la dirección o el nombre"
+                    >
+                      <Pencil className="h-4 w-4" />
                     </button>
-                  </form>
+                    <BotonDeQuitar id={s.id} />
+                  </div>
                 </div>
               </div>
-            );
-          })}
+            ),
+          )}
         </div>
       )}
 
-      <form action={crearSalida} className="rounded-xl border border-linea-2 bg-suave/40 p-3">
-        <div className="grid gap-2.5 sm:grid-cols-[1fr_2fr]">
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-ink-2">Nombre</label>
-            <input name="nombre" placeholder="Mi HubSpot" className="input-l w-full" />
-          </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-ink-2">
-              Dirección a la que enviamos
-            </label>
-            <input
-              name="url"
-              required
-              type="url"
-              placeholder="https://..."
-              className="input-l w-full font-mono text-xs"
-            />
-          </div>
-        </div>
-
-        <p className="mb-1.5 mt-3 text-[11px] font-semibold text-ink-2">Qué quieres que te mandemos</p>
-        <div className="flex flex-wrap gap-2">
-          {EVENTOS.map((e) => (
-            <label
-              key={e.clave}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-linea-2 px-2.5 py-1.5 text-xs text-ink-2 transition hover:border-violet/40"
-              title={e.desc}
-            >
-              <input type="checkbox" name={`ev_${e.clave}`} defaultChecked className="accent-violet" />
-              {e.nombre}
-            </label>
-          ))}
-        </div>
-
-        <button className="btn-primary mt-3 px-4 py-2 text-sm">Conectar</button>
+      <form action={crear} className="rounded-xl border border-linea-2 bg-suave/40 p-3">
+        <Campos />
+        <Enviar etiqueta="Conectar" />
+        <Aviso resultado={nueva} />
         <p className="mt-2 text-[11px] text-ink-3">
           Solo direcciones que empiecen por <b className="text-ink-2">https</b>: por http, los datos de
           tus leads viajarían sin cifrar.
         </p>
       </form>
     </div>
+  );
+}
+
+/** El formulario de cambiar una salida que ya existe, en el mismo sitio. */
+function FormularioDeSalida({ salida, onCerrar }: { salida: SalidaFila; onCerrar: () => void }) {
+  const [estado, guardar] = useFormState(editarSalida, SIN_DECIR_NADA);
+
+  return (
+    <form action={guardar} className="rounded-xl border border-violet/40 bg-suave/40 p-3">
+      <input type="hidden" name="id" value={salida.id} />
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold text-ink">Cambiar «{salida.nombre}»</span>
+        <button type="button" onClick={onCerrar} className="text-ink-3 hover:text-ink" title="Dejarlo como está">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <Campos salida={salida} />
+      <Enviar etiqueta="Guardar" />
+      <Aviso resultado={estado} />
+      <p className="mt-2 text-[11px] text-ink-3">
+        El secreto de firma no cambia: no hace falta tocar nada en tu sistema.
+      </p>
+    </form>
+  );
+}
+
+/** Nombre, dirección y eventos. Los mismos campos para crear y para cambiar. */
+function Campos({ salida }: { salida?: SalidaFila }) {
+  // Sin eventos elegidos es «todos», así que al editar se marcan todos.
+  const marcado = (clave: string) =>
+    !salida || salida.eventos.length === 0 || salida.eventos.includes(clave);
+
+  return (
+    <>
+      <div className="grid gap-2.5 sm:grid-cols-[1fr_2fr]">
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold text-ink-2">Nombre</label>
+          <input
+            name="nombre" placeholder="Mi HubSpot" defaultValue={salida?.nombre ?? ""}
+            className="input-l w-full"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold text-ink-2">
+            Dirección a la que enviamos
+          </label>
+          {/* SIN `type="url"`: el navegador da por buena `https://a.com/https://b.com`
+            * y se lleva la validación por delante sin decir cuál es el problema.
+            * Lo comprueba el servidor, que además contesta por qué. */}
+          <input
+            name="url" required placeholder="https://..." defaultValue={salida?.url ?? ""}
+            className="input-l w-full font-mono text-xs"
+          />
+        </div>
+      </div>
+
+      <p className="mb-1.5 mt-3 text-[11px] font-semibold text-ink-2">Qué quieres que te mandemos</p>
+      <div className="flex flex-wrap gap-2">
+        {EVENTOS.map((e) => (
+          <label
+            key={e.clave}
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-linea-2 px-2.5 py-1.5 text-xs text-ink-2 transition hover:border-violet/40"
+            title={e.desc}
+          >
+            <input
+              type="checkbox" name={`ev_${e.clave}`} defaultChecked={marcado(e.clave)}
+              className="accent-violet"
+            />
+            {e.nombre}
+          </label>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** El botón, que además dice que está trabajando. */
+function Enviar({ etiqueta }: { etiqueta: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <button disabled={pending} className="btn-primary mt-3 px-4 py-2 text-sm disabled:opacity-60">
+      {pending ? "Guardando…" : etiqueta}
+    </button>
+  );
+}
+
+/** Lo que contestó el servidor. Si no contestó nada, no ocupa sitio. */
+function Aviso({ resultado }: { resultado: Resultado }) {
+  if (!resultado.mensaje) return null;
+  return (
+    <p
+      className={`mt-2 text-[11px] font-semibold ${resultado.ok ? "text-exito" : "text-danger"}`}
+      role="status"
+    >
+      {resultado.mensaje}
+    </p>
+  );
+}
+
+function BotonDeQuitar({ id }: { id: string }) {
+  const [estado, quitar] = useFormState(quitarSalida, SIN_DECIR_NADA);
+  return (
+    <form action={quitar}>
+      <input type="hidden" name="id" value={id} />
+      <button className="text-ink-3 transition hover:text-danger" title="Quitar">
+        <Trash2 className="h-4 w-4" />
+      </button>
+      {!estado.ok && estado.mensaje && (
+        <span className="ml-1 text-[11px] text-danger">{estado.mensaje}</span>
+      )}
+    </form>
   );
 }

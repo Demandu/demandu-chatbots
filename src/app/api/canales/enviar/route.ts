@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { urlParaMandar } from "@/lib/adjuntos-servidor";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { enviarTexto, enviarArchivo, enviarPlantilla, type ResultadoEnvio } from "@/lib/canales/whatsappEnviar";
@@ -163,7 +164,7 @@ export async function POST(req: Request) {
     } else if (adjunto?.url) {
       envio = await enviarArchivo(
         canal.phone_number_id, canal.access_token, para,
-        adjunto.url, adjunto.tipo ?? "", adjunto.nombre ?? "archivo",
+        await urlParaMandar(adjunto.url), adjunto.tipo ?? "", adjunto.nombre ?? "archivo",
         // Si el texto es solo el nombre del archivo no se manda como pie:
         // el cliente ya lo ve en el propio documento.
         cuerpo && cuerpo !== adjunto.nombre ? cuerpo : undefined,
@@ -201,7 +202,7 @@ export async function POST(req: Request) {
       envio = { ok: false, error: "Este contacto no tiene identificador de Instagram." };
     } else if (adjunto?.url) {
       envio = await enviarAdjuntoDm(
-        canal.ig_user_id, canal.access_token, igsid, adjunto.url, adjunto.tipo ?? "",
+        canal.ig_user_id, canal.access_token, igsid, await urlParaMandar(adjunto.url), adjunto.tipo ?? "",
       );
     } else {
       envio = await enviarDm(canal.ig_user_id, canal.access_token, igsid, cuerpo);

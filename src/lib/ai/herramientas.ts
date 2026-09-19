@@ -15,7 +15,12 @@ import {
 } from "@/lib/agendaHorarios";
 import { zonaDelTelefono } from "@/lib/zonaHoraria";
 import { emitir } from "@/lib/salidas";
-import { prometioUnaPersona, prometioUnaCita, LA_CITA_NO_QUEDO } from "@/lib/ai/promesas";
+import {
+  prometioUnaPersona, pidioUnaPersona, prometioUnaCita, LA_CITA_NO_QUEDO,
+} from "@/lib/ai/promesas";
+// La lista vive sola: la usan la IA, el canal web y el motor de WhatsApp.
+// Ver la cabecera de `casillas.ts`.
+import { CASILLA_DE_LA_FICHA } from "@/lib/leads/casillas";
 import {
   cuantoDura, loQueSeCongela, servicioQuePidio, comoSeLosOfrezco, POR_DEFECTO_MIN,
   type Servicio,
@@ -68,6 +73,14 @@ export type ContextoAgente = {
   /** Se enciende SOLO cuando el calendario confirmó. Ver `desmentirLaCita`. */
   citaAgendada?: boolean;
   /**
+   * Lo último que escribió la PERSONA en este turno.
+   *
+   * No es para el modelo —el modelo ya lo tiene en el historial— sino para
+   * `cumplirLoPrometido`: si el cliente pidió hablar con alguien y el modelo no
+   * llamó a la herramienta, el pase se hace igual. Ver `pidioUnaPersona`.
+   */
+  ultimoTexto?: string | null;
+  /**
    * La tienda que eligió el agente, si eligió alguna.
    *
    * Nulo = como se decidía antes (la enlazada al bot, y con empate la primera
@@ -106,25 +119,6 @@ export type AjustesAgente = {
   sistemaDescripcion?: string;
 };
 
-/**
- * Datos que además tienen su CASILLA PROPIA en la ficha del lead.
- *
- * Sin esto, el correo que la IA captura se guarda como «un atributo más» y la
- * casilla «Correo» de la ficha se queda vacía. Pasó tal cual: el bot pidió el
- * correo, la persona lo dio, el bot dijo «ya quedó registrado» y en la ficha no
- * había nada donde el equipo lo busca. Para el agente que abre esa ficha, el
- * dato no existe.
- *
- * Se guarda en LOS DOS SITIOS: en la casilla, que es donde se mira, y en los
- * atributos, que es de donde tiran los flujos y las plantillas.
- */
-const CASILLA_DE_LA_FICHA: Record<string, string> = {
-  nombre: "name", name: "name", nombre_completo: "name",
-  correo: "email", email: "email", mail: "email", correo_electronico: "email",
-  telefono: "phone", phone: "phone", celular: "phone", movil: "phone",
-  empresa: "company", company: "company", negocio: "company",
-  pais: "country", country: "country",
-};
 
 /**
  * La ficha de la persona con la que se está hablando.
@@ -796,25 +790,70 @@ export async function cumplirLoPrometido(
   const corregido = await desmentirLaCita(ctx, texto, tools);
   if (ctx.pasoAHumano) return corregido;
   if (!tools.some((t) => t.name === "pasar_a_humano")) return corregido;
+
+  /* DOS DISPARADORES, NO UNO.
+   *
+   * El de abajo mira lo que prometió el BOT. Este mira lo que pidió el
+   * CLIENTE, y es el que faltaba: en producción se vieron dos personas
+   * pidiendo lo mismo con otras palabras, misma cuenta y misma herramienta
+   * encendida, y solo una acabó con un agente. La diferencia estuvo en si al
+   * modelo le dio por llamar a la herramienta.
+   *
+   * SE HACE EL PASE Y SE DEJA HABLAR AL BOT. No se sustituye el texto: el
+   * modelo suele contestar algo razonable («claro, te comunico») y taparlo con
+   * una frase nuestra sería peor. Lo que no puede pasar es que la conversación
+   * siga sin dueño. */
+  if (pidioUnaPersona(ctx.ultimoTexto)) {
+    console.log("[agente] el cliente pidió una persona; se hace el pase");
+    await hacerElPase(
+      ctx,
+      "El cliente pidió hablar con una persona",
+      "lo pidió el cliente",
+    );
+    return corregido;
+  }
+
   if (!prometioUnaPersona(corregido)) return corregido;
 
   console.log("[agente] prometió una persona sin llamar a la herramienta; se hace el pase");
+  await hacerElPase(
+    ctx,
+    "El asistente prometió que atendería una persona",
+    "el asistente lo prometió en su respuesta",
+  );
+  return corregido;
+}
+
+/**
+ * El pase en sí, en UN solo sitio.
+ *
+ * Había dos copias de estas siete líneas y ahora harían falta tres. Una copia
+ * que se arregla y otra que no es exactamente cómo vuelve un fallo: el día que
+ * el pase necesite tocar una columna más, la que se olvide dejará
+ * conversaciones a medio pasar sin que nadie lo note.
+ *
+ * Que falle no puede dejar al cliente sin respuesta: se registra y se sigue.
+ */
+async function hacerElPase(
+  ctx: ContextoAgente,
+  razon: string,
+  motivo: string,
+): Promise<void> {
   try {
     await ctx.admin.from("conversations").update({
       status: "assigned",
       handoff_requested_at: new Date().toISOString(),
-      handoff_reason: "El asistente prometió que atendería una persona",
+      handoff_reason: razon,
     }).eq("id", ctx.conversationId).eq("org_id", ctx.orgId);
     ctx.pasoAHumano = true;
     emitir(ctx.orgId, "pase.a.humano", {
-      motivo: "el asistente lo prometió en su respuesta",
+      motivo,
       conversacion_id: ctx.conversationId,
       por: "agente_ia",
     });
   } catch (e) {
-    console.error("[agente] no pude cumplir la promesa de pase:", e);
+    console.error("[agente] no pude hacer el pase a una persona:", e);
   }
-  return corregido;
 }
 
 /**

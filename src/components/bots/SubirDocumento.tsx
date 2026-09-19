@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { ALMACEN_PRIVADO, comoSeGuarda } from "@/lib/adjuntos";
 import { FileUp, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { porQueNoSeAcepta, FORMATOS } from "@/lib/ai/extraerTexto";
@@ -63,14 +64,17 @@ export function SubirDocumento({
       const limpio = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
       const ruta = `${orgId}/entrenamiento/${botId}/${Date.now()}-${limpio}`;
 
+      // AL ALMACÉN PRIVADO. Un documento de entrenamiento es de la empresa que
+      // lo sube: su catálogo, sus precios, sus condiciones. Estaba quedando
+      // descargable por cualquiera con el enlace.
       const { error: errSubida } = await sb.storage
-        .from("media")
+        .from(ALMACEN_PRIVADO)
         .upload(ruta, file, { cacheControl: "3600", upsert: false });
       if (errSubida) throw new Error(errSubida.message);
 
-      const { data: pub } = sb.storage.from("media").getPublicUrl(ruta);
-
-      campoUrl.current!.value = pub.publicUrl;
+      // SE GUARDA DÓNDE ESTÁ, NO UNA DIRECCIÓN PÚBLICA. El servidor lo lee con
+      // la llave de servicio justo después; nadie más necesita alcanzarlo.
+      campoUrl.current!.value = comoSeGuarda(ALMACEN_PRIVADO, ruta);
       campoNombre.current!.value = file.name;
       campoBytes.current!.value = String(file.size);
       // Se envía el formulario para que el trabajo pesado —leer el PDF,

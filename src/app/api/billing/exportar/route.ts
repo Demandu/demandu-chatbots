@@ -3,7 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import { misPermisos } from "@/lib/permisos-server";
-import { exportarContactos, exportarConversaciones } from "@/lib/billing/baja";
+import {
+  exportarContactos, exportarConversaciones, exportarRespuestas,
+} from "@/lib/billing/baja";
 
 export const dynamic = "force-dynamic";
 
@@ -34,10 +36,15 @@ export async function GET(req: Request) {
   const que = new URL(req.url).searchParams.get("que") ?? "contactos";
   const admin = createAdminClient();
 
+  /* TRES HOJAS, NO DOS. La de respuestas es la que hace auditable la captura
+   * de datos: qué bloque preguntó qué, quién contestó y cuándo. Ver
+   * `exportarRespuestas`. */
   const csv =
     que === "conversaciones"
       ? await exportarConversaciones(admin, orgId)
-      : await exportarContactos(admin, orgId);
+      : que === "respuestas"
+        ? await exportarRespuestas(admin, orgId)
+        : await exportarContactos(admin, orgId);
 
   const nombre = `demandu-${que}-${new Date().toISOString().slice(0, 10)}.csv`;
 

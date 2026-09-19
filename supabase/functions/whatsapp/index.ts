@@ -19,7 +19,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
  * Sube este número al tocar el archivo. Sirve para comprobar que lo que corre
  * en producción es lo mismo que está en el repo (`GET ?version`).
  */
-const VERSION_MOTOR = "46";
+const VERSION_MOTOR = "47";
 
 // ─── La firma de Meta ────────────────────────────────────────────────────────
 //
@@ -557,6 +557,123 @@ function sendButtons(pnid: string, token: string, to: string, body: string, butt
 /** Meta caduca los ids a los 30 días. Los damos por vencidos antes, a los 25. */
 const DIAS_CACHE_MEDIA = 25;
 
+/* ═════════════════════════════════════════════════════════════════════════════
+ * DÓNDE VIVE UN ADJUNTO. LO MISMO QUE ENTIENDE LA PANTALLA, PALABRA POR
+ * PALABRA.
+ *
+ * Esto es una copia literal de `src/lib/adjuntos.ts`. No por pereza: este
+ * archivo corre en Deno y no puede importar de `src/`. Y si el motor leyera
+ * la cadena guardada de otra manera que la Bandeja, el archivo que ve el
+ * agente no sería el que sale por WhatsApp.
+ *
+ * `scripts/pruebas/estatico.mjs` compara los dos bloques carácter a carácter
+ * y se pone rojo si difieren. Se edita `src/lib/adjuntos.ts` y se pega aquí;
+ * nunca uno solo.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+/* ═══ COPIA LITERAL COMPARTIDA (src/lib/adjuntos.ts ↔ motor) · INICIO ═══ */
+/** Los dos únicos almacenes que existen. Cualquier otro nombre no es nuestro. */
+export const ALMACENES = ["media", "privado"] as const;
+export type Almacen = (typeof ALMACENES)[number];
+
+/** El almacén donde nacen los adjuntos nuevos: el que NO es público. */
+export const ALMACEN_PRIVADO: Almacen = "privado";
+
+const MARCAS = ["/storage/v1/object/public/", "/storage/v1/object/sign/"];
+
+export type Adjuntado = { almacen: Almacen; ruta: string };
+
+export function partesDeAdjunto(guardado: string | null | undefined): Adjuntado | null {
+  const crudo = String(guardado ?? "").trim();
+  if (!crudo) return null;
+
+  let resto = crudo;
+  let almacen: Almacen | null = null;
+
+  if (/^https?:\/\//i.test(crudo)) {
+    const marca = MARCAS.find((m) => crudo.includes(m));
+    // Una dirección de fuera no se toca. Ver la cabecera: redirector abierto.
+    if (!marca) return null;
+    resto = crudo.slice(crudo.indexOf(marca) + marca.length);
+    // Detrás de la marca viene `<almacen>/<ruta>`.
+    const corte = resto.indexOf("/");
+    if (corte < 1) return null;
+    const nombre = resto.slice(0, corte);
+    if (!(ALMACENES as readonly string[]).includes(nombre)) return null;
+    almacen = nombre as Almacen;
+    resto = resto.slice(corte + 1);
+  }
+
+  // Fuera lo que venga detrás de `?` (el token de una firma vieja, por ejemplo).
+  resto = resto.split("?")[0].split("#")[0];
+
+  try {
+    resto = decodeURIComponent(resto);
+  } catch {
+    // Un `%` suelto rompe `decodeURIComponent`. Se deja como está: peor es
+    // tirar el adjunto por un carácter raro en el nombre del archivo.
+  }
+
+  resto = resto.replace(/^\/+/, "");
+
+  if (!almacen) {
+    // Ruta pelada. Si empieza por el nombre de un almacén, ese es; si no, es
+    // de las de ayer, cuando todo vivía en `media`.
+    const corte = resto.indexOf("/");
+    const primero = corte > 0 ? resto.slice(0, corte) : "";
+    if ((ALMACENES as readonly string[]).includes(primero)) {
+      almacen = primero as Almacen;
+      resto = resto.slice(corte + 1);
+    } else {
+      almacen = "media";
+    }
+  }
+
+  // `..` sale de la carpeta de la cuenta, que es justo lo que comprueba quien
+  // llama. Sin esto, la comprobación de la primera carpeta no valdría nada.
+  if (!resto || resto.includes("..")) return null;
+  // Y tiene que tener al menos `<org>/<algo>`: una ruta de un solo trozo no
+  // pertenece a ninguna cuenta.
+  if (!resto.includes("/")) return null;
+
+  return { almacen, ruta: resto };
+}
+
+/** Cómo se guarda un adjunto nuevo: con su almacén delante, sin ambigüedad. */
+export function comoSeGuarda(almacen: Almacen, ruta: string): string {
+  return `${almacen}/${ruta}`;
+}
+
+/* ═══ COPIA LITERAL COMPARTIDA (src/lib/adjuntos.ts ↔ motor) · FIN ═══ */
+
+/**
+ * La dirección de un adjunto NUESTRO, firmada, para poder ir a buscarlo.
+ *
+ * El almacén `privado` no es público, y quien baja el archivo —este motor, o
+ * Meta desde sus propios servidores cuando se manda por enlace— no tiene
+ * sesión ni manera de tenerla. Sin firma no hay archivo.
+ *
+ * UNA HORA, no cinco minutos: un envío puede entrar en cola o reintentarse, y
+ * una firma corta convertiría un reintento normal en un adjunto perdido.
+ *
+ * Lo que no es nuestro se devuelve tal cual —si el negocio enlazó una imagen
+ * de su propia web no hay nada que firmar— y si la firma falla también: con
+ * el almacén todavía público eso sigue funcionando, y si ya no lo está, el
+ * fallo llega con el error de Meta, que es una pista, y no en silencio.
+ */
+async function firmarParaMandar(db: any, guardado: string): Promise<string> {
+  const partes = partesDeAdjunto(guardado);
+  if (!partes) return guardado;
+  const { data, error } = await db.storage
+    .from(partes.almacen).createSignedUrl(partes.ruta, 3600);
+  if (error || !data?.signedUrl) {
+    console.error(
+      "[whatsapp] no pude firmar el adjunto", partes.almacen, partes.ruta, error?.message,
+    );
+    return guardado;
+  }
+  return data.signedUrl as string;
+}
+
 /** Por encima de esto no subimos: se manda por enlace y que Meta lo descargue. */
 const TOPE_SUBIDA = 16 * 1024 * 1024;
 
@@ -574,11 +691,18 @@ const TIPO_POR_DEFECTO: Record<string, string> = {
  * malo; que no llegue es peor.
  */
 async function subirMediaAMeta(
-  pnid: string, token: string, url: string,
+  db: any, pnid: string, token: string, url: string,
   kind: "image" | "video" | "file", filename?: string,
 ): Promise<string | null> {
   try {
-    const bajada = await fetch(url);
+    /* SE FIRMA ANTES DE BAJAR. Lo guardado ya no es una dirección pública sino
+     * `privado/<cuenta>/…`, y a eso no se le puede hacer `fetch` a pelo.
+     *
+     * Y lo firmado NO SE ESCRIBE EN NINGÚN REGISTRO: lleva el permiso dentro.
+     * Por eso los `console.error` de aquí abajo siguen sacando `url`, que es la
+     * ruta guardada y no abre nada. */
+    const origen = await firmarParaMandar(db, url);
+    const bajada = await fetch(origen);
     if (!bajada.ok) {
       console.error("media bajar", bajada.status, url.slice(0, 120));
       return null;
@@ -630,7 +754,7 @@ async function mediaIdDeMeta(
     .maybeSingle();
   if (data?.media_id) return data.media_id as string;
 
-  const id = await subirMediaAMeta(ctx.pnid, ctx.token, url, kind, filename);
+  const id = await subirMediaAMeta(ctx.db, ctx.pnid, ctx.token, url, kind, filename);
   if (!id) return null;
 
   await ctx.db
@@ -753,13 +877,25 @@ async function guardarMedioEntrante(
     const limpio = medio.nombre.replace(/[^\w.\-]+/g, "_").slice(-80);
     const ruta = `${orgId}/whatsapp/${convId}/${Date.now()}-${limpio}`;
 
-    const { error } = await db.storage.from("media").upload(ruta, datos, {
+    const { error } = await db.storage.from(ALMACEN_PRIVADO).upload(ruta, datos, {
       contentType: tipo, cacheControl: "3600", upsert: false,
     });
     if (error) throw new Error(`el almacén lo rechazó: ${error.message}`);
 
-    const { data: pub } = db.storage.from("media").getPublicUrl(ruta);
-    return { url: pub.publicUrl, nombre: medio.nombre, tipo, bytes: datos.byteLength };
+    /* NI UNA DIRECCIÓN PÚBLICA MÁS.
+     *
+     * Esto es la foto que un cliente le manda a un negocio: el recibo de la
+     * transferencia, la receta, el parte del coche, el documento con su nombre.
+     * Hasta hoy se guardaba `getPublicUrl`: una dirección que abría cualquiera
+     * que la tuviera, sin sesión, sin caducidad y sin quedar registrado.
+     *
+     * Ahora se guarda la RUTA con su almacén delante. Quien la quiera ver pasa
+     * por `/api/adjunto`, que comprueba que la cuenta del archivo es la suya
+     * antes de firmarla por cinco minutos. */
+    return {
+      url: comoSeGuarda(ALMACEN_PRIVADO, ruta),
+      nombre: medio.nombre, tipo, bytes: datos.byteLength,
+    };
   } catch (e) {
     // Se pierde el adjunto, no la conversación — y queda dicho POR QUÉ, que es
     // la diferencia entre un fallo y un misterio.
@@ -785,7 +921,10 @@ async function sendMedia(
       .eq("phone_number_id", ctx.pnid).eq("url", url);
   }
 
-  return mediaPost(ctx.pnid, ctx.token, ctx.to, kind, { link: url }, caption, filename);
+  /* Por enlace lo baja META desde sus servidores. Una ruta del almacén privado
+   * le devolvería un 400 y el cliente se quedaría sin su archivo. */
+  const enlace = await firmarParaMandar(ctx.db, url);
+  return mediaPost(ctx.pnid, ctx.token, ctx.to, kind, { link: enlace }, caption, filename);
 }
 
 // ---- IA (mismo comportamiento que en el canal web) ----
@@ -1016,6 +1155,54 @@ function prometioUnaCita(texto: string | null | undefined): boolean {
     const f = frase.trim();
     if (!f || PROM_SOLO_OFRECE.test(f)) continue;
     if (PROM_PATRONES_CITA.some((p) => p.test(f))) return true;
+  }
+  return false;
+}
+
+/* ── GEMELO de `pidioUnaPersona` en `src/lib/ai/promesas.ts` ────────────────
+ * Ahí está el porqué completo y las pruebas. Resumen: `prometioUnaPersona`
+ * mira lo que dijo el BOT; esta mira lo que dijo el CLIENTE. En producción se
+ * vieron dos personas pidiendo lo mismo con otras palabras, misma cuenta y
+ * misma herramienta encendida, y solo una acabó con un agente.
+ *
+ * OJO A LA DIFERENCIA: aquí las preguntas SÍ cuentan. «¿Me pasas con una
+ * persona?» es la petición, y es como la escribe casi todo el mundo.
+ * Una regla estática compara los dos cuerpos. */
+const PIDE_QUIEN =
+  "(?:un[ao]?\\s+persona|un\\s+humano|humano|asesor[ao]?|agente|ejecutiv[ao]|" +
+  "vendedor[ao]?|representante|operador[ao]?|alguien\\s+(?:del\\s+equipo|real|de\\s+verdad|m[aá]s)|" +
+  "servicio\\s+al\\s+cliente|atenci[oó]n\\s+(?:al\\s+cliente|humana|personalizada))";
+const PIDE_VERBO =
+  "(?:hablar|platicar|charlar|conversar|comunicarme|contactar(?:me)?|" +
+  "que\\s+me\\s+atienda|atenderme)";
+const PIDE_PASAME =
+  "(?:p[aá]same|me\\s+pasas|me\\s+puedes?\\s+pasar|puedes?\\s+pasarme|" +
+  "comun[ií]came|me\\s+comunicas|me\\s+puedes?\\s+comunicar|transfi[eé]re(?:me)?|" +
+  "me\\s+transfieres|der[ií]vame|con[eé]ctame|me\\s+conectas)" +
+  "\\s+(?:con|a)\\b";
+const PIDE_QUIERO = "(?:quiero|necesito|deseo|busco|requiero|dame|me\\s+das|hay)";
+const PIDE_AL_BOT =
+  /\b(?:bot|robot|m[aá]quina|chatbot|inteligencia\s+artificial|contestador)\b/i;
+const PIDE_HARTO =
+  /\b(?:no\s+(?:quiero|me\s+sirve|me\s+funciona|entiendes|entiende|me\s+ayudas)|deja\s+de|basta)\b/i;
+const PIDE_PATRONES = [
+  new RegExp(`${PIDE_VERBO}\\s+(?:con\\s+)?(?:un[ao]?\\s+)?${PIDE_QUIEN}`, "i"),
+  new RegExp(PIDE_PASAME, "i"),
+  new RegExp(`${PIDE_QUIERO}\\s+(?:un[ao]?\\s+)?${PIDE_QUIEN}`, "i"),
+];
+const PIDE_YA_PASO =
+  /\b(?:ya\s+)?(?:habl[ée]|platiqu[ée]|me\s+atendi[óo]|me\s+contact[óo]|me\s+llam[óo]|me\s+escribi[óo]|me\s+pasaron|me\s+atendieron)\b/i;
+const PIDE_NEGADO = /\bno\s+(?:quiero|necesito|hace\s+falta|es\s+necesario)\b/i;
+
+function pidioUnaPersona(texto: string | null | undefined): boolean {
+  const t = String(texto ?? "").trim();
+  if (!t) return false;
+  for (const frase of t.split(/(?<=[.!?\n])/)) {
+    const f = frase.trim();
+    if (!f) continue;
+    if (PIDE_AL_BOT.test(f) && PIDE_HARTO.test(f)) return true;
+    if (PIDE_YA_PASO.test(f) || PIDE_NEGADO.test(f)) continue;
+    if (PIDE_PATRONES.some((p) => p.test(f))) return true;
   }
   return false;
 }
@@ -2245,28 +2432,65 @@ async function cumplirLoPrometido(ctx: any, texto: string, tools: any[]): Promis
 
   if (ctx.pasoAHumano) return texto;
   if (!tools.some((t: any) => t.name === "pasar_a_humano")) return texto;
+
+  /* DOS DISPARADORES, NO UNO.
+   *
+   * El segundo mira lo que prometió el BOT. Este mira lo que pidió el CLIENTE,
+   * y es el que faltaba: misma cuenta, mismo bot, misma herramienta encendida,
+   * dos personas pidiendo lo mismo con otras palabras, y solo una acabó con un
+   * agente. La diferencia no estuvo en la configuración sino en si al modelo le
+   * dio por llamar a la herramienta.
+   *
+   * SE HACE EL PASE Y SE DEJA HABLAR AL BOT: el modelo suele contestar algo
+   * razonable, y taparlo con una frase nuestra sería peor. Lo que no puede
+   * pasar es que la conversación siga sin dueño. */
+  if (pidioUnaPersona(ctx.lastUserText)) {
+    console.log("[agente] el cliente pidió una persona; se hace el pase");
+    await elPaseAUnaPersona(
+      ctx, "El cliente pidió hablar con una persona", "lo pidió el cliente",
+    );
+    return texto;
+  }
+
   if (!prometioUnaPersona(texto)) return texto;
 
   console.log("[agente] prometió una persona sin llamar a la herramienta; se hace el pase");
+  await elPaseAUnaPersona(
+    ctx,
+    "El asistente prometió que atendería una persona",
+    "el asistente lo prometió en su respuesta",
+  );
+  return texto;
+}
+
+/**
+ * El pase en sí, en UN solo sitio.
+ *
+ * GEMELO de `hacerElPase` en `src/lib/ai/herramientas.ts`. Eran dos copias de
+ * las mismas siete líneas y ahora harían falta tres: el día que el pase
+ * necesite tocar una columna más, la copia que se olvide deja conversaciones a
+ * medio pasar sin que nadie se entere.
+ *
+ * Que falle no puede dejar al cliente sin respuesta: se registra y se sigue.
+ */
+async function elPaseAUnaPersona(ctx: any, razon: string, motivo: string): Promise<void> {
   try {
     await ctx.db.from("conversations").update({
       status: "assigned",
       handoff_requested_at: new Date().toISOString(),
-      handoff_reason: "El asistente prometió que atendería una persona",
+      handoff_reason: razon,
     }).eq("id", ctx.convId);
     ctx.finMotivo = "agente";
     ctx.pasoAHumano = true;
     contarFuera(ctx.db, ctx.orgId, "pase.a.humano", {
       telefono: ctx.to,
-      motivo: "el asistente lo prometió en su respuesta",
+      motivo,
       conversacion_id: ctx.convId,
       por: "agente_ia",
     });
   } catch (e) {
-    // Que falle el pase no puede dejar al cliente sin respuesta.
-    console.error("[agente] no pude cumplir la promesa de pase:", e);
+    console.error("[agente] no pude hacer el pase a una persona:", e);
   }
-  return texto;
 }
 
 /**
@@ -2679,6 +2903,84 @@ function contarFuera(db: any, orgId: string, tipo: string, datos: Record<string,
       });
   } catch (e) {
     console.error(`[salidas] fallo al encolar ${tipo}:`, e);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * LO QUE CONTESTA UNA PERSONA NO SE QUEDA EN LA MEMORIA DEL TURNO.
+ *
+ * Un bloque de pregunta guardaba su respuesta en `vars[...]` y ahí se moría:
+ * `vars` vive lo que dura el recorrido. El negocio monta un flujo que pide
+ * nombre, correo y presupuesto, la persona contesta los tres, y en la ficha
+ * del lead no hay nada. El ÚNICO sitio que escribía en `contacts.attributes`
+ * era `guardar_dato`, la herramienta de la IA — o sea que capturar datos
+ * dependía de tener la IA encendida y de que al modelo le diera por llamarla.
+ *
+ * ESTO ES COMPORTAMIENTO BASE, no una opción. No hay nada que configurar: si
+ * un bloque tiene variable, su respuesta acaba en la ficha. Para las cuentas
+ * de hoy y para las de mañana.
+ *
+ * SE GUARDA EN LOS DOS SITIOS, igual que `guardar_dato`: en `attributes`, de
+ * donde tiran los flujos y las plantillas, y en la casilla propia cuando el
+ * nombre de la variable es uno de los conocidos, que es donde mira el equipo.
+ *
+ * Y SE APUNTA EN `respuestas_de_flujo`, una fila por respuesta. La ficha
+ * guarda el último valor; el registro guarda que la respuesta entró, aunque
+ * luego se pisara. Sin eso, comprobar que la captura funciona obliga a abrir
+ * fichas una por una, que es como se llega a no comprobarlo nunca.
+ *
+ * NADA DE ESTO PUEDE COSTARLE LA RESPUESTA AL CLIENTE: todo va dentro de un
+ * `try` y lo que falle queda dicho en el registro, no en el chat.
+ * ══════════════════════════════════════════════════════════════════════════ */
+async function guardarLoQueContesto(
+  ctx: any, node: any, variable: string, valor: string,
+): Promise<void> {
+  const campo = String(variable ?? "").trim();
+  const texto = String(valor ?? "").trim();
+  // Una respuesta vacía no es un dato: es un turno perdido. Guardarla borraría
+  // el valor bueno que la persona dio dos preguntas antes.
+  if (!campo || !texto) return;
+
+  try {
+    const { data: c, error: eFicha } = await ctx.db.from("contacts")
+      .select("id, attributes")
+      .eq("org_id", ctx.orgId).eq("channel", "whatsapp").eq("external_id", ctx.to)
+      .maybeSingle();
+    // «No hay ficha» y «no pude preguntarlo» acaban igual aquí, pero no son lo
+    // mismo: sin esta línea el segundo caso sería invisible.
+    if (eFicha) console.error("[flujo] no pude leer la ficha:", eFicha.message);
+
+    if (c) {
+      const cambios: any = { attributes: { ...(c.attributes ?? {}), [campo]: texto } };
+      const casilla = CASILLA_DE_LA_FICHA[campo.toLowerCase()];
+      if (casilla) cambios[casilla] = texto;
+      const { error } = await ctx.db.from("contacts").update(cambios).eq("id", c.id);
+      if (error) console.error("[flujo] no pude escribir la ficha:", error.message);
+    } else {
+      console.error("[flujo] no encontré la ficha de", ctx.to, "para guardar", campo);
+    }
+
+    const { error: eReg } = await ctx.db.from("respuestas_de_flujo").insert({
+      org_id: ctx.orgId,
+      bot_id: ctx.botId ?? null,
+      conversation_id: ctx.convId,
+      contact_id: c?.id ?? null,
+      flow_id: ctx.flowId ?? null,
+      node_id: node?.id ?? null,
+      // La etiqueta se copia AHORA: el negocio renombra sus bloques, y una
+      // fila de auditoría que cambia de significado con el tiempo no audita.
+      etiqueta: String(node?.data?.label ?? "").slice(0, 120) || null,
+      variable: campo,
+      valor: texto.slice(0, 2000),
+      canal: "whatsapp",
+    });
+    if (eReg) console.error("[flujo] no pude apuntar la respuesta:", eReg.message);
+
+    contarFuera(ctx.db, ctx.orgId, "lead.datos", {
+      telefono: ctx.to, campo, valor: texto, conversacion_id: ctx.convId, por: "nodo",
+    });
+  } catch (e) {
+    console.error("[flujo] fallo guardando la respuesta del bloque:", e);
   }
 }
 
@@ -5769,7 +6071,12 @@ async function handleIncoming(opts: any) {
       startId = (node && b ? buttonTarget(opts.flow, node.id, b) : undefined)
         ?? (node ? defaultNext(opts.flow, node) : undefined);
     } else if (awaiting.type === "question") {
-      if (node?.data.variable) vars[node.data.variable] = opts.text;
+      if (node?.data.variable) {
+        vars[node.data.variable] = opts.text;
+        // Y no solo en la memoria del turno: en la ficha del lead y en el
+        // registro que se puede descargar. Ver `guardarLoQueContesto`.
+        await guardarLoQueContesto(ctx, node, node.data.variable, opts.text ?? "");
+      }
       // El bloque de IA se queda escuchando: la siguiente pregunta vuelve a él.
       startId = node?.type === "ai" ? node.id : (node ? defaultNext(opts.flow, node) : undefined);
     } else if (awaiting.type === "tienda_catalogo") {

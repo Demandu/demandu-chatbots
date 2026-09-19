@@ -1,6 +1,7 @@
 "use client";
 
 import { FileText, Download } from "lucide-react";
+import { enlaceDeAdjunto } from "@/lib/adjuntos";
 
 export type Adjunto = {
   url: string;
@@ -30,12 +31,24 @@ export const TOPE_BYTES = 25 * 1024 * 1024;
 export function VistaAdjunto({ adjunto, oscuro }: { adjunto: Adjunto; oscuro?: boolean }) {
   const esImagen = adjunto.tipo?.startsWith("image/");
 
+  /* NUNCA SE PINTA LA DIRECCIÓN DEL ALMACÉN, SIEMPRE LA NUESTRA.
+   *
+   * Lo que hay guardado en el mensaje —ruta nueva o URL pública vieja— se
+   * convierte en `/api/adjunto`, que comprueba de quién es el archivo antes de
+   * firmarlo. Así el navegador no necesita que el bucket sea público, que es
+   * lo que dejaba los recibos y las fotos de los clientes al alcance de
+   * cualquiera con el enlace.
+   *
+   * Si no es un archivo nuestro —una imagen que el negocio enlazó de su propia
+   * web— se deja tal cual: no es nuestro, no hay nada que firmar. */
+  const src = enlaceDeAdjunto(adjunto.url) ?? adjunto.url;
+
   if (esImagen) {
     return (
-      <a href={adjunto.url} target="_blank" rel="noopener noreferrer" className="mt-1 block">
+      <a href={src} target="_blank" rel="noopener noreferrer" className="mt-1 block">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={adjunto.url}
+          src={src}
           alt={adjunto.nombre}
           className="max-h-64 w-auto max-w-full rounded-lg object-contain"
         />
@@ -45,7 +58,7 @@ export function VistaAdjunto({ adjunto, oscuro }: { adjunto: Adjunto; oscuro?: b
 
   return (
     <a
-      href={adjunto.url}
+      href={src}
       target="_blank"
       rel="noopener noreferrer"
       className={`mt-1 flex items-center gap-2.5 rounded-lg border px-2.5 py-2 transition hover:opacity-80 ${

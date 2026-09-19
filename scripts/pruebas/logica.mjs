@@ -19,6 +19,7 @@ import {
   AVISO_HORAS, MARGEN_MINIMO_MIN, REPOSO_MIN, TOPE_INTENTOS, comoSeManda, VENTANA_LIBRE_MIN,
 } from "../../src/lib/agenda/cuandoRecordar.ts";
 import { comoVanLosRecordatorios } from "../../src/lib/whatsapp/comoVanLasPlantillas.ts";
+import { partesDeAdjunto, enlaceDeAdjunto, comoSeGuarda } from "../../src/lib/adjuntos.ts";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
@@ -150,7 +151,9 @@ import { estadoDelCobro, VENTANA_COBRO_MIN } from "../../src/lib/tienda/cobro.ts
 import { aWhatsapp, telefonoUtil } from "../../src/lib/tienda/telefono.ts";
 import { metricasDeCliente, comoFrecuencia, SIN_COMPRAS } from "../../src/lib/tienda/metricas.ts";
 import { claveDeLinea, precioUnitario, totalDeLinea, totalDelCarrito, cuantasUnidades, faltaElegir, faltaContestar, textoDelPedido, enlaceDeWhatsapp } from "../../src/lib/tienda/pedido.ts";
-import { prometioUnaPersona, prometioUnaCita, LA_CITA_NO_QUEDO } from "../../src/lib/ai/promesas.ts";
+import { prometioUnaPersona, pidioUnaPersona, prometioUnaCita, LA_CITA_NO_QUEDO } from "../../src/lib/ai/promesas.ts";
+import { revisarDireccion, LARGO_MAXIMO } from "../../src/lib/salidas-url.ts";
+import { esEnlaceDeImagen } from "../../src/lib/tienda/imagenes.ts";
 import { leerEventos, abreConversacion, textoParaElFlujo } from "../../src/lib/canales/instagramEntrante.ts";
 import { firmaValida, firmarComoMeta } from "../../src/lib/canales/instagramFirma.ts";
 import { paisDesdeTelefono, bandera, nombrePais } from "../../src/lib/phoneCountry.ts";
@@ -731,6 +734,220 @@ describe("El bot promete una persona", () => {
   test("una oferta y una promesa en el mismo mensaje: manda la promesa", () => {
     // Un mensaje puede preguntar algo y además comprometerse dos líneas abajo.
     esperar(prometioUnaPersona("¿Te sirve el martes? Mientras tanto, te paso con un asesor.")).verdadero();
+  });
+});
+
+// ─── «Enviar a tu CRM»: la dirección se revisa y se contesta ────────────────
+//
+// El 19 de septiembre, configurando Zoho, la dirección entró PEGADA DOS VECES:
+// 292 caracteres, `https://…https://…`. El formulario la dio por buena —el
+// `type="url"` del navegador también— y quedaron cuatro salidas, tres
+// apuntando a ninguna parte. Y cuando una dirección no valía, la acción
+// devolvía `void`: se pulsaba «Conectar» y no pasaba absolutamente nada.
+describe("La dirección del CRM se revisa antes de guardarla", () => {
+  const BUENAS = [
+    "https://flow.zoho.com/123/flow/webhook/incoming?zapikey=abc",
+    "https://hooks.zapier.com/hooks/catch/1/2/",
+    "https://mi-crm.com.mx/demandu",
+  ];
+
+  const MALAS = [
+    ["", "Falta"],
+    ["   ", "Falta"],
+    // El caso real, con la dirección pegada dos veces.
+    [
+      "https://flow.zoho.com/123/flow/webhook/incoming?zapikey=abchttps://flow.zoho.com/123/flow/webhook/incoming?zapikey=abc",
+      "dos veces",
+    ],
+    ["http://mi-crm.com/demandu", "https"],
+    ["mi crm", "dirección"],
+    ["https://mi crm.com", "espacios"],
+    // Red de casa: la petición la hacemos NOSOTROS desde nuestros servidores.
+    ["https://localhost/demandu", "privada"],
+    ["https://127.0.0.1/demandu", "privada"],
+    ["https://169.254.169.254/latest/meta-data/", "privada"],
+    ["https://10.0.0.5/hook", "privada"],
+    ["https://192.168.1.10/hook", "privada"],
+    ["https://172.20.0.3/hook", "privada"],
+    ["https://algo.internal/hook", "privada"],
+  ];
+
+  for (const u of BUENAS) {
+    test(`vale: "${u.slice(0, 44)}…"`, () => {
+      const r = revisarDireccion(u);
+      esperar(r.ok).verdadero(r.ok ? "" : `la rechazó diciendo: ${r.motivo}`);
+    });
+  }
+
+  for (const [u, pista] of MALAS) {
+    test(`no vale: "${(u || "(vacío)").slice(0, 44)}…"`, () => {
+      const r = revisarDireccion(u);
+      esperar(r.ok).falso("esto no debería aceptarse");
+      // Y NO BASTA CON RECHAZARLO: si el motivo no dice qué pasa, quien lo
+      // configura sigue sin saber qué corregir, que es el fallo original.
+      esperar(!r.ok && r.motivo.toLowerCase().includes(pista.toLowerCase())).verdadero(
+        `el motivo no explica el problema: "${!r.ok ? r.motivo : ""}"`,
+      );
+    });
+  }
+
+  test("el dominio se normaliza, para no acabar con dos salidas iguales", () => {
+    const r = revisarDireccion("https://MI-CRM.com/Demandu");
+    esperar(r.ok && r.url.startsWith("https://mi-crm.com/")).verdadero(
+      "el dominio tiene que quedar en minúsculas; la ruta NO, que distingue mayúsculas",
+    );
+  });
+
+  test("una dirección larguísima se rechaza diciendo por qué", () => {
+    const r = revisarDireccion("https://mi-crm.com/" + "a".repeat(LARGO_MAXIMO));
+    esperar(r.ok).falso();
+    esperar(!r.ok && /dos veces|larga/i.test(r.motivo)).verdadero(
+      "el motivo tiene que apuntar a lo que casi siempre es: se pegó dos veces",
+    );
+  });
+});
+
+// ─── El escaparate no pinta una imagen rota ─────────────────────────────────
+//
+// El editor aceptaba cualquier cosa no vacía como enlace de imagen. Lo que un
+// negocio escribe en un campo que dice «Banners — uno por línea» es, la mitad
+// de las veces, «banner de verano». Y entonces el visitante ve el icono de
+// imagen rota en la cabecera de la tienda, sin que nadie se entere.
+describe("El escaparate no pinta una imagen rota", () => {
+  const SI = [
+    "https://cdn.midominio.com/banner.jpg",
+    "http://midominio.com/banner.jpg",
+    "/img/portada.png",
+    "data:image/png;base64,iVBORw0KGgo=",
+  ];
+  const NO = [
+    "",
+    "   ",
+    "banner de verano",
+    "Captura de pantalla 2026-07-09.png",
+    "https://banner",
+    "mi-logo.png",
+    "//cdn.midominio.com/x.jpg",
+  ];
+
+  for (const v of SI) {
+    test(`es un enlace: "${v.slice(0, 40)}…"`, () => {
+      esperar(esEnlaceDeImagen(v)).verdadero("esto sí es un enlace de imagen");
+    });
+  }
+  for (const v of NO) {
+    test(`no es un enlace: "${(v || "(vacío)").slice(0, 40)}…"`, () => {
+      esperar(esEnlaceDeImagen(v)).falso(
+        "esto acabaría dentro de un <img src> y el visitante vería una imagen rota",
+      );
+    });
+  }
+
+  test("la configuración tira lo que no es enlace, y conserva lo demás", () => {
+    const c = leerConfig({
+      titulo: "Mi tienda",
+      logo_url: "mi-logo.png",
+      portada_url: "https://cdn.x.com/portada.jpg",
+      banners: [
+        { imagen_url: "https://cdn.x.com/1.jpg" },
+        { imagen_url: "banner de verano" },
+        { imagen_url: "https://cdn.x.com/2.jpg", enlace: "https://x.com" },
+      ],
+      categorias: [
+        { nombre: "Postres", imagen_url: "foto postres" },
+        { nombre: "Bebidas", imagen_url: "https://cdn.x.com/b.jpg" },
+      ],
+    });
+
+    esperar(c.titulo).igual("Mi tienda", "lo bueno no se puede caer con lo malo");
+    esperar(c.logo_url).igual(undefined, "el logo que no es enlace tiene que caerse");
+    esperar(c.portada_url).igual("https://cdn.x.com/portada.jpg");
+    esperar(c.banners.length).igual(2, "solo tenían que sobrevivir los dos buenos");
+    // LA CATEGORÍA SE QUEDA, LA IMAGEN NO: una categoría sin foto se ve bien;
+    // tirar la categoría entera le borraría productos de la tienda.
+    esperar(c.categorias.length).igual(2, "las categorías no se caen por una foto mala");
+    esperar(c.categorias[0].imagen_url).igual(undefined);
+    esperar(c.categorias[1].imagen_url).igual("https://cdn.x.com/b.jpg");
+  });
+});
+
+// ─── Cuando el CLIENTE pide una persona ─────────────────────────────────────
+//
+// El otro lado del mismo agujero. `prometioUnaPersona` mira lo que dijo el bot;
+// esto mira lo que dijo el cliente. Se vio en producción: misma cuenta, mismo
+// bot, misma herramienta encendida, dos personas pidiendo lo mismo con otras
+// palabras, y solo una acabó con un agente. La diferencia no estuvo en la
+// configuración, estuvo en si al modelo le dio por llamar a la herramienta.
+describe("Cuando el cliente pide una persona, se le pasa", () => {
+  const SI = [
+    "Quiero hablar con una persona",
+    "quiero hablar con un asesor por favor",
+    "¿Me puedes pasar con un agente?",
+    "pásame con alguien del equipo",
+    "me comunicas con un ejecutivo",
+    "Necesito hablar con un humano",
+    "necesito un asesor",
+    "quiero atención personalizada",
+    "Hay alguien real ahí?",
+    "conéctame con servicio al cliente",
+    "prefiero platicar con una persona de verdad",
+    "no quiero hablar con un robot",
+    "deja de contestarme el bot",
+    "Buenos días. Quiero hablar con un vendedor.",
+  ];
+
+  const NO = [
+    "",
+    null,
+    "Hola, ¿cuánto cuesta el plan básico?",
+    "quiero agendar una cita",
+    // Pasado: es contexto, no una petición.
+    "ya hablé con un asesor la semana pasada",
+    "me atendió una persona muy amable ayer",
+    // Negado.
+    "no quiero hablar con un asesor todavía",
+    "no necesito un agente, gracias",
+    // Menciona a la persona sin pedirla.
+    "el asesor me dijo que el envío era gratis",
+    "trabajo como asesor de seguros",
+    // Pregunta por el bot, no lo rechaza.
+    "¿eres un bot?",
+  ];
+
+  for (const t of SI) {
+    test(`lo pide: "${t.slice(0, 42)}…"`, () => {
+      esperar(pidioUnaPersona(t)).verdadero(
+        "el cliente pidió una persona: seguir contestando solo es el fallo más caro que hay",
+      );
+    });
+  }
+  for (const t of NO) {
+    test(`no lo pide: "${(t || "(vacío)").slice(0, 42)}…"`, () => {
+      esperar(pidioUnaPersona(t)).falso(
+        "esto no es pedir una persona: pasar conversaciones de más cuesta el tiempo del equipo",
+      );
+    });
+  }
+
+  test("el rechazo al bot gana a la negación", () => {
+    /* «No quiero hablar con un robot» es una negación por la forma y una
+     * petición por el fondo. Si la negación se mirara primero, el caso más
+     * claro de hartazgo sería justo el que no dispara. */
+    esperar(pidioUnaPersona("no quiero hablar con un robot")).verdadero();
+    esperar(pidioUnaPersona("no quiero hablar con un asesor")).falso();
+  });
+
+  test("una pregunta SÍ cuenta, al revés que en la promesa", () => {
+    /* En `prometioUnaPersona` una pregunta anula la promesa. Aquí la pregunta
+     * ES la petición, y es como la escribe casi todo el mundo. */
+    esperar(pidioUnaPersona("¿me pasas con una persona?")).verdadero();
+    esperar(prometioUnaPersona("¿te paso con una persona?")).falso();
+  });
+
+  test("dos frases: manda la que pide", () => {
+    esperar(
+      pidioUnaPersona("Gracias por la info. Pero quiero hablar con un asesor."),
+    ).verdadero();
   });
 });
 
@@ -1396,11 +1613,19 @@ describe("Tienda: cómo se ve y qué pregunta", () => {
   });
 
   test("un banner sin imagen no se pinta", () => {
+    /* EL DOMINIO DE MENTIRA SE CAMBI\u00d3 A UNO CON PUNTO, y no es cosm\u00e9tico:
+     * desde que `leerConfig` exige que el enlace parezca un enlace,
+     * `https://x` no pasa \u2014y es justo lo que hace que `https://banner`
+     * tampoco pase, que era el caso real. Ver `esEnlaceDeImagen`. */
     const c = leerConfig({
-      banners: [{ imagen_url: "https://x/1.png", enlace: "https://x" }, { imagen_url: "  " }, {}],
+      banners: [
+        { imagen_url: "https://cdn.x.com/1.png", enlace: "https://x.com" },
+        { imagen_url: "  " },
+        {},
+      ],
     });
     esperar(c.banners.length).igual(1);
-    esperar(c.banners[0].imagen_url).igual("https://x/1.png");
+    esperar(c.banners[0].imagen_url).igual("https://cdn.x.com/1.png");
   });
 
   test("el mínimo de pedido es un entero de centavos, nunca negativo", () => {
@@ -8868,6 +9093,74 @@ describe("Cómo se le cuenta al negocio", () => {
     const r = comoVanLosRecordatorios(null, true);
     esperar(r.como).igual("preparando");
     esperar(r.como === "listo").falso("dice que está listo algo que no se ha mandado");
+  });
+});
+
+describe("Un adjunto se sirve con permiso, no con una URL eterna", () => {
+  const ORG = "8237d99a-054b-4a75-bd4a-a0e978a9f017";
+  const RUTA = `${ORG}/whatsapp/abc-123/1789-foto.jpg`;
+  const PUB = `https://xyz.supabase.co/storage/v1/object/public/media/${RUTA}`;
+
+  test("lo nuevo lleva su almacén delante", () => {
+    const p = partesDeAdjunto(`privado/${RUTA}`);
+    esperar(p.almacen).igual("privado");
+    esperar(p.ruta).igual(RUTA);
+  });
+
+  test("LOS ADJUNTOS VIEJOS NO SE PIERDEN", () => {
+    // En los mensajes ya guardados hay URLs públicas enteras y rutas peladas.
+    // Si esto dejara de reconocerlas, cerrar el almacén borraría de la pantalla
+    // todo el historial de adjuntos de todos los clientes.
+    esperar(partesDeAdjunto(PUB)).igual({ almacen: "media", ruta: RUTA });
+    esperar(partesDeAdjunto(RUTA)).igual({ almacen: "media", ruta: RUTA });
+  });
+
+  test("una dirección firmada vieja también, y sin su token", () => {
+    const firmada = `https://xyz.supabase.co/storage/v1/object/sign/privado/${RUTA}?token=eyJhb.abc`;
+    esperar(partesDeAdjunto(firmada)).igual({ almacen: "privado", ruta: RUTA });
+  });
+
+  test("NO ES UN REDIRECTOR ABIERTO", () => {
+    // Esto alimenta una ruta que redirige. Aceptar una dirección cualquiera
+    // convierte nuestro dominio en la tapadera de un correo de engaño.
+    esperar(partesDeAdjunto("https://sitio-de-engano.example/robo")).igual(null);
+    esperar(partesDeAdjunto("http://169.254.169.254/latest/meta-data/")).igual(null);
+  });
+
+  test("UN ALMACÉN QUE NO EXISTE NO SE FIRMA", () => {
+    // Sin esto, `.../object/public/<lo-que-sea>/x` haría que el servidor
+    // pidiera firmar en un almacén inventado.
+    esperar(partesDeAdjunto("https://xyz.supabase.co/storage/v1/object/public/secretos/a/b")).igual(null);
+  });
+
+  test("no se puede salir de la carpeta de la cuenta", () => {
+    // La comprobación de quien llama es «la primera carpeta es tu cuenta».
+    // Sin esto, `<org>/../<otra-org>/x` la burlaría entera.
+    esperar(partesDeAdjunto(`${ORG}/../otra/foto.jpg`)).igual(null);
+    esperar(partesDeAdjunto(`privado/${ORG}/../otra/foto.jpg`)).igual(null);
+  });
+
+  test("una ruta de un solo trozo no es de nadie", () => {
+    esperar(partesDeAdjunto("foto.jpg")).igual(null);
+    esperar(partesDeAdjunto("")).igual(null);
+    esperar(partesDeAdjunto(null)).igual(null);
+  });
+
+  test("el nombre con espacios y acentos sobrevive", () => {
+    const p = partesDeAdjunto(`privado/${ORG}/inbox/mi%20recibo%20de%20luz.pdf`);
+    esperar(p.ruta).igual(`${ORG}/inbox/mi recibo de luz.pdf`);
+  });
+
+  test("el enlace que se pinta es el nuestro, nunca el del almacén", () => {
+    const e = enlaceDeAdjunto(PUB);
+    esperar(e.startsWith("/api/adjunto?r=")).verdadero("el enlace no pasa por nuestra ruta");
+    esperar(e.includes("supabase")).falso("el enlace sigue llevando al almacén");
+    esperar(enlaceDeAdjunto("https://otro.example/x")).igual(null);
+  });
+
+  test("lo que se guarda se vuelve a leer igual", () => {
+    const guardado = comoSeGuarda("privado", RUTA);
+    esperar(partesDeAdjunto(guardado)).igual({ almacen: "privado", ruta: RUTA });
   });
 });
 

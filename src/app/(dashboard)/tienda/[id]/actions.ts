@@ -255,11 +255,38 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
   if (error) return { ok: false, mensaje: "No se pudo guardar. Inténtalo de nuevo." };
 
   revalidatePath(`/tienda/${tiendaId}`);
+
+  /* ── LO QUE SE CAYÓ SE DICE ───────────────────────────────────────────────
+   *
+   * `leerConfig` tira los enlaces de imagen que no son enlaces —«banner de
+   * verano», el nombre de un archivo del escritorio— para que la tienda no
+   * pinte una imagen rota. Pero tirarlo en silencio es cambiar un problema
+   * visible por uno invisible: el negocio guarda, no ve ningún error, y su
+   * banner no aparece. Aquí se cuenta cuántos se cayeron. */
+  const avisos: string[] = [];
+  const bannersCaidos = banners.length - nueva.banners.length;
+  if (bannersCaidos > 0) {
+    avisos.push(
+      bannersCaidos === 1
+        ? "Un banner no se guardó: eso no es un enlace a una imagen (tiene que empezar por https://)."
+        : `${bannersCaidos} banners no se guardaron: eso no son enlaces a imágenes (tienen que empezar por https://).`,
+    );
+  }
+  if (s(fd.get("logo_url")) && !nueva.logo_url) {
+    avisos.push("El logo no se guardó: eso no es un enlace a una imagen.");
+  }
+  if (s(fd.get("portada_url")) && !nueva.portada_url) {
+    avisos.push("La portada no se guardó: eso no es un enlace a una imagen.");
+  }
+  if (!sanearPreguntas(preguntas).length) {
+    avisos.push("Dejaste el formulario vacío, así que se conservaron las preguntas anteriores.");
+  }
+
   return {
+    // SIGUE SIENDO `ok`: lo demás SÍ se guardó, y decir que falló haría que
+    // el negocio volviera a escribirlo todo.
     ok: true,
-    mensaje: sanearPreguntas(preguntas).length
-      ? "Diseño guardado."
-      : "Diseño guardado. Dejaste el formulario vacío, así que se conservaron las preguntas anteriores.",
+    mensaje: avisos.length ? `Diseño guardado. ${avisos.join(" ")}` : "Diseño guardado.",
   };
 }
 

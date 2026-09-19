@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ALMACEN_PRIVADO, comoSeGuarda } from "@/lib/adjuntos";
 import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Paperclip, ChevronLeft, Hand, AlertTriangle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -542,14 +543,22 @@ export function InboxClient({
       // El constructor ya lo hacía bien (`${orgId}/…`); esto lo alinea.
       const ruta = `${orgId}/inbox/${sel.id}/${Date.now()}-${limpio}`;
 
+      // AL ALMACÉN PRIVADO. Esto es un archivo de una conversación con una
+      // persona, no contenido que el negocio publique.
       const { error: errSubida } = await sb.storage
-        .from("media")
+        .from(ALMACEN_PRIVADO)
         .upload(ruta, file, { cacheControl: "3600", upsert: false });
       if (errSubida) throw new Error(errSubida.message);
 
-      const { data: pub } = sb.storage.from("media").getPublicUrl(ruta);
+      /* SE GUARDA LA RUTA, NO UNA DIRECCIÓN PÚBLICA.
+       *
+       * Antes aquí se pedía `getPublicUrl` y esa dirección quedaba escrita en
+       * el mensaje para siempre: cualquiera con ese enlace se bajaba el archivo
+       * sin sesión y sin caducidad. Ahora se guarda dónde está, y quien lo
+       * necesite lo firma en ese momento — la pantalla por `/api/adjunto`, y el
+       * envío a Meta con una firma de una hora. */
       const adjunto: Adjunto = {
-        url: pub.publicUrl,
+        url: comoSeGuarda(ALMACEN_PRIVADO, ruta),
         nombre: file.name,
         tipo: file.type || "application/octet-stream",
         bytes: file.size,

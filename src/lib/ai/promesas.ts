@@ -68,6 +68,99 @@ export function prometioUnaPersona(texto: string | null | undefined): boolean {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * ¿EL CLIENTE ACABA DE PEDIR UNA PERSONA?
+ *
+ * ── EL OTRO LADO DEL MISMO AGUJERO ─────────────────────────────────────────
+ *
+ * `prometioUnaPersona` mira lo que dijo EL BOT. Esta mira lo que dijo EL
+ * CLIENTE, y hace falta porque en producción se vio lo siguiente: misma cuenta,
+ * mismo bot, misma herramienta encendida, dos clientes pidiendo lo mismo con
+ * otras palabras, y solo uno acabó con una persona. La diferencia no estuvo en
+ * la configuración: estuvo en si al modelo le dio por llamar a la herramienta.
+ *
+ * Que un cliente PIDA hablar con alguien y el bot siga contestando solo es el
+ * fallo más caro que tiene un chatbot de ventas: la persona ya dijo que el bot
+ * no le sirve. Y no se arregla con el prompt, porque el prompt ya lo dice.
+ *
+ * ── AQUÍ LAS PREGUNTAS SÍ CUENTAN, AL REVÉS QUE ARRIBA ─────────────────────
+ *
+ * En `prometioUnaPersona` una pregunta anula la promesa: «¿quieres que te pase
+ * con un asesor?» no promete nada. Aquí es justo al contrario — «¿me puedes
+ * pasar con una persona?» es LA petición, y es como la escribe casi todo el
+ * mundo. Filtrar preguntas dejaría fuera la mayoría de los casos reales.
+ *
+ * ── LO QUE SE DESCARTA A PROPÓSITO ─────────────────────────────────────────
+ *
+ * 1. El pasado: «ya hablé con un asesor», «me atendió una persona». Eso es
+ *    contexto, no una petición.
+ * 2. La negación: «no quiero hablar con un asesor todavía».
+ *
+ * Y una excepción que va antes que las dos: rechazar al bot —«no quiero hablar
+ * con un robot»— SÍ es pedir una persona, aunque venga escrito como negación.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** A quién pide: una persona del equipo, no el bot. */
+const PIDE_QUIEN =
+  "(?:un[ao]?\\s+persona|un\\s+humano|humano|asesor[ao]?|agente|ejecutiv[ao]|" +
+  "vendedor[ao]?|representante|operador[ao]?|alguien\\s+(?:del\\s+equipo|real|de\\s+verdad|m[aá]s)|" +
+  "servicio\\s+al\\s+cliente|atenci[oó]n\\s+(?:al\\s+cliente|humana|personalizada))";
+
+/** Que quiere hablar con esa persona, en infinitivo: es lo que aún no pasó. */
+const PIDE_VERBO =
+  "(?:hablar|platicar|charlar|conversar|comunicarme|contactar(?:me)?|" +
+  "que\\s+me\\s+atienda|atenderme)";
+
+/** «Pásame con…», «me comunicas con…»: la petición en primera persona. */
+const PIDE_PASAME =
+  "(?:p[aá]same|me\\s+pasas|me\\s+puedes?\\s+pasar|puedes?\\s+pasarme|" +
+  "comun[ií]came|me\\s+comunicas|me\\s+puedes?\\s+comunicar|transfi[eé]re(?:me)?|" +
+  "me\\s+transfieres|der[ií]vame|con[eé]ctame|me\\s+conectas)" +
+  "\\s+(?:con|a)\\b";
+
+/** «Quiero un asesor», sin verbo de hablar de por medio. */
+const PIDE_QUIERO = "(?:quiero|necesito|deseo|busco|requiero|dame|me\\s+das|hay)";
+
+/** Rechazar al bot es pedir una persona, y llega escrito como negación. */
+const PIDE_AL_BOT =
+  /\b(?:bot|robot|m[aá]quina|chatbot|inteligencia\s+artificial|contestador)\b/i;
+const PIDE_HARTO =
+  /\b(?:no\s+(?:quiero|me\s+sirve|me\s+funciona|entiendes|entiende|me\s+ayudas)|deja\s+de|basta)\b/i;
+
+const PIDE_PATRONES = [
+  new RegExp(`${PIDE_VERBO}\\s+(?:con\\s+)?(?:un[ao]?\\s+)?${PIDE_QUIEN}`, "i"),
+  new RegExp(PIDE_PASAME, "i"),
+  new RegExp(`${PIDE_QUIERO}\\s+(?:un[ao]?\\s+)?${PIDE_QUIEN}`, "i"),
+];
+
+/** Lo que ya ocurrió no se pide: es contexto. */
+const PIDE_YA_PASO =
+  /\b(?:ya\s+)?(?:habl[ée]|platiqu[ée]|me\s+atendi[óo]|me\s+contact[óo]|me\s+llam[óo]|me\s+escribi[óo]|me\s+pasaron|me\s+atendieron)\b/i;
+
+/** Una negación de la petición, que NO es lo mismo que rechazar al bot. */
+const PIDE_NEGADO = /\bno\s+(?:quiero|necesito|hace\s+falta|es\s+necesario)\b/i;
+
+/**
+ * @param texto Lo que el CLIENTE acaba de escribir.
+ */
+export function pidioUnaPersona(texto: string | null | undefined): boolean {
+  const t = String(texto ?? "").trim();
+  if (!t) return false;
+
+  for (const frase of t.split(/(?<=[.!?\n])/)) {
+    const f = frase.trim();
+    if (!f) continue;
+
+    // Primero la excepción: «no quiero hablar con un robot» es una petición,
+    // no una negación, y si se mirara después la negación se la comería.
+    if (PIDE_AL_BOT.test(f) && PIDE_HARTO.test(f)) return true;
+
+    if (PIDE_YA_PASO.test(f) || PIDE_NEGADO.test(f)) continue;
+    if (PIDE_PATRONES.some((p) => p.test(f))) return true;
+  }
+  return false;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * ¿EL BOT ACABA DE DECIR QUE AGENDÓ UNA CITA?
  *
  * 16 sep 2026, visto en producción en una clínica fetal. El modelo llamó a

@@ -389,6 +389,93 @@ begin
   r := r || E'\n27. Tabla sin politicas con permisos sueltos .. '
          || case when v = 'ninguna' then 'OK' else 'FALLO: ' || v end;
 
+  -- == 28. CADA MIGRACION APLICADA VIVE EN EL REPOSITORIO ==============
+  -- El 19 de septiembre se aplicaron cuatro migraciones a produccion desde
+  -- la herramienta, sin archivo en `supabase/migrations/`. La base quedo
+  -- bien y el repositorio quedo mintiendo: cualquiera que clonara y montara
+  -- una base nueva tendria otra cosa. Eso es H-05 con cara de descuido.
+  --
+  -- El repositorio nombra sus archivos `NNNN_lo_que_hace.sql`, y la
+  -- herramienta guarda como nombre el que se le pasa. Asi que una migracion
+  -- aplicada SIN el numero delante es, casi siempre, una que se aplico a
+  -- mano y nunca se escribio.
+  --
+  -- SE MIRA DESDE LA ULTIMA DEL INCIDENTE, no antes. Las cuatro de ese dia
+  -- (20260919191951 a 20260919201842) tienen su archivo desde entonces
+  -- —0133 a 0136— pero el nombre con que se aplicaron ya no se puede
+  -- cambiar, y dejarlas dentro tendria esta regla roja para siempre. Una
+  -- regla que siempre esta roja es una regla que nadie mira.
+  select coalesce(string_agg(name, ', ' order by version), 'ninguna') into v
+    from supabase_migrations.schema_migrations
+   where version > '20260919201842'
+     and name !~ '^[0-9]{4}_';
+  r := r || E'\n28. Migracion aplicada sin su numero .......... '
+         || case when v = 'ninguna' then 'OK'
+                 else 'FALLO (aplicadas a mano, comprueba que tengan archivo): ' || v end;
+
+  -- == 29. LINEA BASE DE PERMISOS DE LAS FUNCIONES PRIVILEGIADAS (H-09) =
+  --
+  -- El trinquete de `estatico.mjs` vigila el CODIGO de las 71 funciones
+  -- `security definer`: que comprueben de que cuenta es quien llama. Lo que
+  -- nadie vigilaba era la otra mitad, el GRANT — a quien se le deja
+  -- ejecutarlas. Una funcion impecable concedida a `anon` sigue siendo una
+  -- puerta.
+  --
+  -- MEDIDO HOY, y sale bien: de las 71, `anon` puede ejecutar 8. SEIS de esas
+  -- ocho devuelven `trigger`, o sea que no se pueden llamar desde fuera
+  -- (PostgREST no expone una funcion de disparador; Postgres tampoco exige el
+  -- permiso para que un disparador se dispare). Las otras dos —`auth_tiene` y
+  -- `org_features_mias`— SI se pueden llamar, y las dos comprueban quien
+  -- llama: sin sesion devuelven falso o vacio.
+  --
+  -- Las ocho estan abiertas porque nadie revoco el permiso de PUBLIC, que es
+  -- el que trae Postgres de serie. No se toca aqui: revocarselo a `auth_tiene`
+  -- podria hacer que una politica de RLS falle con «permission denied» en vez
+  -- de con «false», y eso tumbaria el escaparate publico. Queda propuesto,
+  -- medido y con esta regla encima.
+  --
+  -- LO QUE ESTA REGLA IMPIDE: que manana nazca una funcion definer que
+  -- devuelva datos y quede al alcance de un visitante sin que nadie lo note.
+  declare
+    n_anon int; abiertas text; sin_comprobar text;
+  begin
+    -- (a) Cuantas puede ejecutar un visitante. El numero no sube.
+    select count(*) into n_anon
+      from pg_proc p join pg_namespace ns4 on ns4.oid = p.pronamespace
+     where ns4.nspname = 'public' and p.prosecdef
+       and has_function_privilege('anon', p.oid, 'EXECUTE');
+
+    -- (b) Y de esas, cuales NO son de disparador: esas son las que de verdad
+    --     se pueden llamar desde internet.
+    select coalesce(string_agg(p.proname, ', ' order by p.proname), 'ninguna')
+      into abiertas
+      from pg_proc p join pg_namespace ns5 on ns5.oid = p.pronamespace
+     where ns5.nspname = 'public' and p.prosecdef
+       and has_function_privilege('anon', p.oid, 'EXECUTE')
+       and pg_get_function_result(p.oid) <> 'trigger';
+
+    -- (c) Las dos que si se pueden llamar TIENEN que seguir comprobando.
+    --     Quitarles la comprobacion sin tocar el grant es como se convierte
+    --     una funcion segura en una fuga sin cambiar ni un permiso.
+    select coalesce(string_agg(p.proname, ', ' order by p.proname), 'ninguna')
+      into sin_comprobar
+      from pg_proc p join pg_namespace ns6 on ns6.oid = p.pronamespace
+     where ns6.nspname = 'public' and p.prosecdef
+       and has_function_privilege('anon', p.oid, 'EXECUTE')
+       and pg_get_function_result(p.oid) <> 'trigger'
+       and pg_get_functiondef(p.oid) !~* 'auth_org_ids|auth\.uid|auth_puede|auth_tiene';
+
+    r := r || E'\n29a. Definer al alcance de un visitante ........ '
+           || case when n_anon <= 8 then 'OK (' || n_anon || ' de 71)'
+                   else 'FALLO: subio a ' || n_anon || ', eran 8' end;
+    r := r || E'\n29b. Y de esas, llamables de verdad ........... '
+           || case when abiertas = 'auth_tiene, org_features_mias' then 'OK (las 2 de siempre)'
+                   else 'FALLO: ' || abiertas end;
+    r := r || E'\n29c. Las llamables siguen comprobando ......... '
+           || case when sin_comprobar = 'ninguna' then 'OK'
+                   else 'FALLO (ejecutables sin sesion y sin comprobar): ' || sin_comprobar end;
+  end;
+
   -- Limpieza y salida (el ERROR es a proposito: deshace todo)
   delete from memberships where user_id = usr_a;
   delete from auth.users where id = usr_a;
