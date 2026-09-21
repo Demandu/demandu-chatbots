@@ -2,6 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+// Para comprobar las direcciones ya usadas: con la sesión del usuario no se ven
+// las de otros negocios, que es justo lo que hay que mirar. Ver más abajo.
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import { puedeUsar } from "@/lib/planes/tiene";
 import { aDireccion, direccionValida, enlaceLegible } from "@/lib/tienda/direccion";
@@ -48,14 +51,36 @@ export async function crearTienda(
 
   const sb = createClient();
 
-  // UNA DIRECCIÓN ABANDONADA NO QUEDA LIBRE. Si otro negocio pudiera tomarla,
-  // se quedaría con el tráfico —y con los enlaces de cobro— del que la tuvo
-  // antes, que siguen vivos en los chats de sus clientes.
-  const { data: usada } = await sb
+  /* ══ UNA DIRECCIÓN ABANDONADA NO QUEDA LIBRE ═════════════════════════
+   *
+   * Si otro negocio pudiera tomarla, se quedaría con el tráfico —y con los
+   * enlaces de cobro— del que la tuvo antes, que siguen vivos en los chats de
+   * sus clientes, en biografías de Instagram y en tarjetas impresas.
+   *
+   * SE LEE CON LA LLAVE DE SERVICIO, Y ESE ES TODO EL ARREGLO. Antes esta
+   * consulta iba con la sesión del usuario, y la política de esa tabla es
+   * `org_id in (select auth_org_ids())`: la dirección abandonada por OTRO
+   * negocio era invisible, la consulta volvía vacía y el alta pasaba. O sea,
+   * la tabla existía para impedir exactamente esto y no impedía nada.
+   *
+   * `direccionAnterior` ya lo hacía así; esta se quedó atrás.
+   *
+   * NO DEVUELVE NADA DE LA OTRA CUENTA: solo se mira si la fila existe, y lo
+   * único que sale de aquí es «esa dirección ya estuvo en uso». ═════════════ */
+  const { data: usada, error: eUsada } = await createAdminClient()
     .from("tienda_direcciones_previas")
     .select("slug")
     .eq("slug", slug)
     .maybeSingle();
+
+  /* Y UN FALLO DE LA CONSULTA NO ES «ESTÁ LIBRE». Sin esto, el día que la base
+   * tosa se reparte la dirección de otro negocio y nadie se entera. */
+  if (eUsada) {
+    return {
+      ok: false,
+      mensaje: "No pude comprobar si esa dirección ya estuvo en uso. Inténtalo de nuevo.",
+    };
+  }
 
   if (usada) {
     return {

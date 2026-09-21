@@ -24,6 +24,16 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GRAPH = "https://graph.facebook.com/v20.0";
 
+/**
+ * Sube este número al tocar el archivo.
+ *
+ * ESTA FUNCIÓN SE PUBLICABA A CIEGAS, igual que el motor antes de tener su
+ * `?version`: no había forma de saber si lo que corre en producción es lo que
+ * está en el repositorio. Su último despliegue era de hacía un mes y nadie
+ * podía comprobarlo sin entrar al panel.
+ */
+const VERSION_EMBEBIDO = "2";
+
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -47,14 +57,29 @@ function generatePin(): string {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+
+  /* QUÉ CORRE EN PRODUCCIÓN, SIN ENTRAR AL PANEL. Lo mismo que `?version` en
+   * el motor. No dice nada que no sea público: un número. */
+  if (req.method === "GET" && new URL(req.url).searchParams.has("version")) {
+    return json({ version: VERSION_EMBEBIDO });
+  }
+
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
   const WHATSAPP_TOKEN = Deno.env.get("WHATSAPP_TOKEN");
-  const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") ?? "demandu_wa_2026";
+  /* SIN VALOR POR DEFECTO, Y ESO IMPORTA. Decía `?? "demandu_wa_2026"`: un
+   * token escrito en el repositorio, o sea público. Es el mismo fallo que el
+   * motor ya arregló en su día y que aquí seguía. Con él, cualquiera que
+   * leyera el código sabía con qué palabra se da de alta un webhook nuestro.
+   *
+   * Ahora falla cerrado: sin el secreto no se conecta un número nuevo, y se
+   * dice por qué en vez de seguir con un token que no protege nada. */
+  const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") ?? "";
   if (!WHATSAPP_TOKEN) return json({ error: "server_not_configured" }, 500);
+  if (!VERIFY_TOKEN) return json({ error: "falta_WHATSAPP_VERIFY_TOKEN" }, 500);
 
   // 0) Autenticar al usuario a partir del access_token del navegador
   const authHeader = req.headers.get("Authorization") ?? "";
@@ -85,6 +110,36 @@ Deno.serve(async (req) => {
   const bot_id = body.bot_id as string | undefined;
   if (!waba_id || !phone_number_id) {
     return json({ error: "missing_waba_or_phone" });
+  }
+
+  /* ══ DE QUIÉN ES ESTE CHATBOT ═════════════════════════════════════
+   *
+   * El `bot_id` lo manda el NAVEGADOR y hasta hoy nadie comprobaba que fuera
+   * de esta organización. Abajo se guarda con `onConflict: "bot_id"` y con la
+   * llave de servicio —que se salta el RLS— sobre un índice único que existe.
+   *
+   * O sea: mandando el `bot_id` de otro negocio se PISABA su fila y se le
+   * cambiaba el `org_id` al del atacante. Su bot se quedaba mudo sin que
+   * apareciera un solo error en ninguna pantalla.
+   *
+   * Reproducido el 19 de septiembre de 2026 en una transacción que se deshace:
+   * tras el upsert, el canal de B pertenecía a A.
+   *
+   * El callback de Instagram sí hacía esta comprobación, con un comentario que
+   * explica por qué hace falta al escribir con la llave de servicio. Esta
+   * función no la hacía. ═══════════════════════════════════════════ */
+  if (bot_id) {
+    const { data: suyo, error: eBot } = await admin
+      .from("bots").select("id")
+      .eq("id", bot_id).eq("org_id", orgId)
+      .maybeSingle();
+    // Un fallo de la consulta NO puede pasar por «sí es tuyo»: eso convertiría
+    // un error de la base en la puerta abierta de antes.
+    if (eBot) {
+      console.error("[whatsapp-embedded] no pude comprobar el chatbot:", eBot.message);
+      return json({ error: "no_pude_comprobar_el_chatbot" }, 500);
+    }
+    if (!suyo) return json({ error: "ese_chatbot_no_es_de_tu_cuenta" }, 403);
   }
 
   try {

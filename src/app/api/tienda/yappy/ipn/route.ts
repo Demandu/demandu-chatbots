@@ -53,12 +53,26 @@ export async function GET(req: Request) {
 
   if (!pedido) return no();
 
-  const { data: cobro } = await sb
+  const { data: cobro, error: eCobro } = await sb
     .from("tienda_cobros")
     .select("secreto,dominio")
     .eq("tienda_id", pedido.tienda_id)
     .eq("proveedor", "yappy")
     .maybeSingle();
+
+  /* UN FALLO DE LA BASE NO ES UNA FIRMA FALSA.
+   *
+   * Sin esto, si la consulta del secreto fallaba, `cobro` venía vacío, la
+   * comprobación de firma no podía cuadrar, y un pago LEGÍTIMO acababa
+   * apuntado como `pago_rechazado_firma`. El negocio leía «alguien intentó
+   * falsificar un pago» donde hubo un problema de base de datos.
+   *
+   * Se contesta 500, no 400: Yappy reintenta ante un error de servidor, y ese
+   * reintento es justo lo que salva el cobro. Un 400 lo daría por entregado. */
+  if (eCobro) {
+    console.error("[yappy ipn] no pude leer el secreto de la tienda:", eCobro.message);
+    return NextResponse.json({ ok: false, error: "no_pude_comprobar" }, { status: 500 });
+  }
 
   const firma = ipnValido({
     secreto: cobro?.secreto ?? "",
@@ -118,13 +132,35 @@ export async function GET(req: Request) {
   const vencido = pago === "expirado" && pedido.estado === "recibido";
   if (vencido) cambios.estado = "cancelado";
 
-  await sb.from("pedidos").update(cambios).eq("id", pedido.id);
-  await sb.from("pedido_eventos").insert({
+  /* ══ NO SE APUNTA UN PAGO QUE NO SE ESCRIBIÓ ══════════════════════════
+   *
+   * Este `update` no miraba su `error`. Justo después se insertaba el evento
+   * `pago_pagado` y se contestaba 200, así que Yappy no reintentaba nunca.
+   *
+   * El resultado era el peor posible: el cliente pagó, el pedido se quedó en
+   * «pendiente de pago», y la bitácora —la única fuente de verdad sobre el
+   * dinero— decía que sí se pagó. No es que se pierda el dato: es que queda
+   * guardada la evidencia contraria.
+   *
+   * Ahora, si el pedido no se pudo mover, no se apunta nada y se contesta 500
+   * para que Yappy lo vuelva a mandar. ═════════════════════════════════ */
+  const { error: eMover } = await sb.from("pedidos").update(cambios).eq("id", pedido.id);
+  if (eMover) {
+    console.error("[yappy ipn] no pude mover el pedido:", eMover.message, "pedido", pedido.id);
+    return NextResponse.json({ ok: false, error: "no_pude_guardar" }, { status: 500 });
+  }
+
+  const { error: eApunte } = await sb.from("pedido_eventos").insert({
     pedido_id: pedido.id,
     que: `pago_${pago}`,
     quien: "yappy",
     detalle: { status, total: pedido.total, referencia: referencia || null },
   });
+  // El pedido YA se movió bien: aquí no se puede contestar 500, o el reintento
+  // volvería a procesarlo. Se deja dicho y se sigue.
+  if (eApunte) {
+    console.error("[yappy ipn] el pedido se movió pero no quedó apuntado:", eApunte.message);
+  }
 
   // ── Y AHORA SE LO DECIMOS AL CLIENTE ──────────────────────────────────────
   //

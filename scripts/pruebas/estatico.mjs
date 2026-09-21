@@ -11664,6 +11664,131 @@ describe("La puerta del motor ve los errores que dice ver", () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *
+ * LAS TRES ROJAS DEL 8 DE SEPTIEMBRE QUE SEGUÍAN ABIERTAS EL 21
+ *
+ * Las tres tienen la misma forma: algo se escribe con la llave de servicio
+ * —que se salta el RLS— o se lee con la sesión del usuario —que no ve lo de
+ * los demás— y nadie comprueba a mano lo que la base ya no puede comprobar.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Lo que escribe la llave de servicio se comprueba a mano", () => {
+  const emb = sinComentarios(
+    fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp-embedded/index.ts"), "utf8"),
+  );
+  const ipn = sinComentarios(
+    ARCHIVOS.find((a) => a.ruta === "src/app/api/tienda/yappy/ipn/route.ts")?.texto ?? "",
+  );
+  const tienda = sinComentarios(
+    ARCHIVOS.find((a) => a.ruta === "src/app/(dashboard)/tienda/actions.ts")?.texto ?? "",
+  );
+
+  // ── 1.7 ────────────────────────────────────────────────────────────────
+  test("1.7 · NADIE CONECTA UN NÚMERO AL CHATBOT DE OTRO NEGOCIO", () => {
+    /* El `bot_id` lo manda el navegador y se guarda con `onConflict: "bot_id"`
+     * usando la llave de servicio, sobre un índice único que existe. Sin esta
+     * comprobación, mandar el `bot_id` de otro negocio PISA su fila y le
+     * cambia el `org_id`: su bot se queda mudo sin un solo error.
+     *
+     * Reproducido contra la base el 19 de septiembre. */
+    esperar(/\.from\("bots"\)\.select\("id"\)[\s\S]{0,120}\.eq\("org_id", orgId\)/.test(emb)).verdadero(
+      "whatsapp-embedded volvió a aceptar el `bot_id` del navegador sin comprobar de quién es",
+    );
+    esperar(/ese_chatbot_no_es_de_tu_cuenta/.test(emb)).verdadero(
+      "desapareció el rechazo del chatbot ajeno",
+    );
+  });
+
+  test("1.7 · y se comprueba ANTES de guardar, no después", () => {
+    /* Después del upsert no sirve de nada: la fila del otro negocio ya se
+     * pisó. */
+    const iComprueba = emb.indexOf('.from("bots").select("id")');
+    const iGuarda = emb.indexOf('.from("whatsapp_channels").upsert(');
+    esperar(iComprueba > 0 && iGuarda > 0 && iComprueba < iGuarda).verdadero(
+      "la comprobación del chatbot quedó DESPUÉS del upsert: cuando se ejecuta, el daño ya está hecho",
+    );
+  });
+
+  test("1.7 · un fallo de la consulta NO pasa por «sí es tuyo»", () => {
+    /* Tragarse el error convierte un problema de base de datos en la puerta
+     * abierta de antes, y encima sin rastro. */
+    esperar(/if \(eBot\)[\s\S]{0,200}return json\(/.test(emb)).verdadero(
+      "si no se puede comprobar de quién es el chatbot, hay que parar, no seguir",
+    );
+  });
+
+  test("1.7 · el token de verificación no trae un valor escrito en el repositorio", () => {
+    /* Decía `?? "demandu_wa_2026"`: un token público. Es el mismo fallo que el
+     * motor arregló en su día y que aquí seguía. */
+    esperar(/WHATSAPP_VERIFY_TOKEN"\) \?\? ""/.test(emb)).verdadero(
+      "volvió un token de verificación por defecto: lo que está en el repositorio es público",
+    );
+    esperar(/demandu_wa_2026/.test(emb)).falso("ese token está escrito en el código");
+  });
+
+  test("1.7 · y se puede preguntar qué versión corre", () => {
+    /* Esta función se publicaba a ciegas: su último despliegue era de hacía un
+     * mes y no había forma de saber si coincidía con el repositorio. */
+    esperar(/const VERSION_EMBEBIDO = "/.test(emb)).verdadero(
+      "sin versión, no se puede comprobar que lo desplegado sea lo que está aquí",
+    );
+    esperar(/searchParams\.has\("version"\)/.test(emb)).verdadero(
+      "la versión existe pero no se puede preguntar desde fuera",
+    );
+  });
+
+  // ── 1.8 ────────────────────────────────────────────────────────────────
+  test("1.8 · NO SE APUNTA UN PAGO QUE NO SE ESCRIBIÓ", () => {
+    /* El `update` no miraba su error, se insertaba `pago_pagado` y se
+     * contestaba 200, así que Yappy no reintentaba. El cliente pagó, el pedido
+     * siguió en «pendiente de pago», y la bitácora dijo que sí se pagó: queda
+     * guardada la evidencia contraria. */
+    esperar(/const \{ error: eMover \} = await sb\.from\("pedidos"\)\.update\(cambios\)/.test(ipn)).verdadero(
+      "el update del pedido volvió a no mirar su error",
+    );
+    const iMover = ipn.indexOf("if (eMover)");
+    const iApunte = ipn.indexOf('.from("pedido_eventos").insert({\n    pedido_id: pedido.id,\n    que: `pago_');
+    esperar(iMover > 0 && (iApunte < 0 || iMover < iApunte)).verdadero(
+      "el pago se apunta antes de saber si el pedido se movió",
+    );
+    esperar(/if \(eMover\)[\s\S]{0,260}status: 500/.test(ipn)).verdadero(
+      "si el pedido no se movió hay que contestar 500, o Yappy da el aviso por entregado y no reintenta",
+    );
+  });
+
+  test("1.8 · un fallo de la base no se registra como firma falsa", () => {
+    /* Si la consulta del secreto fallaba, `cobro` venía vacío, la firma no
+     * podía cuadrar, y un pago legítimo quedaba apuntado como
+     * `pago_rechazado_firma`. El negocio leía «alguien intentó falsificar un
+     * pago» donde hubo un problema de base de datos. */
+    esperar(/const \{ data: cobro, error: eCobro \}/.test(ipn)).verdadero(
+      "la consulta del secreto volvió a no mirar su error",
+    );
+    esperar(/if \(eCobro\)[\s\S]{0,260}status: 500/.test(ipn)).verdadero(
+      "ante un fallo al leer el secreto hay que contestar 500, no 400: el 400 lo da por entregado",
+    );
+  });
+
+  // ── 1.6 ────────────────────────────────────────────────────────────────
+  test("1.6 · LA DIRECCIÓN ABANDONADA DE OTRO NEGOCIO TAMBIÉN SE VE", () => {
+    /* La política de `tienda_direcciones_previas` es por organización, así que
+     * con la sesión del usuario la dirección abandonada por OTRO negocio es
+     * invisible: la consulta vuelve vacía y el alta pasa. La tabla existía
+     * para impedir exactamente eso y no impedía nada. */
+    const i = tienda.indexOf('.from("tienda_direcciones_previas")');
+    esperar(i > 0).verdadero("desapareció la comprobación de direcciones ya usadas");
+    esperar(tienda.slice(Math.max(0, i - 200), i).includes("createAdminClient()")).verdadero(
+      "esa comprobación volvió a hacerse con la sesión del usuario, que no ve las de los demás",
+    );
+  });
+
+  test("1.6 · y un fallo de la consulta no es «está libre»", () => {
+    esperar(/if \(eUsada\)[\s\S]{0,200}ok: false/.test(tienda)).verdadero(
+      "el día que la base tosa se reparte la dirección de otro negocio y nadie se entera",
+    );
+  });
+});
+
 // ─── Los adjuntos y sus dos almacenes ─────────────────────────────────
 //
 // Lo que un cliente le manda a un negocio —un recibo, una receta, el parte del

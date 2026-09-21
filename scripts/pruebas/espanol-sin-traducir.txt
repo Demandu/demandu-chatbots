@@ -9,7 +9,7 @@
 # Se regenera con:  node scripts/medir-idiomas.mjs --guardar
 Textos dentro de la lógica: 796
 Constructor de flujos: 610
-Tienda: 511
+Tienda: 515
 Componentes sueltos: 436
 Chatbots: 391
 Superadmin (interno): 320

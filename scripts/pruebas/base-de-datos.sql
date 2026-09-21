@@ -476,6 +476,39 @@ begin
                    else 'FALLO (ejecutables sin sesion y sin comprobar): ' || sin_comprobar end;
   end;
 
+  -- == 30. UN CHATBOT NO SE PRESTA ENTRE CUENTAS (1.3) =================
+  -- Un usuario con sesion de su cuenta podia apuntar SU canal al chatbot de
+  -- otro negocio: la politica de RLS mira el `org_id` de la fila, y ese no
+  -- cambia. Desde el siguiente mensaje, el motor ejecutaba los flujos del
+  -- competidor por el numero de quien atacaba.
+  --
+  -- Lo cierra la migracion 0138 con claves foraneas COMPUESTAS
+  -- `(org_id, bot_id) -> bots(org_id, id)`: el par tiene que existir, asi que
+  -- un chatbot ajeno junto a tu organizacion no es una fila que exista.
+  --
+  -- SE VIGILA QUE SIGAN AHI, no que el codigo se acuerde de comprobar. Esa es
+  -- toda la gracia de haberlo puesto en la base: el mismo descuido aparecio
+  -- tres veces en sitios distintos.
+  select coalesce(string_agg(t.tabla, ', ' order by t.tabla), 'ninguna') into v
+    from (values ('whatsapp_channels'), ('instagram_channels'), ('flows'),
+                 ('ai_configs'), ('bot_knowledge')) as t(tabla)
+   where not exists (
+     select 1 from pg_constraint c
+     where c.conrelid = ('public.' || t.tabla)::regclass
+       and c.contype = 'f'
+       and c.confrelid = 'public.bots'::regclass
+       and array_length(c.conkey, 1) = 2);
+  r := r || E'\n30a. Claves compuestas org_id+bot_id ........... '
+         || case when v = 'ninguna' then 'OK (las 5)'
+                 else 'FALLO, les falta a: ' || v end;
+
+  -- Y la unica que las hace posibles.
+  select count(*) into n from pg_constraint
+   where conrelid = 'public.bots'::regclass and contype = 'u'
+     and array_length(conkey, 1) = 2;
+  r := r || E'\n30b. Y el par unico en `bots` que las sostiene . '
+         || case when n >= 1 then 'OK' else 'FALLO: sin el, las de arriba no existen' end;
+
   -- Limpieza y salida (el ERROR es a proposito: deshace todo)
   delete from memberships where user_id = usr_a;
   delete from auth.users where id = usr_a;
