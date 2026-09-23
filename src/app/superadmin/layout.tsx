@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { Crown, ArrowLeft, LogOut } from "lucide-react";
+import { Crown, ArrowLeft, LogOut, LifeBuoy } from "lucide-react";
 import { cerrarSesion } from "../salir";
+import { sesionDeSoporte } from "@/lib/soporte";
+import { volverAMiCuenta } from "./volver";
 
 export const dynamic = "force-dynamic";
 
@@ -25,10 +27,21 @@ export const dynamic = "force-dynamic";
  * error algo de alguien.
  */
 export default async function SuperadminLayout({ children }: { children: React.ReactNode }) {
-  const { data: esAdmin } = await createClient().rpc("is_platform_admin");
+  const supabase = createClient();
+  const { data: esAdmin } = await supabase.rpc("is_platform_admin");
   // Al panel del cliente, no a una pantalla de "no tienes permiso": para quien
   // no es del equipo, esto sencillamente no existe.
   if (!esAdmin) redirect("/dashboard");
+
+  // AQUÍ NO HABÍA NI RASTRO DE QUE HUBIERA UNA CUENTA AJENA ABIERTA. El aviso
+  // rojo solo vive en el marco del cliente, así que desde la trastienda el
+  // acceso de soporte era invisible —y sin embargo seguía mandando en
+  // `/dashboard`. De ahí que «Volver a la plataforma» llevara a la cuenta del
+  // cliente: no fallaba el enlace, faltaba saber que el soporte estaba abierto.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const soporte = user ? await sesionDeSoporte(user.id) : null;
 
   return (
     <div className="flex min-h-dvh flex-col bg-canvas">
@@ -98,12 +111,24 @@ export default async function SuperadminLayout({ children }: { children: React.R
           >
             Bajas
           </Link>
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Volver a la plataforma
-          </Link>
+          {/* CON SOPORTE ABIERTO NO ES UN ENLACE: es salir. Ver `volver.ts`. */}
+          {soporte ? (
+            <form action={volverAMiCuenta}>
+              <button
+                title={`Cierra el soporte de ${soporte.negocio} y te lleva a tu cuenta`}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" /> Volver a la plataforma
+              </button>
+            </form>
+          ) : (
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Volver a la plataforma
+            </Link>
+          )}
           {/* Aquí NO había forma de cerrar sesión: había que volver a la
               plataforma y buscar el menú del avatar. Se aguanta cuando tienes
               organización propia; a quien no la tiene lo dejaba dando vueltas.
@@ -115,6 +140,21 @@ export default async function SuperadminLayout({ children }: { children: React.R
           </form>
         </nav>
       </header>
+
+      {/* El mismo aviso que ve el marco del cliente, porque el acceso es el
+          mismo. Aquí faltaba, y su ausencia se leía como «no hay nada abierto». */}
+      {soporte && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-danger px-4 py-2 text-sm text-white sm:px-6">
+          <LifeBuoy className="h-4 w-4 flex-none" />
+          <p className="font-semibold">
+            Tienes abierta la cuenta de <b className="underline">{soporte.negocio}</b> como soporte.
+          </p>
+          <p className="opacity-80">
+            Mientras dure, la plataforma te enseña la suya. «Volver a la plataforma» cierra ese acceso y te
+            deja en tu propia cuenta.
+          </p>
+        </div>
+      )}
 
       <main className="min-h-0 flex-1 overflow-auto p-4 pb-[env(safe-area-inset-bottom)] text-ink sm:p-6 lg:p-8">
         {children}

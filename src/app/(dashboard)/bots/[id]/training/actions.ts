@@ -9,6 +9,7 @@ import { fetchPageText } from "@/lib/ai/fromUrl";
 import { ingestText } from "@/lib/ai/ingest";
 import { checkQuota } from "@/lib/billing/quota";
 import { extraerTexto, porQueNoSeAcepta } from "@/lib/ai/extraerTexto";
+import { comoSeGuarda, partesDeAdjunto } from "@/lib/adjuntos";
 
 /**
  * Agrega un dato del negocio a la base de conocimiento del chatbot.
@@ -162,8 +163,9 @@ export async function toggleKnowledge(formData: FormData) {
  * Esta función baja lo que le digan. Sin comprobarlo, cualquiera con sesión
  * podría pasarle `http://169.254.169.254/...` y usar nuestro servidor para leer
  * cosas de la red interna, o la carpeta de OTRO cliente para llevarse su
- * catálogo. Por eso la dirección tiene que empezar por el almacén de este
- * proyecto Y por la carpeta de su propia organización.
+ * catálogo. Por eso la dirección se descifra con `partesDeAdjunto` —que solo
+ * reconoce NUESTROS dos almacenes— y la primera carpeta de la ruta tiene que
+ * ser la de su propia organización.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export async function importFromFile(formData: FormData) {
@@ -180,18 +182,38 @@ export async function importFromFile(formData: FormData) {
   const noSirve = porQueNoSeAcepta(nombre, Number(formData.get("bytes") ?? 1));
   if (noSirve) fallar(noSirve);
 
-  // El candado contra leer lo que no es nuestro. Ver la cabecera.
-  const almacen = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/media/${orgId}/`;
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !url.startsWith(almacen)) {
+  // ── EL CANDADO, Y POR QUÉ YA NO SE MIRA EL TEXTO DE LA DIRECCIÓN ──────────
+  //
+  // Esto comparó durante meses contra una dirección PÚBLICA de `media`, armada
+  // aquí con una plantilla de texto. El día que los documentos de entrenamiento
+  // se mudaron al almacén privado, la comparación dejó de cuadrar y TODAS las
+  // subidas murieron en «No pude leer ese archivo. Vuelve a subirlo.»
+  //
+  // Y no hubo un solo error en los registros: desde el punto de vista del
+  // código la dirección era ajena y el rechazo estaba funcionando. El negocio
+  // lo intentó siete veces y acabó escribiendo su información a mano.
+  //
+  // Ahora la dirección se DESCIFRA con el mismo lector que usan la Bandeja y el
+  // motor, y el candado se pone donde de verdad está la cuenta: la primera
+  // carpeta de la ruta, que es también lo que comprueba la regla del almacén.
+  const donde = partesDeAdjunto(url);
+  if (!donde || donde.ruta.split("/")[0] !== orgId) {
     console.error("[entrenamiento] dirección fuera del almacén de la cuenta:", url.slice(0, 120));
     fallar("No pude leer ese archivo. Vuelve a subirlo.");
+    return; // `fallar` no vuelve, pero TypeScript necesita verlo escrito.
   }
 
   let datos: Uint8Array;
   try {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`el almacén respondió ${r.status}`);
-    datos = new Uint8Array(await r.arrayBuffer());
+    // Con la llave de servicio. El almacén privado no se alcanza con un `fetch`
+    // a secas, y firmar un enlace para bajarnos nosotros mismos un archivo que
+    // ya es nuestro sería dar un rodeo por internet para nada.
+    const { data, error: eBajada } = await createAdminClient()
+      .storage.from(donde.almacen)
+      .download(donde.ruta);
+    // Sin mensaje inventado: lo útil en el registro es QUÉ archivo vino vacío.
+    if (eBajada || !data) throw new Error(eBajada?.message ?? comoSeGuarda(donde.almacen, donde.ruta));
+    datos = new Uint8Array(await data.arrayBuffer());
   } catch (e) {
     console.error("[entrenamiento] no pude bajar el archivo:", (e as Error)?.message);
     return fallar("Se subió el archivo pero no pude volver a leerlo. Inténtalo otra vez.");
@@ -217,7 +239,9 @@ export async function importFromFile(formData: FormData) {
     title: nombre,
     text: texto,
     sourceType: "file",
-    sourceUrl: url,
+    // La ruta normalizada, no el texto crudo del navegador: así
+    // `partesDeAdjunto` la vuelve a entender el día que haga falta.
+    sourceUrl: comoSeGuarda(donde.almacen, donde.ruta),
     sourceName: nombre,
     // Subir otra vez el mismo nombre REEMPLAZA lo anterior. Es lo que espera
     // quien corrige su lista de precios: si se acumulara, el chatbot tendría

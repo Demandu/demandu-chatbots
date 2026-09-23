@@ -5762,6 +5762,45 @@ describe("Una cuenta a la vez", () => {
     esperar(/create or replace function public\.auth_puede[\s\S]{0,900}order by/.test(sql))
       .verdadero("auth_puede volvió a elegir la membresía sin order by");
   });
+
+  test("«VOLVER A LA PLATAFORMA» NO TE DEJA DENTRO DE LA CUENTA DE UN CLIENTE", () => {
+    /* ────────────────────────────────────────────────────────────────────
+     * Era un `<Link href="/dashboard">`, y con un acceso de soporte vivo
+     * `/dashboard` ES la cuenta del cliente —lo decide `membresiaActiva()`, y
+     * está bien que lo decida—. Así que el botón que dice «volver a lo mío»
+     * devolvía una y otra vez a la cuenta del negocio que se estaba mirando.
+     *
+     * Y no había forma de darse cuenta: el aviso rojo solo se pinta en el marco
+     * del cliente, así que desde la trastienda el soporte abierto era invisible.
+     * ─────────────────────────────────────────────────────────────────── */
+    const marco = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/layout.tsx"), "utf8"));
+    const volver = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/volver.ts"), "utf8"));
+
+    esperar(/action=\{volverAMiCuenta\}/.test(marco)).verdadero(
+      "«Volver a la plataforma» volvió a ser un enlace a /dashboard: con soporte abierto " +
+        "eso es la cuenta del cliente, no la tuya",
+    );
+    esperar(/sesionDeSoporte\(user\.id\)/.test(marco)).verdadero(
+      "el marco del superadmin dejó de mirar si hay una cuenta ajena abierta: sin eso no " +
+        "puede avisarlo ni cerrarlo",
+    );
+    esperar(/\{soporte &&/.test(marco)).verdadero(
+      "desapareció el aviso de que hay una cuenta de cliente abierta. Sin él, la trastienda " +
+        "vuelve a ser el único sitio donde el soporte es invisible",
+    );
+    esperar(/await cerrarSoporte\(user\.id\)/.test(volver)).verdadero(
+      "volverAMiCuenta ya no cierra el soporte: entonces te sigue llevando a la cuenta del cliente",
+    );
+    // OJO: `indexOf("cerrarSoporte")` a secas encuentra el `import` de arriba,
+    // que siempre va antes que todo. Con eso, esta comprobación no comprobaba
+    // nada: el mutante que cerraba el soporte DESPUÉS del redirect pasó verde.
+    const iCierra = volver.indexOf("await cerrarSoporte(");
+    const iVa = volver.indexOf('redirect("/dashboard")');
+    esperar(iCierra > 0 && iVa > 0 && iCierra < iVa).verdadero(
+      "se va a /dashboard ANTES de cerrar el soporte: el redirect no vuelve, así que el " +
+        "acceso se quedaría abierto y aterrizarías donde mismo",
+    );
+  });
 });
 
 
@@ -11868,6 +11907,63 @@ describe("Un adjunto de una conversación no es contenido público", () => {
       "alguien volvió a pedir una dirección pública del almacén. Para un adjunto de una " +
         "conversación se usa `enlaceDeAdjunto()` (pantalla) o `urlParaMandar()` (servidor)",
     );
+  });
+
+  test("NADIE ARMA A MANO LA DIRECCIÓN DE UN ARCHIVO DEL ALMACÉN", () => {
+    /* ────────────────────────────────────────────────────────────────────
+     * ESTA REGLA NACE DE UN FALLO QUE LA DE ARRIBA DEJÓ PASAR.
+     *
+     * La de arriba solo busca `getPublicUrl`. En la pantalla de entrenamiento la
+     * dirección no se pedía: se escribía a mano con una plantilla de texto
+     * —`${SUPABASE_URL}/storage/v1/object/public/media/<cuenta>/`— y contra ese
+     * texto se comparaba el archivo recién subido.
+     *
+     * Cuando los documentos de entrenamiento se mudaron al almacén privado, la
+     * comparación dejó de cuadrar y NINGUNA subida volvió a entrar. Sin un solo
+     * error en los registros, porque el rechazo estaba «funcionando». El negocio
+     * lo intentó siete veces y acabó escribiendo su información a mano. Y la
+     * prueba de arriba estuvo verde todo el tiempo.
+     *
+     * Así que `/storage/v1/object/` solo puede aparecer en `src/lib/adjuntos.ts`,
+     * que es quien sabe LEER esas direcciones. Quien necesite el archivo lo baja
+     * del almacén con `.download()`, que no depende de dónde viva hoy.
+     * ─────────────────────────────────────────────────────────────────── */
+    const aMano = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta.endsWith("src/lib/adjuntos.ts")) continue; // el lector: su sitio
+      if (/storage\/v1\/object\//.test(sinComentarios(texto))) aMano.push(ruta);
+    }
+    esperar(aMano.join(" | ")).igual(
+      "",
+      "alguien volvió a armar a mano la dirección de un archivo del almacén. Eso se " +
+        "rompe solo el día que el archivo cambia de almacén, y sin un error en los " +
+        "registros: se usa `partesDeAdjunto()` para leerla y `.download()` para bajarla",
+    );
+  });
+
+  test("EL ENTRENAMIENTO BAJA EL DOCUMENTO DEL ALMACÉN, NO DE INTERNET", () => {
+    /* Las dos mitades del mismo arreglo: de quién es el archivo se decide por la
+     * RUTA —la primera carpeta es la cuenta, igual que en la regla del almacén— y
+     * la bajada va al almacén con la llave de servicio, porque al privado no se
+     * llega con un `fetch` a secas. */
+    const ent = sinComentarios(
+      ARCHIVOS.find((a) => a.ruta.endsWith("training/actions.ts"))?.texto ?? "",
+    );
+    esperar(ent.length > 1000).verdadero(
+      "no encuentro la pantalla de entrenamiento: esta regla no está mirando nada",
+    );
+    esperar(/const donde = partesDeAdjunto\(url\)/.test(ent)).verdadero(
+      "el entrenamiento volvió a decidir de quién es el archivo mirando el texto de la dirección",
+    );
+    esperar(/donde\.ruta\.split\("\/"\)\[0\] !== orgId/.test(ent)).verdadero(
+      "desapareció la comprobación de que la primera carpeta es la cuenta: sin ella, " +
+        "cualquiera con sesión se lleva el catálogo de otro negocio",
+    );
+    esperar(/\.storage\.from\(donde\.almacen\)[\s\S]{0,60}\.download\(donde\.ruta\)/.test(ent)).verdadero(
+      "el documento se vuelve a bajar por internet en vez de leerlo del almacén: en el " +
+        "privado eso es un 400 y ninguna subida entra",
+    );
+    esperar(/await fetch\(url\)/.test(ent)).falso("volvió el `fetch` a la dirección cruda");
   });
 });
 

@@ -12,7 +12,7 @@ Constructor de flujos: 610
 Tienda: 515
 Componentes sueltos: 436
 Chatbots: 391
-Superadmin (interno): 320
+Superadmin (interno): 322
 Configuración: 270
 Resto del panel: 235
 Bandeja: 115
