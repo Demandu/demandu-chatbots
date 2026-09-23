@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { updateSession } from "@/lib/supabase/middleware";
+import { updateSession, esProtegida } from "@/lib/supabase/middleware";
 import { DOMINIO_TIENDAS, hostDeLaPeticion } from "@/lib/tienda/direccion";
 
 /**
@@ -31,7 +31,40 @@ import { DOMINIO_TIENDAS, hostDeLaPeticion } from "@/lib/tienda/direccion";
  * tienda, para nada.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * ── LA RED DE SEGURIDAD ──────────────────────────────────────────
+ *
+ * Por aquí pasa TODA la plataforma: el `matcher` de abajo solo deja fuera los
+ * archivos estáticos. Así que lo que falle aquí no rompe una pantalla, rompe
+ * el sitio entero — y sin dejar rastro en la aplicación, porque el error
+ * ocurre antes de que la aplicación exista.
+ *
+ * Esa es la diferencia entre «no funciona el calendario» y «Error · Request
+ * ID: …» en todas las direcciones a la vez, incluido `/robots.txt`.
+ *
+ * Se falla hacia el lado seguro, igual que arriba: pantalla protegida → a
+ * entrar; lo demás se sirve. La lista de protegidas es LA MISMA, importada,
+ * no una copia.
+ */
 export async function middleware(request: NextRequest) {
+  try {
+    return await atender(request);
+  } catch (e) {
+    console.error(
+      "[middleware] la peticion no se pudo atender:",
+      request.nextUrl.pathname,
+      (e as Error)?.message,
+    );
+    if (esProtegida(request.nextUrl.pathname)) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      return NextResponse.redirect(url);
+    }
+    return NextResponse.next();
+  }
+}
+
+async function atender(request: NextRequest) {
   const host = hostDeLaPeticion(request.headers);
 
   if (host === DOMINIO_TIENDAS) {

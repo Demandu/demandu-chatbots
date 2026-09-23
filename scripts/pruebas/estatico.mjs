@@ -4706,6 +4706,51 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     );
   });
 
+  test("UN TROPIEZO EN LA PUERTA NO TUMBA LA PLATAFORMA ENTERA", () => {
+    /* ────────────────────────────────────────────────────────────────────
+     * 23 sep 2026: la plataforma entera contestó «Error · Request ID: …» a los
+     * segundos de publicar. Hasta `/robots.txt`, que no toca una línea de
+     * código de ninguna pantalla. A la siguiente recarga funcionaba.
+     *
+     * Por el middleware pasa TODO —el `matcher` solo deja fuera los estáticos—
+     * y dentro hay un viaje a Supabase por petición, sin guarda. Cuando ese
+     * viaje tropieza, el error ocurre ANTES de que exista la aplicación: no hay
+     * pantalla donde mirar ni registro que leer, solo la página genérica de
+     * Netlify. Es el fallo que más parece «la plataforma está caída» de todos
+     * los que puede tener.
+     * ─────────────────────────────────────────────────────────────────── */
+    const puerta = sinComentarios(fs.readFileSync(path.join(SRC, "middleware.ts"), "utf8"));
+    const sesion = sinComentarios(
+      fs.readFileSync(path.join(SRC, "lib/supabase/middleware.ts"), "utf8"),
+    );
+
+    esperar(/try \{[\s\S]{0,120}await atender\(request\)[\s\S]{0,500}\} catch/.test(puerta)).verdadero(
+      "el middleware volvió a poder reventar sin red debajo: un tropiezo ahí es un error " +
+        "en TODAS las direcciones a la vez, incluido /robots.txt",
+    );
+    esperar(
+      /esProtegida\(request\.nextUrl\.pathname\)[\s\S]{0,200}pathname = "\/login"/.test(puerta),
+    ).verdadero(
+      "al fallar, el middleware deja pasar a una pantalla protegida. Sin saber quién eres " +
+        "hay que mandar a entrar, no abrir la puerta",
+    );
+    esperar(/try \{[\s\S]{0,200}await supabase\.auth\.getUser\(\)[\s\S]{0,200}\} catch/.test(sesion))
+      .verdadero(
+        "la comprobación de sesión volvió a salir a la red sin guarda. Es UNA llamada por " +
+          "petición y de ella depende que el sitio conteste algo",
+      );
+
+    /* LA LISTA DE PANTALLAS PROTEGIDAS, UNA SOLA VEZ. Copiada, el día que se
+     * añada una pantalla solo se acordaría una de las dos copias — y la que se
+     * olvidara dejaría pasar sin sesión justo cuando algo ya ha ido mal. */
+    esperar(/export function esProtegida\(/.test(sesion)).verdadero(
+      "desapareció `esProtegida`: entonces la lista está escrita dos veces",
+    );
+    esperar(/"\/dashboard"/.test(puerta)).falso(
+      "la lista de pantallas protegidas se copió dentro de src/middleware.ts: se importa",
+    );
+  });
+
   test("cambiar la dirección NO puede romper los enlaces repartidos", () => {
     // ─────────────────────────────────────────────────────────────────────────
     // Dentro de cada enlace de cobro que ya está en el chat de un cliente va la
