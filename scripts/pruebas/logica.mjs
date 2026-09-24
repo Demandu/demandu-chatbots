@@ -93,6 +93,7 @@ import {
 } from "../../src/lib/tienda/asap.ts";
 import { comoEstaApple, diasParaElSecretoDeApple } from "../../src/lib/estado/apple.ts";
 import { membresiaActiva, soporteVigente } from "../../src/lib/membresia.ts";
+import { permisosDelSoporte, TODAS } from "../../src/lib/permisos.ts";
 import { FEATURES, feature, tiene } from "../../src/lib/planes/features.ts";
 import { explicar, revisar } from "../../src/lib/billing/descuentos.ts";
 import {
@@ -9161,6 +9162,52 @@ describe("Un adjunto se sirve con permiso, no con una URL eterna", () => {
   test("lo que se guarda se vuelve a leer igual", () => {
     const guardado = comoSeGuarda("privado", RUTA);
     esperar(partesDeAdjunto(guardado)).igual({ almacen: "privado", ruta: RUTA });
+  });
+});
+
+// ─── Con qué permisos se entra a la cuenta de un cliente ─────────────────
+describe("Con qué permisos se entra a dar soporte", () => {
+  test("EL ADMINISTRADOR DE LA PLATAFORMA ENTRA CON TODO", () => {
+    /* No tiene ficha en el equipo comercial —ser administrador es otra cosa—
+     * y por eso entraba con cero permisos: el dueño de Demandu no podía
+     * cambiar una conexión de su propio cliente y su vendedor sí. Visto el 24
+     * de septiembre de 2026 conectando el CRM de Casas Pacíficas. */
+    const p = permisosDelSoporte(undefined, true);
+    for (const clave of TODAS) {
+      esperar(p[clave]).igual(true, `al administrador le faltó el permiso «${clave}»`);
+    }
+  });
+
+  test("y sigue entrando con todo aunque su ficha diga que no", () => {
+    /* Si alguien es administrador de la plataforma, una ficha a medias no le
+     * quita la cuenta: la condición es SER administrador, no lo que diga una
+     * fila que puede estar vieja. */
+    const p = permisosDelSoporte({ conexiones: false, plan: false }, true);
+    esperar(p.conexiones).igual(true, "una ficha vieja le quitó permisos al administrador");
+    esperar(p.plan).igual(true, "una ficha vieja le quitó permisos al administrador");
+  });
+
+  test("QUIEN NO ES ADMINISTRADOR SE QUEDA CON LO DE SU FICHA, y nada más", () => {
+    const p = permisosDelSoporte({ conversaciones: true }, false);
+    esperar(p).igual(
+      { conversaciones: true },
+      "a alguien del equipo se le dieron permisos que su ficha no tenía",
+    );
+  });
+
+  test("UNA FICHA VACÍA O ROTA NO ABRE NADA", () => {
+    /* Esta es la propiedad que existía antes y que NO se podía perder al
+     * arreglar lo del administrador: si la ficha llega vacía, rota o con
+     * basura, el fallo tiene que ser «no ve casi nada», nunca «lo ve todo».
+     * Por eso el arreglo es una rama por SER administrador y no un respaldo
+     * para cuando falta el dato. */
+    for (const basura of [undefined, null, {}, [], "conexiones", 7, true]) {
+      const p = permisosDelSoporte(basura, false);
+      esperar(Object.values(p).filter((v) => v === true).length).igual(
+        0,
+        `una ficha \`${JSON.stringify(basura)}\` concedió permisos`,
+      );
+    }
   });
 });
 

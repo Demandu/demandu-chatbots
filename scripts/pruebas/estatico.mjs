@@ -5777,6 +5777,30 @@ describe("Una cuenta a la vez", () => {
     );
   });
 
+  test("EL ADMINISTRADOR DE LA PLATAFORMA NO ENTRA MANCO", () => {
+    /* La regla vive en `permisos.ts` y está probada con sus casos. Aquí solo
+     * se vigila que `abrirSoporte` la USE: con `miembro?.permisos ?? {}`
+     * escrito a mano, quien no tiene ficha —el administrador— entra con cero
+     * permisos y la regla de al lado se queda mirando. */
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "lib/soporte.ts"), "utf8"));
+    esperar(/permisos: permisosDelSoporte\(/.test(t)).verdadero(
+      "abrirSoporte volvió a decidir los permisos a mano: el administrador de la " +
+        "plataforma entra sin poder tocar nada en la cuenta de su propio cliente",
+    );
+    esperar(/permisos: miembro\?\.permisos \?\? \{\}/.test(t)).falso(
+      "volvió el `miembro?.permisos ?? {}` que dejaba manco a quien no tiene ficha",
+    );
+    /* Y la bitácora tiene que apuntar lo que DE VERDAD se concedió: la lee el
+     * cliente para saber qué pudo tocar quien entró en su cuenta. */
+    const iApunta = t.indexOf("accion: \"entró a la cuenta para dar soporte\"");
+    esperar(iApunta > 0).verdadero("desapareció el apunte de entrada en la bitácora");
+    esperar(/permisos: permisosDelSoporte\([\s\S]*?accion: "entró a la cuenta/.test(t))
+      .verdadero(
+        "la bitácora apunta los permisos de la ficha, no los concedidos: el cliente lee " +
+          "que le entraron con menos acceso del que de verdad tuvieron",
+      );
+  });
+
   test("abrir soporte cierra el anterior", () => {
     // Con dos accesos abiertos el aviso rojo desaparece —lo pinta una consulta
     // que espera una sola fila— y sin aviso no hay botón de salir: el acceso al

@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { anotar, type Actor } from "@/lib/bitacora";
+import { permisosDelSoporte } from "@/lib/permisos";
 
 /**
  * Entrar a la cuenta de un cliente para darle soporte.
@@ -124,7 +125,9 @@ export async function abrirSoporte(userId: string, orgId: string): Promise<Apert
       org_id: orgId,
       user_id: userId,
       role: "viewer",
-      permisos: miembro?.permisos ?? {},
+      // Ver `permisosDelSoporte`: el administrador de la plataforma no tiene
+      // ficha, y entraba con cero permisos.
+      permisos: permisosDelSoporte(miembro?.permisos, !!esAdmin),
       soporte_hasta: hasta,
       soporte_de: miembro?.id ?? null,
     },
@@ -144,7 +147,13 @@ export async function abrirSoporte(userId: string, orgId: string): Promise<Apert
     actor,
     orgId,
     accion: "entró a la cuenta para dar soporte",
-    detalle: { hasta, minutos: MINUTOS, permisos: miembro?.permisos ?? {} },
+    detalle: {
+      hasta,
+      minutos: MINUTOS,
+      // Lo que de verdad se concedió, no lo que decía la ficha: la bitácora
+      // la lee el cliente para saber qué pudo tocar quien entró.
+      permisos: permisosDelSoporte(miembro?.permisos, !!esAdmin),
+    },
     visibleParaElCliente: true,
   });
 

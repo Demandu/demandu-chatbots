@@ -135,6 +135,47 @@ export function resolverPermisos(rol: Rol | string | null | undefined, ajustes?:
   return set;
 }
 
+/**
+ * CON QUÉ PERMISOS SE ENTRA A LA CUENTA DE UN CLIENTE COMO SOPORTE.
+ *
+ * ──────────────────────────────────────────────────────────────────────
+ * SE PARTE DE LO MÍNIMO A PROPÓSITO. Si un día la ficha de alguien del equipo
+ * llega vacía o rota, el fallo tiene que ser «no ve casi nada», no «lo ve
+ * todo». Eso no cambia.
+ *
+ * PERO EL ADMINISTRADOR DE LA PLATAFORMA NO TIENE FICHA. Ser administrador es
+ * otra cosa que estar en el equipo comercial, y nadie lo pensó: entraba con
+ * `{}` —cero permisos— mientras un vendedor con su ficha entraba con los doce.
+ * O sea que el dueño de la plataforma no podía cambiar una conexión de su
+ * propio cliente y su vendedor sí.
+ *
+ * Se vio el 24 de septiembre de 2026 conectando el CRM de Casas Pacíficas: la
+ * pantalla contestó «No tienes permiso para cambiar las conexiones» al dueño
+ * de Demandu, dentro de la cuenta de su propio cliente.
+ *
+ * ── POR QUÉ ES UNA RAMA EXPLÍCITA Y NO UN RESPALDO ─────────────────────────
+ *
+ * Porque «si no hay ficha, dale todo» habría arreglado este caso Y roto el
+ * otro: una ficha borrada por error se convertiría en acceso total. Aquí la
+ * condición es SER ADMINISTRADOR, que es un hecho que la base afirma, no la
+ * ausencia de un dato.
+ *
+ * El rol sigue siendo `viewer`: lo que abre puertas son los permisos, y
+ * dejarlo en viewer mantiene intacto que nadie se convierte en dueño.
+ * ──────────────────────────────────────────────────────────────────────
+ */
+export function permisosDelSoporte(
+  permisosDeLaFicha: unknown,
+  esAdminDePlataforma: boolean,
+): Record<string, boolean> {
+  if (esAdminDePlataforma) {
+    return Object.fromEntries(TODAS.map((c) => [c, true]));
+  }
+  const p = permisosDeLaFicha;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return {};
+  return p as Record<string, boolean>;
+}
+
 /** ¿Puede? Se pregunta así en todas partes, para que no haya dos formas. */
 export function puede(permisos: Set<ClavePermiso> | null | undefined, clave: ClavePermiso): boolean {
   return !!permisos?.has(clave);
