@@ -12013,4 +12013,104 @@ describe("Un adjunto de una conversación no es contenido público", () => {
 });
 
 
+// ─── «lead.datos» siempre dice de quién habla ────────────────────────────
+//
+// EL MISMO EVENTO SIGNIFICABA COSAS DISTINTAS SEGÚN EL CANAL. El motor de
+// WhatsApp mandaba `telefono`; la web y el panel mandaban `contacto_id` y ya.
+// Un CRM conectado a `lead.datos` identificaba al lead que escribe por
+// WhatsApp y se quedaba sin saber de quién le hablan cuando escribe por la
+// web — con el mismo evento y el mismo contrato.
+//
+// Se vio con Zoho: su acción de buscar un lead va por correo o por id, nunca
+// por teléfono. Las etiquetas llegaban y no había a quién pegárselas.
+describe("«lead.datos» siempre dice de quién habla", () => {
+  const MOTOR = path.join(RAIZ, "supabase/functions/whatsapp/index.ts");
+  const wa = sinComentarios(fs.readFileSync(MOTOR, "utf8"));
+  const quien = sinComentarios(fs.readFileSync(path.join(SRC, "lib/leads/quienEs.ts"), "utf8"));
+
+  /** Los trozos de código que siguen a cada emisión del evento. */
+  const emisiones = (texto, marca) => {
+    const fuera = [];
+    let i = texto.indexOf(marca);
+    while (i >= 0) {
+      fuera.push(texto.slice(i, i + 420));
+      i = texto.indexOf(marca, i + 1);
+    }
+    return fuera;
+  };
+
+  test("UNA SOLA DEFINICIÓN DE QUIÉN ES, y devuelve las tres claves", () => {
+    esperar(/export function quienEs\(/.test(quien)).verdadero(
+      "desapareció `quienEs`: entonces cada sitio arma las claves a su manera",
+    );
+    /* OJO: mirar el archivo entero NO sirve — las tres claves también están en
+     * el tipo que anota el retorno, así que borrar la línea de verdad pasaba
+     * verde. Se mira SOLO el objeto que se devuelve. Es el mismo tropiezo que
+     * el `indexOf` que encontraba el import en vez del uso. */
+    const cuerpo = quien.slice(quien.indexOf("if (!c) return"));
+    esperar(cuerpo.length > 60).verdadero("no encuentro el cuerpo de quienEs");
+    /* LOS DOS `return`: el de «no hay ficha» y el normal. Contar que cada
+     * clave aparece dos veces es lo que impide que borrar una línea pase
+     * verde porque la palabra sigue estando en el otro retorno. */
+    for (const clave of ["contacto_id", "telefono", "nombre"]) {
+      const veces = cuerpo.split(clave + ":").length - 1;
+      esperar(veces >= 2).verdadero(
+        `quienEs devuelve \`${clave}\` en ${veces} de sus 2 retornos. Ese es el dato con ` +
+          "el que el CRM encuentra a la persona",
+      );
+    }
+  });
+
+  test("el respaldo del teléfono MIRA EL CANAL", () => {
+    /* `external_id` es el identificador en su canal. En WhatsApp ES su
+     * teléfono; en Instagram no. Mandar un id de Instagram dentro de un campo
+     * llamado «teléfono» es peor que mandarlo vacío: el CRM lo guarda como
+     * bueno y alguien acaba marcándolo. Es la regla de la migración 0131. */
+    esperar(/CANALES_CON_TELEFONO[\s\S]{0,120}whatsapp/.test(quien)).verdadero(
+      "desapareció la lista de canales cuyo identificador ES un teléfono",
+    );
+    esperar(/CANALES_CON_TELEFONO\.includes\([\s\S]{0,80}external_id/.test(quien)).verdadero(
+      "el respaldo dejó de mirar el canal: así acaba un identificador de Instagram " +
+        "guardado en el CRM como número de teléfono",
+    );
+  });
+
+  test("LOS TRES SITIOS DE `src/` LO MANDAN, y por la función común", () => {
+    const sitios = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta.endsWith("lib/leads/quienEs.ts")) continue;
+      for (const trozo of emisiones(sinComentarios(texto), '"lead.datos", {')) {
+        sitios.push({ ruta, trozo });
+      }
+    }
+    esperar(sitios.length).igual(
+      3,
+      `esperaba 3 emisiones de lead.datos en src/ y hay ${sitios.length}. Si añadiste una, ` +
+        "tiene que llevar `...quienEs(...)` y este número sube",
+    );
+    const mudos = sitios.filter((s) => !/\.\.\.quien/.test(s.trozo)).map((s) => s.ruta);
+    esperar(mudos.join(" | ")).igual(
+      "",
+      "hay una emisión de lead.datos que no dice de quién habla. El CRM recibe el dato " +
+        "y no sabe a quién ponérselo",
+    );
+  });
+
+  test("Y LAS TRES DEL MOTOR, que no puede importar de src/", () => {
+    const trozos = emisiones(wa, '"lead.datos", {');
+    esperar(trozos.length).igual(
+      3,
+      `esperaba 3 emisiones de lead.datos en el motor y hay ${trozos.length}`,
+    );
+    for (const clave of ["contacto_id", "telefono", "nombre"]) {
+      const faltan = trozos.filter((x) => !x.includes(clave + ":")).length;
+      esperar(faltan).igual(
+        0,
+        `${faltan} de las 3 emisiones del motor no mandan \`${clave}\`. El mismo evento ` +
+          "significa una cosa por WhatsApp y otra por la web",
+      );
+    }
+  });
+});
+
 process.exit(await correrPruebas());

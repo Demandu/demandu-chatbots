@@ -2255,7 +2255,7 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         const etiqueta = String(args?.etiqueta ?? "").trim();
 
         const { data: c } = await ctx.db.from("contacts")
-          .select("id").eq("org_id", ctx.orgId).eq("channel", "whatsapp")
+          .select("id, name").eq("org_id", ctx.orgId).eq("channel", "whatsapp")
           .eq("external_id", ctx.to).maybeSingle();
         if (!c) return "No encuentro la ficha de esta persona.";
 
@@ -2288,7 +2288,11 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         }
 
         contarFuera(ctx.db, ctx.orgId, "lead.datos", {
-          telefono: ctx.to, etiqueta, etiquetas: quedaron ?? [etiqueta],
+          // De quién hablamos, las tres claves. Aquí el teléfono ya iba;
+          // faltaban las otras dos, y sin `contacto_id` el CRM no puede
+          // cruzar este evento con el `lead.nuevo` que lo estrenó.
+          contacto_id: c.id, telefono: ctx.to, nombre: (c.name ?? "").trim() || null,
+          etiqueta, etiquetas: quedaron ?? [etiqueta],
           por_que: args?.por_que ?? null,
           // Queda por escrito en qué se basó. Es lo que permite auditar una
           // calificación después, en vez de discutir de memoria.
@@ -2310,7 +2314,7 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         }
 
         const { data: c } = await ctx.db.from("contacts")
-          .select("id, attributes").eq("org_id", ctx.orgId).eq("channel", "whatsapp")
+          .select("id, attributes, name").eq("org_id", ctx.orgId).eq("channel", "whatsapp")
           .eq("external_id", ctx.to).maybeSingle();
         if (!c) return "No encuentro la ficha de esta persona.";
 
@@ -2321,7 +2325,8 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
         await ctx.db.from("contacts").update(cambios).eq("id", c.id);
 
         contarFuera(ctx.db, ctx.orgId, "lead.datos", {
-          telefono: ctx.to, campo, valor, por: "agente_ia",
+          contacto_id: c.id, telefono: ctx.to, nombre: (c.name ?? "").trim() || null,
+          campo, valor, por: "agente_ia",
         });
         return `Guardado: ${campo} = ${valor}. No se lo menciones a la persona.`;
       }
@@ -2943,7 +2948,7 @@ async function guardarLoQueContesto(
 
   try {
     const { data: c, error: eFicha } = await ctx.db.from("contacts")
-      .select("id, attributes")
+      .select("id, attributes, name")
       .eq("org_id", ctx.orgId).eq("channel", "whatsapp").eq("external_id", ctx.to)
       .maybeSingle();
     // «No hay ficha» y «no pude preguntarlo» acaban igual aquí, pero no son lo
@@ -2977,7 +2982,8 @@ async function guardarLoQueContesto(
     if (eReg) console.error("[flujo] no pude apuntar la respuesta:", eReg.message);
 
     contarFuera(ctx.db, ctx.orgId, "lead.datos", {
-      telefono: ctx.to, campo, valor: texto, conversacion_id: ctx.convId, por: "nodo",
+      contacto_id: c?.id ?? null, telefono: ctx.to, nombre: (c?.name ?? "").trim() || null,
+      campo, valor: texto, conversacion_id: ctx.convId, por: "nodo",
     });
   } catch (e) {
     console.error("[flujo] fallo guardando la respuesta del bloque:", e);

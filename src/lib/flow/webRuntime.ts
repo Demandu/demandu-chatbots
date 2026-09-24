@@ -14,6 +14,7 @@ import type { MensajeChat } from "@/lib/tienda/conversacionDePedido";
 import { esElReciboDeUnPedido } from "@/lib/tienda/pedidoQueLlega";
 import { historialParaLaIA } from "@/lib/ai/historial";
 import { CASILLA_DE_LA_FICHA } from "@/lib/leads/casillas";
+import { quienEs } from "@/lib/leads/quienEs";
 import { emitir } from "@/lib/salidas";
 import type { CarritoChat } from "@/lib/tienda/pedirPorChat";
 
@@ -917,13 +918,16 @@ async function guardarLoQueContestoWeb(
     if (eConv) console.error("[flujo] no pude leer la conversación:", eConv.message);
 
     let contactId: string | null = conv?.contact_id ?? null;
+    // De quién hablamos, para el evento del final. Se llena si hay ficha.
+    let quien = quienEs(null);
     if (contactId) {
       const { data: c, error: eCont } = await ctx.admin
-        .from("contacts").select("id, attributes")
+        .from("contacts").select("id, attributes, name, phone, external_id, channel")
         .eq("id", contactId).eq("org_id", ctx.orgId)
         .maybeSingle();
       if (eCont) console.error("[flujo] no pude leer la ficha:", eCont.message);
       if (c) {
+        quien = quienEs(c as any);
         const cambios: Record<string, unknown> = {
           attributes: { ...(c.attributes ?? {}), [campo]: texto },
         };
@@ -951,6 +955,7 @@ async function guardarLoQueContestoWeb(
     if (eReg) console.error("[flujo] no pude apuntar la respuesta:", eReg.message);
 
     emitir(ctx.orgId, "lead.datos", {
+      ...quien,
       campo, valor: texto, conversacion_id: ctx.conversationId, por: "nodo",
     });
   } catch (e) {

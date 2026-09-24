@@ -21,6 +21,7 @@ import {
 // La lista vive sola: la usan la IA, el canal web y el motor de WhatsApp.
 // Ver la cabecera de `casillas.ts`.
 import { CASILLA_DE_LA_FICHA } from "@/lib/leads/casillas";
+import { quienEs } from "@/lib/leads/quienEs";
 import {
   cuantoDura, loQueSeCongela, servicioQuePidio, comoSeLosOfrezco, POR_DEFECTO_MIN,
   type Servicio,
@@ -140,7 +141,7 @@ async function fichaDeLaConversacion(ctx: ContextoAgente) {
 
   const { data: c } = await ctx.admin
     .from("contacts")
-    .select("id, tags, attributes, name, email, phone, external_id")
+    .select("id, tags, attributes, name, email, phone, external_id, channel")
     .eq("id", conv.contact_id)
     .eq("org_id", ctx.orgId)
     .maybeSingle();
@@ -1393,8 +1394,10 @@ export async function ejecutarHerramienta(
         }
 
         emitir(ctx.orgId, "lead.datos", {
+          // De quién hablamos. Ver `quienEs`: sin esto el CRM recibe una
+          // calificación y no sabe a quién ponérsela.
+          ...quienEs(c),
           etiquetas: quedaron ?? [etiqueta],
-          contacto_id: c.id,
           etiqueta,
           por_que: args?.por_que ?? null,
           // Queda por escrito en qué se basó. Es lo que permite auditar una
@@ -1428,7 +1431,7 @@ export async function ejecutarHerramienta(
         await ctx.admin.from("contacts").update(cambios).eq("id", c.id);
 
         emitir(ctx.orgId, "lead.datos", {
-          contacto_id: c.id,
+          ...quienEs(c),
           campo,
           valor,
           conversacion_id: ctx.conversationId,
