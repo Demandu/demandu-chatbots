@@ -102,6 +102,54 @@ export const MARCA_AGENTE = "[un compañero del equipo escribió]";
    por eso está aquí con un número y un porqué, y no repartido por el código. */
 export const CUANTOS_MENSAJES_RECUERDA = 24;
 
+/* CON QUÉ SE BUSCA EN EL ENTRENAMIENTO.
+
+   Se buscaba con el ÚLTIMO mensaje y nada más. Pero en una conversación de
+   verdad las preguntas son elípticas: «¿y el inicial?», «¿cuánto sale ese?».
+   Ahí no está el nombre del proyecto —está tres mensajes más arriba—, así que
+   la búsqueda no tenía con qué encontrarlo y el bot contestaba que no lo sabía
+   teniéndolo cargado.
+
+   Visto el 26 de septiembre de 2026: «cuanto tengo que dar de inicial? par el
+   de 3 recamaras», dos mensajes después de «me interesaría información de
+   Terrazas Zeledonia».
+
+   SOLO LO QUE DIJO LA PERSONA, y solo sus últimos turnos. Meter también lo que
+   contestó el bot llenaría la consulta de sus propias palabras y acabaría
+   buscándose a sí mismo. */
+export function consultaParaBuscar(
+  pregunta: string,
+  historial: Turno[] | null | undefined,
+  cuantos = 3,
+): string {
+  const ahora = String(pregunta ?? "").trim();
+  const antes = (historial ?? [])
+    .filter((t) => t?.role === "user")
+    .map((t) => String(t?.content ?? "").trim())
+    .filter(Boolean)
+    .slice(-cuantos)
+    .reverse();
+
+  const vistas = new Set<string>();
+  const partes: string[] = [];
+  // Lo de AHORA va delante: es lo que se está preguntando.
+  for (const p of [ahora, ...antes]) {
+    const clave = p.toLowerCase();
+    if (!p || vistas.has(clave)) continue;
+    vistas.add(clave);
+    partes.push(p);
+  }
+  // Un tope, para que una conversación larga no acabe mandando una parrafada
+  // como consulta: más texto no es más puntería.
+  return partes.join(" · ").slice(0, 600);
+}
+
+/* CUÁNTOS FRAGMENTOS SE LE PASAN AL MODELO.
+   Cinco contra ochenta y cinco fragmentos es poca red. Ocho sigue cabiendo de
+   sobra en el mensaje del sistema y da margen a que el bueno entre. */
+export const CUANTOS_FRAGMENTOS = 8;
+
+
 export function historialParaLaIA(mensajes: MensajeGuardado[] | null | undefined): Turno[] {
   const turnos: Turno[] = [];
 

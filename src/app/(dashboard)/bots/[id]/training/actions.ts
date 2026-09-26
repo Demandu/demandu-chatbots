@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import { fetchPageText } from "@/lib/ai/fromUrl";
-import { ingestText } from "@/lib/ai/ingest";
+import { ingestText, embed, embeddingsConfigured } from "@/lib/ai/ingest";
 import { checkQuota } from "@/lib/billing/quota";
 import { extraerTexto, porQueNoSeAcepta } from "@/lib/ai/extraerTexto";
 import { comoSeGuarda, partesDeAdjunto } from "@/lib/adjuntos";
@@ -34,11 +34,20 @@ export async function addKnowledge(
   const quota = await checkQuota(supabase, orgId, Buffer.byteLength(content, "utf8"));
   if (!quota.ok) return { ok: false, mensaje: quota.message };
 
+  /* NACE CON SU VECTOR, igual que lo que sube por documento.
+   *
+   * Esto insertaba a pelo y se saltaba el único sitio que calcula vectores
+   * (`ingestText`). Un dato escrito a mano quedaba fuera de la búsqueda por
+   * significado para siempre, y desde la pantalla se veía igual que los
+   * demás. Si no hay llave, `embed` devuelve null y se guarda como antes. */
+  const vector = (await embed([content]))?.[0] ?? null;
+
   const { error } = await supabase.from("bot_knowledge").insert({
     org_id: orgId,
     bot_id: botId,
     title,
     content,
+    embedding: vector,
     source_type: String(formData.get("source_type") ?? "text"),
   });
   if (error) return { ok: false, mensaje: "No se pudo guardar. Inténtalo otra vez." };
@@ -255,4 +264,110 @@ export async function importFromFile(formData: FormData) {
       ? `${base}&imported=${n}`
       : `${base}&error=${encodeURIComponent("No pude guardar el contenido de ese archivo.")}`,
   );
+}
+
+/**
+ * RE-INDEXAR: ponerle su vector a lo que ya está subido.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ HIZO FALTA. Los vectores solo se calculaban AL SUBIR. Así que el día
+ * que se puso la llave de búsqueda por significado, todo lo subido antes siguió
+ * ciego — y desde la pantalla no había forma de notarlo: el mismo fragmento, la
+ * misma letra, y el bot sin encontrarlo.
+ *
+ * El 26 de septiembre de 2026 se midió: 142 de 142 fragmentos de la plataforma,
+ * en los cinco chatbots, guardados sin vector desde agosto. Ninguna cuenta tenía
+ * búsqueda por significado, y el síntoma que llegaba era «el bot no sabe lo que
+ * sí está en su entrenamiento».
+ *
+ * ── POR QUÉ VA POR TANDAS Y NO DE UNA ──────────────────────────────────────
+ *
+ * Esto corre dentro de una petición web, que tiene su reloj. Una cuenta con
+ * ochocientos fragmentos lo agotaría a la mitad y se quedaría sin saber cuántos
+ * llegaron a guardarse. Se hace una tanda, se dice cuántos faltan y se vuelve a
+ * pulsar. Es repetible y nunca deja la mitad a oscuras sin avisar.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const POR_TANDA = 50;
+
+export async function reindexarConocimiento(
+  _estado: { ok: boolean; mensaje?: string } | undefined,
+  formData: FormData,
+): Promise<{ ok: boolean; mensaje?: string }> {
+  const orgId = await getCurrentOrgId();
+  const botId = String(formData.get("bot_id") ?? "");
+  if (!orgId || !botId) return { ok: false, mensaje: "Falta el chatbot." };
+
+  if (!embeddingsConfigured()) {
+    return {
+      ok: false,
+      mensaje: "Todavía no está activada la búsqueda por significado en la plataforma.",
+    };
+  }
+
+  // Con la sesión del usuario: si el chatbot no es de su cuenta, no existe.
+  const supabase = createClient();
+  const { data: filas, error } = await supabase
+    .from("bot_knowledge")
+    .select("id, content")
+    .eq("bot_id", botId)
+    .is("embedding", null)
+    .order("created_at")
+    .limit(POR_TANDA);
+  if (error) return { ok: false, mensaje: "No pude leer el entrenamiento." };
+
+  const tanda = (filas ?? []) as { id: string; content: string }[];
+  if (!tanda.length) {
+    return { ok: true, mensaje: "Todo tu entrenamiento ya se busca por significado." };
+  }
+
+  const vectores = await embed(tanda.map((f) => f.content));
+  /* SI VUELVEN MENOS VECTORES QUE TEXTOS, NO SE REPARTE NINGUNO. Colocarlos por
+   * posición cuando falta uno los correría a todos: cada fragmento quedaría con
+   * el vector del siguiente y el buscador devolvería, con total seguridad, la
+   * respuesta de otra pregunta. Es peor que no buscar. */
+  if (!vectores || vectores.length !== tanda.length) {
+    return {
+      ok: false,
+      mensaje: "El servicio de búsqueda no contestó bien. No cambié nada; vuelve a intentarlo.",
+    };
+  }
+
+  let hechos = 0;
+  for (let i = 0; i < tanda.length; i++) {
+    const { error: eFila } = await supabase
+      .from("bot_knowledge")
+      .update({ embedding: vectores[i] })
+      .eq("id", tanda[i].id);
+    if (eFila) {
+      console.error("[reindexar] no pude guardar el vector:", eFila.message);
+      continue;
+    }
+    hechos++;
+  }
+
+  const { count: faltan, error: eCuenta } = await supabase
+    .from("bot_knowledge")
+    .select("id", { count: "exact", head: true })
+    .eq("bot_id", botId)
+    .is("embedding", null);
+  // Si no se puede contar, NO se dice «ya está todo»: se dice lo que sí se
+  // sabe —cuántos se hicieron— y que vuelva a pulsar. Un «listo» falso aquí
+  // deja fragmentos ciegos para siempre, porque nadie vuelve a mirar.
+  if (eCuenta) console.error("[reindexar] no pude contar los que faltan:", eCuenta.message);
+
+  revalidatePath(`/bots/${botId}/training`);
+
+  if (!hechos) {
+    return { ok: false, mensaje: "No pude guardar ningún vector. Vuelve a intentarlo." };
+  }
+  if (eCuenta) {
+    return { ok: true, mensaje: `Listos ${hechos}. Vuelve a pulsar por si queda alguno.` };
+  }
+  return {
+    ok: true,
+    mensaje: faltan
+      ? `Listos ${hechos}. Faltan ${faltan}: vuelve a pulsar para seguir.`
+      : `Listo. Tus ${hechos} fragmentos ya se buscan por significado.`,
+  };
 }

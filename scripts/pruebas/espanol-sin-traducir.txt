@@ -11,7 +11,7 @@ Textos dentro de la lógica: 803
 Constructor de flujos: 610
 Tienda: 515
 Componentes sueltos: 436
-Chatbots: 391
+Chatbots: 401
 Superadmin (interno): 322
 Configuración: 271
 Resto del panel: 236

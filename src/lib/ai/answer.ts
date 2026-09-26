@@ -10,6 +10,7 @@
  */
 
 import { embedQuery } from "./ingest";
+import { consultaParaBuscar, CUANTOS_FRAGMENTOS, CUANTOS_MENSAJES_RECUERDA } from "./historial";
 import {
   armarHerramientas, ejecutarHerramienta, cumplirLoPrometido,
   elRespaldoPrometioUnaPersona, AHORA_CONTESTA, type ContextoAgente,
@@ -293,11 +294,23 @@ async function pensarRespuesta(opts: {
     return "⚠️ Falta configurar la llave de IA en el servidor.";
   }
 
-  // El conocimiento SIEMPRE se acota a la organización y al chatbot.
-  const knowledge = await findKnowledge(opts.admin, opts.botId, opts.question, opts.orgId);
+  /* El conocimiento SIEMPRE se acota a la organización y al chatbot.
+   *
+   * Y se busca con el hilo, no solo con el último mensaje: ver
+   * `consultaParaBuscar`. «¿Y el inicial?» no lleva dentro el nombre del
+   * proyecto, y sin él no hay con qué encontrarlo. */
+  const knowledge = await findKnowledge(
+    opts.admin,
+    opts.botId,
+    consultaParaBuscar(opts.question, opts.history),
+    opts.orgId,
+    CUANTOS_FRAGMENTOS,
+  );
 
   const messages: any[] = [
-    ...(opts.history ?? []).slice(-6),
+    // El recorte ya lo hizo quien leyó el hilo. Un `slice(-6)` aquí deshacía
+    // en silencio los mensajes que el motor se había molestado en traer.
+    ...(opts.history ?? []).slice(-CUANTOS_MENSAJES_RECUERDA),
     { role: "user" as const, content: opts.question },
   ];
 

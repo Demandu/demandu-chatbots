@@ -12329,4 +12329,83 @@ describe("Los dos motores recuerdan lo mismo", () => {
   });
 });
 
+// ─── Lo que está cargado tiene que poder encontrarse ────────────────────────
+//
+// 26 sep 2026. El cliente preguntó el abono inicial. La respuesta ESTÁ en su
+// entrenamiento («sujeto a la entidad bancaria, referencia desde el 10%») y el
+// bot contestó que no lo sabía. Dos motivos, los dos medibles:
+//
+// 1. Se buscaba con el ÚLTIMO mensaje y nada más. «¿Y el inicial?» no lleva
+//    dentro el nombre del proyecto — está tres mensajes más arriba.
+// 2. Los vectores solo se calculaban al subir el documento. El día que se puso
+//    la llave, lo ya cargado siguió ciego, y en la pantalla se veía igual.
+//    Medido ese día: 142 de 142 fragmentos de la plataforma, sin vector.
+describe("Lo que está cargado tiene que poder encontrarse", () => {
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const answer = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8"));
+  const hist = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/historial.ts"), "utf8"));
+  const acciones = sinComentarios(
+    fs.readFileSync(path.join(SRC, "app/(dashboard)/bots/[id]/training/actions.ts"), "utf8"),
+  );
+
+  test("LOS DOS MOTORES BUSCAN CON EL HILO, no solo con el último mensaje", () => {
+    /* SE MIRA LA LLAMADA JUNTO A LA BÚSQUEDA, no que la palabra aparezca en el
+     * archivo: el motor de WhatsApp lleva dentro su propia copia de la función,
+     * así que buscarla a secas daba verde aunque nadie la usara. */
+    for (const [donde, texto, buscador] of [
+      ["WhatsApp", wa, "buscarConocimiento"],
+      ["canal web", answer, "findKnowledge"],
+    ]) {
+      const pegadas = new RegExp(`${buscador}\\([\\s\\S]{0,200}consultaParaBuscar\\(`);
+      esperar(pegadas.test(texto)).verdadero(
+        `el motor de ${donde} busca en el entrenamiento solo con el último mensaje. Una ` +
+          "pregunta corta —«¿y el inicial?»— no lleva dentro de qué proyecto habla",
+      );
+    }
+    /* Y la consulta se arma SOLO con lo que dijo la persona: meter también lo
+     * que contestó el bot haría que la búsqueda se persiguiera a sí misma. */
+    esperar(/role === "user"/.test(hist)).verdadero(
+      "`consultaParaBuscar` dejó de quedarse solo con los turnos de la persona",
+    );
+  });
+
+  test("y traen más de un puñado de fragmentos", () => {
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", answer]]) {
+      esperar(/CUANTOS_FRAGMENTOS/.test(texto)).verdadero(
+        `el motor de ${donde} pide los fragmentos con el número de fábrica. Contra un ` +
+          "entrenamiento de ochenta fragmentos, cinco es poca red",
+      );
+    }
+    const n = Number((hist.match(/CUANTOS_FRAGMENTOS\s*=\s*(\d+)/) ?? [])[1] ?? 0);
+    const m = Number((wa.match(/CUANTOS_FRAGMENTOS\s*=\s*(\d+)/) ?? [])[1] ?? 0);
+    esperar(n).igual(m, "las dos copias de `CUANTOS_FRAGMENTOS` se separaron");
+    esperar(n >= 6).verdadero(`solo se le pasan ${n} fragmentos al modelo`);
+  });
+
+  test("NADA NACE CIEGO, Y LO QUE YA LO ESTÁ SE PUEDE ARREGLAR", () => {
+    /* `addKnowledge` insertaba a pelo, saltándose el único sitio que calcula
+     * vectores: un dato escrito a mano quedaba fuera de la búsqueda por
+     * significado para siempre y en la lista se veía igual que los demás. */
+    /* Dentro del INSERT, no en cualquier parte del archivo: «embedding: vector»
+     * también aparece dentro de «embedding: vectores[i]» del re-indexado, y con
+     * eso la regla daba verde aunque lo escrito a mano naciera ciego. */
+    esperar(/insert\(\{[\s\S]{0,300}embedding: vector,/.test(acciones)).verdadero(
+      "lo que se escribe a mano vuelve a guardarse sin vector: nace fuera de la búsqueda " +
+        "por significado y nadie lo nota",
+    );
+    /* Y el botón para lo ya subido, porque los vectores solo se calculaban al
+     * subir: sin esto, encender la llave no arregla nada de lo de ayer. */
+    esperar(/export async function reindexarConocimiento\(/.test(acciones)).verdadero(
+      "desapareció «re-indexar»: entonces poner la llave deja ciego todo lo ya cargado",
+    );
+    /* SI VUELVEN MENOS VECTORES QUE TEXTOS, NO SE REPARTE NINGUNO. Colocarlos
+     * por posición correría cada vector al fragmento siguiente y el buscador
+     * devolvería la respuesta de otra pregunta, con total seguridad. */
+    esperar(/vectores\.length !== tanda\.length/.test(acciones)).verdadero(
+      "re-indexar volvió a repartir vectores sin comprobar que vinieron todos: un vector " +
+        "corrido le pega a cada fragmento la respuesta del de al lado",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

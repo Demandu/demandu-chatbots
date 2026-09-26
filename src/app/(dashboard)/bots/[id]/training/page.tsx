@@ -4,8 +4,9 @@ import { Topbar } from "@/components/Topbar";
 import { BotTitle } from "@/components/BotTitle";
 import { LanaSays } from "@/components/Lana";
 import { createClient } from "@/lib/supabase/server";
-import { addKnowledge, addKnowledgeSimple, deleteKnowledge, toggleKnowledge, updateKnowledge, importFromUrl, importFromFile, deleteSource } from "./actions";
+import { addKnowledge, addKnowledgeSimple, deleteKnowledge, toggleKnowledge, updateKnowledge, importFromUrl, importFromFile, deleteSource, reindexarConocimiento } from "./actions";
 import { AgregarConocimiento } from "@/components/bots/AgregarConocimiento";
+import { Reindexar } from "@/components/bots/Reindexar";
 import { EntrenamientoNav, PESTANAS } from "@/components/bots/EntrenamientoNav";
 import { EntrenamientoResumen } from "@/components/bots/EntrenamientoResumen";
 import { LoQueNoSupo, type Pregunta } from "@/components/settings/LoQueNoSupo";
@@ -78,6 +79,13 @@ export default async function BotTrainingPage({
   const fragmentos = list.filter((k) => k.source_type === "text" || !k.source_name);
   const activos = fragmentos.filter((k) => k.enabled).length;
   const semantica = embeddingsConfigured();
+  /* CUÁNTOS DE SUS FRAGMENTOS LA TIENEN DE VERDAD.
+   *
+   * La bolita verde de aquí abajo decía «búsqueda por significado activa» y
+   * miraba solo si hay llave en la plataforma. El 26 de septiembre de 2026 se
+   * midió que los 142 fragmentos de las cinco cuentas estaban guardados SIN
+   * vector: la bolita habría estado verde con todos los chatbots ciegos. */
+  const sinVector = list.filter((k: any) => !k.embedding).length;
   const storage = await getStorage(supabase, await getCurrentOrgId());
 
   // Agrupa lo que vino de una misma fuente (una web, un documento…)
@@ -184,6 +192,9 @@ export default async function BotTrainingPage({
                     ? "Entiende preguntas aunque estén escritas con otras palabras: quien pregunte «cuánto sale» encuentra tus precios."
                     : "Funciona bien con poca información. Para documentos largos conviene activar la búsqueda por significado."}
                 </p>
+                {semantica && sinVector > 0 && (
+                  <Reindexar botId={bot.id} sinVector={sinVector} accion={reindexarConocimiento} />
+                )}
                 <p className="mt-2 text-[11px] text-ink-3">
                   {fragmentos.length} fragmento{fragmentos.length === 1 ? "" : "s"} · {listaFuentes.length} fuente
                   {listaFuentes.length === 1 ? "" : "s"}
