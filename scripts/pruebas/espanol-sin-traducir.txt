@@ -7,13 +7,13 @@
 # traduciendo algo, o se sube este archivo a mano Y se explica en el commit.
 #
 # Se regenera con:  node scripts/medir-idiomas.mjs --guardar
-Textos dentro de la lógica: 797
+Textos dentro de la lógica: 803
 Constructor de flujos: 610
 Tienda: 515
 Componentes sueltos: 436
 Chatbots: 391
 Superadmin (interno): 322
-Configuración: 270
+Configuración: 271
 Resto del panel: 236
 Bandeja: 115
 Reservas: 80

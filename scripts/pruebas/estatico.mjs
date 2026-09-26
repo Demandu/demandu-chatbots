@@ -2784,7 +2784,9 @@ describe("Agente de IA con herramientas", () => {
     esperar(answer.includes("await cumplirLoPrometido(")).verdadero(
       "el canal web lo tiene escrito pero no lo llama",
     );
-    esperar(/return await cumplirLoPrometido\(ctx, texto, tools\)/.test(wa)).verdadero(
+    // Se mira la LLAMADA, no la línea entera: desde que el respaldo también
+    // hace el pase, el resultado se guarda en una variable antes de devolverlo.
+    esperar(/await cumplirLoPrometido\(ctx, texto, tools\)/.test(wa)).verdadero(
       "el motor de WhatsApp lo tiene escrito pero no lo llama",
     );
   });
@@ -12132,6 +12134,134 @@ describe("«lead.datos» siempre dice de quién habla", () => {
         0,
         `${faltan} de las 3 emisiones del motor no mandan \`${clave}\`. El mismo evento ` +
           "significa una cosa por WhatsApp y otra por la web",
+      );
+    }
+  });
+});
+
+// ─── El panel no puede decir «IA encendida» de un chatbot apagado ────────
+//
+// 24 sep 2026: la pantalla «Lana IA» ponía «IA encendida» en verde sobre un
+// chatbot cuya IA estaba apagada. Leía `bots.ai`, el sitio VIEJO, que para un
+// chatbot con agente está vacío — y un `{}` no dice «apagada»: deja pasar el
+// valor por defecto, que es `enabled: true`.
+//
+// El daño no es la etiqueta. Es que el dueño da por bueno que su bot contesta
+// y su bot calla. Un panel que miente sobre si algo está encendido es peor que
+// un panel que no lo dice.
+describe("La IA que enseña el panel es la que obedece el motor", () => {
+  /* El motor es quien DEFINE los valores por defecto; ahí la mezcla es su
+   * trabajo y los ajustes le llegan de fuera. Las pantallas no: las pantallas
+   * tienen que ir a buscarlos al agente. */
+  const EL_MOTOR = "lib/ai/answer.ts";
+
+  test("NADIE MEZCLA `AI_DEFAULTS` CON AJUSTES QUE NO VIENEN DEL AGENTE", () => {
+    const mudos = [];
+    for (const { ruta, texto } of ARCHIVOS) {
+      if (ruta.endsWith(EL_MOTOR)) continue;
+      const t = sinComentarios(texto);
+      if (!/\.\.\.AI_DEFAULTS/.test(t)) continue;
+      if (!/ajustesQueMandan\(|\.ajustes\b/.test(t)) mudos.push(ruta);
+    }
+    esperar(mudos.join(" | ")).igual(
+      "",
+      "una pantalla decide si la IA está encendida sin mirar el agente. El agente es lo " +
+        "que obedece el motor: así es como el panel dice «encendida» y el chatbot calla",
+    );
+  });
+
+  test("y la lista de chatbots trae el agente de cada uno", () => {
+    const t = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/(dashboard)/settings/ai/page.tsx"), "utf8"),
+    );
+    esperar(/select\("id, name, channel, ai, agente_id"\)/.test(t)).verdadero(
+      "la lista de chatbots dejó de pedir `agente_id`: sin él no hay forma de saber si la " +
+        "IA de cada uno está encendida",
+    );
+    esperar(/\.\.\.\(b\.ai \?\? \{\}\)/.test(t)).falso(
+      "volvió el `...(b.ai ?? {})` que pintaba «IA encendida» sobre un chatbot apagado",
+    );
+  });
+});
+
+// ─── El bot no promete una persona que nadie llama ──────────────────────────
+//
+// 25 y 26 sep 2026, Casas Pacíficas. Después de dos o tres preguntas el bot
+// contestaba siempre lo mismo: «Oye sabes que?, mejor te envío con uno de mis
+// compañeros para que te ayude con esto». Eso es el MENSAJE DE RESPALDO del
+// cliente, y salía porque el modelo terminaba el turno sin escribir nada.
+//
+// Dos agujeros, y el segundo es el caro:
+//
+// 1. Los resultados de herramienta decían «No se lo menciones a la persona» y
+//    nada más. Con UNA herramienta colaba; con dos o tres en el mismo turno el
+//    modelo se callaba del todo. Los seis respaldos de esas 24 h van detrás de
+//    un turno con herramientas; los cinco mudos usaron dos o más.
+//
+// 2. Ese respaldo PROMETE UNA PERSONA y no se pasaba a nadie: `caida()`
+//    devolvía el texto del cliente sin mirarlo. Las seis conversaciones
+//    siguieron `open`, sin dueño y sin nadie avisado. El lead esperando.
+describe("Una promesa de persona se cumple, venga de donde venga", () => {
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const answer = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8"));
+  const herr = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/herramientas.ts"), "utf8"));
+
+  test("EL MENSAJE DE RESPALDO TAMBIÉN SE MIRA", () => {
+    esperar(/prometioUnaPersona\(ai\.fallback\)/.test(wa)).verdadero(
+      "el motor de WhatsApp manda el respaldo sin comprobar si promete una persona: " +
+        "el cliente lee «te paso con alguien» y la conversación se queda sin dueño",
+    );
+    esperar(/elRespaldoPrometioUnaPersona\(/.test(answer)).verdadero(
+      "el canal web manda el respaldo sin comprobar si promete una persona",
+    );
+    esperar(/prometioUnaPersona\(respaldo\)/.test(herr)).verdadero(
+      "desapareció la comprobación del respaldo en `herramientas.ts`",
+    );
+  });
+
+  test("y NINGÚN respaldo sale sin esperar a que el pase esté hecho", () => {
+    /* `caida` es async desde que hace el pase. Un `return caida(...)` sin
+     * `await` devuelve una promesa —que en texto sale como «[object Promise]»—
+     * y, peor, se va antes de que el pase termine. */
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", answer]]) {
+      esperar(/return caida\(/.test(texto)).falso(
+        `en el motor de ${donde} quedó un respaldo sin \`await\`: sale antes de que ` +
+          "el pase a una persona llegue a grabarse",
+      );
+    }
+  });
+
+  test("DESPUÉS DE USAR HERRAMIENTAS, EL MODELO TIENE ORDEN DE CONTESTAR", () => {
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", answer]]) {
+      esperar(/\.\.\.resultados, \{ type: "text", text: AHORA_CONTESTA \}/.test(texto)).verdadero(
+        `el motor de ${donde} le devuelve los resultados de las herramientas sin pedirle ` +
+          "que conteste. Con dos o tres herramientas en un turno, se queda mudo",
+      );
+    }
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", herr]]) {
+      esperar(/No se lo menciones a la persona\.`/.test(texto)).falso(
+        `en ${donde} volvió el resultado de herramienta que solo dice qué NO hacer. ` +
+          "Repetido dos o tres veces, el modelo entiende que no tiene que decir nada",
+      );
+    }
+  });
+
+  test("las dos copias de las dos frases dicen lo mismo", () => {
+    /* Deno no puede importar de `src/`, así que las frases están escritas dos
+     * veces. Que se separen es cómo vuelve este fallo por un solo canal. */
+    const sacar = (texto, nombre) => {
+      const m = texto.match(new RegExp(`${nombre}\\s*=\\s*([\\s\\S]*?);`));
+      return m ? m[1].replace(/\s+/g, " ").trim() : "";
+    };
+    for (const nombre of ["SIGUE_HABLANDO", "AHORA_CONTESTA"]) {
+      const enElMotor = sacar(wa, nombre);
+      esperar(enElMotor.length > 40).verdadero(
+        `no encuentro \`${nombre}\` en el motor de WhatsApp`,
+      );
+      esperar(enElMotor).igual(
+        sacar(herr, nombre),
+        `las dos copias de \`${nombre}\` se separaron: el bot se comportaría distinto ` +
+          "por WhatsApp que por la web, y nadie lo vería hasta que un cliente se queje",
       );
     }
   });

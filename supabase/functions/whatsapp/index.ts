@@ -1107,10 +1107,15 @@ const PROM_COMPROMISO =
   "en\\s+un\\s+momento\\s+te\\s+atiende|enseguida\\s+te\\s+atiende)";
 const PROM_YO_TE_PASO =
   "(?:te|le|lo|la)\\s+(?:paso|comunico|conecto|transfiero|derivo|enlazo)\\s+(?:con|a)\\b";
+/* «Mejor te ENVÍO con uno de mis compañeros». Se exige una PERSONA detrás
+ * para no confundirlo con «te lo mando a tu correo». */
+const PROM_YO_TE_ENVIO_CON =
+  `(?:te|le|lo|la)\\s+(?:env[íi]o|mando|remito)\\s+(?:con|a)\\b[^.!?\\n]{0,40}${PROM_PERSONA}`;
 const PROM_PATRONES = [
   new RegExp(`${PROM_PERSONA}[^.!?\\n]{0,60}${PROM_COMPROMISO}`, "i"),
   new RegExp(`${PROM_COMPROMISO}[^.!?\\n]{0,60}${PROM_PERSONA}`, "i"),
   new RegExp(PROM_YO_TE_PASO, "i"),
+  new RegExp(PROM_YO_TE_ENVIO_CON, "i"),
 ];
 const PROM_SOLO_OFRECE =
   /(?:\?|¿)|(?:quieres|querés|desea|deseas|gustar[íi]a|prefieres|te sirve|puedo)\b/i;
@@ -1866,6 +1871,26 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
  * error EXPLICATIVO en vez de fallar en silencio: con eso el modelo corrige y
  * lo vuelve a intentar bien, que es justo lo que se quiere.
  */
+/**
+ * LO QUE SE LE DICE AL MODELO DESPUÉS DE GUARDAR ALGO POR DENTRO.
+ * COPIA DELIBERADA de `SIGUE_HABLANDO` y `AHORA_CONTESTA` en
+ * `src/lib/ai/herramientas.ts` — Deno no puede importar del proyecto. Una
+ * regla estática compara las dos, carácter por carácter.
+ *
+ * Aquí ponía solo «No se lo menciones a la persona», que es media orden: dice
+ * qué no hacer y no dice qué hacer. Con una herramienta colaba; con dos o
+ * tres en el mismo turno el modelo se callaba del todo. Medido en Casas
+ * Pacíficas el 25 y 26 de septiembre de 2026.
+ */
+const SIGUE_HABLANDO =
+  "Es un apunte interno: no se lo menciones a la persona, pero SIGUE la " +
+  "conversación con normalidad en este mismo turno.";
+
+const AHORA_CONTESTA =
+  "Ya está todo registrado. Ahora escríbele tú a la persona, en una o dos " +
+  "frases, sobre lo último que te dijo. No contestar no es una opción: si te " +
+  "quedas sin escribir nada, se queda esperando.";
+
 async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any): Promise<string> {
   try {
     switch (nombre) {
@@ -2299,7 +2324,7 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           en_que_me_baso: Array.isArray(args?.en_que_me_baso) ? args.en_que_me_baso : [],
           por: "agente_ia",
         });
-        return `Listo, quedó etiquetado como "${etiqueta}". No se lo menciones a la persona.`;
+        return `Listo, quedó etiquetado como "${etiqueta}". ${SIGUE_HABLANDO}`;
       }
 
       case "guardar_dato": {
@@ -2328,7 +2353,7 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           contacto_id: c.id, telefono: ctx.to, nombre: (c.name ?? "").trim() || null,
           campo, valor, por: "agente_ia",
         });
-        return `Guardado: ${campo} = ${valor}. No se lo menciones a la persona.`;
+        return `Guardado: ${campo} = ${valor}. ${SIGUE_HABLANDO}`;
       }
 
       case "pasar_a_humano": {
@@ -2666,20 +2691,39 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
    * motivo queda en el registro y pegado al mensaje, para que la Bandeja pueda
    * decirle al negocio qué pasó de verdad.
    * ────────────────────────────────────────────────────────────────────── */
-  const caida = (motivo: string) => {
+  /* EL MENSAJE DE RESPALDO TAMBIÉN PROMETE, Y NADIE LO ESTABA MIRANDO.
+   *
+   * `cumplirLoPrometido` vigila lo que escribe el MODELO. Pero cuando la IA se
+   * cae, lo que sale es el texto que escribió EL CLIENTE —y ese también puede
+   * prometer una persona—. El de Casas Pacíficas dice «mejor te envío con uno
+   * de mis compañeros»: el 25 y el 26 de septiembre de 2026 se mandó seis
+   * veces y las seis la conversación siguió `open`, sin dueño y sin nadie
+   * avisado. El lead esperando a alguien a quien nunca se llamó.
+   *
+   * Da igual por qué se cayó: al cliente se le acaba de prometer una persona
+   * en nombre del negocio. Se cumple. */
+  const caida = async (motivo: string) => {
     console.error(`[ia] respaldo por: ${motivo} (org ${ctx.orgId})`);
     ctx.motivoDelRespaldo = motivo;
+    if (!ctx.pasoAHumano && prometioUnaPersona(ai.fallback)) {
+      console.log("[agente] el mensaje de respaldo promete una persona; se hace el pase");
+      await elPaseAUnaPersona(
+        ctx,
+        "El mensaje de respaldo prometió que atendería una persona",
+        "lo prometió el mensaje de respaldo",
+      );
+    }
     return ai.fallback;
   };
 
   // El interruptor «Responder con IA». Mismo comportamiento que el canal web:
   // apagada no se llama a la API, no se gasta y no se registra consumo.
-  if (ai.enabled === false) return caida("la IA está apagada en este chatbot");
+  if (ai.enabled === false) return await caida("la IA está apagada en este chatbot");
 
   // El `.trim()` no sobra: una llave pegada con un salto de línea al final se
   // ve idéntica en el panel y falla con 401 sin que nadie entienda por qué.
   const key = (Deno.env.get("ANTHROPIC_API_KEY") ?? "").trim();
-  if (!key) return caida("falta ANTHROPIC_API_KEY en el motor");
+  if (!key) return await caida("falta ANTHROPIC_API_KEY en el motor");
 
   // Freno de mano. Normalmente NO hay tope y la IA va incluida — es lo que se
   // vende. Se pone un número solo cuando una cuenta concreta se desborda.
@@ -2687,7 +2731,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
   // AL LLEGAR AL TOPE EL BOT NO SE CALLA: sigue con sus flujos y sus botones y
   // solo deja de pensar respuestas nuevas. Degradar es mejor que cortar — el
   // cliente sigue atendiendo mientras se habla con él para subirlo de plan.
-  if (await pasoElTopeDeIA(ctx)) return caida("esta cuenta llegó a su tope de mensajes de IA");
+  if (await pasoElTopeDeIA(ctx)) return await caida("esta cuenta llegó a su tope de mensajes de IA");
 
   /* ── ¿SU PLAN INCLUYE LA IA? ─────────────────────────────────────────────
    *
@@ -2698,7 +2742,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
    * ANTE LA DUDA, SÍ. Si la base no contesta, dejar mudo al cliente de un
    * negocio que SÍ paga la IA es mucho peor que unos centavos de más.
    */
-  if (!(await tieneIA(ctx))) return caida("el plan no incluye IA");
+  if (!(await tieneIA(ctx))) return await caida("el plan no incluye IA");
 
   const kbRows = await buscarConocimiento(ctx.db, ctx.orgId, ctx.botId, pregunta);
   const kb = kbRows.length
@@ -2788,7 +2832,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
       });
       if (!res.ok) {
         const detalle = (await res.text().catch(() => "")).slice(0, 200);
-        return caida(`la API de IA respondió ${res.status}: ${detalle.slice(0, 120)}`);
+        return await caida(`la API de IA respondió ${res.status}: ${detalle.slice(0, 120)}`);
       }
 
       const j = await res.json();
@@ -2824,7 +2868,12 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
 
       const pedidas = bloques.filter((c: any) => c?.type === "tool_use");
       if (j?.stop_reason !== "tool_use" || !pedidas.length) {
-        return await cumplirLoPrometido(ctx, texto, tools) || caida("el modelo terminó sin escribir nada");
+        const dicho = await cumplirLoPrometido(ctx, texto, tools);
+        if (dicho) return dicho;
+        // QUÉ TRAJO, no solo que vino vacío.
+        const comoParo = `${j?.stop_reason ?? "?"}, bloques: ${
+          (bloques.map((b: any) => b?.type).join("+") || "ninguno")}`;
+        return await caida(`el modelo terminó sin escribir nada (${comoParo})`);
       }
 
       // Se ejecuta lo que pidió y se le devuelve el resultado para que siga.
@@ -2835,7 +2884,12 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
         const salida = await ejecutarHerramienta(ctx, ai, p.name, p.input ?? {});
         resultados.push({ type: "tool_result", tool_use_id: p.id, content: salida });
       }
-      mensajes.push({ role: "user", content: resultados });
+      /* LA ÚLTIMA LÍNEA DEL TURNO ES UNA ORDEN DE HABLAR. Ver `AHORA_CONTESTA`.
+       * Va al final porque lo último que se lee es lo que manda. */
+      mensajes.push({
+        role: "user",
+        content: [...resultados, { type: "text", text: AHORA_CONTESTA }],
+      });
 
       // Si la herramienta pasó la charla a una persona, no hay más que hablar:
       // seguir el ciclo sería que el bot siguiera conversando después de haber
@@ -2849,9 +2903,9 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
     // MOTIVO QUE MÁS IMPORTA: casi siempre significa que una herramienta está
     // fallando y el modelo la reintenta hasta quedarse sin turnos. Desde fuera
     // se veía igual que «no sé la respuesta».
-    return caida(`se agotaron los intentos (${MAX_VUELTAS}), probablemente una herramienta está fallando`);
+    return await caida(`se agotaron los intentos (${MAX_VUELTAS}), probablemente una herramienta está fallando`);
   } catch (e: any) {
-    return caida(`no se pudo conectar con la IA: ${e?.message ?? e}`);
+    return await caida(`no se pudo conectar con la IA: ${e?.message ?? e}`);
   }
 }
 

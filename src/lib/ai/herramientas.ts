@@ -783,6 +783,60 @@ export async function armarHerramientas(
  * a veces narra el pase en vez de ejecutarlo, y el lead se queda esperando a
  * alguien que no va a llegar. La promesa la hizo el bot en nombre del negocio.
  */
+/**
+ * LO QUE SE LE DICE AL MODELO DESPUÉS DE GUARDAR ALGO POR DENTRO.
+ *
+ * ────────────────────────────────────────────────────────────────────────
+ * AQUÍ PONÍA SOLO «No se lo menciones a la persona», Y ESO ES MEDIA ORDEN.
+ * Dice qué no hacer y no dice qué hacer. Con una herramienta colaba; con dos
+ * o tres en el mismo turno, el modelo recibe la misma orden de callar
+ * repetida y se calla del todo —devuelve un turno sin una sola palabra—.
+ *
+ * Medido en Casas Pacíficas el 25 y 26 de septiembre de 2026: los seis
+ * respaldos de «el modelo terminó sin escribir nada» de esas 24 horas van
+ * detrás de un turno con herramientas, y los cinco que se quedaron mudos
+ * usaron DOS O MÁS. El único turno de una sola herramienta contestó bien.
+ *
+ * Desde el lado del cliente eso se ve así: contesta dos o tres veces, y a la
+ * tercera pregunta suelta el mensaje de respaldo y ya no sale de ahí.
+ * ────────────────────────────────────────────────────────────────────────
+ */
+export const SIGUE_HABLANDO =
+  "Es un apunte interno: no se lo menciones a la persona, pero SIGUE la " +
+  "conversación con normalidad en este mismo turno.";
+
+/** Y esto cierra el turno de resultados, una sola vez, pase lo que pase. */
+export const AHORA_CONTESTA =
+  "Ya está todo registrado. Ahora escríbele tú a la persona, en una o dos " +
+  "frases, sobre lo último que te dijo. No contestar no es una opción: si te " +
+  "quedas sin escribir nada, se queda esperando.";
+
+/**
+ * EL MENSAJE DE RESPALDO TAMBIÉN PROMETE, Y NADIE LO ESTABA MIRANDO.
+ *
+ * `cumplirLoPrometido` vigila lo que escribe el MODELO. Pero cuando la IA se
+ * cae, el bot manda el texto de respaldo que escribió el CLIENTE —y ese texto
+ * también puede prometer una persona—. El de Casas Pacíficas dice «mejor te
+ * envío con uno de mis compañeros»: se mandó dos veces y la conversación
+ * siguió `open`, sin dueño y sin nadie avisado.
+ *
+ * Da igual por qué se cayó —sin llave, sin plan, sin texto—: al cliente se le
+ * acaba de prometer una persona en nombre del negocio. Se cumple.
+ */
+export async function elRespaldoPrometioUnaPersona(
+  ctx: ContextoAgente | null | undefined,
+  respaldo: string,
+): Promise<void> {
+  if (!ctx || ctx.pasoAHumano) return;
+  if (!prometioUnaPersona(respaldo)) return;
+  console.log("[agente] el mensaje de respaldo promete una persona; se hace el pase");
+  await hacerElPase(
+    ctx,
+    "El mensaje de respaldo prometió que atendería una persona",
+    "lo prometió el mensaje de respaldo",
+  );
+}
+
 export async function cumplirLoPrometido(
   ctx: ContextoAgente,
   texto: string,
@@ -1406,7 +1460,7 @@ export async function ejecutarHerramienta(
           conversacion_id: ctx.conversationId,
           por: "agente_ia",
         });
-        return `Listo, quedó etiquetado como "${etiqueta}". No se lo menciones a la persona.`;
+        return `Listo, quedó etiquetado como "${etiqueta}". ${SIGUE_HABLANDO}`;
       }
 
       case "guardar_dato": {
@@ -1437,7 +1491,7 @@ export async function ejecutarHerramienta(
           conversacion_id: ctx.conversationId,
           por: "agente_ia",
         });
-        return `Guardado: ${campo} = ${valor}. No se lo menciones a la persona.`;
+        return `Guardado: ${campo} = ${valor}. ${SIGUE_HABLANDO}`;
       }
 
       case "pasar_a_humano": {

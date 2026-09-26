@@ -38,10 +38,24 @@ const COMPROMISO =
 const YO_TE_PASO =
   "(?:te|le|lo|la)\\s+(?:paso|comunico|conecto|transfiero|derivo|enlazo)\\s+(?:con|a)\\b";
 
+/**
+ * «Mejor te ENVÍO con uno de mis compañeros». No estaba, y es exactamente
+ * como lo escribió una inmobiliaria en su mensaje de respaldo: el bot se lo
+ * mandó dos veces a la misma persona el 25 de septiembre de 2026 y la
+ * conversación se quedó abierta y sin dueño las dos veces.
+ *
+ * SE EXIGE UNA PERSONA DETRÁS, y por eso no va dentro de `YO_TE_PASO`: sin
+ * ese requisito, «te lo mando a tu correo» contaría como promesa de un
+ * asesor y cada envío de un PDF acabaría ocupando a alguien del equipo.
+ */
+const YO_TE_ENVIO_CON =
+  `(?:te|le|lo|la)\\s+(?:env[íi]o|mando|remito)\\s+(?:con|a)\\b[^.!?\\n]{0,40}${PERSONA}`;
+
 const PATRONES = [
   new RegExp(`${PERSONA}[^.!?\\n]{0,60}${COMPROMISO}`, "i"),
   new RegExp(`${COMPROMISO}[^.!?\\n]{0,60}${PERSONA}`, "i"),
   new RegExp(YO_TE_PASO, "i"),
+  new RegExp(YO_TE_ENVIO_CON, "i"),
 ];
 
 /**

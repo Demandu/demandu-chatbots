@@ -5,6 +5,8 @@ import { exigir } from "@/lib/permisos-server";
 import { LanaSays } from "@/components/Lana";
 import { LoQueNoSupo, type Pregunta } from "@/components/settings/LoQueNoSupo";
 import { AI_DEFAULTS } from "@/lib/ai/answer";
+import { ajustesQueMandan, type FilaDeAgente } from "@/lib/ai/agenteAjustes";
+import { COLUMNAS_DE_AGENTE } from "@/lib/ai/agentes";
 
 export const dynamic = "force-dynamic";
 
@@ -32,11 +34,46 @@ export default async function LanaIAPage() {
   const supabase = createClient();
   const [{ data: sinRespuesta }, { data: botsData }] = await Promise.all([
     supabase.rpc("lo_que_no_supo", { p_dias: 30 }),
-    supabase.from("bots").select("id, name, channel, ai").order("created_at"),
+    supabase.from("bots").select("id, name, channel, ai, agente_id").order("created_at"),
   ]);
 
   const preguntas = (sinRespuesta ?? []) as Pregunta[];
-  const bots = (botsData ?? []) as { id: string; name: string; channel: string; ai: any }[];
+  const bots = (botsData ?? []) as {
+    id: string; name: string; channel: string; ai: any; agente_id: string | null;
+  }[];
+
+  /* ── DE DÓNDE SALE «IA ENCENDIDA» ────────────────────────────────────────
+   *
+   * DEL AGENTE, QUE ES LO QUE OBEDECE EL MOTOR. Esta tarjeta leía `bots.ai`,
+   * que es el sitio VIEJO: desde que existen los agentes, ahí no queda nada
+   * para un chatbot nuevo. Un `{}` no dice «apagada» — deja pasar el valor por
+   * defecto, que es `enabled: true`. Resultado: la tarjeta ponía «IA encendida»
+   * en verde mientras el chatbot no contestaba con IA.
+   *
+   * Se vio el 24 de septiembre de 2026 en Casas Pacíficas: su agente estaba
+   * apagado, su pantalla de chatbot decía «IA apagada en este chatbot» y esta
+   * de al lado decía lo contrario. La pantalla que más se abre era la que
+   * mentía.
+   *
+   * `ajustesQueMandan` es la MISMA función que usa el motor y la pantalla del
+   * chatbot: el agente manda y `bots.ai` queda de respaldo para los chatbots
+   * de antes. Mientras las tres lean de aquí, no pueden volver a discrepar.
+   * ────────────────────────────────────────────────────────────────────── */
+  const idsDeAgente = [
+    ...new Set(bots.map((b) => String(b.agente_id ?? "").trim()).filter(Boolean)),
+  ];
+  const agentes = new Map<string, FilaDeAgente>();
+  if (idsDeAgente.length) {
+    const { data: filas, error: eAgentes } = await supabase
+      .from("agentes")
+      .select(COLUMNAS_DE_AGENTE)
+      .in("id", idsDeAgente);
+    // Si la base tiene un mal minuto se cae al respaldo de siempre —`bots.ai`—,
+    // que es EXACTAMENTE lo que hace el motor en ese caso (ver `agenteDelBot`).
+    // Así, hasta fallando, la pantalla y el chatbot siguen diciendo lo mismo.
+    if (eAgentes) console.error("[lana-ia] no pude leer los agentes:", eAgentes.message);
+    for (const a of (filas ?? []) as FilaDeAgente[]) agentes.set(String(a.id ?? ""), a);
+  }
 
   // El conocimiento se cuenta por chatbot: es el dato que de verdad dice si la
   // IA de ese bot sabe algo del negocio o va a contestar con evasivas.
@@ -91,7 +128,11 @@ export default async function LanaIAPage() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {bots.map((b) => {
-              const ai = { ...AI_DEFAULTS, ...(b.ai ?? {}) };
+              // El agente manda; `bots.ai` es el respaldo. Igual que el motor.
+              const ai = {
+                ...AI_DEFAULTS,
+                ...ajustesQueMandan(agentes.get(String(b.agente_id ?? "")) ?? null, b.ai),
+              };
               const apagada = ai.enabled === false;
               const saberes = conteos.get(b.id) ?? 0;
 

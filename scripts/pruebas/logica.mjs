@@ -710,8 +710,18 @@ describe("El bot promete una persona", () => {
     "En un momento te atiende una persona del equipo 🙌",
     "Gracias por los datos. Un ejecutivo te contactará mañana.",
     "Perfecto. Te conecto con alguien del equipo.",
+    // El respaldo que escribió Casas Pacíficas, palabra por palabra. Se mandó
+    // seis veces el 25 y 26 de septiembre de 2026 y las seis la conversación
+    // se quedó abierta y sin dueño: «envío» no estaba en la lista.
+    "Oye sabes que?, mejor te envío con uno de mis compañeros para que te ayude con esto. Gracias!",
+    "Te mando con un asesor ahora mismo.",
   ];
   const NO = [
+    // Y lo que NO puede arrastrar el añadido de arriba: mandar una COSA no es
+    // mandar con una PERSONA. Sin esta distinción, cada PDF que envíe el bot
+    // ocuparía a alguien del equipo.
+    "Te lo mando a tu correo en un momento.",
+    "Te envío el brochure del proyecto.",
     "¿Quieres que te comunique con una persona del equipo?",
     "Esa no me la sé todavía 🙈 ¿Quieres que te comunique con alguien?",
     "Si prefieres, un asesor puede ayudarte con eso.",

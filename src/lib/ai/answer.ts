@@ -10,7 +10,10 @@
  */
 
 import { embedQuery } from "./ingest";
-import { armarHerramientas, ejecutarHerramienta, cumplirLoPrometido, type ContextoAgente } from "./herramientas";
+import {
+  armarHerramientas, ejecutarHerramienta, cumplirLoPrometido,
+  elRespaldoPrometioUnaPersona, AHORA_CONTESTA, type ContextoAgente,
+} from "./herramientas";
 import { sinMarcadores } from "./acciones";
 import { sinLoQueNoPuedeDecir } from "./loQueNoPuedeDecir";
 
@@ -247,14 +250,16 @@ async function pensarRespuesta(opts: {
   //
   // Se apunta en el contexto del agente, que es lo que el motor guarda con el
   // mensaje. Un `console.error` no sirve: nadie lee los registros de Netlify.
-  const caida = (motivo: string) => {
+  const caida = async (motivo: string) => {
     console.error(`[ia] respaldo por: ${motivo} (org ${opts.orgId})`);
     if (opts.agente) (opts.agente as any).motivoDelRespaldo = motivo;
+    // Ver `elRespaldoPrometioUnaPersona`: el texto del cliente también promete.
+    await elRespaldoPrometioUnaPersona(opts.agente, ai.fallback);
     return ai.fallback;
   };
 
   if (ai.enabled === false) {
-    if (!opts.diagnostico) return caida("la IA está apagada en este chatbot");
+    if (!opts.diagnostico) return await caida("la IA está apagada en este chatbot");
     return opts.diagnostico
       ? "⚠️ La IA está apagada para este chatbot. Enciéndela con el interruptor «Responder con IA»."
       : ai.fallback;
@@ -278,13 +283,13 @@ async function pensarRespuesta(opts: {
    * solo deja de pensar respuestas nuevas. Degradar es mejor que cortar.
    */
   if (!(await orgConIA(opts.admin, opts.orgId))) {
-    if (!opts.diagnostico) return caida("el plan no incluye IA");
+    if (!opts.diagnostico) return await caida("el plan no incluye IA");
     return "⚠️ Tu plan no incluye Lana IA. Puedes activarla desde Configuración → Mi plan.";
   }
 
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
-    if (!opts.diagnostico) return caida("falta ANTHROPIC_API_KEY en el servidor");
+    if (!opts.diagnostico) return await caida("falta ANTHROPIC_API_KEY en el servidor");
     return "⚠️ Falta configurar la llave de IA en el servidor.";
   }
 
@@ -335,7 +340,7 @@ async function pensarRespuesta(opts: {
 
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
-        if (!opts.diagnostico) return caida(`la API de IA respondió ${res.status}: ${detail.slice(0, 120)}`);
+        if (!opts.diagnostico) return await caida(`la API de IA respondió ${res.status}: ${detail.slice(0, 120)}`);
         return explicarFallo(res.status, detail);
       }
 
@@ -377,7 +382,12 @@ async function pensarRespuesta(opts: {
         if (opts.agente) text = await cumplirLoPrometido(opts.agente, text, tools);
         // SIN TEXTO NO ES «no lo sé»: el modelo terminó sin decir nada, que es
         // una avería. Decirle al cliente «esa no me la sé» esconde el fallo.
-        return text || caida("el modelo terminó sin escribir nada");
+        if (text) return text;
+        // QUÉ TRAJO, no solo que vino vacío. Sin esto, «terminó sin escribir
+        // nada» obliga a reconstruir a mano por qué paró.
+        const comoParo = `${j?.stop_reason ?? "?"}, bloques: ${
+          (bloques.map((b: any) => b?.type).join("+") || "ninguno")}`;
+        return await caida(`el modelo terminó sin escribir nada (${comoParo})`);
       }
 
       // Se ejecuta lo que pidió y se le devuelve el resultado para que siga.
@@ -391,7 +401,14 @@ async function pensarRespuesta(opts: {
           content: await ejecutarHerramienta(opts.agente, ai, p.name, p.input ?? {}),
         });
       }
-      messages.push({ role: "user", content: resultados });
+      /* LA ÚLTIMA LÍNEA DEL TURNO ES UNA ORDEN DE HABLAR. Los resultados de
+       * herramienta dicen «no se lo menciones» una vez por herramienta; con dos
+       * o tres, el modelo se creía que no tenía que decir nada y devolvía un
+       * turno vacío. Va al final porque lo último que se lee es lo que manda. */
+      messages.push({
+        role: "user",
+        content: [...resultados, { type: "text", text: AHORA_CONTESTA }],
+      });
 
       // Si la herramienta pasó la charla a una persona, no hay más que hablar.
       if (opts.agente.pasoAHumano) {
@@ -404,9 +421,9 @@ async function pensarRespuesta(opts: {
     // reintenta hasta agotar las vueltas. Le pasó a una demo: `agendar_cita`
     // fallaba, el modelo insistía, y el cliente recibió «esa no me la sé»
     // mientras la agenda estaba rota. Sin este apunte, indistinguible.
-    return caida(`se agotaron los intentos (${MAX_VUELTAS}), probablemente una herramienta está fallando`);
+    return await caida(`se agotaron los intentos (${MAX_VUELTAS}), probablemente una herramienta está fallando`);
   } catch (e: any) {
-    if (!opts.diagnostico) return caida(`no se pudo conectar con la IA: ${e?.message ?? e}`);
+    if (!opts.diagnostico) return await caida(`no se pudo conectar con la IA: ${e?.message ?? e}`);
     return "⚠️ No se pudo conectar con el servicio de IA. Vuelve a intentar en un minuto.";
   }
 }
