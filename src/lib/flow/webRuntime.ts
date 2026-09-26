@@ -12,7 +12,7 @@ import {
 } from "@/lib/tienda/paraElBot";
 import type { MensajeChat } from "@/lib/tienda/conversacionDePedido";
 import { esElReciboDeUnPedido } from "@/lib/tienda/pedidoQueLlega";
-import { historialParaLaIA } from "@/lib/ai/historial";
+import { historialParaLaIA, CUANTOS_MENSAJES_RECUERDA } from "@/lib/ai/historial";
 import { CASILLA_DE_LA_FICHA } from "@/lib/leads/casillas";
 import { quienEs } from "@/lib/leads/quienEs";
 import { emitir } from "@/lib/salidas";
@@ -379,7 +379,7 @@ async function recentHistory(ctx: Ctx): Promise<{ role: "user" | "assistant"; co
       .select("direction, sender, body")
       .eq("conversation_id", ctx.conversationId)
       .order("created_at", { ascending: false })
-      .limit(8);
+      .limit(CUANTOS_MENSAJES_RECUERDA);
     return historialParaLaIA(((data ?? []) as any[]).reverse());
   } catch {
     return [];

@@ -1882,6 +1882,21 @@ async function armarHerramientas(ctx: any, ai: any): Promise<{ tools: any[]; con
  * tres en el mismo turno el modelo se callaba del todo. Medido en Casas
  * Pacíficas el 25 y 26 de septiembre de 2026.
  */
+/* CUÁNTOS MENSAJES RECUERDA EL AGENTE.
+
+   Eran OCHO, que son cuatro idas y vueltas. Un guión de calificación como el
+   de una inmobiliaria pide seis datos —trabajo, antigüedad, ingreso, zona,
+   proyecto, si aplica solo—, así que a la quinta pregunta el bot ya no podía
+   acordarse de la primera. No es que se despistara: no lo tenía delante.
+
+   Visto el 25 de septiembre de 2026, con el cliente escribiendo «Ya me
+   preguntaste esto» cuatro veces seguidas y el bot volviendo a preguntarlo.
+
+   VEINTICUATRO son doce idas y vueltas: cubre un guión de seis preguntas
+   entero con sitio de sobra. Cuesta tokens en cada mensaje de cada cliente, y
+   por eso está aquí con un número y un porqué, y no repartido por el código. */
+const CUANTOS_MENSAJES_RECUERDA = 24;
+
 const SIGUE_HABLANDO =
   "Es un apunte interno: no se lo menciones a la persona, pero SIGUE la " +
   "conversación con normalidad en este mismo turno.";
@@ -2786,7 +2801,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
   try {
     const { data } = await ctx.db.from("messages")
       .select("direction, sender, body").eq("conversation_id", ctx.convId)
-      .order("created_at", { ascending: false }).limit(8);
+      .order("created_at", { ascending: false }).limit(CUANTOS_MENSAJES_RECUERDA);
     history = historialParaLaIA((data ?? []).reverse());
   } catch { /* sin historial */ }
 

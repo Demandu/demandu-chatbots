@@ -12267,4 +12267,66 @@ describe("Una promesa de persona se cumple, venga de donde venga", () => {
   });
 });
 
+// ─── Lo que el agente recuerda, en un número y con su porqué ───────────────
+//
+// Eran ocho mensajes: cuatro idas y vueltas. El guión de calificación de una
+// inmobiliaria pide seis datos, así que a la quinta pregunta el bot ya no tenía
+// delante la primera y la repetía. El 25 de septiembre de 2026 un cliente
+// escribió «Ya me preguntaste esto» cuatro veces seguidas.
+//
+// Esto NO vigila que el número sea 24: vigila que sea UNO SOLO, con nombre, y
+// el mismo en los dos motores. Un número a pelo en dos archivos es cómo acaban
+// dos canales recordando cosas distintas sin que nadie lo note.
+describe("Los dos motores recuerdan lo mismo", () => {
+  const FUENTES = [
+    ["el motor de WhatsApp", "supabase/functions/whatsapp/index.ts"],
+    ["el motor web", "src/lib/flow/webRuntime.ts"],
+    ["el archivo puro", "src/lib/ai/historial.ts"],
+  ];
+
+  test("NADIE PIDE EL HISTORIAL CON UN NÚMERO A PELO", () => {
+    for (const [donde, rel] of FUENTES.slice(0, 2)) {
+      const texto = sinComentarios(fs.readFileSync(path.join(RAIZ, rel), "utf8"));
+      const i = texto.indexOf('from("messages")');
+      esperar(i > 0).verdadero(`no encontré la consulta del historial en ${donde}`);
+      esperar(/\.limit\(CUANTOS_MENSAJES_RECUERDA\)/.test(texto.slice(i, i + 400))).verdadero(
+        `${donde} pide el historial con un número escrito a mano. Si se queda corto, el bot ` +
+          "vuelve a preguntar lo que la persona ya le contestó",
+      );
+    }
+  });
+
+  test("y LOS DOS RECUERDAN LA MISMA CANTIDAD", () => {
+    /* El número se DECLARA en dos sitios y no puede ser de otra forma: Deno no
+     * importa de `src/`. El motor web no declara nada — lo importa del archivo
+     * puro, que es lo que se comprueba justo debajo. */
+    const DECLARAN = [
+      ["el motor de WhatsApp", "supabase/functions/whatsapp/index.ts"],
+      ["el archivo puro", "src/lib/ai/historial.ts"],
+    ];
+    const valores = DECLARAN.map(([donde, rel]) => {
+      const texto = sinComentarios(fs.readFileSync(path.join(RAIZ, rel), "utf8"));
+      const m = texto.match(/CUANTOS_MENSAJES_RECUERDA\s*=\s*(\d+)/);
+      esperar(!!m).verdadero(`no encuentro el número en ${donde}`);
+      return Number(m ? m[1] : 0);
+    });
+    const web = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+    esperar(/import \{[^}]*CUANTOS_MENSAJES_RECUERDA[^}]*\} from "@\/lib\/ai\/historial"/.test(web))
+      .verdadero(
+        "el motor web dejó de importar el número del archivo puro: si lo copia, el día que " +
+          "cambie se cambiará en un sitio y no en el otro",
+      );
+    esperar(new Set(valores).size).igual(
+      1,
+      `los motores recuerdan cantidades distintas (${valores.join(" · ")}): la misma ` +
+        "conversación se comportaría de una forma por WhatsApp y de otra por la web",
+    );
+    /* Y un suelo. Por debajo de doce mensajes —seis idas y vueltas— cualquier
+     * guión de calificación se queda sin memoria a mitad. */
+    esperar(valores[0] >= 12).verdadero(
+      `el agente recuerda solo ${valores[0]} mensajes: un guión de seis preguntas no cabe`,
+    );
+  });
+});
+
 process.exit(await correrPruebas());

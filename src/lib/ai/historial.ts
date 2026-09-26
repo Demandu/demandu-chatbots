@@ -87,6 +87,21 @@ export const MARCA_AGENTE = "[un compañero del equipo escribió]";
  *                          el silencio, que aquí es el lado barato.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/* CUÁNTOS MENSAJES RECUERDA EL AGENTE.
+
+   Eran OCHO, que son cuatro idas y vueltas. Un guión de calificación como el
+   de una inmobiliaria pide seis datos —trabajo, antigüedad, ingreso, zona,
+   proyecto, si aplica solo—, así que a la quinta pregunta el bot ya no podía
+   acordarse de la primera. No es que se despistara: no lo tenía delante.
+
+   Visto el 25 de septiembre de 2026, con el cliente escribiendo «Ya me
+   preguntaste esto» cuatro veces seguidas y el bot volviendo a preguntarlo.
+
+   VEINTICUATRO son doce idas y vueltas: cubre un guión de seis preguntas
+   entero con sitio de sobra. Cuesta tokens en cada mensaje de cada cliente, y
+   por eso está aquí con un número y un porqué, y no repartido por el código. */
+export const CUANTOS_MENSAJES_RECUERDA = 24;
+
 export function historialParaLaIA(mensajes: MensajeGuardado[] | null | undefined): Turno[] {
   const turnos: Turno[] = [];
 
