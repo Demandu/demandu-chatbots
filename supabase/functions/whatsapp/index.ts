@@ -945,7 +945,10 @@ async function buscarConocimiento(db: any, orgId: string, botId: string, pregunt
 
   // 1) Por significado (embeddings)
   try {
-    const key = Deno.env.get("VOYAGE_API_KEY");
+    // Se limpia, igual que la de Anthropic: un salto de línea pegado sin
+    // querer se ve idéntico en el panel y contesta 401. Ver `llaveVoyage`
+    // en `src/lib/ai/ingest.ts`.
+    const key = (Deno.env.get("VOYAGE_API_KEY") ?? "").trim();
     if (key) {
       const r = await fetch("https://api.voyageai.com/v1/embeddings", {
         method: "POST",

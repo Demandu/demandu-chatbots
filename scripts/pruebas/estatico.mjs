@@ -12435,6 +12435,23 @@ describe("Lo que está cargado tiene que poder encontrarse", () => {
       );
     }
 
+    /* NINGUNA LLAVE SE LEE SIN LIMPIAR.
+     *
+     * Un salto de línea pegado sin querer al copiarla se ve idéntico en el
+     * panel y contesta 401 — lo mismo que una llave revocada. Costó dos días en
+     * agosto de 2026 con la de Anthropic; la de Voyage se quedó sin `.trim()` y
+     * el 401 volvió el 26 de septiembre. */
+    const ing2 = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/ingest.ts"), "utf8"));
+    const motorWa = sinComentarios(
+      fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"),
+    );
+    for (const [donde, texto] of [["el canal web", ing2], ["el motor de WhatsApp", motorWa]]) {
+      esperar(/VOYAGE_API_KEY(\s*\?\?\s*""\))?[^\n]*\.trim\(\)/.test(texto)).verdadero(
+        `en ${donde} la llave de Voyage se lee sin limpiar: un espacio invisible al pegarla ` +
+          "contesta 401 y parece una llave revocada",
+      );
+    }
+
     /* Y «no hay filas» no puede contarse como «ya está todo». */
     esperar(/No encontr\u00e9 entrenamiento en este chatbot/.test(acciones)
       || acciones.includes("No encontré entrenamiento en este chatbot")).verdadero(

@@ -10,9 +10,22 @@
 const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
 const VOYAGE_MODEL = process.env.VOYAGE_MODEL || "voyage-3";
 
+/* LA LLAVE SE LIMPIA ANTES DE USARLA.
+
+   Un salto de línea o un espacio pegados sin querer al copiarla se ven
+   IDÉNTICOS en el panel de Netlify y hacen que el servicio conteste 401 — o
+   sea, exactamente lo mismo que una llave revocada. Eso ya costó dos días en
+   agosto de 2026 con la llave de Anthropic, y por eso aquella se lee con
+   `.trim()` desde entonces. Esta no, y el 26 de septiembre volvió el 401.
+
+   Ver `ia-llaves-y-configuracion-cliente.md`. */
+function llaveVoyage(): string {
+  return (process.env.VOYAGE_API_KEY ?? "").trim();
+}
+
 /** ¿Hay búsqueda por significado disponible? */
 export function embeddingsConfigured(): boolean {
-  return !!process.env.VOYAGE_API_KEY;
+  return !!llaveVoyage();
 }
 
 /**
@@ -79,7 +92,7 @@ export function chunkText(text: string, maxChars = 1200): string[] {
 export async function embedConDetalle(
   texts: string[],
 ): Promise<{ vectores: number[][] | null; fallo?: string }> {
-  const key = process.env.VOYAGE_API_KEY;
+  const key = llaveVoyage();
   if (!key) return { vectores: null, fallo: "no hay llave de búsqueda por significado configurada" };
   if (!texts.length) return { vectores: null, fallo: "no había nada que convertir" };
 
@@ -124,7 +137,7 @@ export async function embed(texts: string[]): Promise<number[][] | null> {
 
 /** Vector de una consulta (para buscar, no para guardar). */
 export async function embedQuery(text: string): Promise<number[] | null> {
-  const key = process.env.VOYAGE_API_KEY;
+  const key = llaveVoyage();
   if (!key || !text?.trim()) return null;
   try {
     const res = await fetch(VOYAGE_URL, {
