@@ -12405,6 +12405,23 @@ describe("Lo que está cargado tiene que poder encontrarse", () => {
       "re-indexar volvió a repartir vectores sin comprobar que vinieron todos: un vector " +
         "corrido le pega a cada fragmento la respuesta del de al lado",
     );
+    /* NO SE FILTRA POR LA COLUMNA DE VECTORES EN LA CONSULTA.
+     *
+     * `.is("embedding", null)` volvía VACÍA teniendo 85 filas sin vector, y el
+     * botón contestaba «ya está todo» sin haber tocado nada — mientras la
+     * pantalla de al lado contaba los 85 en la misma petición. Un «ya está»
+     * falso es lo peor que puede decir esto: el dueño deja de mirar y su
+     * chatbot se queda ciego para siempre. Se piden las filas como las pide la
+     * pantalla y se filtra en el código, donde se puede ver. */
+    esperar(/\.is\("embedding"/.test(acciones)).falso(
+      "volvió el filtro por la columna de vectores: esa consulta devuelve vacío aunque haya " +
+        "filas sin vector, y el botón dice «ya está todo» sin haber hecho nada",
+    );
+    /* Y «no hay filas» no puede contarse como «ya está todo». */
+    esperar(/No encontr\u00e9 entrenamiento en este chatbot/.test(acciones)
+      || acciones.includes("No encontré entrenamiento en este chatbot")).verdadero(
+      "re-indexar volvió a tratar «no vi ninguna fila» como «ya está todo»",
+    );
   });
 });
 

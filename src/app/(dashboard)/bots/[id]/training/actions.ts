@@ -289,6 +289,10 @@ export async function importFromFile(formData: FormData) {
  * ─────────────────────────────────────────────────────────────────────────────
  */
 const POR_TANDA = 50;
+/* Cuántas filas se miran de una vez para encontrar las que van sin vector.
+   Con más de esto en una cuenta, hacen falta varias pulsaciones — y el botón
+   dice cuántas faltan, así que no se pierde nadie por el camino. */
+const MIRAR_HASTA = 400;
 
 export async function reindexarConocimiento(
   _estado: { ok: boolean; mensaje?: string } | undefined,
@@ -305,22 +309,43 @@ export async function reindexarConocimiento(
     };
   }
 
-  // Con la sesión del usuario: si el chatbot no es de su cuenta, no existe.
+  /* SE PIDE LA LISTA IGUAL QUE LA PANTALLA, Y SE FILTRA AQUÍ.
+   *
+   * Aquí ponía `.is("embedding", null)` y la consulta volvía VACÍA teniendo 85
+   * filas sin vector: el botón contestaba «todo tu entrenamiento ya se busca
+   * por significado» sin haber tocado nada. Medido el 26 de septiembre de 2026,
+   * con la pantalla de al lado contando los 85 en la misma petición.
+   *
+   * No se averiguó por qué PostgREST no filtra esa columna —es de un tipo que
+   * no es suyo, `vector`— y da igual: lo que no se puede hacer es CREER una
+   * consulta cuyo «no hay nada» es indistinguible de «no supe mirar». La
+   * pantalla ya pide estas filas así y le funcionan, así que se piden igual y
+   * el filtro se hace aquí, donde se puede ver.
+   *
+   * Un «ya está todo» falso es el peor resultado posible: el dueño deja de
+   * mirar y su chatbot se queda ciego para siempre. */
   const supabase = createClient();
   const { data: filas, error } = await supabase
     .from("bot_knowledge")
-    .select("id, content")
+    .select("id, content, embedding")
     .eq("bot_id", botId)
-    .is("embedding", null)
     .order("created_at")
-    .limit(POR_TANDA);
+    .limit(MIRAR_HASTA);
   if (error) return { ok: false, mensaje: "No pude leer el entrenamiento." };
 
-  const tanda = (filas ?? []) as { id: string; content: string }[];
-  if (!tanda.length) {
+  const todas = (filas ?? []) as { id: string; content: string; embedding: unknown }[];
+  if (!todas.length) {
+    // Ni una fila. Eso no es «ya está todo»: es que no hay entrenamiento o no
+    // se pudo leer. Decir que está listo sería mentir.
+    return { ok: false, mensaje: "No encontré entrenamiento en este chatbot." };
+  }
+
+  const ciegas = todas.filter((f) => !f.embedding);
+  if (!ciegas.length) {
     return { ok: true, mensaje: "Todo tu entrenamiento ya se busca por significado." };
   }
 
+  const tanda = ciegas.slice(0, POR_TANDA);
   const vectores = await embed(tanda.map((f) => f.content));
   /* SI VUELVEN MENOS VECTORES QUE TEXTOS, NO SE REPARTE NINGUNO. Colocarlos por
    * posición cuando falta uno los correría a todos: cada fragmento quedaría con
@@ -346,23 +371,12 @@ export async function reindexarConocimiento(
     hechos++;
   }
 
-  const { count: faltan, error: eCuenta } = await supabase
-    .from("bot_knowledge")
-    .select("id", { count: "exact", head: true })
-    .eq("bot_id", botId)
-    .is("embedding", null);
-  // Si no se puede contar, NO se dice «ya está todo»: se dice lo que sí se
-  // sabe —cuántos se hicieron— y que vuelva a pulsar. Un «listo» falso aquí
-  // deja fragmentos ciegos para siempre, porque nadie vuelve a mirar.
-  if (eCuenta) console.error("[reindexar] no pude contar los que faltan:", eCuenta.message);
+  const faltan = ciegas.length - hechos;
 
   revalidatePath(`/bots/${botId}/training`);
 
   if (!hechos) {
     return { ok: false, mensaje: "No pude guardar ningún vector. Vuelve a intentarlo." };
-  }
-  if (eCuenta) {
-    return { ok: true, mensaje: `Listos ${hechos}. Vuelve a pulsar por si queda alguno.` };
   }
   return {
     ok: true,
