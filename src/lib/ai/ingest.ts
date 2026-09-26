@@ -57,10 +57,31 @@ export function chunkText(text: string, maxChars = 1200): string[] {
   return chunks.filter((c) => c.length > 20);
 }
 
-/** Genera vectores para varios textos. Devuelve null si no hay servicio. */
-export async function embed(texts: string[]): Promise<number[][] | null> {
+/**
+ * Genera vectores para varios textos, DICIENDO POR QUÉ si no pudo.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ANTES DEVOLVÍA `null` Y SE LLEVABA EL MOTIVO AL REGISTRO. Eso está bien
+ * cuando esto corre dentro de una conversación —ahí nadie puede hacer nada con
+ * el motivo y lo que importa es no cortarla—, pero es inservible cuando lo
+ * pulsó una persona y está mirando la pantalla: leyó «no se pudo» y se quedó
+ * sin saber si es la llave, el modelo o el saldo. Tres arreglos distintos y la
+ * misma frase para los tres.
+ *
+ * Pasó el 26 de septiembre de 2026 con el botón de re-indexar: contestó «El
+ * servicio de búsqueda no contestó bien» y hubo que salir a buscar el motivo a
+ * los registros de Netlify, que desde el panel no se leen.
+ *
+ * Es la misma lección que el `?diag` del motor: 401 = la llave · 400/404 = el
+ * modelo · 429 = saldo. Ver `ia-llaves-y-configuracion-cliente.md`.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function embedConDetalle(
+  texts: string[],
+): Promise<{ vectores: number[][] | null; fallo?: string }> {
   const key = process.env.VOYAGE_API_KEY;
-  if (!key || !texts.length) return null;
+  if (!key) return { vectores: null, fallo: "no hay llave de búsqueda por significado configurada" };
+  if (!texts.length) return { vectores: null, fallo: "no había nada que convertir" };
 
   try {
     const res = await fetch(VOYAGE_URL, {
@@ -69,16 +90,36 @@ export async function embed(texts: string[]): Promise<number[][] | null> {
       body: JSON.stringify({ model: VOYAGE_MODEL, input: texts.slice(0, 128), input_type: "document" }),
     });
     if (!res.ok) {
-      console.error("[embeddings] error:", res.status, (await res.text().catch(() => "")).slice(0, 200));
-      return null;
+      const cuerpo = (await res.text().catch(() => "")).slice(0, 200);
+      console.error("[embeddings] error:", res.status, cuerpo);
+      return { vectores: null, fallo: explicarVoyage(res.status, cuerpo) };
     }
     const j = await res.json();
     const out = (j?.data ?? []).map((d: any) => d.embedding).filter(Boolean);
-    return out.length ? out : null;
+    if (!out.length) return { vectores: null, fallo: "el servicio contestó sin vectores" };
+    return { vectores: out };
   } catch (e: any) {
-    console.error("[embeddings] fallo de red:", e?.message ?? e);
-    return null;
+    const msg = e?.message ?? String(e);
+    console.error("[embeddings] fallo de red:", msg);
+    return { vectores: null, fallo: `no se pudo conectar (${String(msg).slice(0, 80)})` };
   }
+}
+
+/** El código de Voyage traducido a qué hay que tocar. */
+function explicarVoyage(estado: number, cuerpo: string): string {
+  if (estado === 401 || estado === 403) {
+    return `la llave VOYAGE_API_KEY no vale (${estado}). Revísala en Netlify`;
+  }
+  if (estado === 429) return "te quedaste sin saldo o hay demasiadas peticiones (429)";
+  if (estado === 400 || estado === 404) {
+    return `el modelo «${VOYAGE_MODEL}» no existe o no acepta esto (${estado}): ${cuerpo.slice(0, 90)}`;
+  }
+  return `el servicio contestó ${estado}: ${cuerpo.slice(0, 90)}`;
+}
+
+/** Genera vectores para varios textos. Devuelve null si no hay servicio. */
+export async function embed(texts: string[]): Promise<number[][] | null> {
+  return (await embedConDetalle(texts)).vectores;
 }
 
 /** Vector de una consulta (para buscar, no para guardar). */

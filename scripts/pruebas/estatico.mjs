@@ -12417,6 +12417,24 @@ describe("Lo que está cargado tiene que poder encontrarse", () => {
       "volvió el filtro por la columna de vectores: esa consulta devuelve vacío aunque haya " +
         "filas sin vector, y el botón dice «ya está todo» sin haber hecho nada",
     );
+    /* Y CUANDO FALLA, DICE POR QUÉ.
+     *
+     * «El servicio de búsqueda no contestó bien» fue lo que contestó el botón
+     * el 26 de septiembre de 2026, y hubo que salir a buscar el motivo a los
+     * registros de Netlify — que desde el panel no se leen. La llave, el
+     * modelo y el saldo son tres averías distintas que se arreglan en tres
+     * sitios distintos: una sola frase para las tres no sirve de nada. */
+    esperar(/embedConDetalle\(/.test(acciones)).verdadero(
+      "re-indexar volvió a usar el `embed` que se traga el motivo: quien pulse el botón lee " +
+        "«no se pudo» y no sabe si es la llave, el modelo o el saldo",
+    );
+    const ing = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/ingest.ts"), "utf8"));
+    for (const codigo of ["401", "429", "404"]) {
+      esperar(ing.includes(codigo)).verdadero(
+        `\`explicarVoyage\` dejó de distinguir el ${codigo}: vuelve a haber un solo «no se pudo»`,
+      );
+    }
+
     /* Y «no hay filas» no puede contarse como «ya está todo». */
     esperar(/No encontr\u00e9 entrenamiento en este chatbot/.test(acciones)
       || acciones.includes("No encontré entrenamiento en este chatbot")).verdadero(

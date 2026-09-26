@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import { fetchPageText } from "@/lib/ai/fromUrl";
-import { ingestText, embed, embeddingsConfigured } from "@/lib/ai/ingest";
+import { ingestText, embed, embedConDetalle, embeddingsConfigured } from "@/lib/ai/ingest";
 import { checkQuota } from "@/lib/billing/quota";
 import { extraerTexto, porQueNoSeAcepta } from "@/lib/ai/extraerTexto";
 import { comoSeGuarda, partesDeAdjunto } from "@/lib/adjuntos";
@@ -346,16 +346,18 @@ export async function reindexarConocimiento(
   }
 
   const tanda = ciegas.slice(0, POR_TANDA);
-  const vectores = await embed(tanda.map((f) => f.content));
+  const { vectores, fallo } = await embedConDetalle(tanda.map((f) => f.content));
   /* SI VUELVEN MENOS VECTORES QUE TEXTOS, NO SE REPARTE NINGUNO. Colocarlos por
    * posición cuando falta uno los correría a todos: cada fragmento quedaría con
    * el vector del siguiente y el buscador devolvería, con total seguridad, la
    * respuesta de otra pregunta. Es peor que no buscar. */
   if (!vectores || vectores.length !== tanda.length) {
-    return {
-      ok: false,
-      mensaje: "El servicio de búsqueda no contestó bien. No cambié nada; vuelve a intentarlo.",
-    };
+    /* EL MOTIVO, NO «no se pudo». Tres averías distintas —la llave, el modelo,
+     * el saldo— se arreglan en tres sitios distintos, y con una sola frase para
+     * las tres hay que salir a buscarlo a unos registros que desde el panel no
+     * se leen. Ver `embedConDetalle`. */
+    const porQue = fallo ?? `vinieron ${vectores?.length ?? 0} vectores para ${tanda.length} textos`;
+    return { ok: false, mensaje: `No cambié nada. ${porQue}.` };
   }
 
   let hechos = 0;
