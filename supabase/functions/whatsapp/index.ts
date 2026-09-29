@@ -1948,6 +1948,30 @@ function consultaParaBuscar(
 const CUANTOS_FRAGMENTOS = 8;
 
 
+/* CUÁNTO PUEDE ESCRIBIR EL MODELO EN UN TURNO.
+
+   Eran 400, y ese número se lo COMEN LAS HERRAMIENTAS antes de llegar al
+   texto. Cada llamada a una herramienta es un bloque con su JSON dentro
+   —`etiquetar` lleva la etiqueta, el porqué y las frases en las que se basa—,
+   y seis de esas caben de sobra en 400 tokens. El modelo se queda sin espacio
+   ANTES de escribir la primera palabra para la persona.
+
+   Visto en Casas Pacíficas el 29 de septiembre de 2026. El aviso lo dijo con
+   todas las letras:
+
+       el modelo terminó sin escribir nada
+       (max_tokens, bloques: tool_use+tool_use+tool_use+tool_use+tool_use+tool_use)
+
+   Desde fuera se veía como «después de dos o tres preguntas suelta siempre el
+   mensaje de respaldo»: justo cuando el guión de calificación junta varios
+   datos a la vez y el agente quiere guardarlos todos.
+
+   DOS MIL no es gastar cinco veces más: es un TECHO, y solo se paga lo que de
+   verdad se escribe. Las respuestas siguen siendo cortas porque el largo lo
+   manda `maxWords` en el prompt. Lo que cambia es que ya no se corta a mitad
+   de pensar. */
+const TECHO_DE_RESPUESTA = 2000;
+
 const SIGUE_HABLANDO =
   "Es un apunte interno: no se lo menciones a la persona, pero SIGUE la " +
   "conversación con normalidad en este mismo turno.";
@@ -2891,7 +2915,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
         // Debe coincidir con src/lib/ai/answer.ts. Si el nombre no existe, la
         // API falla y el bot contesta "esa no me la sé" sin que se note.
         model: Deno.env.get("ANTHROPIC_MODEL") ?? "claude-haiku-4-5",
-        max_tokens: 400,
+        max_tokens: TECHO_DE_RESPUESTA,
         system: sistemaFinal,
         messages: mensajes,
       };

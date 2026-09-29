@@ -12460,4 +12460,43 @@ describe("Lo que está cargado tiene que poder encontrarse", () => {
   });
 });
 
+// ─── El tope de la respuesta se lo comen las herramientas ──────────────────
+//
+// 29 sep 2026, Casas Pacíficas. El aviso de la Bandeja lo dijo entero:
+//
+//     el modelo terminó sin escribir nada
+//     (max_tokens, bloques: tool_use+tool_use+tool_use+tool_use+tool_use+tool_use)
+//
+// Seis llamadas a herramientas y ni una palabra para la persona. El tope eran
+// 400 tokens y cada llamada es un bloque con su JSON dentro; se acabó el
+// espacio antes de escribir. Desde fuera: «después de dos o tres preguntas
+// suelta siempre el mensaje de respaldo» — justo cuando el guión de
+// calificación junta varios datos y el agente quiere guardarlos todos.
+describe("El modelo tiene espacio para hablar después de usar sus herramientas", () => {
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const answer = sinComentarios(fs.readFileSync(path.join(SRC, "lib/ai/answer.ts"), "utf8"));
+
+  test("NINGÚN MOTOR PIDE EL TOPE CON UN NÚMERO A PELO", () => {
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", answer]]) {
+      esperar(/max_tokens: TECHO_DE_RESPUESTA/.test(texto)).verdadero(
+        `el motor de ${donde} fija el tope de la respuesta con un número suelto. Ese número ` +
+          "se lo comen las herramientas y el cliente recibe el mensaje de respaldo",
+      );
+    }
+  });
+
+  test("y los dos usan el MISMO, con sitio de sobra", () => {
+    const n = Number((wa.match(/TECHO_DE_RESPUESTA\s*=\s*(\d+)/) ?? [])[1] ?? 0);
+    const m = Number((answer.match(/TECHO_DE_RESPUESTA\s*=\s*(\d+)/) ?? [])[1] ?? 0);
+    esperar(n).igual(m, `los dos motores tienen topes distintos (${n} · ${m})`);
+    /* SUELO DE 1000. Seis llamadas a herramientas con su JSON pasan de 500
+     * tokens con holgura; por debajo de mil se vuelve a comer el texto. No se
+     * paga por el techo, se paga por lo escrito: bajarlo no ahorra nada. */
+    esperar(n >= 1000).verdadero(
+      `el tope bajó a ${n}: con eso las herramientas vuelven a dejar al modelo sin espacio ` +
+        "para contestarle a la persona",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

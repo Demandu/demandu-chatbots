@@ -326,6 +326,30 @@ async function pensarRespuesta(opts: {
     ? `${buildSystem(ai, knowledge)}\n\n${contexto}`
     : buildSystem(ai, knowledge);
 
+/* CUÁNTO PUEDE ESCRIBIR EL MODELO EN UN TURNO.
+
+   Eran 400, y ese número se lo COMEN LAS HERRAMIENTAS antes de llegar al
+   texto. Cada llamada a una herramienta es un bloque con su JSON dentro
+   —`etiquetar` lleva la etiqueta, el porqué y las frases en las que se basa—,
+   y seis de esas caben de sobra en 400 tokens. El modelo se queda sin espacio
+   ANTES de escribir la primera palabra para la persona.
+
+   Visto en Casas Pacíficas el 29 de septiembre de 2026. El aviso lo dijo con
+   todas las letras:
+
+       el modelo terminó sin escribir nada
+       (max_tokens, bloques: tool_use+tool_use+tool_use+tool_use+tool_use+tool_use)
+
+   Desde fuera se veía como «después de dos o tres preguntas suelta siempre el
+   mensaje de respaldo»: justo cuando el guión de calificación junta varios
+   datos a la vez y el agente quiere guardarlos todos.
+
+   DOS MIL no es gastar cinco veces más: es un TECHO, y solo se paga lo que de
+   verdad se escribe. Las respuestas siguen siendo cortas porque el largo lo
+   manda `maxWords` en el prompt. Lo que cambia es que ya no se corta a mitad
+   de pensar. */
+const TECHO_DE_RESPUESTA = 2000;
+
   // Un modelo puede quedarse pidiendo herramientas en bucle. Cuatro vueltas
   // cubren de sobra «mira horarios → agenda → confirma» y cortan el bucle.
   // El mismo número que en el motor de WhatsApp.
@@ -335,7 +359,7 @@ async function pensarRespuesta(opts: {
     for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
       const cuerpo: any = {
         model: DEFAULT_MODEL,
-        max_tokens: 400,
+        max_tokens: TECHO_DE_RESPUESTA,
         system,
         messages,
       };
