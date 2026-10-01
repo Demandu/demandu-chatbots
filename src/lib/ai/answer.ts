@@ -350,10 +350,33 @@ async function pensarRespuesta(opts: {
    de pensar. */
 const TECHO_DE_RESPUESTA = 2000;
 
+/* LA ÚLTIMA RED: SI SE QUEDÓ SIN ESPACIO, SE LE PREGUNTA SIN HERRAMIENTAS.
+
+   Subir el techo hace el corte improbable; esto lo hace IMPOSIBLE de cobrar al
+   cliente. Cuando el turno se corta mientras el modelo escribía llamadas a
+   herramientas, no hay texto que mandar — y mandarle el mensaje de respaldo a
+   la persona por una avería nuestra es exactamente lo que no puede pasar.
+
+   Se repite el turno SIN pasarle las herramientas. Sin ellas, lo único que el
+   modelo puede producir es texto: no hay forma de que vuelva a quedarse sin
+   sitio por el mismo motivo. Una vez, y solo una.
+
+   SE PIERDE LO QUE IBA A GUARDAR en ese turno —la etiqueta, el dato— y se
+   acepta a propósito: el turno venía cortado y la última llamada podría estar
+   a medias. Ejecutar un JSON incompleto es peor que volver a guardarlo en el
+   mensaje siguiente. Lo que no se negocia es que la persona reciba respuesta. */
+const SOLO_CONTESTA =
+  "Te quedaste sin espacio en el turno anterior. Contéstale ahora a la persona " +
+  "directamente, en pocas frases, con lo que ya sabes. No llames a ninguna " +
+  "herramienta en este turno.";
+
+
   // Un modelo puede quedarse pidiendo herramientas en bucle. Cuatro vueltas
   // cubren de sobra «mira horarios → agenda → confirma» y cortan el bucle.
   // El mismo número que en el motor de WhatsApp.
   const MAX_VUELTAS = 4;
+  // Ver `SOLO_CONTESTA`. Una sola vez por conversación.
+  let sinHerramientas = false;
 
   try {
     for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
@@ -363,7 +386,7 @@ const TECHO_DE_RESPUESTA = 2000;
         system,
         messages,
       };
-      if (tools.length) cuerpo.tools = tools;
+      if (tools.length && !sinHerramientas) cuerpo.tools = tools;
 
       const res = await fetch(ANTHROPIC_URL, {
         method: "POST",
@@ -420,6 +443,15 @@ const TECHO_DE_RESPUESTA = 2000;
         // SIN TEXTO NO ES «no lo sé»: el modelo terminó sin decir nada, que es
         // una avería. Decirle al cliente «esa no me la sé» esconde el fallo.
         if (text) return text;
+
+        // SE QUEDÓ SIN ESPACIO. Ver `SOLO_CONTESTA`.
+        if (j?.stop_reason === "max_tokens" && !sinHerramientas) {
+          console.log("[agente] se quedó sin espacio; repito el turno sin herramientas");
+          sinHerramientas = true;
+          messages.push({ role: "user", content: SOLO_CONTESTA });
+          continue;
+        }
+
         // QUÉ TRAJO, no solo que vino vacío. Sin esto, «terminó sin escribir
         // nada» obliga a reconstruir a mano por qué paró.
         const comoParo = `${j?.stop_reason ?? "?"}, bloques: ${

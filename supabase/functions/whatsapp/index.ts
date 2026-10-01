@@ -1972,6 +1972,27 @@ const CUANTOS_FRAGMENTOS = 8;
    de pensar. */
 const TECHO_DE_RESPUESTA = 2000;
 
+/* LA ÚLTIMA RED: SI SE QUEDÓ SIN ESPACIO, SE LE PREGUNTA SIN HERRAMIENTAS.
+
+   Subir el techo hace el corte improbable; esto lo hace IMPOSIBLE de cobrar al
+   cliente. Cuando el turno se corta mientras el modelo escribía llamadas a
+   herramientas, no hay texto que mandar — y mandarle el mensaje de respaldo a
+   la persona por una avería nuestra es exactamente lo que no puede pasar.
+
+   Se repite el turno SIN pasarle las herramientas. Sin ellas, lo único que el
+   modelo puede producir es texto: no hay forma de que vuelva a quedarse sin
+   sitio por el mismo motivo. Una vez, y solo una.
+
+   SE PIERDE LO QUE IBA A GUARDAR en ese turno —la etiqueta, el dato— y se
+   acepta a propósito: el turno venía cortado y la última llamada podría estar
+   a medias. Ejecutar un JSON incompleto es peor que volver a guardarlo en el
+   mensaje siguiente. Lo que no se negocia es que la persona reciba respuesta. */
+const SOLO_CONTESTA =
+  "Te quedaste sin espacio en el turno anterior. Contéstale ahora a la persona " +
+  "directamente, en pocas frases, con lo que ya sabes. No llames a ninguna " +
+  "herramienta en este turno.";
+
+
 const SIGUE_HABLANDO =
   "Es un apunte interno: no se lo menciones a la persona, pero SIGUE la " +
   "conversación con normalidad en este mismo turno.";
@@ -2908,6 +2929,8 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
   // sobra «mira horarios → agenda → confirma» y cortan cualquier bucle.
   const MAX_VUELTAS = 4;
   const mensajes: any[] = [...history, { role: "user", content: pregunta }];
+  // Ver `SOLO_CONTESTA`. Una sola vez por conversación.
+  let sinHerramientas = false;
 
   try {
     for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
@@ -2919,7 +2942,7 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
         system: sistemaFinal,
         messages: mensajes,
       };
-      if (tools.length) cuerpo.tools = tools;
+      if (tools.length && !sinHerramientas) cuerpo.tools = tools;
 
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -2966,6 +2989,18 @@ async function responderConIA(ctx: any, pregunta: string, promptDelNodo?: string
       if (j?.stop_reason !== "tool_use" || !pedidas.length) {
         const dicho = await cumplirLoPrometido(ctx, texto, tools);
         if (dicho) return dicho;
+
+        // SE QUEDÓ SIN ESPACIO. Ver `SOLO_CONTESTA`: se repite el turno sin
+        // herramientas, que es la única forma de garantizar que salga texto.
+        // NO se arrastra el turno cortado: venía a medias y sus llamadas
+        // podrían estar incompletas.
+        if (j?.stop_reason === "max_tokens" && !sinHerramientas) {
+          console.log("[agente] se quedó sin espacio; repito el turno sin herramientas");
+          sinHerramientas = true;
+          mensajes.push({ role: "user", content: SOLO_CONTESTA });
+          continue;
+        }
+
         // QUÉ TRAJO, no solo que vino vacío.
         const comoParo = `${j?.stop_reason ?? "?"}, bloques: ${
           (bloques.map((b: any) => b?.type).join("+") || "ninguno")}`;
@@ -4583,9 +4618,40 @@ async function llamarApi(ctx: any, node: any): Promise<string | undefined> {
   }
 
   const metodo = String(d.apiMethod ?? "GET").toUpperCase();
+  /* LAS CABECERAS SE GUARDAN COMO TEXTO JSON, NO COMO LISTA.
+
+     Esto las recorría con `for (const h of d.apiHeaders)` esperando
+     `[{key, value}]`. Pero el editor guarda un TEXTO —es un `<textarea>` y el
+     tipo dice `apiHeaders?: string`—, y recorrer un texto devuelve letras
+     sueltas: `h.key` es `undefined` en todas, así que NO SE AÑADÍA NI UNA
+     CABECERA. Cualquier API con `Authorization` contestaba 401 y el flujo se
+     iba por la rama de error sin que nadie pudiera saber por qué.
+
+     Estaba igual en los dos motores. Y a dos pantallas de distancia, el bloque
+     de Acción ya lo hacía bien: `JSON.parse` del texto. Esta copia se quedó
+     con la forma que nunca existió.
+
+     Se admite la lista por si algún flujo viejo la guardó así, pero la forma
+     buena es el texto. */
   const cabeceras: Record<string, string> = { "Content-Type": "application/json" };
-  for (const h of (d.apiHeaders ?? [])) {
-    if (h?.key) cabeceras[String(h.key)] = interp(String(h.value ?? ""), ctx.vars);
+  const crudas = d.apiHeaders;
+  if (Array.isArray(crudas)) {
+    for (const h of crudas) {
+      if (h?.key) cabeceras[String(h.key)] = interp(String(h.value ?? ""), ctx.vars);
+    }
+  } else if (typeof crudas === "string" && crudas.trim()) {
+    try {
+      const obj = JSON.parse(interp(crudas.trim(), ctx.vars));
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        for (const [k, v] of Object.entries(obj)) {
+          if (v !== null && typeof v !== "object") cabeceras[k] = String(v);
+        }
+      }
+    } catch (e) {
+      // NO se sigue en silencio: sin sus cabeceras la llamada va a fallar, y
+      // el dueño tiene que poder ver que lo que escribió no es JSON válido.
+      console.error("[api] las cabeceras no son JSON válido:", (e as Error)?.message);
+    }
   }
 
   let status = 0;

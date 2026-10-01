@@ -2568,7 +2568,11 @@ describe("Agente de IA con herramientas", () => {
   test("sin herramientas activadas, se comporta igual que antes", () => {
     // Nadie que solo quería un bot que contesta puede notar que existe todo
     // esto. `tools` solo se manda si el cliente activó alguna.
-    esperar(/if \(tools\.length\) cuerpo\.tools = tools;/.test(wa)).verdadero(
+    // Se admiten condiciones DE MÁS —hoy hay una: el reintento sin
+    // herramientas cuando el turno se quedó sin espacio— pero `tools.length`
+    // tiene que seguir mandando. Sin él, un bot que nadie configuró como
+    // agente empezaría a recibir herramientas que su dueño no pidió.
+    esperar(/if \(tools\.length[^)]*\) cuerpo\.tools = tools;/.test(wa)).verdadero(
       "el campo de herramientas solo debe mandarse cuando hay alguna activada",
     );
   });
@@ -12485,6 +12489,33 @@ describe("El modelo tiene espacio para hablar después de usar sus herramientas"
     }
   });
 
+  test("Y SI AUN ASÍ SE QUEDA SIN ESPACIO, SE LE PREGUNTA SIN HERRAMIENTAS", () => {
+    /* Subir el techo hace el corte improbable. Esto lo hace imposible de
+     * cobrarle al cliente: sin herramientas, lo único que el modelo puede
+     * producir es texto, así que no hay forma de que vuelva a quedarse sin
+     * sitio por el mismo motivo. Sin esta red, un turno cortado acaba SIEMPRE
+     * en el mensaje de respaldo, que además promete una persona. */
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", answer]]) {
+      esperar(/stop_reason === "max_tokens"/.test(texto)).verdadero(
+        `el motor de ${donde} trata «se quedó sin espacio» como «no escribió nada», y le ` +
+          "manda el mensaje de respaldo a la persona por una avería nuestra",
+      );
+      esperar(/tools\.length && !sinHerramientas/.test(texto)).verdadero(
+        `en el motor de ${donde} el reintento vuelve a llevar herramientas: entonces puede ` +
+          "quedarse sin espacio otra vez y la red no sirve de nada",
+      );
+      esperar(/SOLO_CONTESTA/.test(texto)).verdadero(
+        `desapareció la orden de contestar sin herramientas en el motor de ${donde}`,
+      );
+    }
+    /* Y una sola vez: si no, dos turnos cortados seguidos dan vueltas. */
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", answer]]) {
+      esperar(/sinHerramientas = true/.test(texto)).verdadero(
+        `en el motor de ${donde} la red no se marca como usada: puede repetirse en bucle`,
+      );
+    }
+  });
+
   test("y los dos usan el MISMO, con sitio de sobra", () => {
     const n = Number((wa.match(/TECHO_DE_RESPUESTA\s*=\s*(\d+)/) ?? [])[1] ?? 0);
     const m = Number((answer.match(/TECHO_DE_RESPUESTA\s*=\s*(\d+)/) ?? [])[1] ?? 0);
@@ -12496,6 +12527,48 @@ describe("El modelo tiene espacio para hablar después de usar sus herramientas"
       `el tope bajó a ${n}: con eso las herramientas vuelven a dejar al modelo sin espacio ` +
         "para contestarle a la persona",
     );
+  });
+});
+
+// ─── El bloque de API manda las cabeceras que el cliente escribió ──────────
+//
+// Se recorrían con `for (const h of d.apiHeaders)` esperando `[{key, value}]`,
+// pero el editor las guarda como TEXTO JSON —es un `<textarea>` y el tipo dice
+// `apiHeaders?: string`—. Recorrer un texto da letras sueltas: `h.key` es
+// `undefined` en todas y no se añadía NI UNA cabecera.
+//
+// O sea: cualquier API con `Authorization` contestaba 401, el flujo se iba por
+// la rama de error, y desde el editor se veía la cabecera escrita y correcta.
+// Estaba así en los dos motores. Visto el 29 de septiembre de 2026.
+describe("El bloque de API manda las cabeceras que se escribieron", () => {
+  const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+  const web = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/webRuntime.ts"), "utf8"));
+  const tipos = sinComentarios(fs.readFileSync(path.join(SRC, "lib/flow/types.ts"), "utf8"));
+
+  test("EL TIPO DICE TEXTO, Y LOS DOS MOTORES LO LEEN COMO TEXTO", () => {
+    esperar(/apiHeaders\?: string/.test(tipos)).verdadero(
+      "cambió el tipo de `apiHeaders`: si ya no es texto, esta regla y el editor hablan de " +
+        "cosas distintas",
+    );
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      esperar(/typeof crudas === "string"/.test(texto)).verdadero(
+        `el motor de ${donde} volvió a leer las cabeceras como si fueran una lista. El editor ` +
+          "guarda texto, así que no se manda ninguna y toda API con Authorization falla",
+      );
+      esperar(/JSON\.parse\(interp\(crudas/.test(texto)).verdadero(
+        `el motor de ${donde} dejó de interpretar el texto de cabeceras como JSON`,
+      );
+    }
+  });
+
+  test("y un JSON mal escrito se APUNTA, no se traga", () => {
+    /* Sin cabeceras la llamada va a fallar igual. Lo que no puede pasar es que
+     * el dueño escriba algo mal y no haya forma de enterarse. */
+    for (const [donde, texto] of [["WhatsApp", wa], ["canal web", web]]) {
+      esperar(/\[api\] las cabeceras no son JSON/.test(texto)).verdadero(
+        `en el motor de ${donde} un JSON de cabeceras inválido se traga en silencio`,
+      );
+    }
   });
 });
 

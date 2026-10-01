@@ -548,9 +548,40 @@ async function llamarApiWeb(ctx: Ctx, node: any): Promise<string | undefined> {
   }
 
   const metodo = String(d.apiMethod ?? "GET").toUpperCase();
+  /* LAS CABECERAS SE GUARDAN COMO TEXTO JSON, NO COMO LISTA.
+
+     Esto las recorría con `for (const h of d.apiHeaders)` esperando
+     `[{key, value}]`. Pero el editor guarda un TEXTO —es un `<textarea>` y el
+     tipo dice `apiHeaders?: string`—, y recorrer un texto devuelve letras
+     sueltas: `h.key` es `undefined` en todas, así que NO SE AÑADÍA NI UNA
+     CABECERA. Cualquier API con `Authorization` contestaba 401 y el flujo se
+     iba por la rama de error sin que nadie pudiera saber por qué.
+
+     Estaba igual en los dos motores. Y a dos pantallas de distancia, el bloque
+     de Acción ya lo hacía bien: `JSON.parse` del texto. Esta copia se quedó
+     con la forma que nunca existió.
+
+     Se admite la lista por si algún flujo viejo la guardó así, pero la forma
+     buena es el texto. */
   const cabeceras: Record<string, string> = { "Content-Type": "application/json" };
-  for (const h of (d.apiHeaders ?? [])) {
-    if (h?.key) cabeceras[String(h.key)] = interp(String(h.value ?? ""), ctx.vars);
+  const crudas = d.apiHeaders;
+  if (Array.isArray(crudas)) {
+    for (const h of crudas) {
+      if (h?.key) cabeceras[String(h.key)] = interp(String(h.value ?? ""), ctx.vars);
+    }
+  } else if (typeof crudas === "string" && crudas.trim()) {
+    try {
+      const obj = JSON.parse(interp(crudas.trim(), ctx.vars));
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        for (const [k, v] of Object.entries(obj)) {
+          if (v !== null && typeof v !== "object") cabeceras[k] = String(v);
+        }
+      }
+    } catch (e) {
+      // NO se sigue en silencio: sin sus cabeceras la llamada va a fallar, y
+      // el dueño tiene que poder ver que lo que escribió no es JSON válido.
+      console.error("[api] las cabeceras no son JSON válido:", (e as Error)?.message);
+    }
   }
 
   let status = 0;
