@@ -180,31 +180,7 @@ async function atender(e: EventoInstagram): Promise<void> {
   const contacto = await contactoDeInstagram(admin, canal, e);
   if (!contacto) return;
 
-  let { data: conv } = await admin
-    .from("conversations")
-    .select("id, flow_state, status")
-    .eq("org_id", canal.org_id)
-    .eq("contact_id", contacto)
-    .eq("channel", "instagram")
-    .order("last_message_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!conv || conv.status === "closed") {
-    const ins = await admin
-      .from("conversations")
-      .insert({
-        org_id: canal.org_id,
-        contact_id: contacto,
-        bot_id: bot.id,
-        channel: "instagram",
-        status: "open",
-        flow_state: {},
-      })
-      .select("id, flow_state, status")
-      .single();
-    conv = ins.data as any;
-  }
+  const conv = await conversacionDeInstagram(admin, canal.org_id, bot.id, contacto);
   if (!conv) return;
 
   // El mensaje del cliente se guarda SIEMPRE, conteste el bot o no. Si un
@@ -315,6 +291,72 @@ async function textoPublico(
  * ANTES de enviar, y la clave primaria de `ig_respuestas_privadas` hace de
  * candado: si dos entregas del mismo webhook llegan a la vez, solo una gana.
  */
+
+/* ═══ LA CONVERSACIÓN DE UNA PERSONA EN INSTAGRAM, UNA SOLA ═════════════════
+ *
+ * 28 sep 2026: `@frank.moret.isea` comentó DOS reels distintos con dos minutos
+ * de diferencia y acabó con DOS conversaciones abiertas a la vez, cada una con
+ * un mensaje. En la Bandeja y en el Embudo salía dos veces, y su historia
+ * quedó partida en dos.
+ *
+ * El porqué: el camino del DM buscaba si ya había una conversación antes de
+ * crearla, y el camino del COMENTARIO no — hacía un `insert` a secas. Dos
+ * caminos hacia la misma tabla con dos comportamientos distintos, que es
+ * exactamente lo que acaba divergiendo.
+ *
+ * Ahora los dos pasan por aquí.
+ *
+ * ── EL ORIGEN SE RELLENA, NO SE PISA ──────────────────────────────────────
+ *
+ * Un lead que llegó por un anuncio y vuelve a comentar otro sigue siendo del
+ * primero: la atribución es del momento en que entró. Pero si la conversación
+ * nació de un DM —sin origen— y después comenta un anuncio, ESE origen sí se
+ * guarda: era la única oportunidad de saber de dónde vino.
+ * ═════════════════════════════════════════════════════════════════════════ */
+async function conversacionDeInstagram(
+  admin: any,
+  orgId: string,
+  botId: string,
+  contactoId: string,
+  origen?: Record<string, unknown> | null,
+): Promise<{ id: string; flow_state: any; status: string } | null> {
+  const { data: conv, error } = await admin
+    .from("conversations")
+    .select("id, flow_state, status, origen")
+    .eq("org_id", orgId)
+    .eq("contact_id", contactoId)
+    .eq("channel", "instagram")
+    .order("last_message_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) console.error("[ig] no pude mirar si ya había conversación:", error.message);
+
+  if (conv && conv.status !== "closed") {
+    if (origen && !conv.origen) {
+      const { error: eOrigen } = await admin
+        .from("conversations").update({ origen }).eq("id", conv.id);
+      if (eOrigen) console.error("[ig] no pude guardar el origen del lead:", eOrigen.message);
+    }
+    return conv as any;
+  }
+
+  const { data: nueva, error: eAlta } = await admin
+    .from("conversations")
+    .insert({
+      org_id: orgId,
+      contact_id: contactoId,
+      bot_id: botId,
+      channel: "instagram",
+      status: "open",
+      flow_state: {},
+      ...(origen ? { origen } : {}),
+    })
+    .select("id, flow_state, status")
+    .single();
+  if (eAlta) console.error("[ig] no pude crear la conversación:", eAlta.message);
+  return (nueva as any) ?? null;
+}
+
 async function atenderComentario(
   admin: any, canal: any, bot: any, e: EventoInstagram, texto: string,
 ): Promise<void> {
@@ -383,29 +425,17 @@ async function atenderComentario(
   // dejar rastro. El comentario público ya salió, que es lo que se ve.
   if (!contacto) return;
 
-  const { data: conv } = await admin
-    .from("conversations")
-    .insert({
-      org_id: canal.org_id,
-      contact_id: contacto,
-      bot_id: bot.id,
-      channel: "instagram",
-      status: "open",
-      flow_state: {},
-      // Queda apuntado de dónde salió: un lead que llegó por un comentario en
-      // un reel no es lo mismo que uno que escribió por su cuenta, y quien
-      // paga la publicidad quiere poder distinguirlos.
-      origen: {
-        tipo: "comentario",
-        plataforma: "meta",
-        canal: "instagram",
-        anuncio_id: e.mediaId ?? null,
-        titular: e.tipoDeMedia ?? null,
-        visto_en: new Date().toISOString(),
-      },
-    })
-    .select("id, flow_state, status")
-    .single();
+  /* Queda apuntado de dónde salió: un lead que llegó por un comentario en un
+     reel no es lo mismo que uno que escribió por su cuenta, y quien paga la
+     publicidad quiere poder distinguirlos. */
+  const conv = await conversacionDeInstagram(admin, canal.org_id, bot.id, contacto, {
+    tipo: "comentario",
+    plataforma: "meta",
+    canal: "instagram",
+    anuncio_id: e.mediaId ?? null,
+    titular: e.tipoDeMedia ?? null,
+    visto_en: new Date().toISOString(),
+  });
   if (!conv) return;
 
   await admin.from("messages").insert({

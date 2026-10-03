@@ -12686,4 +12686,47 @@ describe("Una plantilla con imagen arriba manda su imagen", () => {
   });
 });
 
+// ─── Una persona, una conversación viva por canal ───────────────────────────
+//
+// 28 sep 2026: `@frank.moret.isea` comentó DOS reels con dos minutos de
+// diferencia y acabó con DOS conversaciones abiertas a la vez. En la Bandeja y
+// en el Embudo salía dos veces y su historia quedó partida.
+//
+// El camino del DM buscaba antes de crear; el del COMENTARIO hacía un `insert`
+// a secas. Dos caminos a la misma tabla con dos comportamientos: la forma
+// clásica de que uno se quede atrás.
+describe("Una persona, una conversación viva por canal", () => {
+  const IG = "app/api/webhooks/instagram/route.ts";
+
+  test("NADIE CREA UNA CONVERSACIÓN DE INSTAGRAM SIN MIRAR SI YA HAY UNA", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, IG), "utf8"));
+
+    /* El `insert` vive en UN solo sitio: el ayudante. Si aparece otro, es que
+       alguien volvió a crear una conversación por su cuenta. */
+    const altas = (t.match(/from\("conversations"\)\s*\.insert\(/g) ?? []).length;
+    esperar(altas).igual(
+      1,
+      `hay ${altas} sitios que crean una conversación de Instagram. Tiene que haber uno: ` +
+        "el segundo es el que deja dos conversaciones abiertas para la misma persona",
+    );
+
+    esperar(/async function conversacionDeInstagram\(/.test(t)).verdadero(
+      "desapareció el ayudante que busca antes de crear",
+    );
+    /* Dos llamadas: el DM y el comentario. Si queda una, un camino volvió a ir por libre. */
+    const usos = (t.match(/conversacionDeInstagram\(/g) ?? []).length;
+    esperar(usos >= 3).verdadero(
+      `el ayudante se define y se usa ${usos - 1} vez(ces): los dos caminos —DM y comentario— tienen que pasar por él`,
+    );
+  });
+
+  test("y el origen del lead se rellena, no se pisa", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, IG), "utf8"));
+    esperar(/if \(origen && !conv\.origen\)/.test(t)).verdadero(
+      "se perdió la regla del origen: o se pisa la atribución del anuncio por el que entró " +
+        "de verdad, o se tira la del DM que no tenía ninguna",
+    );
+  });
+});
+
 process.exit(await correrPruebas());
