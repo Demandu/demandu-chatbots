@@ -3,6 +3,7 @@ import { leerPlantilla } from "@/lib/correo/guardadas";
 import { salida } from "@/lib/correo/enviar";
 import Editor from "./Editor";
 import Reenviar from "./Reenviar";
+import ListaDeNegocios from "./ListaDeNegocios";
 import { restaurar } from "./acciones";
 import { RotateCcw, CheckCircle2, AlertTriangle } from "lucide-react";
 
@@ -100,6 +101,8 @@ export default async function CorreosPage({
           <span>{searchParams.fallo}</span>
         </div>
       )}
+
+      <ListaDeNegocios />
 
       <Reenviar buscar={searchParams?.buscar} reenviado={searchParams?.reenviado} fallo={searchParams?.noSalio} />
 

@@ -21,6 +21,10 @@ import {
 import { comoVanLosRecordatorios } from "../../src/lib/whatsapp/comoVanLasPlantillas.ts";
 import { partesDeAdjunto, enlaceDeAdjunto, comoSeGuarda } from "../../src/lib/adjuntos.ts";
 import {
+  filaDelNegocio, listaDeNegocios, enviosDeLaBienvenida, estadoDeLaCuenta,
+  segundosParaReenviar, cuantosFaltan, hace, ESPERA_DE_BIENVENIDA_S,
+} from "../../src/lib/correo/estadoDeLosNegocios.ts";
+import {
   parametrosDe, utmsDeLaUrl, clicsDeLaUrl, sitioDe, plataformaDeLaVisita,
   origenDeLaWeb, origenDeAnuncioDeInstagram, comoSeLlamaElOrigen, redDelOrigen,
   lineasDelOrigen, esElMismoOrigen, CLAVES_UTM,
@@ -9750,6 +9754,161 @@ describe("De qué publicidad llegó el lead", () => {
     esperar(esElMismoOrigen(null, { tipo: "ad", anuncio_id: "1" })).falso();
     esperar(esElMismoOrigen({ tipo: "ad", anuncio_id: "1" }, null)).falso();
     esperar(esElMismoOrigen(null, null)).falso();
+  });
+});
+
+
+/* ═══ A QUÉ NEGOCIO LE FALTA SU CORREO ═════════════════════════════════════
+ *
+ * El 3 oct esto costó cinco correos de más: dos clientes recibieron la
+ * bienvenida dos y tres veces en ocho segundos porque nada en la pantalla
+ * decía que ya había salido. Lo que decide gastar un correo de verdad se
+ * prueba aquí, sin mandar ninguno.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("A qué negocio le falta su correo", () => {
+  const AHORA = new Date("2026-10-03T19:20:00Z");
+  const neg = (extra = {}) => ({
+    id: "n1", name: "Casas Pacíficas", contacto_email: "dcarles@casaspacificas.com",
+    bienvenida_enviada_at: null, ...extra,
+  });
+  const envio = (extra = {}) => ({
+    para: "dcarles@casaspacificas.com", etiqueta: "bienvenida", enviado: true,
+    error: null, created_at: "2026-10-03T19:19:00Z", ...extra,
+  });
+
+  /* LA REGLA QUE DESTAPÓ EL PROBLEMA. Dos negocios tienen
+     `bienvenida_enviada_at` del 7 sep a las 19:08 —los dos la misma hora, sin
+     ninguna fila de envío—. Si esta columna mandara, esos dos saldrían como
+     resueltos y nadie les habría mandado nunca su bienvenida. */
+  test("UNA FECHA DE BIENVENIDA SIN ENVÍO APUNTADO NO ES UNA BIENVENIDA", () => {
+    const f = filaDelNegocio(neg({ bienvenida_enviada_at: "2026-09-07T19:08:53Z" }), [], null, AHORA);
+    esperar(f.bienvenida).igual("nunca");
+    esperar(f.sePuede).verdadero("deja sin mandar la bienvenida de quien solo tiene la marca de la fecha");
+    esperar(f.nota).contiene("relleno");
+  });
+
+  /* «Mandármelo a mí» va a quien está sentado en la pantalla, no al cliente.
+     Contarlo haría creer que el cliente ya lo tiene. */
+  test("UNA PRUEBA NO CUENTA COMO ENVÍO AL CLIENTE", () => {
+    const f = filaDelNegocio(
+      neg(), [envio({ etiqueta: "bienvenida_prueba", enviado: true })], null, AHORA,
+    );
+    esperar(f.bienvenida).igual("nunca");
+    esperar(enviosDeLaBienvenida("dcarles@casaspacificas.com", [envio({ etiqueta: "bienvenida_prueba" })]))
+      .igual([]);
+  });
+
+  test("UN ENVÍO QUE SALIÓ ES «RECIBIDA», Y UN FALLO ES «FALLO» CON SU MOTIVO", () => {
+    const bien = filaDelNegocio(neg(), [envio()], null, AHORA);
+    esperar(bien.bienvenida).igual("recibida");
+
+    const mal = filaDelNegocio(
+      neg(), [envio({ enviado: false, error: "While your account is pending approval" })], null, AHORA,
+    );
+    esperar(mal.bienvenida).igual("fallo");
+    esperar(mal.error).contiene("pending approval");
+    esperar(mal.sePuede).verdadero("no deja reintentar lo que falló");
+  });
+
+  /* EL FRENO QUE FALTABA. Google aceptó los tres seguidos sin quejarse, y por
+     eso llegaron tres. Sin esto, cada pulsación gasta un correo de verdad. */
+  test("RECIÉN MANDADA, EL BOTÓN NO SE PUEDE PULSAR", () => {
+    const f = filaDelNegocio(neg(), [envio({ created_at: "2026-10-03T19:19:52Z" })], null, AHORA);
+    esperar(f.sePuede).falso(
+      "el botón sigue vivo justo después de mandarlo: eso es lo que mandó tres copias en ocho segundos",
+    );
+    esperar(f.nota).contiene("Espera");
+  });
+
+  test("y pasada la espera vuelve a poder pulsarse", () => {
+    const viejo = new Date(AHORA.getTime() - (ESPERA_DE_BIENVENIDA_S + 10) * 1000).toISOString();
+    const f = filaDelNegocio(neg(), [envio({ created_at: viejo })], null, AHORA);
+    esperar(f.sePuede).verdadero("deja el botón apagado para siempre");
+    esperar(segundosParaReenviar(viejo, AHORA)).igual(0);
+    esperar(segundosParaReenviar(null, AHORA)).igual(0);
+  });
+
+  /* Si se mandó de más, la pantalla lo dice. Es la única forma de que alguien
+     se entere de que un cliente recibió tres copias. */
+  test("SI SE MANDÓ DE MÁS, LO DICE", () => {
+    const f = filaDelNegocio(
+      neg(),
+      [
+        envio({ created_at: "2026-10-03T19:00:00Z" }),
+        envio({ created_at: "2026-10-03T19:00:05Z" }),
+        envio({ created_at: "2026-10-03T19:00:09Z" }),
+      ],
+      null, AHORA,
+    );
+    esperar(f.veces).igual(3);
+    esperar(f.nota).contiene("3 veces");
+  });
+
+  test("SIN CORREO DE CONTACTO NO HAY A QUIÉN MANDÁRSELO", () => {
+    const f = filaDelNegocio(neg({ contacto_email: null }), [], null, AHORA);
+    esperar(f.bienvenida).igual("sin_correo");
+    esperar(f.sePuede).falso("ofrece mandar un correo a nadie");
+  });
+
+  /* Dos negocios distintos pueden tener correos parecidos, y el apuntado llega
+     tal cual lo escribió quien lo mandó. */
+  test("EL CORREO SE COMPARA SIN MAYÚSCULAS, Y EL DE OTRO NO CUENTA", () => {
+    const conMayus = filaDelNegocio(neg(), [envio({ para: "DCarles@CasasPacificas.com" })], null, AHORA);
+    esperar(conMayus.bienvenida).igual("recibida");
+
+    const deOtro = filaDelNegocio(neg(), [envio({ para: "otro@cliente.com" })], null, AHORA);
+    esperar(deOtro.bienvenida).igual(
+      "nunca", "le cuenta a un negocio el correo que se mandó a otro",
+    );
+  });
+
+  test("CÓMO ESTÁ LA CUENTA DE ESE CORREO", () => {
+    esperar(estadoDeLaCuenta(null)).igual("sin_cuenta");
+    esperar(estadoDeLaCuenta({ confirmadoEl: "2026-09-01T00:00:00Z", invitadoEl: null })).igual("confirmada");
+    esperar(estadoDeLaCuenta({ confirmadoEl: null, invitadoEl: "2026-09-11T00:00:00Z" }))
+      .igual("invitada_sin_aceptar");
+    esperar(estadoDeLaCuenta({ confirmadoEl: null, invitadoEl: null })).igual("sin_confirmar");
+  });
+
+  /* Quien abre esta pantalla no viene a buscar un negocio concreto: viene a ver
+     a quién le falta algo. Alfabético lo dejaría escondido entre los que ya
+     están bien. */
+  test("LO QUE NECESITA ALGO VA PRIMERO, NO EL ORDEN ALFABÉTICO", () => {
+    const filas = listaDeNegocios(
+      [
+        { id: "a", name: "Aaa ya recibió", contacto_email: "a@x.com", bienvenida_enviada_at: null },
+        { id: "z", name: "Zzz le falló", contacto_email: "z@x.com", bienvenida_enviada_at: null },
+        { id: "m", name: "Mmm nunca", contacto_email: "m@x.com", bienvenida_enviada_at: null },
+      ],
+      [
+        { para: "a@x.com", etiqueta: "bienvenida", enviado: true, error: null, created_at: "2026-09-01T00:00:00Z" },
+        { para: "z@x.com", etiqueta: "bienvenida", enviado: false, error: "no salió", created_at: "2026-09-01T00:00:00Z" },
+      ],
+      new Map(), AHORA,
+    );
+    esperar(filas.map((f) => f.bienvenida)).igual(["fallo", "nunca", "recibida"]);
+    esperar(filas[0].nombre).contiene("Zzz");
+  });
+
+  test("EL RESUMEN DE ARRIBA CUENTA LO QUE FALTA", () => {
+    const filas = listaDeNegocios(
+      [
+        { id: "a", name: "A", contacto_email: "a@x.com", bienvenida_enviada_at: null },
+        { id: "b", name: "B", contacto_email: "b@x.com", bienvenida_enviada_at: null },
+      ],
+      [{ para: "a@x.com", etiqueta: "reenvio_bienvenida", enviado: true, error: null, created_at: "2026-09-01T00:00:00Z" }],
+      new Map([["b@x.com", { confirmadoEl: null, invitadoEl: null }]]),
+      AHORA,
+    );
+    esperar(cuantosFaltan(filas)).igual({ pendientes: 1, recibidas: 1, sinConfirmar: 1 });
+  });
+
+  test("EL «HACE CUÁNTO» SE LEE SIN PENSAR", () => {
+    esperar(hace("2026-10-03T19:19:30Z", AHORA)).igual("hace unos segundos");
+    esperar(hace("2026-10-03T19:18:00Z", AHORA)).igual("hace 2 minutos");
+    esperar(hace("2026-10-03T18:20:00Z", AHORA)).igual("hace 1 hora");
+    esperar(hace("2026-09-30T19:20:00Z", AHORA)).igual("hace 3 días");
+    esperar(hace(null, AHORA)).igual("");
   });
 });
 

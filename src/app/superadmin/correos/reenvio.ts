@@ -11,6 +11,9 @@ import { leerPlantilla } from "@/lib/correo/guardadas";
 import { enviarYApuntar } from "@/lib/correo/enviar";
 import { personaDe, negociosDe } from "@/lib/correo/buscarPersona";
 import {
+  enviosDeLaBienvenida, segundosParaReenviar, ESPERA_DE_BIENVENIDA_S,
+} from "@/lib/correo/estadoDeLosNegocios";
+import {
   opcionesDeSupabase,
   opcionDeBienvenida,
   esTipoDeReenvio,
@@ -88,6 +91,47 @@ export async function reenviarCorreo(formData: FormData): Promise<void> {
     if (!negocio) volver(correo, { noSalio: "Ese negocio no es de esta persona." });
     const opcion = opcionDeBienvenida(negocio!);
     if (!opcion.vale) volver(correo, { noSalio: opcion.nota });
+
+    // ── EL FRENO, Y VA AQUÍ PORQUE AQUÍ ES DONDE SE GASTA EL CORREO ───────
+    //
+    // 3 oct 2026: dos clientes recibieron la bienvenida DOS y TRES veces en
+    // ocho segundos. El botón no tenía freno y Google aceptó los tres sin
+    // quejarse, así que llegaron los tres. `aliadospty@gmail.com` tiene tres
+    // filas en `correos_enviados` con 19:13:27, :32 y :35.
+    //
+    // Los tres de Supabase ya tenían su espera —la pone Supabase—. La
+    // bienvenida la manda la plataforma, así que la espera la tiene que poner
+    // la plataforma. Pintar el botón apagado no basta: el formulario se puede
+    // mandar a mano, y además dos pestañas abiertas ven el mismo botón vivo.
+    const paraFrenar = String(negocio!.contacto_email ?? "").trim();
+    const { data: yaSalieron, error: eFreno } = await admin
+      .from("correos_enviados")
+      .select("para, etiqueta, enviado, error, created_at")
+      .eq("para", paraFrenar)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    // SI NO SE PUEDE SABER, NO SE MANDA. Tragarse este error dejaría el freno
+    // en «adelante» justo cuando no hay forma de comprobar nada, y un correo
+    // repetido a un cliente no se puede deshacer. Negarse sí: se vuelve a
+    // pulsar.
+    if (eFreno) {
+      volver(correo, {
+        noSalio:
+          "No pude comprobar si ya le había salido la bienvenida, así que no la mandé. " +
+          `Vuelve a intentarlo. (${eFreno.message})`,
+      });
+    }
+    const bueno = enviosDeLaBienvenida(paraFrenar, (yaSalieron as any[]) ?? [])
+      .find((e) => e.enviado === true);
+    const espera = segundosParaReenviar(bueno?.created_at ?? null, new Date());
+    if (espera > 0) {
+      volver(correo, {
+        noSalio:
+          `A ${paraFrenar} ya le salió la bienvenida hace menos de ` +
+          `${Math.round(ESPERA_DE_BIENVENIDA_S / 60)} minutos. Espera ${espera} segundos: ` +
+          "si la mandas otra vez le llega repetida.",
+      });
+    }
 
     // LA MARCA, POR SI LA TAREA TODAVÍA NO SE LA HABÍA MANDADO. Sin esto, la
     // tarea de cada cinco minutos le mandaría otra igual detrás de ésta.

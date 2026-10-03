@@ -13076,4 +13076,70 @@ describe("Qué anuncio trae gente que compra", () => {
 });
 
 
+// ─── La bienvenida no se le manda tres veces al mismo ───────────────────────
+//
+// 3 oct 2026, 19:10–19:13. En cuanto el SMTP de Google empezó a funcionar, el
+// botón de «Reenviar» mandó la bienvenida DOS veces a `the_alexmolina@icloud.com`
+// y TRES a `aliadospty@gmail.com` —19:13:27, :32 y :35—, porque nada decía que
+// ya había salido y Google aceptó las tres sin quejarse.
+//
+// Los tres correos de Supabase ya tenían su espera: la pone Supabase. La
+// bienvenida la manda la plataforma, así que la espera la tiene que poner la
+// plataforma. Y va en la ACCIÓN, no en el botón: el formulario se puede mandar
+// a mano, y dos pestañas abiertas ven las dos el mismo botón vivo.
+describe("La bienvenida no se le manda tres veces al mismo", () => {
+  const ACCION = "app/superadmin/correos/reenvio.ts";
+
+  test("LA ACCIÓN MIRA SI YA SALIÓ ANTES DE GASTAR EL CORREO", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, ACCION), "utf8"));
+
+    esperar(/segundosParaReenviar\(/.test(t)).verdadero(
+      "desapareció el freno de la bienvenida: cada pulsación vuelve a mandar un correo de verdad",
+    );
+    esperar(/if \(espera > 0\)/.test(t)).verdadero(
+      "calcula la espera y no la usa para cortar",
+    );
+    /* Que corte DE VERDAD: un `volver` con el aviso y sin llegar al envío. */
+    const corte = t.indexOf("if (espera > 0)");
+    const envio = t.indexOf("enviarYApuntar(");
+    esperar(corte > 0 && envio > corte).verdadero(
+      "el freno está DESPUÉS del envío: no frena nada",
+    );
+  });
+
+  /* El freno se cuenta sobre los envíos que SALIERON, no sobre los intentos.
+     Contando los fallos, un negocio al que le falló la bienvenida se quedaría
+     sin poder recibirla durante cinco minutos — justo al revés. */
+  test("y se cuenta sobre lo que SALIÓ, no sobre lo que se intentó", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, ACCION), "utf8"));
+    esperar(/\.find\(\(e\) => e\.enviado === true\)/.test(t)).verdadero(
+      "cuenta los intentos fallidos como si hubieran salido: a quien le falló no le dejaría reintentar",
+    );
+  });
+
+  /* Lo que no se ve no se atiende: sin la lista hay que acordarse de la
+     dirección exacta de cada cliente para descubrir a quién le falta algo. */
+  test("Y LA PANTALLA ENSEÑA A QUIÉN LE FALTA, SIN BUSCARLO", () => {
+    const pagina = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/superadmin/correos/page.tsx"), "utf8"),
+    );
+    esperar(/<ListaDeNegocios \/>/.test(pagina)).verdadero(
+      "se quitó la lista de negocios: se vuelve a depender de escribir el correo de memoria",
+    );
+
+    const lista = sinComentarios(
+      fs.readFileSync(path.join(SRC, "app/superadmin/correos/ListaDeNegocios.tsx"), "utf8"),
+    );
+    esperar(/listaDeNegocios\(/.test(lista)).verdadero("la lista dejó de usar la lógica probada");
+    /* El destino NO se escribe: va el id del negocio y el de su dueño. */
+    esperar(/name="negocio"/.test(lista) && /name="persona"/.test(lista)).verdadero(
+      "el botón dejó de mandar los ids: si manda la dirección, aparece un campo donde escribirla",
+    );
+    esperar(/type="email"/.test(lista)).falso(
+      "apareció un campo de correo en la lista: el destino se lee de la base, no se escribe",
+    );
+  });
+});
+
+
 process.exit(await correrPruebas());
