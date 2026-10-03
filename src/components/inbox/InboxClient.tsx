@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ALMACEN_PRIVADO, comoSeGuarda } from "@/lib/adjuntos";
 import { claveDeDia, separadorDeDia, fechaLarga } from "@/lib/fechasDelHilo";
-import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Paperclip, ChevronLeft, Hand, AlertTriangle } from "lucide-react";
+import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Paperclip, ChevronLeft, Hand, AlertTriangle, Check } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ChannelBadge } from "./ChannelBadge";
@@ -15,6 +15,8 @@ import { ResponderEnIdioma } from "./ResponderEnIdioma";
 import { EmojiPicker } from "./EmojiPicker";
 import { VistaAdjunto, TOPE_BYTES, pesoLegible, type Adjunto } from "./Adjunto";
 import { EnviarPlantilla } from "./EnviarPlantilla";
+import { BarraEnBloque } from "@/components/enbloque/BarraEnBloque";
+import { ControlesSeleccion } from "@/components/enbloque/ControlesSeleccion";
 
 /**
  * Por qué no se pudo adjuntar, en cristiano.
@@ -187,6 +189,18 @@ export function InboxClient({
   const [errorEnvio, setErrorEnvio] = useState("");
   const [filter, setFilter] = useState<"todas" | "solicitudes" | "abiertas" | "cerradas">("todas");
   const [q, setQ] = useState("");
+  /* VARIAS A LA VEZ. Con el modo encendido, tocar una fila la marca en vez de
+   * abrirla: abrir un chat por error a mitad de una selección de veinte haría
+   * perder la cuenta. */
+  const [modoVarias, setModoVarias] = useState(false);
+  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
+  const [avisoBloque, setAvisoBloque] = useState<{ ok: boolean; texto: string } | null>(null);
+  const alternarMarcada = (id: string) =>
+    setMarcadas((m) => {
+      const n = new Set(m);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
   const bodyRef = useRef<HTMLDivElement>(null);
   // Acción destructiva pendiente de confirmar (vaciar o eliminar un chat)
   const [porConfirmar, setPorConfirmar] = useState<{ id: string; accion: "vaciar" | "eliminar"; quien: string } | null>(null);
@@ -872,6 +886,47 @@ export function InboxClient({
               </button>
             ))}
           </div>
+          <ControlesSeleccion
+            activo={modoVarias}
+            total={filtered.length}
+            todasMarcadas={filtered.length > 0 && filtered.every((c) => marcadas.has(c.id))}
+            onAlternarModo={() => {
+              setModoVarias((v) => !v);
+              setMarcadas(new Set());
+            }}
+            onAlternarTodas={() => {
+              const todas = filtered.every((c) => marcadas.has(c.id));
+              setMarcadas(todas ? new Set() : new Set(filtered.map((c) => c.id)));
+            }}
+          />
+          {modoVarias && marcadas.size > 0 && (
+            <div className="mt-2">
+              <BarraEnBloque
+                tipo="conversaciones"
+                ids={Array.from(marcadas)}
+                miembros={members}
+                etiquetas={tags}
+                etapas={states}
+                onLimpiar={() => setMarcadas(new Set())}
+                onListo={(r) => {
+                  setAvisoBloque({ ok: r.ok, texto: r.texto });
+                  if (r.ok) setMarcadas(new Set());
+                  loadConvos();
+                  setTimeout(() => setAvisoBloque(null), 8000);
+                }}
+              />
+            </div>
+          )}
+          {avisoBloque && (
+            <p
+              role="status"
+              className={`mt-2 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
+                avisoBloque.ok ? "bg-success/15 text-exito" : "bg-danger/10 text-danger"
+              }`}
+            >
+              {avisoBloque.texto}
+            </p>
+          )}
         </div>
 
         <div className="flex-1 overflow-auto">
@@ -886,10 +941,23 @@ export function InboxClient({
                 key={c.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => setSelId(c.id)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelId(c.id); } }}
-                className={`group flex w-full cursor-pointer items-center gap-3 border-b border-surface-border px-3.5 py-3 text-left transition hover:bg-surface-raised ${active ? "bg-surface-raised" : ""}`}
+                aria-pressed={modoVarias ? marcadas.has(c.id) : undefined}
+                onClick={() => (modoVarias ? alternarMarcada(c.id) : setSelId(c.id))}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); modoVarias ? alternarMarcada(c.id) : setSelId(c.id); } }}
+                className={`group flex w-full cursor-pointer items-center gap-3 border-b border-surface-border px-3.5 py-3 text-left transition hover:bg-surface-raised ${
+                  modoVarias && marcadas.has(c.id) ? "bg-pink/10" : active ? "bg-surface-raised" : ""
+                }`}
               >
+                {modoVarias && (
+                  <span
+                    aria-hidden
+                    className={`grid h-5 w-5 flex-none place-items-center rounded-md border-2 transition ${
+                      marcadas.has(c.id) ? "border-pink bg-pink" : "border-surface-border"
+                    }`}
+                  >
+                    {marcadas.has(c.id) && <Check className="h-3.5 w-3.5" style={{ color: "#fff" }} strokeWidth={3} />}
+                  </span>
+                )}
                 <div className="relative flex-none">
                   <div className="grid h-11 w-11 place-items-center rounded-full bg-gradient-to-br from-pink to-violet font-display text-sm font-bold text-white">
                     {initials(c.contact?.name || c.contact?.wa_name)}

@@ -10375,6 +10375,9 @@ describe("Los idiomas no se desincronizan", () => {
       // español y en portugués. Se comprobó frase por frase al traducir la
       // pantalla, no se dieron por buenas porque coincidieran.
       "reservasTurnos.cancelar", "reservasTurnos.grupoGrandePartir",
+      // Acciones en bloque (3 oct 2026): «Etiquetas», «Etapa», «Aplicar a …» y
+      // «Desmarcar todas» son portugués correcto, comprobadas una por una.
+      "enBloque.etiquetas", "enBloque.etapa", "enBloque.aplicarA", "enBloque.desmarcarTodas",
     ];
     const es = leer("es") ?? {};
     const valor = (o, k) => k.split(".").reduce((a, p) => a?.[p], o);

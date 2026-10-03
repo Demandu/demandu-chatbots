@@ -4,6 +4,9 @@ import { ContactsClient } from "@/components/contacts/ContactsClient";
 import { createContact } from "./actions";
 import { AgregarContacto } from "@/components/contacts/AgregarContacto";
 import { Download } from "lucide-react";
+import { getCurrentOrgId } from "@/lib/org";
+import { misPermisos } from "@/lib/permisos-server";
+import { ordenarEtapas } from "@/lib/enBloque";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +19,27 @@ const CHANNELS = [
 ];
 
 export default async function ContactsPage() {
-  const { data } = await createClient()
+  const sb = createClient();
+  const orgId = (await getCurrentOrgId()) ?? "";
+  const { permisos } = await misPermisos();
+  // La barra de «varios a la vez» cambia conversaciones: solo para quien puede.
+  const puedeEnBloque = permisos.has("conversaciones");
+
+  /* Lo que la barra necesita para preguntar: a quién, qué etiqueta, qué etapa.
+     Filtrado por cuenta A MANO: con dos accesos, RLS deja ver las dos. */
+  const [mem, tg, st] = puedeEnBloque
+    ? await Promise.all([
+        sb.from("team_members").select("id,name").eq("org_id", orgId).order("name"),
+        sb.from("tags").select("id,name,color").eq("org_id", orgId).order("name"),
+        sb
+          .from("conversation_states")
+          .select("id,name,color,sort,pipeline:pipelines(name,sort)")
+          .eq("org_id", orgId)
+          .order("sort"),
+      ])
+    : [{ data: [] }, { data: [] }, { data: [] }];
+
+  const { data } = await sb
     .from("contacts")
     .select("id,name,wa_name,phone,email,company,country,channel,tags,created_at")
     // El contacto que crea «Probar flujo» no es una persona: es el dueño
@@ -55,7 +78,18 @@ export default async function ContactsPage() {
 
         <AgregarContacto canales={CHANNELS} accion={createContact} />
 
-        <ContactsClient contacts={(data as any[]) ?? []} />
+        <ContactsClient
+          contacts={(data as any[]) ?? []}
+          enBloque={
+            puedeEnBloque
+              ? {
+                  miembros: (mem.data as any[]) ?? [],
+                  etiquetas: (tg.data as any[]) ?? [],
+                  etapas: ordenarEtapas((st.data as any[]) ?? []),
+                }
+              : null
+          }
+        />
       </div>
     </>
   );

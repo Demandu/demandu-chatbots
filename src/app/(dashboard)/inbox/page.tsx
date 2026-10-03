@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentOrgId } from "@/lib/org";
 import { Topbar } from "@/components/Topbar";
 import { InboxClient } from "@/components/inbox/InboxClient";
+import { ordenarEtapas } from "@/lib/enBloque";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,9 @@ export default async function InboxPage() {
       .eq("prueba", false)
       .order("last_message_at", { ascending: false }),
     sb.from("team_members").select("id,name,user_id").order("name"),
-    sb.from("conversation_states").select("id,name,color").order("sort"),
+    // `pipeline` y `sort` los usa la barra de «varias a la vez» para agrupar
+    // las etapas por embudo. Los selectores de siempre solo miran id/nombre/color.
+    sb.from("conversation_states").select("id,name,color,sort,pipeline:pipelines(name,sort)").order("sort"),
     sb.from("tags").select("id,name,color").order("name"),
     sb.from("custom_attributes").select("id,name,key").eq("visible", true).order("sort"),
     sb.from("organizations").select("id, branding").eq("id", orgId ?? "").maybeSingle(),
@@ -45,7 +48,7 @@ export default async function InboxPage() {
       <InboxClient
         initial={(conv.data as any[]) ?? []}
         members={(mem.data as any[]) ?? []}
-        states={(st.data as any[]) ?? []}
+        states={ordenarEtapas((st.data as any[]) ?? [])}
         tags={(tg.data as any[]) ?? []}
         attrs={(attr.data as any[]) ?? []}
         bubbleOut={branding.bubble_out ?? null}

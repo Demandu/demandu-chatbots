@@ -7,6 +7,8 @@ import { deleteContacts } from "@/app/(dashboard)/contacts/actions";
 import { ChannelIcon } from "@/components/inbox/ChannelBadge";
 import { Confirm } from "@/components/ui/Confirm";
 import { bandera, paisDesdeTelefono } from "@/lib/phoneCountry";
+import { useRouter } from "next/navigation";
+import { BarraEnBloque, type MiembroEB, type EtiquetaEB, type EtapaEB } from "@/components/enbloque/BarraEnBloque";
 
 type Contact = {
   id: string;
@@ -45,7 +47,15 @@ function BotonEliminar({ cuantos, onPedir }: { cuantos: number; onPedir: () => v
   );
 }
 
-export function ContactsClient({ contacts }: { contacts: Contact[] }) {
+export function ContactsClient({
+  contacts,
+  enBloque,
+}: {
+  contacts: Contact[];
+  /** Lo que necesita la barra de «varios a la vez». `null` = este usuario no puede. */
+  enBloque?: { miembros: MiembroEB[]; etiquetas: EtiquetaEB[]; etapas: EtapaEB[] } | null;
+}) {
+  const router = useRouter();
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [confirmar, setConfirmar] = useState(false);
@@ -114,7 +124,7 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
         {sel.size > 0 && <BotonEliminar cuantos={sel.size} onPedir={() => setConfirmar(true)} />}
 
         {aviso && (
-          <span
+          <span role="status"
             className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium ${
               aviso.ok ? "bg-success/15 text-exito" : "bg-danger/10 text-danger"
             }`}
@@ -124,6 +134,28 @@ export function ContactsClient({ contacts }: { contacts: Contact[] }) {
           </span>
         )}
       </div>
+
+      {/* VARIOS A LA VEZ: asignar, etiquetar, mover de etapa, cerrar.
+        * Actúa sobre TODOS los marcados, también los que la búsqueda esconde
+        * ahora mismo — igual que «Eliminar». El número lo dice. */}
+      {enBloque && sel.size > 0 && (
+        <div className="mb-4">
+          <BarraEnBloque
+            tipo="contactos"
+            ids={Array.from(sel)}
+            miembros={enBloque.miembros}
+            etiquetas={enBloque.etiquetas}
+            etapas={enBloque.etapas}
+            onLimpiar={() => setSel(new Set())}
+            onListo={(r) => {
+              setAviso({ ok: r.ok, texto: r.texto });
+              if (r.ok) setSel(new Set());
+              router.refresh();
+              setTimeout(() => setAviso(null), 8000);
+            }}
+          />
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <p className="rounded-xl border border-dashed border-linea px-4 py-8 text-center text-sm text-ink-3">
