@@ -14,6 +14,10 @@ import {
   type Tablero as TableroTipo, type Tarjeta, type Columna,
 } from "@/lib/crm";
 import { FichaOportunidad } from "./FichaOportunidad";
+import {
+  BarraEnBloque, type MiembroEB, type EtiquetaEB, type EtapaEB,
+} from "@/components/enbloque/BarraEnBloque";
+import { BotonSeleccionarTarjetas, MarcarColumna } from "@/components/enbloque/ControlesDeTablero";
 
 /**
  * El tablero del embudo.
@@ -30,9 +34,14 @@ import { FichaOportunidad } from "./FichaOportunidad";
 export function Tablero({
   inicial,
   orgId,
+  enBloque,
 }: {
   inicial: TableroTipo;
   orgId: string;
+  /** Nulo cuando quien mira no tiene el permiso: sin esto no hay barra. Lo
+   *  decide el servidor en `crm/page.tsx`; esconderla no es prohibirla, el
+   *  permiso se vuelve a comprobar en cada acción. */
+  enBloque?: { miembros: MiembroEB[]; etiquetas: EtiquetaEB[]; etapas: EtapaEB[] } | null;
 }) {
   const sb = useMemo(() => createClient(), []);
   const router = useRouter();
@@ -44,6 +53,34 @@ export function Tablero({
   const [cargando, setCargando] = useState(false);
   const [abierta, setAbierta] = useState<Tarjeta | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /* ── SELECCIÓN MÚLTIPLE ───────────────────────────────────────────────────
+   *
+   * En modo selección, tocar una tarjeta la MARCA en vez de abrir su ficha, y
+   * se apaga el arrastre. Es el mismo patrón que la Bandeja: un modo explícito
+   * en vez de casillas siempre a la vista, porque el tablero se usa a diario
+   * para arrastrar de a una y unas casillas permanentes estorbarían siempre
+   * para ganar algo que se usa de vez en cuando.
+   *
+   * Solo se puede marcar lo que se VE. El tablero trae 50 por columna: marcar
+   * lo que no está cargado sería mover a ciegas. */
+  const [modo, setModo] = useState(false);
+  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
+  const [aviso, setAviso] = useState<{ ok: boolean; texto: string } | null>(null);
+
+  const alternarUna = useCallback((id: string) => {
+    setMarcadas((antes) => {
+      const n = new Set(antes);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }, []);
+
+  const salirDeSeleccion = useCallback(() => {
+    setModo(false);
+    setMarcadas(new Set());
+  }, []);
 
   const arrastrando = useRef<string | null>(null);
   const [indicador, setIndicador] = useState<{ col: string; idx: number } | null>(null);
@@ -237,7 +274,32 @@ export function Tablero({
           </button>
 
           <Link href="/settings/states" className="btn-soft px-3 text-xs">Editar etapas</Link>
+
+          {enBloque && (
+            <BotonSeleccionarTarjetas
+              activo={modo}
+              onAlternar={() => (modo ? salirDeSeleccion() : setModo(true))}
+            />
+          )}
         </div>
+
+        {aviso && (
+          <div
+            className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${
+              aviso.ok ? "border-success/30 bg-success/5 text-ink-2" : "border-danger/30 bg-danger/5 text-ink-2"
+            }`}
+          >
+            {aviso.ok ? (
+              <RefreshCw className="mt-0.5 h-4 w-4 flex-none text-exito" />
+            ) : (
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-danger" />
+            )}
+            <span className="min-w-0">{aviso.texto}</span>
+            <button type="button" onClick={() => setAviso(null)} className="ml-auto text-ink-3 hover:text-ink">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         {error && (
           <div className="flex items-center gap-2 rounded-xl border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-ink-2">
@@ -281,6 +343,26 @@ export function Tablero({
                 onArrastrar={(id) => (arrastrando.current = id)}
                 onAbrir={setAbierta}
                 onMoverA={(idTarjeta, idCol) => mover(idTarjeta, idCol, 0)}
+                seleccion={
+                  modo
+                    ? {
+                        marcadas,
+                        alternarUna,
+                        alternarColumna: () => {
+                          const visibles = (c.tarjetas ?? []).map((x) => x.id);
+                          const todas = visibles.length > 0 && visibles.every((id) => marcadas.has(id));
+                          setMarcadas((antes) => {
+                            const n = new Set(antes);
+                            for (const id of visibles) {
+                              if (todas) n.delete(id);
+                              else n.add(id);
+                            }
+                            return n;
+                          });
+                        },
+                      }
+                    : null
+                }
               />
             ))}
           </div>
@@ -288,6 +370,33 @@ export function Tablero({
       )}
 
       {/* ── Ficha lateral ──────────────────────────────────────────────── */}
+      {/* ── La barra de acciones en bloque ──────────────────────────────
+          Es la MISMA de Contactos y Conversaciones, con `tipo="oportunidades"`.
+          Si tuviera su propia copia, la regla «se escribe la tarjeta Y su
+          conversación» viviría en dos sitios y un día divergirían. */}
+      {enBloque && modo && marcadas.size > 0 && (
+        <div className="pointer-events-none sticky bottom-0 z-20 -mx-1 mt-3 flex justify-center px-1 pb-[env(safe-area-inset-bottom)]">
+          <div className="pointer-events-auto">
+            <BarraEnBloque
+              tipo="oportunidades"
+              ids={Array.from(marcadas)}
+              miembros={enBloque.miembros}
+              etiquetas={enBloque.etiquetas}
+              etapas={enBloque.etapas}
+              onLimpiar={salirDeSeleccion}
+              onListo={(r) => {
+                setAviso(r);
+                if (r.ok) {
+                  salirDeSeleccion();
+                  recargar();
+                  router.refresh();
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {abierta && (
         <FichaOportunidad
           tarjeta={abierta}
@@ -311,8 +420,15 @@ export function Tablero({
 /** Lo justo para pintar el enlace: el número que se lee y a qué tienda ir. */
 type PedidoDeTarjeta = { numero: number; tienda_id: string };
 
+type Seleccion = {
+  marcadas: Set<string>;
+  alternarUna: (id: string) => void;
+  alternarColumna: () => void;
+};
+
 function ColumnaTablero({
   columna, columnas, indicador, pedidos, onSobre, onSalir, onSoltar, onArrastrar, onAbrir, onMoverA,
+  seleccion,
 }: {
   columna: Columna;
   columnas: Columna[];
@@ -324,6 +440,8 @@ function ColumnaTablero({
   onArrastrar: (id: string) => void;
   onAbrir: (t: Tarjeta) => void;
   onMoverA: (idTarjeta: string, idColumna: string) => void;
+  /** Nulo = no estamos seleccionando: la columna se comporta como siempre. */
+  seleccion: Seleccion | null;
 }) {
   const tarjetas = columna.tarjetas ?? [];
   const ocultas = Math.max(0, (columna.total ?? 0) - tarjetas.length);
@@ -352,6 +470,17 @@ function ColumnaTablero({
         </span>
       </header>
 
+      {seleccion && (
+        <div className="border-b border-linea px-2.5 py-1.5">
+          <MarcarColumna
+            visibles={tarjetas.length}
+            total={columna.total}
+            todasMarcadas={tarjetas.length > 0 && tarjetas.every((t) => seleccion.marcadas.has(t.id))}
+            onAlternar={seleccion.alternarColumna}
+          />
+        </div>
+      )}
+
       {!!columna.importe && (
         <div className="border-b border-linea px-3.5 py-1.5 text-xs font-semibold text-violet">
           {dinero(columna.importe)}
@@ -371,6 +500,8 @@ function ColumnaTablero({
               onSobre={(mitadInferior) => onSobre(mitadInferior ? i + 1 : i)}
               onAbrir={onAbrir}
               onMoverA={onMoverA}
+              marcada={!!seleccion?.marcadas.has(t.id)}
+              onMarcar={seleccion ? seleccion.alternarUna : null}
             />
           </div>
         ))}
@@ -399,6 +530,7 @@ function Guia() {
 
 function TarjetaCrm({
   tarjeta: t, pedido, columnas, columnaActual, onArrastrar, onSobre, onAbrir, onMoverA,
+  marcada, onMarcar,
 }: {
   tarjeta: Tarjeta;
   pedido?: PedidoDeTarjeta;
@@ -408,6 +540,9 @@ function TarjetaCrm({
   onSobre: (mitadInferior: boolean) => void;
   onAbrir: (t: Tarjeta) => void;
   onMoverA: (idTarjeta: string, idColumna: string) => void;
+  marcada: boolean;
+  /** Nulo = no estamos seleccionando: tocar la tarjeta abre su ficha. */
+  onMarcar: ((id: string) => void) | null;
 }) {
   const [menu, setMenu] = useState(false);
   const av = alerta(t);
@@ -415,16 +550,48 @@ function TarjetaCrm({
 
   return (
     <article
-      draggable
-      onDragStart={(e) => { onArrastrar(t.id); e.dataTransfer.effectAllowed = "move"; }}
+      /* SIN ARRASTRE MIENTRAS SE SELECCIONA. Dejarlo vivo haría que el primer
+         gesto sobre una tarjeta ya marcada la moviera sola, deshaciendo la
+         selección sin que nadie lo pidiera. */
+      draggable={!onMarcar}
+      onDragStart={(e) => {
+        if (onMarcar) return;
+        onArrastrar(t.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
       onDragOver={(e) => {
+        if (onMarcar) return;
         e.preventDefault();
         const caja = e.currentTarget.getBoundingClientRect();
         onSobre(e.clientY > caja.top + caja.height / 2);
       }}
-      className="group mb-2 cursor-grab rounded-xl border border-linea bg-tarjeta p-3 transition hover:border-violet/50 hover:shadow-[0_6px_20px_-10px_rgba(20,20,60,.35)] active:cursor-grabbing"
+      className={`group mb-2 rounded-xl border bg-tarjeta p-3 transition hover:shadow-[0_6px_20px_-10px_rgba(20,20,60,.35)] ${
+        onMarcar
+          ? marcada
+            ? "cursor-pointer border-pink ring-2 ring-pink/40"
+            : "cursor-pointer border-linea hover:border-pink/50"
+          : "cursor-grab border-linea hover:border-violet/50 active:cursor-grabbing"
+      }`}
     >
-      <button type="button" onClick={() => onAbrir(t)} className="block w-full text-left">
+      {/* EL MISMO BOTÓN, OTRO DESTINO. En modo selección marca; si no, abre la
+          ficha. Un segundo botón encima haría que en táctil se pulsara el que
+          no era. */}
+      <button
+        type="button"
+        onClick={() => (onMarcar ? onMarcar(t.id) : onAbrir(t))}
+        aria-pressed={onMarcar ? marcada : undefined}
+        className="block w-full text-left"
+      >
+        {onMarcar && (
+          <span
+            aria-hidden
+            className={`mb-2 inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] font-bold ${
+              marcada ? "border-pink bg-pink text-white" : "border-linea-2 bg-tarjeta-2 text-transparent"
+            }`}
+          >
+            ✓
+          </span>
+        )}
         <div className="flex items-start gap-2">
           <span className="grid h-7 w-7 flex-none place-items-center rounded-full bg-demandu-gradient text-[10px] font-bold text-white">
             {iniciales(nombre)}

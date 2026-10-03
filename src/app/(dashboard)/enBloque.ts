@@ -36,6 +36,8 @@ import {
   partesAsignar,
   partesEtiquetas,
   partesEtapa,
+  soloLasQueCambian,
+  sortAlFinal,
   partesCerrar,
   type Parte,
   type TipoSeleccion,
@@ -48,7 +50,12 @@ export type ResultadoEnBloque = { ok: boolean; partes: Parte[] };
 const no = (k: string, v?: Parte["v"]): ResultadoEnBloque => ({ ok: false, partes: [{ k, v }] });
 
 type Sb = ReturnType<typeof createClient>;
-type Conv = { id: string; contact_id: string | null; opportunity_id: string | null; status: string };
+type Conv = {
+  id: string; contact_id: string | null; opportunity_id: string | null; status: string;
+  /** La etapa en la que YA está: a quien no cambia, no se le escribe. */
+  state_id?: string | null;
+};
+type Tarjeta = { id: string; contact_id: string | null; stage_id?: string | null };
 
 const ABIERTAS = ["open", "pending", "assigned"];
 
@@ -57,7 +64,9 @@ async function preparar(
   tipo: TipoSeleccion,
   idsCrudos: unknown,
 ): Promise<{ sb: Sb; orgId: string; ids: string[] } | ResultadoEnBloque> {
-  if (tipo !== "contactos" && tipo !== "conversaciones") return no("seleccionNoValida");
+  if (tipo !== "contactos" && tipo !== "conversaciones" && tipo !== "oportunidades") {
+    return no("seleccionNoValida");
+  }
   const ids = idsLimpios(idsCrudos);
   if (!ids.length) return no("noSeleccionaste");
   if (ids.length > MAX_EN_BLOQUE) {
@@ -87,15 +96,48 @@ async function resolver(
   orgId: string,
   tipo: TipoSeleccion,
   ids: string[],
-): Promise<{ convs: Conv[]; contactIds: string[] }> {
+): Promise<{ convs: Conv[]; contactIds: string[]; tarjetas?: Tarjeta[] }> {
   const convs: Conv[] = [];
   const contactos = new Set<string>();
+
+  /* ── DESDE EL TABLERO: la selección SON las tarjetas ────────────────────
+   *
+   * Y sus conversaciones cuelgan de ellas (`conversations.opportunity_id`), que
+   * es el mismo camino que recorre el disparador `crm_etapa_a_conversacion`
+   * cuando se mueve una sola. Se leen aquí para poder escribir las dos, porque
+   * la regla «se mueven las dos o el tablero se queda quieto» no cambia según
+   * desde qué pantalla se pulse. */
+  if (tipo === "oportunidades") {
+    const tarjetas: Tarjeta[] = [];
+    for (const trozo of enTrozos(ids)) {
+      const { data, error } = await sb
+        .from("opportunities")
+        .select("id, contact_id, stage_id")
+        .eq("org_id", orgId)
+        .in("id", trozo);
+      if (error) throw new Error(`no pude leer las tarjetas: ${error.message}`);
+      for (const o of (data ?? []) as Tarjeta[]) {
+        tarjetas.push(o);
+        if (o.contact_id) contactos.add(o.contact_id);
+      }
+    }
+    for (const trozo of enTrozos(tarjetas.map((t) => t.id))) {
+      const { data, error } = await sb
+        .from("conversations")
+        .select("id, contact_id, opportunity_id, status, state_id")
+        .eq("org_id", orgId)
+        .in("opportunity_id", trozo);
+      if (error) throw new Error(`no pude leer sus conversaciones: ${error.message}`);
+      convs.push(...((data ?? []) as Conv[]));
+    }
+    return { convs, contactIds: Array.from(contactos), tarjetas };
+  }
 
   if (tipo === "conversaciones") {
     for (const trozo of enTrozos(ids)) {
       const { data, error } = await sb
         .from("conversations")
-        .select("id, contact_id, opportunity_id, status")
+        .select("id, contact_id, opportunity_id, status, state_id")
         .eq("org_id", orgId)
         .in("id", trozo);
       if (error) throw new Error(`no pude leer las conversaciones: ${error.message}`);
@@ -116,7 +158,7 @@ async function resolver(
   for (const trozo of enTrozos(contactIds)) {
     const { data, error } = await sb
       .from("conversations")
-      .select("id, contact_id, opportunity_id, status")
+      .select("id, contact_id, opportunity_id, status, state_id")
       .eq("org_id", orgId)
       .eq("prueba", false)
       .in("status", ABIERTAS)
@@ -141,12 +183,16 @@ async function tarjetasDe(
   tipo: TipoSeleccion,
   convs: Conv[],
   contactIds: string[],
-): Promise<{ id: string; contact_id: string | null }[]> {
-  const out = new Map<string, { id: string; contact_id: string | null }>();
+  yaLeidas?: Tarjeta[],
+): Promise<Tarjeta[]> {
+  // Desde el tablero ya vienen leídas con su etapa: pedirlas otra vez sería un
+  // viaje de más y, peor, una segunda verdad sobre en qué etapa estaban.
+  if (yaLeidas) return yaLeidas;
+  const out = new Map<string, Tarjeta>();
   if (tipo === "conversaciones") {
     const ids = Array.from(new Set(convs.map((c) => c.opportunity_id).filter((x): x is string => !!x)));
     for (const trozo of enTrozos(ids)) {
-      const { data, error } = await sb.from("opportunities").select("id, contact_id").eq("org_id", orgId).in("id", trozo);
+      const { data, error } = await sb.from("opportunities").select("id, contact_id, stage_id").eq("org_id", orgId).in("id", trozo);
       if (error) throw new Error(`no pude leer las tarjetas: ${error.message}`);
       for (const o of (data ?? []) as any[]) out.set(o.id, o);
     }
@@ -154,7 +200,7 @@ async function tarjetasDe(
     for (const trozo of enTrozos(contactIds)) {
       const { data, error } = await sb
         .from("opportunities")
-        .select("id, contact_id")
+        .select("id, contact_id, stage_id")
         .eq("org_id", orgId)
         .eq("status", "abierta")
         .in("contact_id", trozo);
@@ -341,11 +387,21 @@ export async function etapaEnBloque(
     if (eEtapa) throw new Error(`no pude leer la etapa: ${eEtapa.message}`);
     if (!etapa) return no("etapaNoExiste");
 
-    const { convs, contactIds } = await resolver(sb, orgId, tipo, ids);
-    const tarjetas = await tarjetasDe(sb, orgId, tipo, convs, contactIds);
+    const leido = await resolver(sb, orgId, tipo, ids);
+    const { convs, contactIds } = leido;
+    const tarjetas = await tarjetasDe(sb, orgId, tipo, convs, contactIds, leido.tarjetas);
+
+    /* A QUIEN YA ESTÁ EN ESA ETAPA NO SE LE ESCRIBE. Ver `soloLasQueCambian`:
+     * cada escritura deja una fila de historial en `opportunity_events`, repone
+     * la etiqueta de etapa en el contacto, lo recalifica y lo encola para
+     * Google Sheets. Mover 40 de las que 30 ya estaban ahí ensuciaría el
+     * historial con 30 cambios que no cambiaron nada — y ese historial es lo
+     * que después mide cuánto tarda una venta en cada etapa. */
+    const porMover = soloLasQueCambian(convs, (c) => c.state_id, (etapa as any).id);
+    const porMoverTarjetas = soloLasQueCambian(tarjetas, (t) => t.stage_id, (etapa as any).id);
 
     let convsHechas = 0;
-    for (const trozo of enTrozos(convs.map((c) => c.id))) {
+    for (const trozo of enTrozos(porMover.cambian.map((c) => c.id))) {
       const { data, error } = await sb
         .from("conversations")
         .update({ state_id: (etapa as any).id })
@@ -360,10 +416,27 @@ export async function etapaEnBloque(
      * cambiara `stage_id`, la tarjeta quedaría en un tablero cuya columna no
      * existe ahí: no saldría en ninguno. El estado (ganada/perdida/abierta) lo
      * deriva solo el disparador `crm_estado_desde_etapa`. */
-    const cambio: Record<string, string> = { stage_id: (etapa as any).id };
+    const cambio: Record<string, string | number> = { stage_id: (etapa as any).id };
     if ((etapa as any).pipeline_id) cambio.pipeline_id = (etapa as any).pipeline_id;
+
+    /* AL FINAL DE LA COLUMNA DESTINO. Sin esto la tarjeta se queda con el
+     * `sort` que tenía en su columna anterior y aparece intercalada donde nadie
+     * la puso. Si no se puede leer el final, se deja el `sort` quieto antes que
+     * no mover nada: quedar en mal orden se arregla arrastrando. */
+    if (porMoverTarjetas.cambian.length > 0) {
+      const { data: ultima, error: eUltima } = await sb
+        .from("opportunities")
+        .select("sort")
+        .eq("org_id", orgId)
+        .eq("stage_id", (etapa as any).id)
+        .order("sort", { ascending: false })
+        .limit(1);
+      if (eUltima) console.error("[en bloque] no pude ver el final de la columna:", eUltima.message);
+      else cambio.sort = sortAlFinal((ultima as any[])?.[0]?.sort ?? null);
+    }
+
     let tarjetasHechas = 0;
-    for (const trozo of enTrozos(tarjetas.map((t) => t.id))) {
+    for (const trozo of enTrozos(porMoverTarjetas.cambian.map((t) => t.id))) {
       const { data, error } = await sb
         .from("opportunities")
         .update(cambio)
@@ -376,11 +449,17 @@ export async function etapaEnBloque(
 
     refrescar();
     return {
-      ok: convsHechas > 0 || tarjetasHechas > 0,
+      /* Que ya estuvieran donde se pedía NO es un fallo: la selección acabó
+       * donde se quería. Devolver `ok: false` pintaría la barra en rojo por
+       * haber acertado. */
+      ok:
+        convsHechas > 0 || tarjetasHechas > 0 ||
+        porMoverTarjetas.yaEstaban > 0 || porMover.yaEstaban > 0,
       partes: partesEtapa({
         etapa: (etapa as any).name,
         conversaciones: convsHechas,
         tarjetas: tarjetasHechas,
+        yaEstaban: tipo === "oportunidades" ? porMoverTarjetas.yaEstaban : porMover.yaEstaban,
         sinNada: tipo === "contactos" ? sinNada(contactIds, convs, tarjetas) : 0,
       }),
     };

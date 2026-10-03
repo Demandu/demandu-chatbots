@@ -214,7 +214,16 @@
       "nadaQueCerrar": "No había conversaciones abiertas que cerrar.",
       "yaCerradas": "{n, plural, one {# ya estaba cerrada} other {# ya estaban cerradas}}.",
       "sinAbiertas": "{n, plural, one {# contacto no tenía} other {# contactos no tenían}} ninguna abierta.",
-      "tarjetasSiguen": "Sus tarjetas del Embudo siguen como estaban."
-    }
+      "tarjetasSiguen": "Sus tarjetas del Embudo siguen como estaban.",
+      "etapaYaEstaban": "{n, plural, one {# ya estaba ahí} other {# ya estaban ahí}}.",
+      "confirmarGanadas": "¿Marcar {n, plural, one {# tarjeta} other {# tarjetas}} como ganadas en «{etapa}»?",
+      "confirmarPerdidas": "¿Marcar {n, plural, one {# tarjeta} other {# tarjetas}} como perdidas en «{etapa}»?"
+    },
+    "tarjetas": "{n, plural, one {# tarjeta} other {# tarjetas}}",
+    "marcarVisiblesDeTotal": "Marcar las {n} visibles · de {total}",
+    "seleccionarTarjetas": "Seleccionar varias",
+    "columnaOcultas": "Solo se marcan las {n} que se ven. Las otras {ocultas} no están cargadas.",
+    "confirmarCierreDetalle": "Esto cierra la venta: les pone la fecha de cierre y queda en el historial. Para deshacerlo hay que volver a mover cada tarjeta.",
+    "confirmarCierreSi": "Sí, moverlas"
   }
 }

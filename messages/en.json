@@ -214,7 +214,16 @@
       "nadaQueCerrar": "There were no open conversations to close.",
       "yaCerradas": "{n, plural, one {# was already closed} other {# were already closed}}.",
       "sinAbiertas": "{n, plural, one {# contact had} other {# contacts had}} none open.",
-      "tarjetasSiguen": "Their Pipeline cards stay where they were."
-    }
+      "tarjetasSiguen": "Their Pipeline cards stay where they were.",
+      "etapaYaEstaban": "{n, plural, one {# was already there} other {# were already there}}.",
+      "confirmarGanadas": "Mark {n, plural, one {# card} other {# cards}} as won in “{etapa}”?",
+      "confirmarPerdidas": "Mark {n, plural, one {# card} other {# cards}} as lost in “{etapa}”?"
+    },
+    "tarjetas": "{n, plural, one {# card} other {# cards}}",
+    "marcarVisiblesDeTotal": "Select the {n} shown · of {total}",
+    "seleccionarTarjetas": "Select several",
+    "columnaOcultas": "Only the {n} shown get selected. The other {ocultas} aren't loaded.",
+    "confirmarCierreDetalle": "This closes the deal: it sets the close date and goes into the history. Undoing it means moving every card back by hand.",
+    "confirmarCierreSi": "Yes, move them"
   }
 }

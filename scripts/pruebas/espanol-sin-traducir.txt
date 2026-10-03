@@ -14,7 +14,7 @@ Componentes sueltos: 449
 Chatbots: 405
 Superadmin (interno): 355
 Configuración: 271
-Resto del panel: 246
+Resto del panel: 247
 Bandeja: 118
 Reservas: 80
 Agenda: 73

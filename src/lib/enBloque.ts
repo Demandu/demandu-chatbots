@@ -35,7 +35,15 @@
  *  equivocarse de selección sin darse cuenta. */
 export const MAX_EN_BLOQUE = 500;
 
-export type TipoSeleccion = "contactos" | "conversaciones";
+/**
+ * Qué se seleccionó.
+ *
+ * `oportunidades` son las TARJETAS del tablero del Embudo (3 oct 2026). Es una
+ * variante más, no un camino aparte: la etapa se escribe en la tarjeta y en su
+ * conversación igual que desde la Bandeja, y así la regla de «se escriben las
+ * dos» vive en un solo sitio. Duplicarla era garantizar que un día divergieran.
+ */
+export type TipoSeleccion = "contactos" | "conversaciones" | "oportunidades";
 
 /**
  * Las etiquetas nuevas de un contacto, o `null` si no cambia nada.
@@ -142,16 +150,120 @@ export function partesEtiquetas(r: { cambiados: number; yaEstaban: number; falla
 }
 
 /** Lo que pasó al mover de etapa. */
-export function partesEtapa(r: { etapa: string; conversaciones: number; tarjetas: number; sinNada: number }): Parte[] {
+export function partesEtapa(r: {
+  etapa: string;
+  conversaciones: number;
+  tarjetas: number;
+  sinNada: number;
+  /** Las que ya estaban en esa etapa: no se les escribió nada. */
+  yaEstaban?: number;
+}): Parte[] {
   const out: Parte[] = [];
   if (r.conversaciones > 0 || r.tarjetas > 0) {
     const k = r.conversaciones > 0 && r.tarjetas > 0 ? "etapaAmbas" : r.conversaciones > 0 ? "etapaConv" : "etapaTarjetas";
     out.push({ k, v: { etapa: r.etapa, c: r.conversaciones, t: r.tarjetas } });
-  } else {
+  } else if (!r.yaEstaban) {
     out.push({ k: "etapaNada", v: { etapa: r.etapa } });
   }
+  if (r.yaEstaban && r.yaEstaban > 0) out.push({ k: "etapaYaEstaban", v: { n: r.yaEstaban } });
   if (r.sinNada > 0) out.push({ k: "sinNada", v: { n: r.sinNada } });
   return out;
+}
+
+/**
+ * LO QUE DE VERDAD HAY QUE ESCRIBIR: a quien ya está en esa etapa, nada.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * No es una optimización. Cambiar la etapa de una tarjeta dispara, en cadena:
+ * `crm_estado_desde_etapa` (estado y fecha de cierre), `crm_etapa_a_conversacion`,
+ * `crm_registrar_evento` (una fila de historial) y `crm_etiqueta_de_etapa`, que
+ * le pone al CONTACTO una etiqueta con el nombre de la etapa — y escribir en el
+ * contacto vuelve a calificarlo y lo encola para Google Sheets.
+ *
+ * Mover a «Cotizando» 40 tarjetas de las que 30 ya estaban ahí dejaría 30 filas
+ * de historial que dicen que algo cambió cuando no cambió nada, y 30 filas de
+ * más en la cola de Sheets. El historial del embudo es lo que después mide
+ * cuánto tarda una venta en cada etapa: ensuciarlo lo vuelve inútil.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function soloLasQueCambian<T>(
+  filas: T[],
+  etapaDe: (f: T) => string | null | undefined,
+  destino: string,
+): { cambian: T[]; yaEstaban: number } {
+  const a = String(destino ?? "");
+  const cambian: T[] = [];
+  let yaEstaban = 0;
+  for (const f of filas) {
+    if (String(etapaDe(f) ?? "") === a && a !== "") yaEstaban++;
+    else cambian.push(f);
+  }
+  return { cambian, yaEstaban };
+}
+
+/**
+ * El `sort` de una tarjeta que llega en bloque: al final de la columna destino.
+ *
+ * Arrastrar UNA tarjeta calcula el punto medio entre sus dos vecinas
+ * (`crm_mover_tarjeta`). En bloque no hay vecinas que elegir: cuarenta tarjetas
+ * no se sueltan en un hueco. Van al final, que es donde se mira lo que acaba de
+ * entrar. Comparten el mismo `sort` a propósito — el orden entre ellas no lo
+ * decidió nadie, y fingir uno sería inventarse una prioridad.
+ */
+export function sortAlFinal(maxDeLaColumna: number | null | undefined, ahora: Date = new Date()): number {
+  const porDefecto = Math.floor(ahora.getTime() / 1000);
+  if (maxDeLaColumna === null || maxDeLaColumna === undefined) return porDefecto;
+  const max = Number(maxDeLaColumna);
+  if (!Number.isFinite(max)) return porDefecto;
+  return max + 1;
+}
+
+/**
+ * «Marcar las 50 visibles · de 320».
+ *
+ * EL TABLERO SOLO TRAE 50 POR COLUMNA. Un botón que dijera «marcar todas»
+ * marcaría 50 y el usuario creería que marcó 320 — y después movería 50
+ * pensando que movió todo, sin forma de saber qué quedó atrás. Decir el número
+ * de las dos cosas es lo único honesto que se puede hacer sin traerse la
+ * columna entera.
+ */
+export type EtiquetaDeColumna =
+  | { clave: "marcarTodas"; n: number }
+  | { clave: "marcarVisiblesDeTotal"; n: number; total: number };
+
+export function comoSeMarcaLaColumna(
+  visibles: number,
+  total: number | null | undefined,
+): EtiquetaDeColumna {
+  const v = Math.max(0, Math.floor(Number(visibles) || 0));
+  const t = Math.floor(Number(total) || 0);
+  return t > v ? { clave: "marcarVisiblesDeTotal", n: v, total: t } : { clave: "marcarTodas", n: v };
+}
+
+/**
+ * El aviso antes de mover a una etapa que CIERRA la venta.
+ *
+ * Soltar una tarjeta en «Ganada» o «Perdida» no es moverla de sitio: el
+ * disparador le pone el estado y la fecha de cierre. En bloque eso cierra
+ * cuarenta ventas de una vez, y deshacerlo es volver a mover cuarenta tarjetas
+ * a mano. Se pregunta con el número delante.
+ */
+export type Resultado = "ganado" | "perdido" | "abierto";
+
+export function cierraLaVenta(outcome: string | null | undefined): boolean {
+  return outcome === "ganado" || outcome === "perdido";
+}
+
+export function avisoDeCierre(r: {
+  cuantas: number;
+  etapa: string;
+  outcome: string | null | undefined;
+}): Parte | null {
+  if (!cierraLaVenta(r.outcome)) return null;
+  return {
+    k: r.outcome === "ganado" ? "confirmarGanadas" : "confirmarPerdidas",
+    v: { n: Math.max(0, Math.floor(r.cuantas)), etapa: r.etapa },
+  };
 }
 
 /** Lo que pasó al cerrar. Siempre recuerda que la tarjeta no se mueve. */

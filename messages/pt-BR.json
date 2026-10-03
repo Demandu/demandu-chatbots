@@ -214,7 +214,16 @@
       "nadaQueCerrar": "Não havia conversas abertas para encerrar.",
       "yaCerradas": "{n, plural, one {# já estava encerrada} other {# já estavam encerradas}}.",
       "sinAbiertas": "{n, plural, one {# contato não tinha} other {# contatos não tinham}} nenhuma aberta.",
-      "tarjetasSiguen": "Os cards do Funil continuam onde estavam."
-    }
+      "tarjetasSiguen": "Os cards do Funil continuam onde estavam.",
+      "etapaYaEstaban": "{n, plural, one {# já estava lá} other {# já estavam lá}}.",
+      "confirmarGanadas": "Marcar {n, plural, one {# cartão} other {# cartões}} como ganhos em “{etapa}”?",
+      "confirmarPerdidas": "Marcar {n, plural, one {# cartão} other {# cartões}} como perdidos em “{etapa}”?"
+    },
+    "tarjetas": "{n, plural, one {# cartão} other {# cartões}}",
+    "marcarVisiblesDeTotal": "Marcar os {n} visíveis · de {total}",
+    "seleccionarTarjetas": "Selecionar vários",
+    "columnaOcultas": "Só são marcados os {n} que aparecem. Os outros {ocultas} não estão carregados.",
+    "confirmarCierreDetalle": "Isso fecha a venda: coloca a data de fechamento e fica no histórico. Para desfazer é preciso mover cada cartão de novo.",
+    "confirmarCierreSi": "Sim, mover"
   }
 }

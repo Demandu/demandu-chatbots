@@ -33,7 +33,7 @@ export default async function ContactsPage() {
         sb.from("tags").select("id,name,color").eq("org_id", orgId).order("name"),
         sb
           .from("conversation_states")
-          .select("id,name,color,sort,pipeline:pipelines(name,sort)")
+          .select("id,name,color,sort,outcome,pipeline:pipelines(name,sort)")
           .eq("org_id", orgId)
           .order("sort"),
       ])

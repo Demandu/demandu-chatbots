@@ -33,5 +33,6 @@ echo "  scripts/pruebas/base-de-datos.sql"
 echo "  scripts/pruebas/crm-base-de-datos.sql"
 echo "  scripts/pruebas/reparto-base-de-datos.sql"
 echo "  scripts/pruebas/campanas-base-de-datos.sql"
+echo "  scripts/pruebas/embudo-en-bloque-base-de-datos.sql"
 echo ""
 exit $FALLOS

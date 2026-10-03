@@ -33,7 +33,7 @@ export default async function InboxPage() {
     sb.from("team_members").select("id,name,user_id").order("name"),
     // `pipeline` y `sort` los usa la barra de «varias a la vez» para agrupar
     // las etapas por embudo. Los selectores de siempre solo miran id/nombre/color.
-    sb.from("conversation_states").select("id,name,color,sort,pipeline:pipelines(name,sort)").order("sort"),
+    sb.from("conversation_states").select("id,name,color,sort,outcome,pipeline:pipelines(name,sort)").order("sort"),
     sb.from("tags").select("id,name,color").order("name"),
     sb.from("custom_attributes").select("id,name,key").eq("visible", true).order("sort"),
     sb.from("organizations").select("id, branding").eq("id", orgId ?? "").maybeSingle(),

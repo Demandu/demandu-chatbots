@@ -22,11 +22,17 @@ import {
   cerrarEnBloque,
   type ResultadoEnBloque,
 } from "@/app/(dashboard)/enBloque";
+import { avisoDeCierre, cierraLaVenta } from "@/lib/enBloque";
 import type { TipoSeleccion, Parte } from "@/lib/enBloque";
 
 export type MiembroEB = { id: string; name: string };
 export type EtiquetaEB = { id: string; name: string; color: string };
-export type EtapaEB = { id: string; name: string; color: string; pipeline?: { name: string } | null };
+export type EtapaEB = {
+  id: string; name: string; color: string;
+  pipeline?: { name: string } | null;
+  /** `ganado` / `perdido` / `abierto`. Las dos primeras CIERRAN la venta. */
+  outcome?: string | null;
+};
 
 type Panel = null | "asignar" | "etiquetas" | "etapa";
 
@@ -50,6 +56,11 @@ export function BarraEnBloque({
 }) {
   const [panel, setPanel] = useState<Panel>(null);
   const [cerrarAbierto, setCerrarAbierto] = useState(false);
+  /* La etapa elegida que CIERRA la venta, esperando el sí. Mover a «Ganada» o
+   * «Perdida» no es mover de columna: el disparador le pone el estado y la
+   * fecha de cierre. En bloque eso cierra cuarenta ventas de una vez, y
+   * deshacerlo es volver a mover cuarenta a mano. */
+  const [cerrarVentas, setCerrarVentas] = useState<EtapaEB | null>(null);
   const [poner, setPoner] = useState<Set<string>>(new Set());
   const [quitar, setQuitar] = useState<Set<string>>(new Set());
   const [pendiente, empezar] = useTransition();
@@ -75,7 +86,10 @@ export function BarraEnBloque({
   }, [panel]);
 
   const n = ids.length;
-  const que = t(tipo === "contactos" ? "contactos" : "conversaciones", { n });
+  const que = t(
+    tipo === "contactos" ? "contactos" : tipo === "oportunidades" ? "tarjetas" : "conversaciones",
+    { n },
+  );
 
   const correr = (f: () => Promise<ResultadoEnBloque>) => {
     setPanel(null);
@@ -135,9 +149,15 @@ export function BarraEnBloque({
       <button type="button" disabled={pendiente} className={boton} onClick={() => setPanel(panel === "etapa" ? null : "etapa")}>
         <Columns3 className="h-3.5 w-3.5" /> {t("etapa")}
       </button>
-      <button type="button" disabled={pendiente} className={boton} onClick={() => setCerrarAbierto(true)}>
-        <CheckCircle2 className="h-3.5 w-3.5" /> {t("cerrar")}
-      </button>
+      {/* DESDE EL TABLERO NO SE OFRECE «CERRAR», y no es por falta de sitio:
+          cerrar conversaciones NO cierra la tarjeta (regla 3 del embudo), así
+          que un botón «Cerrar» sobre tarjetas seleccionadas diría una cosa y
+          haría otra. Lo que cierra una venta es moverla a Ganada o Perdida. */}
+      {tipo !== "oportunidades" && (
+        <button type="button" disabled={pendiente} className={boton} onClick={() => setCerrarAbierto(true)}>
+          <CheckCircle2 className="h-3.5 w-3.5" /> {t("cerrar")}
+        </button>
+      )}
 
       {pendiente ? (
         <span className="inline-flex items-center gap-1 text-xs text-ink-3">
@@ -232,7 +252,18 @@ export function BarraEnBloque({
                     {grupo || t("sinEmbudo")}
                   </p>
                 )}
-                <button type="button" className={fila} onClick={() => correr(() => etapaEnBloque(tipo, ids, e.id))}>
+                <button
+                  type="button"
+                  className={fila}
+                  onClick={() => {
+                    if (cierraLaVenta(e.outcome)) {
+                      setPanel(null);
+                      setCerrarVentas(e);
+                      return;
+                    }
+                    correr(() => etapaEnBloque(tipo, ids, e.id));
+                  }}
+                >
                   <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: e.color }} />
                   <span className="truncate">{e.name}</span>
                 </button>
@@ -241,6 +272,27 @@ export function BarraEnBloque({
           })}
         </div>
       )}
+
+      {/* EL NÚMERO VA EN LA PREGUNTA, no un «¿seguro?» a secas: lo que se
+          decide no es mover, es cerrar N ventas. */}
+      <Confirm
+        abierto={!!cerrarVentas}
+        peligro={cerrarVentas?.outcome === "perdido"}
+        titulo={(() => {
+          const a = cerrarVentas
+            ? avisoDeCierre({ cuantas: ids.length, etapa: cerrarVentas.name, outcome: cerrarVentas.outcome })
+            : null;
+          return a ? t(`res.${a.k}` as any, (a.v ?? {}) as any) : "";
+        })()}
+        detalle={t("confirmarCierreDetalle")}
+        confirmar={t("confirmarCierreSi")}
+        onConfirmar={() => {
+          const e = cerrarVentas;
+          setCerrarVentas(null);
+          if (e) correr(() => etapaEnBloque(tipo, ids, e.id));
+        }}
+        onCancelar={() => setCerrarVentas(null)}
+      />
 
       <Confirm
         abierto={cerrarAbierto}
