@@ -32,6 +32,20 @@ import type { Correo } from "./plantillas";
  * No se lanza una excepción ni se devuelve `ok`. Devolver `ok` sin haber
  * mandado nada es lo peor que puede hacer esta función: quien llama apunta
  * «enviado», el cliente nunca lo recibe, y no queda ni rastro de por qué.
+ *
+ * ── 3 OCT 2026: SI ESTÁ GOOGLE, SALE POR GOOGLE ───────────────────────────
+ *
+ * Postmark nunca funcionó: los registros de `envios.demandu.tech` no se
+ * pegaron en Wix y los 7 correos que intentó mandar fallaron todos (ver
+ * `los-correos-de-supabase-y-el-remitente-1-oct-2026.md`). Los de Supabase ya
+ * salen por Google Workspace y llegan. Así que si en Netlify están
+ * `SMTP_USUARIO` y `SMTP_CLAVE`, este correo sale por el mismo camino.
+ *
+ * EL PRECIO, DICHO: con Google el remitente es el dominio raíz
+ * (`@demandu.tech`), justo lo que el subdominio evitaba. Con decenas de
+ * correos al mes el riesgo es teórico; la señal para volver a un subdominio
+ * es pasar de ~100 al mes o la primera queja de spam. Quitar las dos
+ * variables vuelve a Postmark sin tocar código.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -39,9 +53,67 @@ export type Envio = { ok: true; id: string } | { ok: false; error: string };
 
 const API = "https://api.postmarkapp.com/email";
 
-/** El remitente. Se dice aquí una vez para que no puedan discrepar dos sitios. */
+/** El remitente de Postmark. Se dice aquí una vez para que no puedan discrepar dos sitios. */
 export const REMITENTE =
   (process.env.CORREO_REMITENTE ?? "Demandu <no-reply@envios.demandu.tech>").trim();
+
+/** Las dos llaves de Google, o nada si falta cualquiera de las dos. */
+function cuentaDeGoogle(): { usuario: string; clave: string } | null {
+  const usuario = (process.env.SMTP_USUARIO ?? "").trim();
+  // Google enseña la contraseña de aplicación en cuatro grupos con espacios;
+  // quien la pega suele copiarlos. Con espacios Google la rechaza.
+  const clave = (process.env.SMTP_CLAVE ?? "").replace(/\s+/g, "");
+  return usuario && clave ? { usuario, clave } : null;
+}
+
+/** Por dónde va a salir el correo ahora mismo. Lo enseña la pantalla de correos. */
+export function salida(): { proveedor: "google" | "postmark" | "ninguno"; remitente: string } {
+  const g = cuentaDeGoogle();
+  // Google SOLO deja mandar como la propia cuenta (o un alias verificado en
+  // ella). Un «From» distinto lo reescribe o lo rechaza: por eso el remitente
+  // sale del usuario, no de `CORREO_REMITENTE`, que es el de Postmark.
+  if (g) return { proveedor: "google", remitente: `Demandu <${g.usuario}>` };
+  if ((process.env.POSTMARK_TOKEN ?? "").trim()) return { proveedor: "postmark", remitente: REMITENTE };
+  return { proveedor: "ninguno", remitente: REMITENTE };
+}
+
+async function porGoogle(
+  g: { usuario: string; clave: string },
+  v: { para: string; correo: Correo; responderA?: string },
+): Promise<Envio> {
+  try {
+    // SE CARGA AQUÍ DENTRO Y NO ARRIBA. Las pruebas importan este archivo para
+    // leer `REMITENTE` sin tener `node_modules`; arriba, eso las rompería.
+    const nodemailer = (await import("nodemailer")).default;
+    const transporte = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: { user: g.usuario, pass: g.clave },
+      // Con tope, como Postmark: una tarea programada no puede quedarse colgada.
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 20_000,
+    });
+    const info = await transporte.sendMail({
+      from: `Demandu <${g.usuario}>`,
+      to: v.para,
+      subject: v.correo.asunto,
+      html: v.correo.html,
+      text: v.correo.texto,
+      ...(v.responderA ? { replyTo: v.responderA } : {}),
+    });
+    // Google acepta o lanza. Si dice que aceptó pero rechazó al destinatario,
+    // eso NO es «enviado».
+    if (info.rejected?.length) return { ok: false, error: `Google rechazó ${String(info.rejected[0])}.` };
+    return { ok: true, id: String(info.messageId ?? "google") };
+  } catch (e: any) {
+    // EL MENSAJE DE GOOGLE, TAL CUAL Y EN CORTO. «Invalid login» (clave mal
+    // pegada) y «Daily user sending limit exceeded» son dos arreglos distintos.
+    console.error("[correo] Google no lo aceptó:", e?.message ?? e);
+    return { ok: false, error: `Google: ${String(e?.response ?? e?.message ?? "no contestó").slice(0, 280)}` };
+  }
+}
 
 export async function enviarCorreo(v: {
   para: string;
@@ -51,11 +123,16 @@ export async function enviarCorreo(v: {
   /** A dónde contesta el cliente si le da a Responder. */
   responderA?: string;
 }): Promise<Envio> {
-  const token = (process.env.POSTMARK_TOKEN ?? "").trim();
-  if (!token) return { ok: false, error: "Falta la llave de Postmark (POSTMARK_TOKEN)." };
-
   const para = String(v.para ?? "").trim();
   if (!para) return { ok: false, error: "No hay a quién mandárselo." };
+
+  const google = cuentaDeGoogle();
+  if (google) return porGoogle(google, { para, correo: v.correo, responderA: v.responderA });
+
+  const token = (process.env.POSTMARK_TOKEN ?? "").trim();
+  if (!token) {
+    return { ok: false, error: "No hay por dónde mandarlo: faltan SMTP_USUARIO y SMTP_CLAVE (Google) en Netlify." };
+  }
 
   try {
     // CON TOPE DE TIEMPO. Sin esto, un Postmark lento deja colgada la petición

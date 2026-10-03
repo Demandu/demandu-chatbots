@@ -20,6 +20,11 @@ import {
 } from "../../src/lib/agenda/cuandoRecordar.ts";
 import { comoVanLosRecordatorios } from "../../src/lib/whatsapp/comoVanLasPlantillas.ts";
 import { partesDeAdjunto, enlaceDeAdjunto, comoSeGuarda } from "../../src/lib/adjuntos.ts";
+import {
+  parametrosDe, utmsDeLaUrl, clicsDeLaUrl, sitioDe, plataformaDeLaVisita,
+  origenDeLaWeb, origenDeAnuncioDeInstagram, comoSeLlamaElOrigen, redDelOrigen,
+  lineasDelOrigen, esElMismoOrigen, CLAVES_UTM,
+} from "../../src/lib/origenDelLead.ts";
 import path from "node:path";
 import crypto from "node:crypto";
 import { describe, test, esperar, correrPruebas } from "./_runner.mjs";
@@ -140,6 +145,10 @@ import { esElReciboDeUnPedido, codigoDelRecibo } from "../../src/lib/tienda/pedi
 import { historialParaLaIA, MARCA_AGENTE } from "../../src/lib/ai/historial.ts";
 import { sinLoQueNoPuedeDecir, afirmaAlgoQueNoSabe, quedaAlgoQueDecir } from "../../src/lib/ai/loQueNoPuedeDecir.ts";
 import { REMITENTE } from "../../src/lib/correo/enviar.ts";
+import {
+  opcionesDeSupabase, opcionDeBienvenida, segundosParaPoderReenviar, falloEnHumano, esTipoDeReenvio,
+  etiquetaDeReenvio, ESPERA_DE_SUPABASE_S,
+} from "../../src/lib/correo/reenviar.ts";
 import { leerGruposEscritos, escribirGrupos } from "../../src/lib/tienda/escritura.ts";
 import { leerPegado, cortarTabla, esSi } from "../../src/lib/tienda/pegar.ts";
 import { recalcularPedido } from "../../src/lib/tienda/recalcular.ts";
@@ -6629,15 +6638,101 @@ describe("Correos de la plataforma", () => {
     esperar(/black|color\.png/.test(LOGO)).falso("el logo no contrasta con el fondo del correo");
   });
 
-  test("el remitente sale del subdominio, no del dominio raíz", () => {
+  test("el remitente de POSTMARK sale del subdominio, no del dominio raíz", () => {
     /* Si un cliente marca como spam un correo de la plataforma, el golpe se lo
      * lleva `envios.demandu.tech`. La reputación del dominio raíz es la que
      * hace que lleguen los correos que escribe una persona desde Google
-     * Workspace, y esas dos no deben tocarse. */
+     * Workspace, y esas dos no deben tocarse.
+     *
+     * 3 oct 2026: con `SMTP_USUARIO` puesto, la bienvenida sale por Google y
+     * ahí el remitente ES el dominio raíz — decisión tomada a sabiendas, por
+     * volumen (ver `enviar.ts`). Esta regla protege que, si se vuelve a
+     * Postmark, no se vuelva con el dominio raíz. */
     esperar(REMITENTE).contiene("envios.demandu.tech");
     esperar(/@demandu\.tech>/.test(REMITENTE)).falso(
       "el remitente sale del dominio raíz: un spam de la plataforma dañaría el correo de la empresa",
     );
+  });
+});
+
+describe("Reenviar un correo a quien dice que no le llegó", () => {
+  const AHORA = new Date("2026-10-03T18:00:00Z");
+  const HACE = (s) => new Date(AHORA.getTime() - s * 1000).toISOString();
+  const base = {
+    confirmadoEl: null, invitadoEl: null, confirmacionEnviadaEl: HACE(3600),
+    recuperacionEnviadaEl: null, proveedores: ["email"],
+  };
+  const de = (p) => Object.fromEntries(opcionesDeSupabase({ ...base, ...p }, AHORA).map((o) => [o.tipo, o]));
+
+  test("sin confirmar: solo sale «confirmar la cuenta»", () => {
+    const o = de({});
+    esperar(o.confirmar.vale).verdadero();
+    esperar(o.invitacion.vale).falso("se ofrece una invitación a quien se registró solo");
+    esperar(o.contrasena.vale).falso("se ofrece cambiar la contraseña antes de confirmar: tapa el problema real");
+  });
+
+  test("confirmado: solo sale «cambiar la contraseña»", () => {
+    const o = de({ confirmadoEl: HACE(86400) });
+    esperar(o.confirmar.vale).falso("se reenvía «confirma tu cuenta» a quien ya la confirmó");
+    esperar(o.invitacion.vale).falso();
+    esperar(o.contrasena.vale).verdadero();
+  });
+
+  test("invitado sin aceptar: la invitación, no «confirmar»", () => {
+    const o = de({ invitadoEl: HACE(7200) });
+    esperar(o.invitacion.vale).verdadero();
+    esperar(o.confirmar.vale).falso("a un invitado se le manda «confirma tu cuenta»: lo que le falta es la invitación");
+    esperar(o.confirmar.nota).contiene("invitación");
+  });
+
+  test("invitado que ya aceptó: no hay invitación que reenviar", () => {
+    const o = de({ invitadoEl: HACE(7200), confirmadoEl: HACE(3600) });
+    esperar(o.invitacion.vale).falso("Supabase rechaza reinvitar a quien ya entró");
+    esperar(o.contrasena.vale).verdadero();
+  });
+
+  test("si se acaba de mandar uno, se dice cuánto esperar en vez de dejar que Supabase lo rechace", () => {
+    const o = de({ confirmacionEnviadaEl: HACE(20) });
+    esperar(o.confirmar.vale).falso();
+    esperar(o.confirmar.nota).contiene("40 segundos");
+    esperar(segundosParaPoderReenviar(HACE(ESPERA_DE_SUPABASE_S + 1), AHORA)).igual(0);
+    esperar(segundosParaPoderReenviar(null, AHORA)).igual(0);
+    esperar(segundosParaPoderReenviar("basura", AHORA)).igual(0);
+  });
+
+  test("quien entra con Apple puede recibir el de contraseña, y se le avisa a quien lo pulsa", () => {
+    const o = de({ confirmadoEl: HACE(86400), proveedores: ["apple"] });
+    esperar(o.contrasena.vale).verdadero();
+    esperar(o.contrasena.nota).contiene("Apple");
+  });
+
+  test("todas las opciones dicen algo: un botón apagado sin motivo es una duda más", () => {
+    for (const p of [{}, { confirmadoEl: HACE(9) }, { invitadoEl: HACE(9) }, { confirmacionEnviadaEl: HACE(5) }]) {
+      for (const o of opcionesDeSupabase({ ...base, ...p }, AHORA)) {
+        esperar(o.nota.trim().length > 5).verdadero(`«${o.nombre}» sale sin explicación`);
+      }
+    }
+  });
+
+  test("la bienvenida necesita a quién: sin contacto no hay botón", () => {
+    esperar(opcionDeBienvenida({ contacto_email: null }).vale).falso();
+    esperar(opcionDeBienvenida({ contacto_email: "  " }).vale).falso();
+    const o = opcionDeBienvenida({ contacto_email: "ana@negocio.mx" });
+    esperar(o.vale).verdadero();
+    esperar(o.nota).contiene("ana@negocio.mx");
+  });
+
+  test("solo se aceptan los cuatro tipos, y cada uno se apunta con su etiqueta", () => {
+    for (const t of ["confirmar", "invitacion", "contrasena", "bienvenida"]) esperar(esTipoDeReenvio(t)).verdadero(t);
+    for (const t of ["magiclink", "", null, undefined, "recovery"]) esperar(esTipoDeReenvio(t)).falso(String(t));
+    esperar(etiquetaDeReenvio("contrasena")).igual("reenvio_contrasena");
+  });
+
+  test("los errores de Supabase salen en cristiano", () => {
+    esperar(falloEnHumano("For security purposes, you can only request this after 41 seconds.")).contiene("minuto");
+    esperar(falloEnHumano("email rate limit exceeded")).contiene("límite");
+    esperar(falloEnHumano("A user with this email address has already been registered")).contiene("ya aceptó");
+    esperar(falloEnHumano("otra cosa")).igual("otra cosa");
   });
 });
 
@@ -9398,5 +9493,265 @@ describe("El encabezado de una plantilla se manda", () => {
     );
   });
 });
+
+/* ═══ DE QUÉ PUBLICIDAD LLEGÓ EL LEAD ══════════════════════════════════════
+ *
+ * Lo que se prueba aquí no es una comodidad de la pantalla: es la única
+ * respuesta que la plataforma puede dar a «¿qué anuncio me trae clientes?».
+ * Un hueco en esta lógica no se ve nunca —la ficha sale igual de bonita, solo
+ * vacía— y para cuando se nota, el dato de esos leads ya no existe.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("De qué publicidad llegó el lead", () => {
+
+  test("LOS PARÁMETROS SE LEEN EN MINÚSCULAS Y SIN LOS VACÍOS", () => {
+    esperar(parametrosDe("https://x.com/a?UTM_Source=Google&utm_medium=&b=2")).igual({
+      utm_source: "Google", b: "2",
+    });
+  });
+
+  /* Una URL mal formada la escribe el navegador de un visitante en la web de
+     un cliente. Si esto reventara, el visitante se quedaría sin chat — que es
+     infinitamente peor que quedarse sin saber de qué anuncio vino. */
+  test("UNA URL IMPOSIBLE NO TUMBA NADA", () => {
+    esperar(parametrosDe("no es una url")).igual(null);
+    esperar(parametrosDe("")).igual(null);
+    esperar(parametrosDe(null)).igual(null);
+    esperar(parametrosDe(undefined)).igual(null);
+    esperar(parametrosDe({})).igual(null);
+    // Sin host no es una URL absoluta, pero los `utm_` están ahí igual.
+    esperar(utmsDeLaUrl("/aterrizaje?utm_source=google")).igual({ utm_source: "google" });
+  });
+
+  test("EL PRIMER VALOR GANA CUANDO EL ENLACE REPITE UN PARÁMETRO", () => {
+    esperar(utmsDeLaUrl("https://x.com/?utm_source=a&utm_source=b")).igual({ utm_source: "a" });
+  });
+
+  test("SOLO SALEN LOS UTM, NO TODO LO QUE CUELGUE DE LA URL", () => {
+    const u = utmsDeLaUrl("https://x.com/?utm_source=g&id=777&utm_campaign=verano");
+    esperar(u).igual({ utm_source: "g", utm_campaign: "verano" });
+    esperar(Object.keys(u).some((k) => !CLAVES_UTM.includes(k))).falso(
+      "deja pasar parámetros que no son utm: la ficha acabaría pintando ids internos del sitio",
+    );
+  });
+
+  /* EL CASO MÁS COMÚN DE TODOS y el que más fácil se olvida: Google Ads con
+     etiquetado automático añade `gclid` y NADA más. Un cliente que no
+     configuró sus UTMs a mano —la mayoría— se quedaría sin atribución. */
+  test("UN GCLID SOLO, SIN NI UN UTM, YA ES UN ANUNCIO DE GOOGLE", () => {
+    const o = origenDeLaWeb("https://cliente.com/?gclid=ABC123");
+    esperar(o === null).falso("tira el lead de Google Ads con etiquetado automático");
+    esperar(o.plataforma).igual("google");
+    esperar(o.tipo).igual("ad");
+    esperar(o.anuncio_id).igual("ABC123");
+    esperar(clicsDeLaUrl("https://cliente.com/?gclid=ABC123")).igual({ gclid: "ABC123" });
+  });
+
+  test("EL FBCLID ES DE META Y EL TTCLID DE TIKTOK", () => {
+    esperar(origenDeLaWeb("https://c.com/?fbclid=zz").plataforma).igual("meta");
+    esperar(origenDeLaWeb("https://c.com/?ttclid=zz").plataforma).igual("tiktok");
+    esperar(origenDeLaWeb("https://c.com/?msclkid=zz").plataforma).igual("bing");
+  });
+
+  /* El `utm_source` lo escribe una persona a mano, y en los paneles reales
+     está lleno de `Facebook`, `FB` y `fb-ads`. Si no se normaliza, el informe
+     por plataforma sale partido en cinco filas que son la misma. */
+  test("FACEBOOK, FB, IG Y META SON LA MISMA PLATAFORMA", () => {
+    for (const fuente of ["Facebook", "fb", "IG", "instagram", "meta", "fb_ads"]) {
+      esperar(plataformaDeLaVisita({ utm_source: fuente }, null)).igual(
+        "meta", `no agrupa "${fuente}" con Meta`,
+      );
+    }
+    for (const fuente of ["google", "AdWords", "google-ads", "gads"]) {
+      esperar(plataformaDeLaVisita({ utm_source: fuente }, null)).igual(
+        "google", `no agrupa "${fuente}" con Google`,
+      );
+    }
+  });
+
+  test("UNA FUENTE QUE NO SE RECONOCE NO SE INVENTA", () => {
+    esperar(plataformaDeLaVisita({ utm_source: "boletin-de-la-camara" }, null)).igual("enlace");
+    esperar(plataformaDeLaVisita(null, null)).igual("enlace");
+  });
+
+  /* El identificador de clic lo pone la plataforma y no se puede escribir mal;
+     el `utm_source` lo escribe una persona. Cuando se contradicen, manda el
+     que no puede estar equivocado. */
+  test("EL IDENTIFICADOR DE CLIC MANDA SOBRE EL UTM_SOURCE", () => {
+    esperar(plataformaDeLaVisita({ utm_source: "facebook" }, { gclid: "x" })).igual("google");
+  });
+
+  test("UN MEDIO DE PAGO LO MARCA COMO ANUNCIO; UNO ORGÁNICO, COMO CAMPAÑA", () => {
+    esperar(origenDeLaWeb("https://c.com/?utm_source=g&utm_medium=cpc").tipo).igual("ad");
+    esperar(origenDeLaWeb("https://c.com/?utm_source=g&utm_medium=paid_social").tipo).igual("ad");
+    esperar(origenDeLaWeb("https://c.com/?utm_source=g&utm_medium=email").tipo).igual("campana");
+  });
+
+  test("LA CAMPAÑA ES EL TITULAR Y CON ELLA SE AGRUPA", () => {
+    const o = origenDeLaWeb("https://c.com/l?utm_source=google&utm_campaign=verano-2026&utm_medium=cpc");
+    esperar(o.titular).igual("verano-2026");
+    esperar(o.anuncio_id).igual("verano-2026");
+    esperar(o.canal).igual("webchat");
+    esperar(o.url).igual("https://c.com/l?utm_source=google&utm_campaign=verano-2026&utm_medium=cpc");
+  });
+
+  test("EL UTM_ID APUNTA AL ANUNCIO CONCRETO Y GANA AL NOMBRE DE LA CAMPAÑA", () => {
+    const o = origenDeLaWeb("https://c.com/?utm_id=120209&utm_campaign=verano");
+    esperar(o.anuncio_id).igual("120209");
+    esperar(o.titular).igual("verano", "pierde el nombre legible de la campaña");
+  });
+
+  /* Escribir «vino de la web» en la ficha de todo el mundo llena la pantalla
+     de una frase que no ayuda a decidir nada, y encima pisaría el primer toque
+     de verdad de quien ya lo tenía. */
+  test("UNA VISITA DIRECTA NO INVENTA UN ORIGEN", () => {
+    esperar(origenDeLaWeb("https://cliente.com/precios", "")).igual(null);
+    esperar(origenDeLaWeb("", "")).igual(null);
+  });
+
+  test("NAVEGAR POR EL PROPIO SITIO NO ES LLEGAR DE NINGÚN SITIO", () => {
+    esperar(origenDeLaWeb("https://cliente.com/precios", "https://cliente.com/inicio")).igual(null);
+    // Con y sin `www.` es el mismo sitio.
+    esperar(origenDeLaWeb("https://cliente.com/precios", "https://www.cliente.com/inicio")).igual(null);
+  });
+
+  test("UNA VISITA QUE LLEGA DE OTRO SITIO SÍ SE APUNTA", () => {
+    const o = origenDeLaWeb("https://cliente.com/", "https://www.google.com/search?q=x");
+    esperar(o === null).falso("pierde de dónde venía la visita");
+    esperar(o.tipo).igual("referido");
+    esperar(o.plataforma).igual("google");
+    esperar(o.referente).igual("https://www.google.com/search?q=x");
+  });
+
+  test("EL SITIO SE LEE SIN WWW Y EN MINÚSCULAS", () => {
+    esperar(sitioDe("https://WWW.Cliente.COM/a")).igual("cliente.com");
+    esperar(sitioDe("basura")).igual("");
+  });
+
+  /* ── Instagram ───────────────────────────────────────────────────────── */
+
+  /* Meta manda el id del anuncio con DOS nombres según el canal: `source_id`
+     en WhatsApp y `ad_id` en Instagram. Leer solo uno deja un canal entero sin
+     atribuir y nadie se enteraría, porque el otro sigue funcionando. */
+  test("EL ID DEL ANUNCIO SE LEE SE LLAME AD_ID O SOURCE_ID", () => {
+    esperar(origenDeAnuncioDeInstagram({ ad_id: "111" }).anuncio_id).igual("111");
+    esperar(origenDeAnuncioDeInstagram({ source_id: "222" }).anuncio_id).igual("222");
+  });
+
+  test("UN ANUNCIO DE INSTAGRAM TRAE SU TÍTULO Y SU PUBLICACIÓN", () => {
+    const o = origenDeAnuncioDeInstagram({
+      ref: "promo-mayo",
+      ad_id: "120209",
+      source: "ADS",
+      type: "OPEN_THREAD",
+      ads_context_data: { ad_title: "3 meses gratis", post_id: "17895", photo_url: "https://x/f.jpg" },
+    });
+    esperar(o.titular).igual("3 meses gratis");
+    esperar(o.publicacion).igual("17895");
+    esperar(o.codigo).igual("promo-mayo");
+    esperar(o.plataforma).igual("meta");
+    esperar(o.canal).igual("instagram");
+    esperar(o.tipo).igual("ad");
+  });
+
+  /* En los anuncios con «referencia» el código puede ser lo ÚNICO que llegue:
+     exigir el id del anuncio los dejaría todos fuera. */
+  test("UN CÓDIGO DE REFERENCIA SOLO YA VALE", () => {
+    const o = origenDeAnuncioDeInstagram({ ref: "volante-feria" });
+    esperar(o === null).falso("tira los anuncios que solo mandan su código de referencia");
+    esperar(o.anuncio_id).igual("volante-feria");
+  });
+
+  test("UN REFERRAL VACÍO O QUE NO ES UN OBJETO NO ES UN ANUNCIO", () => {
+    esperar(origenDeAnuncioDeInstagram({})).igual(null);
+    esperar(origenDeAnuncioDeInstagram(null)).igual(null);
+    esperar(origenDeAnuncioDeInstagram("ADS")).igual(null);
+    esperar(origenDeAnuncioDeInstagram({ source: "ADS", type: "OPEN_THREAD" })).igual(null);
+  });
+
+  /* ── Cómo se lee en la ficha ─────────────────────────────────────────── */
+
+  test("CADA ORIGEN SE DICE CON PALABRAS QUE ENTIENDE EL AGENTE", () => {
+    esperar(comoSeLlamaElOrigen({ tipo: "ad", plataforma: "google" })).igual("Anuncio de Google");
+    esperar(comoSeLlamaElOrigen({ tipo: "campana", plataforma: "meta" })).igual("Campaña de Meta");
+    esperar(comoSeLlamaElOrigen({ tipo: "comentario", plataforma: "meta", canal: "instagram" }))
+      .igual("Comentario de Instagram");
+    // Sin plataforma reconocida no se añade un «de» colgando.
+    esperar(comoSeLlamaElOrigen({ tipo: "referido", plataforma: "enlace" })).igual("Visita referida");
+    esperar(comoSeLlamaElOrigen(null)).igual("");
+  });
+
+  /* Meta no dice si el anuncio se vio en Facebook o en Instagram, pero si el
+     lead entró por Instagram, decir «Instagram» es lo honesto: es lo que vio
+     él, y es donde el agente va a ir a buscarlo. */
+  test("SI ENTRÓ POR INSTAGRAM, LA FICHA DICE INSTAGRAM Y NO META", () => {
+    esperar(redDelOrigen({ plataforma: "meta", canal: "instagram" })).igual("Instagram");
+    esperar(redDelOrigen({ plataforma: "meta", canal: "whatsapp" })).igual("Meta");
+  });
+
+  /* Lo que no esté en estas filas es como si no se hubiera guardado: quien
+     paga los anuncios no mira la base de datos, mira la ficha. */
+  test("LA FICHA PINTA TODOS LOS UTM, CON SU NOMBRE EN ESPAÑOL", () => {
+    const filas = lineasDelOrigen(origenDeLaWeb(
+      "https://c.com/l?utm_source=google&utm_medium=cpc&utm_campaign=verano&utm_content=anuncio-a&utm_term=casas",
+    ));
+    const porEtiqueta = Object.fromEntries(filas.map((f) => [f.etiqueta, f.valor]));
+    esperar(porEtiqueta["Fuente"]).igual("google");
+    esperar(porEtiqueta["Medio"]).igual("cpc");
+    esperar(porEtiqueta["Anuncio (contenido)"]).igual("anuncio-a");
+    esperar(porEtiqueta["Palabra clave"]).igual("casas");
+    esperar(porEtiqueta["Página de entrada"]).contiene("https://c.com/l");
+  });
+
+  test("EL CLIC DE WHATSAPP SE PINTA AUNQUE NO VENGA EN NINGUNA URL", () => {
+    const filas = lineasDelOrigen({ tipo: "ad", plataforma: "meta", ctwa_clid: "ARBc9" });
+    esperar(filas.some((f) => f.etiqueta === "Clic de WhatsApp" && f.valor === "ARBc9")).verdadero(
+      "se come el identificador de clic de click-to-WhatsApp, que es el que pega el lead con el anuncio en Meta",
+    );
+  });
+
+  /* Un dato repetido dos veces en la misma tarjeta hace que se lea ninguna. */
+  test("LO QUE YA ESTÁ EN GRANDE NO SE REPITE EN LAS FILAS", () => {
+    const filas = lineasDelOrigen(origenDeLaWeb("https://c.com/?utm_campaign=verano&utm_medium=cpc"));
+    esperar(filas.filter((f) => f.valor === "verano").length).igual(
+      0, "repite el nombre de la campaña, que ya está arriba como titular",
+    );
+  });
+
+  test("SIN ORIGEN NO HAY FILAS QUE PINTAR", () => {
+    esperar(lineasDelOrigen(null)).igual([]);
+    esperar(lineasDelOrigen(undefined)).igual([]);
+  });
+
+  /* La segunda tarjeta de la ficha solo aparece cuando el lead VOLVIÓ por otra
+     publicidad. Si esto dijera «distintos» de más, la ficha pintaría el mismo
+     anuncio dos veces y nadie se fijaría el día que de verdad son dos. */
+  test("EL MISMO ANUNCIO NO SE PINTA DOS VECES", () => {
+    const a = { tipo: "ad", anuncio_id: "120209", titular: "Verano" };
+    const b = { tipo: "ad", anuncio_id: "120209", titular: "Verano (copia 2)" };
+    esperar(esElMismoOrigen(a, b)).verdadero("pinta dos veces el mismo anuncio");
+    esperar(esElMismoOrigen(a, { tipo: "ad", anuncio_id: "999" })).falso(
+      "da por iguales dos anuncios distintos: el agente no vería que el lead volvió por otra campaña",
+    );
+  });
+
+  test("SIN IDENTIFICADOR SE COMPARA POR EL ENLACE, Y SI NO, POR EL TITULAR", () => {
+    esperar(esElMismoOrigen({ tipo: "campana", url: "https://c.com/a" }, { tipo: "campana", url: "https://c.com/a" }))
+      .verdadero("no reconoce la misma página de entrada");
+    esperar(esElMismoOrigen({ tipo: "campana", url: "https://c.com/a" }, { tipo: "campana", url: "https://c.com/b" }))
+      .falso("da por igual dos páginas de entrada distintas");
+    esperar(esElMismoOrigen({ tipo: "referido", titular: "google.com" }, { tipo: "referido", titular: "google.com" }))
+      .verdadero("no reconoce el mismo referido");
+  });
+
+  /* Si esto devolviera `true` con un hueco, la ficha de un lead SIN primer
+     toque se quedaría sin pintar el origen de su conversación —el único que
+     tiene. */
+  test("UN ORIGEN QUE NO EXISTE NO ES IGUAL A NINGUNO", () => {
+    esperar(esElMismoOrigen(null, { tipo: "ad", anuncio_id: "1" })).falso();
+    esperar(esElMismoOrigen({ tipo: "ad", anuncio_id: "1" }, null)).falso();
+    esperar(esElMismoOrigen(null, null)).falso();
+  });
+});
+
 
 process.exit(await correrPruebas());

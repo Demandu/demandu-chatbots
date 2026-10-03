@@ -59,10 +59,29 @@ export type EventoInstagram = {
   /** Solo en respuestas a historias: a qué historia contestó. */
   historiaId?: string;
   adjuntos?: { tipo: string; url: string }[];
+  /**
+   * EL ANUNCIO QUE ABRIÓ ESTE MENSAJE, tal cual lo manda Meta.
+   *
+   * Cuando alguien pulsa un anuncio de Instagram que abre el mensaje directo,
+   * Meta cuelga del mensaje un objeto `referral` con el id del anuncio, su
+   * título y la publicación. Esto NO SE LEÍA: se tiraba entero en cada mensaje
+   * que entraba, así que un cliente que paga anuncios para que le escriban por
+   * el DM no tenía forma de saber cuál de ellos le trajo cada lead.
+   *
+   * Se guarda crudo y la plataforma lo interpreta en `origenDeAnuncioDeInstagram`:
+   * este archivo traduce el webhook, no decide qué significa.
+   */
+  anuncio?: Record<string, unknown>;
   cuando: number | null;
 };
 
 const texto = (v: unknown) => String(v ?? "").trim();
+
+/** El `referral` de Meta, solo si trae algo. Un objeto vacío no es un anuncio. */
+const anuncioDe = (v: unknown): Record<string, unknown> | null =>
+  v && typeof v === "object" && Object.keys(v as object).length
+    ? (v as Record<string, unknown>)
+    : null;
 
 /**
  * Traduce el JSON de Meta a una lista de cosas que la plataforma entiende.
@@ -100,6 +119,14 @@ export function leerEventos(cuerpo: any): EventoInstagram[] {
         .map((a: any) => ({ tipo: texto(a?.type), url: texto(a?.payload?.url) }))
         .filter((a: any) => a.tipo || a.url);
 
+      // SE MIRAN LOS TRES SITIOS. Meta cuelga el `referral` del anuncio del
+      // propio mensaje cuando el anuncio abre el DM, del evento cuando solo
+      // abre la conversación, y del `postback` cuando la persona pulsó un
+      // botón del anuncio. Apostar por uno dejaría colocaciones enteras sin
+      // atribuir sin que nadie entendiera por qué.
+      const anuncio =
+        anuncioDe(msg.referral) ?? anuncioDe(m?.referral) ?? anuncioDe(m?.postback?.referral);
+
       const base = {
         cuentaNegocio,
         de: texto(m?.sender?.id) || null,
@@ -111,6 +138,7 @@ export function leerEventos(cuerpo: any): EventoInstagram[] {
         id: texto(msg.mid) || null,
         cuando: typeof m?.timestamp === "number" ? m.timestamp : null,
         ...(adjuntos.length ? { adjuntos } : {}),
+        ...(anuncio ? { anuncio } : {}),
       };
 
       // Una MENCIÓN EN HISTORIA llega como un mensaje con un adjunto de tipo

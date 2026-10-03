@@ -1,7 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { leerPlantilla } from "@/lib/correo/guardadas";
-import { REMITENTE } from "@/lib/correo/enviar";
+import { salida } from "@/lib/correo/enviar";
 import Editor from "./Editor";
+import Reenviar from "./Reenviar";
 import { restaurar } from "./acciones";
 import { RotateCcw, CheckCircle2, AlertTriangle } from "lucide-react";
 
@@ -27,7 +28,15 @@ export const dynamic = "force-dynamic";
 export default async function CorreosPage({
   searchParams,
 }: {
-  searchParams: { guardado?: string; restaurado?: string; probado?: string; fallo?: string };
+  searchParams: {
+    guardado?: string;
+    restaurado?: string;
+    probado?: string;
+    fallo?: string;
+    buscar?: string;
+    reenviado?: string;
+    noSalio?: string;
+  };
 }) {
   // Quién puede entrar aquí lo decide el marco de Superadmin, no esta pantalla.
   const admin = createAdminClient();
@@ -42,20 +51,27 @@ export default async function CorreosPage({
   ]);
 
   const historial = (enviados as any[]) ?? [];
-  const hayLlave = !!(process.env.POSTMARK_TOKEN ?? "").trim();
+  const sale = salida();
 
   return (
     <div className="mx-auto max-w-6xl">
       <h2 className="font-display text-2xl font-bold text-ink">Correos de la plataforma</h2>
       <p className="mb-5 mt-1 text-sm text-ink-2">
-        El texto del correo de bienvenida, que recibe cada negocio nuevo unos minutos después de registrarse. Se manda
-        desde <b className="text-ink">{REMITENTE}</b>.
+        Reenviar un correo a quien dice que no le llegó, y el texto de la bienvenida que recibe cada negocio nuevo.
+        La bienvenida sale desde <b className="text-ink">{sale.remitente}</b>
+        {sale.proveedor === "google" ? " (Google Workspace)" : sale.proveedor === "postmark" ? " (Postmark)" : ""}.
       </p>
 
-      {!hayLlave && (
+      {sale.proveedor === "ninguno" && (
         <div className="mb-5 rounded-xl border border-aviso/50 bg-aviso-suave px-4 py-2.5 text-sm text-ink-2">
-          Falta la llave de Postmark (<code>POSTMARK_TOKEN</code>). Puedes escribir y guardar el texto, pero no saldrá
-          ningún correo hasta ponerla.
+          La bienvenida no tiene por dónde salir: faltan <code>SMTP_USUARIO</code> y <code>SMTP_CLAVE</code> en
+          Netlify. Los correos de confirmar, contraseña e invitación no dependen de esto: esos los manda Supabase.
+        </div>
+      )}
+      {sale.proveedor === "postmark" && (
+        <div className="mb-5 rounded-xl border border-aviso/50 bg-aviso-suave px-4 py-2.5 text-sm text-ink-2">
+          La bienvenida sigue saliendo por Postmark, que nunca llegó a funcionar. Pon <code>SMTP_USUARIO</code> y{" "}
+          <code>SMTP_CLAVE</code> en Netlify para que salga por Google.
         </div>
       )}
       {searchParams?.guardado && (
@@ -84,6 +100,8 @@ export default async function CorreosPage({
           <span>{searchParams.fallo}</span>
         </div>
       )}
+
+      <Reenviar buscar={searchParams?.buscar} reenviado={searchParams?.reenviado} fallo={searchParams?.noSalio} />
 
       <Editor guardada={guardada} />
 
@@ -135,10 +153,11 @@ export default async function CorreosPage({
 
       {/* ── Lo que NO se edita aquí ──────────────────────────────────────── */}
       <div className="mt-10 card-l p-5">
-        <h3 className="font-display text-base font-bold text-ink">Los otros tres correos no están aquí</h3>
+        <h3 className="font-display text-base font-bold text-ink">El texto de los otros tres no se edita aquí</h3>
         <p className="mt-1.5 text-sm text-ink-2">
           Confirmar la cuenta, recuperar la contraseña e invitar a alguien los manda la autenticación en el momento, no
-          la plataforma. Su texto se pega en el panel de Supabase, y en el repositorio están en{" "}
+          la plataforma. Arriba se pueden reenviar, pero su texto se pega en el panel de Supabase, y en el repositorio
+          están en{" "}
           <code className="rounded bg-canvas px-1.5 py-0.5 font-mono text-[13px]">correos/</code>.
         </p>
 

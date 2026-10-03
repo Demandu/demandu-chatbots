@@ -71,6 +71,8 @@ type Convo = {
   asignada_por: string | null;
   /** En qué idioma escribe el lead. Se detecta solo; el agente puede cambiarlo. */
   idioma_lead: string | null;
+  /** Qué publicidad disparó ESTA conversación (el del contacto es el primer toque). */
+  origen: Record<string, any> | null;
   contact: Contact | null;
   state: State | null;
   member: Member | null;
@@ -243,7 +245,7 @@ export function InboxClient({
   })();
 
   const selectSql =
-    "id, channel, bot_id, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, asignada_por, opportunity_id, idioma_lead, " +
+    "id, channel, bot_id, status, unread, last_message_at, handoff_requested_at, state_id, assignee_member_id, asignada_por, opportunity_id, idioma_lead, origen, " +
     "contact:contacts(id,name,wa_name,phone,email,company,country,notes,attributes,channel,tags,origen), " +
     "state:conversation_states(id,name,color), member:team_members(id,name)";
 
@@ -1471,6 +1473,7 @@ export function InboxClient({
             attrs={attrs}
             orgId={orgId}
             conversacionId={sel.id}
+            origenConversacion={sel.origen as any}
             onPatch={(patch) =>
               setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, contact: { ...c.contact!, ...patch } as any } : c)))
             }

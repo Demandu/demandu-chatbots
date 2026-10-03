@@ -2475,6 +2475,10 @@ describe("Tareas programadas", () => {
       "src/app/api/correos/bienvenida/route.ts", // la manda de verdad, por tarea
       "src/app/superadmin/correos/Editor.tsx", // la pinta, no manda nada
       "src/app/superadmin/correos/acciones.ts", // se la manda a uno mismo
+      // 3 oct 2026: el equipo la REENVÍA cuando alguien dice «no me llegó».
+      // Pone la misma marca que la tarea antes de mandar, así que la tarea no
+      // manda otra detrás; y el destino sale del negocio, no de un campo.
+      "src/app/superadmin/correos/reenvio.ts",
     ];
     const usan = ARCHIVOS.filter((f) => sinComentarios(f.texto).includes("correoDeBienvenida("))
       .map((f) => f.ruta)
@@ -2512,6 +2516,45 @@ describe("Tareas programadas", () => {
     esperar(/para:\s*mio/.test(prueba)).verdadero("la prueba se manda a otra cosa que no es el correo de la sesión");
     esperar(/formData\.get\(\s*["'](para|destino|correo|email)["']/.test(prueba)).falso(
       "el destino de la prueba se puede escribir desde el formulario: un día llega a un cliente",
+    );
+  });
+
+  test("EL REENVÍO NO DEJA ESCRIBIR A QUIÉN SE MANDA", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Reenviar «cambia tu contraseña» o una invitación es mandar un enlace que
+    // abre una cuenta. Si el destino se pudiera escribir, un día se pega la
+    // dirección equivocada y un extraño entra en la cuenta de un cliente.
+    //
+    // El formulario manda el id de la persona; la dirección la lee el servidor
+    // de Supabase. Y la decisión de si se puede se toma OTRA VEZ en el servidor.
+    // ─────────────────────────────────────────────────────────────────────────
+    const acc = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/correos/reenvio.ts"), "utf8"));
+    esperar(/formData\.get\(\s*["'](para|destino|correo|email|buscar)["']/.test(acc)).falso(
+      "el reenvío lee la dirección del formulario: un día llega a quien no es",
+    );
+    esperar(/getUserById\(/.test(acc)).verdadero("el reenvío ya no saca la dirección de la cuenta");
+    esperar(/opcionesDeSupabase\(\s*personaDe\(/.test(acc)).verdadero(
+      "el servidor ya no vuelve a decidir si se puede reenviar: basta con mandar el formulario a mano",
+    );
+    esperar(/is_platform_admin/.test(acc)).verdadero("el reenvío no comprueba que quien lo pide sea del equipo");
+  });
+
+  test("EL REENVÍO NO FABRICA ENLACES", () => {
+    // Se decidió el 3 oct NO tener «copiar enlace»: ese enlace abre la cuenta
+    // de la persona y, copiado, acaba en un chat. Los tres correos los manda
+    // Supabase como siempre; aquí solo se le pide que los mande otra vez.
+    const acc = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/correos/reenvio.ts"), "utf8"));
+    esperar(/generateLink/.test(acc)).falso("el reenvío genera enlaces de acceso a mano");
+    const pantalla = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/correos/Reenviar.tsx"), "utf8"));
+    esperar(/generateLink|action_link/.test(pantalla)).falso("la pantalla enseña enlaces de acceso");
+  });
+
+  test("el reenvío de la bienvenida pone la marca, para que la tarea no mande otra", () => {
+    const acc = sinComentarios(fs.readFileSync(path.join(SRC, "app/superadmin/correos/reenvio.ts"), "utf8"));
+    const marca = acc.indexOf("bienvenida_enviada_at");
+    const manda = acc.indexOf("enviarYApuntar(");
+    esperar(marca > 0 && marca < manda).verdadero(
+      "la bienvenida se reenvía sin marcar antes: a los cinco minutos la tarea le manda otra",
     );
   });
 
@@ -12728,5 +12771,151 @@ describe("Una persona, una conversación viva por canal", () => {
     );
   });
 });
+
+// ─── La misma persona no entra dos veces ────────────────────────────────────
+//
+// 25 sep 2026, CertifiedPrime: el mismo «Darwin Bracho», con el mismo teléfono
+// y el mismo correo, QUINCE VECES, creado en 43 segundos. Ninguno con
+// conversación, etiquetas ni grupo: quince fichas vacías idénticas.
+//
+// El formulario insertaba a pelo —sin mirar si ya existía y sin mirar el error
+// del `insert`— y no contestaba nada, así que parecía que no había pasado nada
+// y se volvía a pulsar. Y la base no lo impedía: su índice único es
+// `(org_id, channel, external_id)`, y para un contacto escrito a mano
+// `external_id` es NULL. En Postgres un NULL nunca es igual a otro NULL.
+describe("La misma persona no entra dos veces", () => {
+  const ACCIONES = "app/(dashboard)/contacts/actions.ts";
+
+  test("AGREGAR UN CONTACTO MIRA ANTES SI YA ESTÁ", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, ACCIONES), "utf8"));
+
+    const mira = /\.eq\("phone", telefono\)/.test(t) || /\.eq\("email", correo\)/.test(t);
+    esperar(mira).verdadero(
+      "`createContact` volvió a insertar sin mirar si esa persona ya estaba: así es como " +
+        "entraron quince fichas idénticas en 43 segundos",
+    );
+    esperar(/function soloDigitos/.test(t)).verdadero(
+      "se perdió la normalización del teléfono: «+507 6017-0269» y «50760170269» son la " +
+        "misma persona y una búsqueda por texto los ve distintos",
+    );
+  });
+
+  test("y el insert deja de tragarse su error", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, ACCIONES), "utf8"));
+    esperar(/const \{ error \} = await sb\.from\("contacts"\)\.insert\(/.test(t)).verdadero(
+      "el alta de contacto volvió a no mirar su error: si la base lo rechaza, nadie se entera",
+    );
+  });
+
+  test("Y NO SE PISA LO QUE EL CONTACTO YA TENÍA", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, ACCIONES), "utf8"));
+    esperar(/if \(!yaEsta\.phone && telefono\)/.test(t)).verdadero(
+      "al reencontrar a alguien se le están sobrescribiendo los datos en vez de rellenar " +
+        "solo los huecos: lo viejo lleva más tiempo siendo cierto",
+    );
+  });
+});
+
+// ─── De qué publicidad llegó, en los tres canales ───────────────────────────
+//
+// 3 oct 2026. El motor de WhatsApp leía el anuncio de Meta y lo guardaba bien
+// desde la 0065. Los otros dos caminos NO:
+//
+//   · el chat web no capturaba NADA —ni un `utm_` en todo el proyecto—, así que
+//     un cliente que paga Google Ads para que la gente abra el chat de su web
+//     no tenía forma de saber qué anuncio le traía cada conversación;
+//   · Instagram escribía el origen en la conversación y dejaba el del CONTACTO
+//     vacío para siempre, que es justo el que pinta la ficha del lead y el que
+//     cuenta el informe por campaña.
+//
+// Son tres caminos a la misma pregunta. Esta regla existe porque uno de ellos
+// ya se quedó atrás una vez sin que nadie lo notara: la pantalla sale igual de
+// bien, solo vacía, y cuando se nota el dato de esos leads ya no existe.
+describe("De qué publicidad llegó, en los tres canales", () => {
+
+  test("EL CHAT WEB CAPTURA LA PÁGINA POR LA QUE ENTRÓ EL VISITANTE", () => {
+    const w = sinComentarios(fs.readFileSync(path.join(RAIZ, "public/widget.js"), "utf8"));
+
+    /* La página de ENTRADA, no la que está mirando al pulsar el chat: los
+       `utm_` viven en la página de aterrizaje y se pierden en el primer clic
+       interno. Si esto se cae, la atribución se queda en la mitad de los leads
+       —los que abren el chat sin navegar— y nadie sabría por qué. */
+    esperar(/sessionStorage\.getItem\(LLEGADA\)/.test(w)).verdadero(
+      "el widget dejó de recordar la página de entrada: los leads que miran dos páginas antes de escribir pierden su anuncio",
+    );
+    esperar(/pagina: llegada\.pagina/.test(w)).verdadero(
+      "el widget ya no manda la página de entrada: el servidor no tiene de dónde sacar los utm_",
+    );
+  });
+
+  test("y el servidor la convierte en origen y la guarda EN LA BASE", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "app/api/webchat/route.ts"), "utf8"));
+    esperar(/origenDeLaWeb\(/.test(t)).verdadero(
+      "el chat web volvió a tirar los utm_ del visitante",
+    );
+    esperar(/rpc\("guardar_origen"/.test(t)).verdadero(
+      "el chat web calcula el origen y no lo guarda: la ficha del lead seguiría en blanco",
+    );
+  });
+
+  /* LA REGLA DE QUÉ SE PISA ESTÁ EN LA BASE, no en cada canal. El primer toque
+     del contacto no se sobrescribe nunca; el de la conversación sí. Si un canal
+     se la escribe a mano, el día que la regla cambie cambiará en dos sitios y
+     en el tercero no. */
+  test("LOS TRES CANALES USAN LA MISMA FUNCIÓN DE LA BASE", () => {
+    const sitios = [
+      "app/api/webchat/route.ts",
+      "app/api/webhooks/instagram/route.ts",
+    ];
+    for (const r of sitios) {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, r), "utf8"));
+      esperar(/guardar_origen/.test(t)).verdadero(
+        `${r} dejó de escribir el primer toque del lead con guardar_origen`,
+      );
+    }
+    const wa = sinComentarios(fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8"));
+    esperar(/guardar_origen/.test(wa)).verdadero(
+      "el motor de WhatsApp dejó de guardar de qué anuncio vino el lead",
+    );
+  });
+
+  test("INSTAGRAM LEE EL ANUNCIO QUE ABRIÓ EL MENSAJE", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "lib/canales/instagramEntrante.ts"), "utf8"));
+
+    /* Meta lo cuelga de tres sitios distintos según la colocación. Leer solo
+       uno deja colocaciones enteras sin atribuir, y como las demás siguen
+       funcionando no se nota. */
+    for (const donde of [/anuncioDe\(msg\.referral\)/, /anuncioDe\(m\?\.referral\)/, /anuncioDe\(m\?\.postback\?\.referral\)/]) {
+      esperar(donde.test(t)).verdadero(
+        `el lector de eventos de Instagram dejó de mirar ${donde.source}: esa colocación de anuncios se queda sin atribuir`,
+      );
+    }
+    const r = sinComentarios(fs.readFileSync(path.join(SRC, "app/api/webhooks/instagram/route.ts"), "utf8"));
+    esperar(/origenDeAnuncioDeInstagram\(e\.anuncio\)/.test(r)).verdadero(
+      "el webhook vuelve a tirar el anuncio: lo lee y no lo usa",
+    );
+  });
+
+  /* Lo que no se pinta es como si no se hubiera guardado: quien paga los
+     anuncios no mira la base de datos, mira esta ficha mientras atiende. */
+  test("LA FICHA DEL LEAD PINTA LOS DOS ORÍGENES", () => {
+    const i = sinComentarios(fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8"));
+    esperar(/idioma_lead, origen, /.test(i)).verdadero(
+      "la Bandeja dejó de traer el origen de la conversación: la ficha no puede pintar lo que no pidió",
+    );
+    esperar(/origenConversacion=\{sel\.origen/.test(i)).verdadero(
+      "la Bandeja trae el origen de la conversación y no se lo pasa a la ficha",
+    );
+
+    const f = sinComentarios(fs.readFileSync(path.join(SRC, "components/inbox/ContactPanel.tsx"), "utf8"));
+    esperar(/lineasDelOrigen\(/.test(f)).verdadero(
+      "la ficha dejó de pintar los utm_ y el enlace del anuncio",
+    );
+    esperar(/esElMismoOrigen\(/.test(f)).verdadero(
+      "la ficha dejó de distinguir el primer toque de la campaña que disparó esta conversación",
+    );
+  });
+});
+
 
 process.exit(await correrPruebas());

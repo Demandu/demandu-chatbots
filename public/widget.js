@@ -34,6 +34,35 @@
     sessionId = "w-" + Math.random().toString(36).slice(2) + "-" + Date.now().toString(36);
   }
 
+  /* ── DE QUÉ ANUNCIO LLEGÓ ESTE VISITANTE ──────────────────────────────────
+   *
+   * Se guarda LA PÁGINA POR LA QUE ENTRÓ AL SITIO, no la que está mirando
+   * cuando pulsa el chat. Los `utm_` viven en la página de aterrizaje del
+   * anuncio y se pierden en el primer clic interno: quien llega por un anuncio
+   * de Google, mira tres productos y después abre el chat, tenía que seguir
+   * contando como lead de ese anuncio.
+   *
+   * Va en `sessionStorage` y no en `localStorage` a propósito: la visita de hoy
+   * es de la campaña de hoy. Con `localStorage` el visitante que vuelve meses
+   * después por otro anuncio seguiría atribuido al primero para siempre.
+   *
+   * Si el navegador no deja guardar nada (modo privado, cookies bloqueadas) se
+   * usa la página actual y se sigue: perder la atribución es un problema, no
+   * poder chatear es otro mucho peor.
+   */
+  var LLEGADA = KEY + "_llegada";
+  var llegada = null;
+  try {
+    var guardada = sessionStorage.getItem(LLEGADA);
+    if (guardada) llegada = JSON.parse(guardada);
+  } catch (e) {
+    llegada = null;
+  }
+  if (!llegada || typeof llegada.pagina !== "string") {
+    llegada = { pagina: location.href, referente: document.referrer || "" };
+    try { sessionStorage.setItem(LLEGADA, JSON.stringify(llegada)); } catch (e) {}
+  }
+
   var cfg = {
     color: "#6E42FF",
     position: "right",
@@ -318,6 +347,8 @@
         sessionId: sessionId,
         text: payload.text || "",
         start: !!payload.start,
+        pagina: llegada.pagina,
+        referente: llegada.referente,
       }),
     })
       .then(function (r) { return r.json(); })

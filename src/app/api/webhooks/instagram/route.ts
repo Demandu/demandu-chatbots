@@ -14,6 +14,7 @@ import {
 } from "@/lib/canales/instagramEntrante";
 import { enviarDm, responderEnPrivado, responderComentario, perfilDeInstagram } from "@/lib/canales/instagramEnviar";
 import { firmaValida } from "@/lib/canales/instagramFirma";
+import { origenDeAnuncioDeInstagram } from "@/lib/origenDelLead";
 import type { Flow } from "@/lib/flow/types";
 
 export const dynamic = "force-dynamic";
@@ -180,7 +181,11 @@ async function atender(e: EventoInstagram): Promise<void> {
   const contacto = await contactoDeInstagram(admin, canal, e);
   if (!contacto) return;
 
-  const conv = await conversacionDeInstagram(admin, canal.org_id, bot.id, contacto);
+  // Si este mensaje lo abrió un anuncio, se apunta de cuál. Es el equivalente
+  // exacto del «click to WhatsApp», y hasta hoy en Instagram se perdía.
+  const conv = await conversacionDeInstagram(
+    admin, canal.org_id, bot.id, contacto, origenDeAnuncioDeInstagram(e.anuncio),
+  );
   if (!conv) return;
 
   // El mensaje del cliente se guarda SIEMPRE, conteste el bot o no. Si un
@@ -330,6 +335,27 @@ async function conversacionDeInstagram(
     .limit(1)
     .maybeSingle();
   if (error) console.error("[ig] no pude mirar si ya había conversación:", error.message);
+
+  // EL PRIMER TOQUE DE LA PERSONA, SIEMPRE Y ANTES DE TODO.
+  //
+  // Esto faltaba: Instagram escribía el origen en la conversación y dejaba
+  // `contacts.origen` vacío para siempre. El resultado era que la ficha del
+  // lead —que es donde el agente lo ve— no pintaba nada, y el informe «cuántos
+  // leads trajo el anuncio X», que cuenta contactos, daba cero.
+  //
+  // Se usa la MISMA función de la base que el motor de WhatsApp, a propósito:
+  // la regla de que el primer toque no se pisa no puede ser distinta según el
+  // canal. Se le pasa `null` como conversación porque el de la conversación lo
+  // decide el bloque de abajo, que tiene su propia regla.
+  if (origen) {
+    const { error: ePrimero } = await admin.rpc("guardar_origen", {
+      p_org_id: orgId,
+      p_contact_id: contactoId,
+      p_conversation_id: null,
+      p_origen: origen,
+    });
+    if (ePrimero) console.error("[ig] no pude guardar el primer toque:", ePrimero.message);
+  }
 
   if (conv && conv.status !== "closed") {
     if (origen && !conv.origen) {

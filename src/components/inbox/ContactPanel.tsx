@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Phone, Mail, User, Building2, Tag as TagIcon, Sparkles, Check, StickyNote, Megaphone } from "lucide-react";
+import { Phone, Mail, User, Building2, Tag as TagIcon, Sparkles, Check, StickyNote, Megaphone, Copy } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { bandera, nombrePais, paisDesdeTelefono } from "@/lib/phoneCountry";
 import { NotasPostIt } from "./NotasPostIt";
 import { ComprasDelContacto } from "@/components/tienda/ComprasDelContacto";
+import {
+  comoSeLlamaElOrigen, lineasDelOrigen, esElMismoOrigen, type OrigenDelLead,
+} from "@/lib/origenDelLead";
 
 export type ContactoFicha = {
   id: string;
@@ -18,15 +21,11 @@ export type ContactoFicha = {
   notes?: string | null;
   attributes?: Record<string, any> | null;
   tags: string[] | null;
-  /** De qué anuncio vino esta persona la primera vez. Lo pone el motor. */
-  origen?: {
-    tipo?: string | null;
-    anuncio_id?: string | null;
-    titular?: string | null;
-    cuerpo?: string | null;
-    url?: string | null;
-    visto_en?: string | null;
-  } | null;
+  /**
+   * De qué anuncio vino esta persona LA PRIMERA VEZ. Lo pone el motor y no se
+   * sobrescribe nunca: es el que dice qué publicidad consiguió al cliente.
+   */
+  origen?: OrigenDelLead | null;
 };
 
 /** Atributo definido por el cliente en Configuración. `key` es donde se guarda. */
@@ -101,6 +100,94 @@ function Campo({
 }
 
 /**
+ * DE QUÉ PUBLICIDAD LLEGÓ, con todo lo que se sepa de ella.
+ *
+ * Esta tarjeta es la razón por la que la plataforma captura el origen. Quien
+ * paga los anuncios no mira la base de datos: mira esta ficha mientras atiende,
+ * y lo que no esté aquí es como si no se hubiera guardado.
+ *
+ * Qué filas se pintan y en qué orden lo decide `lineasDelOrigen`, que está
+ * probado. Aquí solo se pinta: una fila que desapareciera por una condición
+ * escrita en el componente no la cazaría nadie.
+ */
+function DeDondeVino({ titulo, origen }: { titulo: string; origen: OrigenDelLead | null }) {
+  const [copiado, setCopiado] = useState(false);
+
+  const filas = origen ? lineasDelOrigen(origen) : [];
+  const enlace = String(origen?.url ?? "").trim();
+  // Solo se convierte en enlace lo que de verdad es una dirección web. El
+  // `url` lo manda Meta o lo escribe el navegador del visitante: pintar un
+  // `<a href>` con lo que venga es como mínimo un enlace roto.
+  const sePuedeAbrir = /^https?:\/\//i.test(enlace);
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(enlace);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 1500);
+    } catch {
+      // Sin permiso del navegador no se puede copiar. El enlace sigue a la
+      // vista y se puede seleccionar a mano: no hay nada que avisar.
+    }
+  };
+
+  if (!origen) return null;
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-2">
+        <Megaphone className="h-3.5 w-3.5" /> {titulo}
+      </div>
+      <div className="rounded-lg border border-violet/30 bg-violet/10 px-2.5 py-2">
+        <p className="text-sm font-semibold text-white">
+          {String(origen.titular ?? "").trim() || comoSeLlamaElOrigen(origen) || "Sin título"}
+        </p>
+        {origen.cuerpo && (
+          <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted">
+            {String(origen.cuerpo)}
+          </p>
+        )}
+        <p className="mt-1 text-[11px] font-semibold text-violet-200">
+          {comoSeLlamaElOrigen(origen)}
+        </p>
+
+        {filas.length > 0 && (
+          <dl className="mt-2 space-y-1 border-t border-violet/20 pt-2">
+            {filas.map((f) => (
+              <div key={f.etiqueta + f.valor} className="flex gap-2 text-[11px] leading-snug">
+                <dt className="w-[86px] flex-none text-muted-2">{f.etiqueta}</dt>
+                <dd className="min-w-0 flex-1 break-all text-muted">{f.valor}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {sePuedeAbrir && (
+          <div className="mt-2 flex items-center gap-3">
+            <a
+              href={enlace}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-[11px] font-semibold text-pink hover:underline"
+            >
+              Abrir el enlace
+            </a>
+            <button
+              type="button"
+              onClick={copiar}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-2 hover:text-white"
+            >
+              {copiado ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
+              {copiado ? "Copiado" : "Copiar"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Ficha del lead. Arriba, cómo se llama en WhatsApp (no se puede cambiar:
  * es su perfil). Debajo, los datos que tu equipo sí edita.
  */
@@ -112,6 +199,7 @@ export function ContactPanel({
   attrs = [],
   orgId,
   conversacionId,
+  origenConversacion,
   onPatch,
   onToggleTag,
 }: {
@@ -124,6 +212,14 @@ export function ContactPanel({
   orgId?: string | null;
   /** La conversación abierta, para poder volver a SU pedido y no a otro. */
   conversacionId?: string | null;
+  /**
+   * Qué publicidad disparó ESTA conversación.
+   *
+   * Va aparte del origen del contacto porque son dos preguntas distintas: el
+   * del contacto dice qué anuncio consiguió a la persona; este dice qué anuncio
+   * la hizo volver hoy. Cuando son el mismo solo se pinta uno.
+   */
+  origenConversacion?: OrigenDelLead | null;
   onPatch: (patch: Partial<ContactoFicha>) => void;
   onToggleTag: (name: string) => void;
 }) {
@@ -242,35 +338,18 @@ export function ContactPanel({
           primero que cambia cómo saludas. Quien llega desde un anuncio de
           casas ya dijo qué quiere, y abrir con "¿en qué te ayudo?" es la forma
           más rápida de que se note que no lo estabas escuchando. */}
-      {contact.origen && (
-        <div className="border-t border-surface-border pt-4">
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-2">
-            <Megaphone className="h-3.5 w-3.5" /> Llegó por
-          </div>
-          <div className="rounded-lg border border-violet/30 bg-violet/10 px-2.5 py-2">
-            <p className="text-sm font-semibold text-white">
-              {contact.origen.titular || "Anuncio sin título"}
-            </p>
-            {contact.origen.cuerpo && (
-              <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted">
-                {contact.origen.cuerpo}
-              </p>
-            )}
-            <p className="mt-1 text-[11px] text-muted-2">
-              {contact.origen.tipo === "post" ? "Publicación" : "Anuncio"}
-              {contact.origen.anuncio_id ? ` · ${contact.origen.anuncio_id}` : ""}
-            </p>
-            {contact.origen.url && (
-              <a
-                href={contact.origen.url}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="mt-1 inline-block text-[11px] font-semibold text-pink hover:underline"
-              >
-                Ver el anuncio
-              </a>
-            )}
-          </div>
+      {(contact.origen || origenConversacion) && (
+        <div className="space-y-3 border-t border-surface-border pt-4">
+          <DeDondeVino
+            titulo="Llegó por"
+            origen={contact.origen ?? origenConversacion ?? null}
+          />
+          {/* La segunda tarjeta solo aparece cuando el lead VOLVIÓ por otra
+              publicidad. Pintar dos veces lo mismo haría que nadie se fijara
+              justo el día que son distintos, que es el día que importa. */}
+          {contact.origen && !esElMismoOrigen(contact.origen, origenConversacion) && origenConversacion && (
+            <DeDondeVino titulo="Esta conversación" origen={origenConversacion} />
+          )}
         </div>
       )}
 

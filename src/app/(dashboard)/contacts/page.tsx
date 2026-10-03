@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Topbar } from "@/components/Topbar";
 import { ContactsClient } from "@/components/contacts/ContactsClient";
 import { createContact } from "./actions";
+import { AgregarContacto } from "@/components/contacts/AgregarContacto";
 import { Download } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -52,27 +53,7 @@ export default async function ContactsPage() {
           <span className="text-[11px] text-ink-3">Se abren en Excel o en Google Sheets.</span>
         </div>
 
-        <form action={createContact} className="mb-6 flex flex-wrap items-end gap-3 rounded-2xl border border-linea bg-tarjeta p-4">
-          <div className="min-w-[160px] flex-1">
-            <label className="mb-1.5 block text-xs font-semibold text-ink-2">Nombre</label>
-            <input name="name" required placeholder="Nombre del contacto" className="input-l" />
-          </div>
-          <div className="min-w-[150px]">
-            <label className="mb-1.5 block text-xs font-semibold text-ink-2">Teléfono</label>
-            <input name="phone" placeholder="+52…" className="input-l" />
-          </div>
-          <div className="min-w-[180px]">
-            <label className="mb-1.5 block text-xs font-semibold text-ink-2">Correo</label>
-            <input name="email" type="email" placeholder="correo@ejemplo.com" className="input-l" />
-          </div>
-          <div className="min-w-[150px]">
-            <label className="mb-1.5 block text-xs font-semibold text-ink-2">Canal</label>
-            <select name="channel" defaultValue="whatsapp" className="input-l">
-              {CHANNELS.map((c) => (<option key={c.value} value={c.value}>{c.label}</option>))}
-            </select>
-          </div>
-          <button className="btn-primary">Agregar contacto</button>
-        </form>
+        <AgregarContacto canales={CHANNELS} accion={createContact} />
 
         <ContactsClient contacts={(data as any[]) ?? []} />
       </div>

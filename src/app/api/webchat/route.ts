@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { origenDeLaWeb } from "@/lib/origenDelLead";
 import { runWebFlow, chooseWebFlow } from "@/lib/flow/webRuntime";
 import { cerrarRecorrido } from "@/lib/flow/flowRuns";
 import type { Flow } from "@/lib/flow/types";
@@ -104,6 +105,10 @@ export async function POST(req: Request) {
     /** Sondeo: el visitante no escribió nada, solo pregunta si le contestaron. */
     const esSondeo = !!body?.poll;
     const desdeCliente = String(body?.desde ?? "");
+    /** La página por la que el visitante entró al sitio, con sus `utm_`. */
+    const pagina = String(body?.pagina ?? "");
+    /** Qué sitio lo mandó, cuando el navegador lo dice. */
+    const referente = String(body?.referente ?? "");
 
     if (!botId || !sessionId) return json({ error: "missing_params" }, 400);
 
@@ -278,6 +283,35 @@ export async function POST(req: Request) {
       conv = ins.data as any;
     }
     if (!conv) return json({ error: "conversation_error" }, 500);
+
+    // ── DE QUÉ ANUNCIO LLEGÓ ───────────────────────────────────────────────
+    //
+    // Hasta hoy el chat web no capturaba NADA: un cliente que paga Google Ads
+    // para que la gente abra el chat de su web no tenía forma de saber qué
+    // anuncio le trajo cada conversación. El widget manda la página de entrada
+    // y de ahí salen los `utm_` y el `gclid`.
+    //
+    // QUIÉN DECIDE QUÉ SE PISA ES LA BASE, no esto: `guardar_origen` deja el
+    // primer toque del contacto intacto y actualiza el de la conversación. Es
+    // la misma función que usa el motor de WhatsApp, a propósito — la regla no
+    // puede ser distinta según por dónde entre la persona.
+    //
+    // No se hace en los sondeos: el visitante no ha hecho nada, solo pregunta
+    // si le contestaron, y serían dos escrituras cada pocos segundos.
+    if (!esSondeo) {
+      const origen = origenDeLaWeb(pagina, referente);
+      if (origen) {
+        const { error: eOrigen } = await admin.rpc("guardar_origen", {
+          p_org_id: bot.org_id,
+          p_contact_id: contact.id,
+          p_conversation_id: conv.id,
+          p_origen: origen,
+        });
+        // Nunca corta la conversación: quedarse sin atribución es molesto,
+        // dejar al visitante sin respuesta es perder al cliente.
+        if (eOrigen) console.error("[webchat] no pude guardar el origen:", eOrigen.message);
+      }
+    }
 
     // Mensaje del visitante
     if (!isStart && text) {
