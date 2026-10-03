@@ -28,9 +28,10 @@ fi
 echo "════════════════════════════════════════════"
 echo ""
 echo "El aislamiento entre clientes se prueba aparte, contra la base real."
-echo "Pega estos dos archivos en el editor SQL de Supabase:"
+echo "Pega estos archivos en el editor SQL de Supabase:"
 echo "  scripts/pruebas/base-de-datos.sql"
 echo "  scripts/pruebas/crm-base-de-datos.sql"
 echo "  scripts/pruebas/reparto-base-de-datos.sql"
+echo "  scripts/pruebas/campanas-base-de-datos.sql"
 echo ""
 exit $FALLOS

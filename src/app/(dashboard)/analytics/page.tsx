@@ -79,8 +79,16 @@ export default async function ResultadosPage({
   const campanas: ResumenDeCampanas = (resCampanas?.data as ResumenDeCampanas) ?? {
     total_leads: 0,
     total_con_campana: 0,
+    charlas_con_campana: 0,
+    importe_total: 0,
+    moneda: "MXN",
+    monedas_mezcladas: false,
     por_plataforma: [],
     por_campana: [],
+    volvieron: [],
+    por_fuente: [],
+    por_medio: [],
+    por_contenido: [],
   };
   // Los canales del selector salen de los chatbots que el cliente tiene, no de
   // los datos del periodo: si no, al filtrar por un canal se quedaría sin poder

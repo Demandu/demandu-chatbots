@@ -12921,4 +12921,119 @@ describe("De qué publicidad llegó, en los tres canales", () => {
 });
 
 
+// ─── Qué anuncio trae gente que compra ──────────────────────────────────────
+//
+// 3 oct 2026. El informe de campañas contestaba «cuántos leads trajo cada
+// anuncio» y «cuántos pidieron una persona». Le faltaba la única pregunta que
+// decide dónde va el presupuesto: CUÁNTO DINERO trajo cada uno. Un anuncio que
+// trae cien curiosos y uno que trae diez que compran salían iguales.
+//
+// Y la vista `leads_por_campana` de la 0065 contaba mal: `count(*)` después de
+// un `left join` con conversaciones, así que un contacto con tres
+// conversaciones valía por tres leads. Medido: decía 3 donde había 1.
+describe("Qué anuncio trae gente que compra", () => {
+  const MIG = "supabase/migrations/0141_que_anuncio_trae_gente_que_compra.sql";
+
+  /* `sinComentarios` quita los comentarios de JavaScript, no los de SQL. Sin
+     esto, una regla se pondría verde porque la frase que busca está escrita en
+     un comentario de la migración —y al revés: una regla NEGATIVA se pondría
+     roja por su propio comentario. Pasó con las dos primeras. */
+  const sql = () => {
+    const t = fs.readFileSync(path.join(RAIZ, MIG), "utf8");
+    return t.replace(/--[^\n]*/g, "");
+  };
+  /* Solo el cuerpo de la vista: el `count(*)` del informe de abajo SÍ es
+     correcto —ahí cada fila ya es una persona— y no se puede mezclar. */
+  const laVista = () => {
+    const t = sql();
+    const i = t.indexOf("create or replace view public.leads_por_campana");
+    return i < 0 ? "" : t.slice(i, t.indexOf(";", i));
+  };
+
+  test("LA VISTA CUENTA PERSONAS, NO FILAS", () => {
+    const v = laVista();
+    esperar(v.length > 0).verdadero("desapareció la vista leads_por_campana de la migración");
+    esperar(/count\(distinct ct\.id\)\s+as leads/.test(v)).verdadero(
+      "volvió el conteo inflado: un contacto con tres conversaciones contaría como tres leads",
+    );
+    esperar(/count\(\*\)/.test(v)).falso(
+      "hay un count(*) en la vista: eso es exactamente el error de la 0065",
+    );
+  });
+
+  /* `create or replace`, no `drop`. Una vista la puede estar leyendo algo que
+     no vive en este repositorio —una consulta guardada, un informe de fuera— y
+     un `drop` se lo rompe sin avisar. */
+  test("y se reemplaza en el sitio, sin tirarla", () => {
+    const t = sql();
+    esperar(/create or replace view public\.leads_por_campana/.test(t)).verdadero(
+      "dejó de reemplazarse en el sitio",
+    );
+    esperar(/drop view[^\n]*leads_por_campana/i.test(t)).falso(
+      "tira la vista en vez de reemplazarla: lo que la estuviera leyendo fuera del repo se rompe",
+    );
+  });
+
+  test("EL DINERO LO SUMA LA BASE, Y SALE DE LOS PEDIDOS Y DE LO GANADO", () => {
+    const t = sql();
+    esperar(/from public\.pedidos/.test(t)).verdadero("el informe dejó de sumar los pedidos");
+    esperar(/from public\.opportunities/.test(t)).verdadero(
+      "el informe dejó de sumar las oportunidades ganadas",
+    );
+
+    /* UN PEDIDO CONTRA ENTREGA ES UNA VENTA. En producción hay 8 pedidos con
+       `pago = sin_cobro` de 19: filtrar por lo que cobró Stripe esconderia
+       casi la mitad de las ventas reales de la región. */
+    esperar(/estado::text <> 'cancelado'/.test(t)).verdadero(
+      "cambió la regla de qué pedido cuenta: lo que no cuenta es lo CANCELADO, no lo no cobrado",
+    );
+    esperar(/pago\s*(::text)?\s*=\s*'pagado'/.test(t)).falso(
+      "volvió a mirar solo lo que cobró Stripe: los pedidos contra entrega desaparecerían del informe",
+    );
+    esperar(/status::text = 'ganada'/.test(t)).verdadero(
+      "suma oportunidades que todavía no están ganadas: eso no es dinero",
+    );
+  });
+
+  test("Y LA PANTALLA LO PINTA", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "components/analytics/Campanas.tsx"), "utf8"));
+    esperar(/dinero\(/.test(t)).verdadero(
+      "la tarjeta de campañas dejó de pintar el dinero: lo que no se ve es como si no se hubiera medido",
+    );
+    /* LOS DOS SITIOS, UNO POR UNO. Contar apariciones no servía: el pie de la
+       tarjeta también dice «Han comprado» al explicarlo, así que quitar la
+       cifra de arriba dejaba la regla verde —comprobado mutándola—. */
+    esperar(/titulo="Han comprado"/.test(t)).verdadero(
+      "desapareció la cifra del dinero de las tarjetas de arriba",
+    );
+    esperar(/<th[^>]*>\s*Han comprado\s*<\/th>/.test(t)).verdadero(
+      "desapareció la columna del dinero de la tabla, campaña por campaña",
+    );
+    /* Las campañas que no trajeron a nadie nuevo pero hicieron VOLVER a
+       alguien saldrían con cero en la tabla y parecerían inútiles. */
+    esperar(/datos\.volvieron/.test(t)).verdadero(
+      "la tarjeta dejó de pintar las campañas que hicieron volver a clientes",
+    );
+    esperar(/por_fuente|por_medio|por_contenido/.test(t)).verdadero(
+      "desapareció el desglose por utm",
+    );
+  });
+
+  /* La normalización de «cómo se llama esta campaña» hace falta en tres sitios
+     —el contacto, la conversación y la vista—. Escrita tres veces se queda
+     distinta en uno, y entonces el mismo anuncio sale en dos filas. */
+  test("CÓMO SE LLAMA UNA CAMPAÑA SE DECIDE EN UN SOLO SITIO", () => {
+    const t = sql();
+    esperar(/create or replace function public\.campana_del_origen\(/.test(t)).verdadero(
+      "desapareció la función que normaliza el nombre de la campaña",
+    );
+    const usos = (t.match(/campana_del_origen\(/g) ?? []).length;
+    esperar(usos >= 4).verdadero(
+      `se define y se usa ${usos - 1} vez(ces): la vista y los dos caminos del informe ` +
+        "—el contacto y la conversación— tienen que pasar por ella",
+    );
+  });
+});
+
+
 process.exit(await correrPruebas());
