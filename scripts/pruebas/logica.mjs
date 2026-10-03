@@ -171,6 +171,7 @@ import { agendaDelNegocio, cuantasAgendoLana } from "../../src/lib/agenda/vista.
 import { mesEnCuadricula, diaEnZona, mesVecino } from "../../src/lib/agenda/mes.ts";
 import { queQuisoDecir, cuandoEnPalabras, BOTON_CONFIRMA, BOTON_CAMBIA } from "../../src/lib/agenda/recordatorio.ts";
 import { RECORDATORIO_CITA, PARA_LA_AGENDA } from "../../src/lib/whatsapp/plantillasDeLaCasa.ts";
+import { claveDeDia, mismoDia, separadorDeDia, fechaLarga } from "../../src/lib/fechasDelHilo.ts";
 import {
   revisar as revisarPlantilla, hayGraves as plantillaGrave,
   aComponentesDeMeta, cuantasVariables,
@@ -9218,6 +9219,88 @@ describe("Con qué permisos se entra a dar soporte", () => {
         `una ficha \`${JSON.stringify(basura)}\` concedió permisos`,
       );
     }
+  });
+});
+
+// ─── El hilo dice de qué día es cada mensaje ────────────────────────────────
+//
+// 3 oct 2026: la Bandeja pintaba SOLO la hora («05:20 p. m.») y ningún
+// separador de día. Una conversación de tres semanas era un muro de horas sin
+// forma de saber de qué día era ninguna — y eso es justo lo que se busca el día
+// que hay que defender un «me contestaron tarde».
+//
+// Lo que se rompe solo en los bordes: medianoche, fin de mes, fin de año, y
+// quien mira desde otro país. Por eso esto vive fuera del componente.
+describe("El hilo dice de qué día es cada mensaje", () => {
+  test("DOS INSTANTES DEL MISMO DÍA LOCAL SON EL MISMO DÍA", () => {
+    const manana = new Date(2026, 9, 3, 8, 15);
+    const noche = new Date(2026, 9, 3, 23, 59);
+    esperar(mismoDia(manana, noche)).verdadero("la mañana y la noche del 3 de octubre son el mismo día");
+    esperar(claveDeDia(manana)).igual(claveDeDia(noche));
+  });
+
+  test("Y UN MINUTO DESPUÉS DE MEDIANOCHE YA ES OTRO", () => {
+    const antes = new Date(2026, 9, 3, 23, 59, 59);
+    const despues = new Date(2026, 9, 4, 0, 0, 1);
+    esperar(mismoDia(antes, despues)).falso(
+      "dos segundos a caballo de la medianoche se contaron como el mismo día: el separador no saldría",
+    );
+  });
+
+  /* EL QUE MÁS DUELE. A las 7 de la tarde en América ya es el día siguiente en
+     UTC. Si la clave del día saliera de `toISOString()`, el separador diría
+     «Hoy» encima de un mensaje de ayer, y partiría una tarde en dos. */
+  test("LA TARDE NO SE PARTE EN DOS POR CULPA DE UTC", () => {
+    /* Mediodía y las once de la noche DEL MISMO DÍA LOCAL. En cualquier huso
+       de América las 23:00 locales ya son del día siguiente en UTC, así que
+       con la clave sacada de `toISOString()` esto da falso. En UTC da
+       verdadero — y ahí es correcto, porque allí el fallo no puede existir. */
+    const tarde = new Date(2026, 9, 3, 12, 0);
+    const noche = new Date(2026, 9, 3, 23, 0);
+    esperar(mismoDia(tarde, noche)).verdadero(
+      "la clave del día se está calculando en UTC: para quien mira fue una sola tarde",
+    );
+    esperar(claveDeDia(tarde).includes("T")).falso(
+      "la clave trae formato ISO, o sea que salió de toISOString() y es UTC",
+    );
+  });
+
+  test("«Hoy» y «Ayer» se cuentan contra la fecha de quien mira", () => {
+    const ahora = new Date(2026, 9, 3, 12, 0);
+    esperar(separadorDeDia(new Date(2026, 9, 3, 7, 30), ahora)).igual("Hoy");
+    esperar(separadorDeDia(new Date(2026, 9, 2, 23, 50), ahora)).igual("Ayer");
+    esperar(separadorDeDia(new Date(2026, 9, 1, 10, 0), ahora) === "Ayer").falso(
+      "anteayer se está contando como ayer",
+    );
+  });
+
+  test("ANTEAYER LLEVA SU FECHA, Y EL AÑO SOLO SI NO ES ESTE", () => {
+    const ahora = new Date(2026, 9, 3, 12, 0);
+    const esteAno = separadorDeDia(new Date(2026, 8, 28, 10, 0), ahora);
+    esperar(esteAno.includes("2026")).falso("repite el año del que ya estamos: sobra");
+    esperar(esteAno.includes("septiembre")).verdadero("no dice de qué día es");
+
+    const otroAno = separadorDeDia(new Date(2025, 8, 28, 10, 0), ahora);
+    esperar(otroAno.includes("2025")).verdadero(
+      "un mensaje del año pasado sin año: «28 de septiembre» a secas engaña",
+    );
+  });
+
+  test("Y UNA FECHA ROTA NO TUMBA EL HILO", () => {
+    esperar(claveDeDia("no soy una fecha")).igual("");
+    esperar(separadorDeDia("no soy una fecha")).igual("");
+    esperar(fechaLarga("no soy una fecha")).igual("");
+    esperar(mismoDia("no soy una fecha", "tampoco")).falso(
+      "dos fechas ilegibles se contaron como el mismo día: saldría un separador vacío",
+    );
+  });
+
+  test("la fecha larga trae los segundos, que es para lo que sirve", () => {
+    const t = fechaLarga(new Date(2026, 9, 3, 17, 20, 43));
+    esperar(/\d{1,2}:\d{2}:\d{2}/.test(t)).verdadero(
+      "sin segundos no se puede discutir un tiempo de respuesta",
+    );
+    esperar(t.includes("2026")).verdadero("sin año no sirve para el histórico");
   });
 });
 

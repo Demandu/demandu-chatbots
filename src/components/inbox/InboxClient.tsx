@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ALMACEN_PRIVADO, comoSeGuarda } from "@/lib/adjuntos";
+import { claveDeDia, separadorDeDia, fechaLarga } from "@/lib/fechasDelHilo";
 import { Search, Send, Bot, User, CheckCircle2, RotateCcw, CheckCheck, Paperclip, ChevronLeft, Hand, AlertTriangle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -120,6 +121,8 @@ function ago(iso: string) {
   const d = Math.floor(h / 24);
   return `${d} d`;
 }
+/* La hora, en la zona de quien mira. El porqué está en `fechasDelHilo.ts`,
+   junto con el resto de las fechas del hilo — ahí se puede probar solo. */
 function clock(iso: string) {
   return new Date(iso).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
 }
@@ -1143,8 +1146,20 @@ export function InboxClient({
               </div>
             )}
 
-            {messages.map((m) => {
+            {messages.map((m, i) => {
               const out = m.direction === "outbound";
+
+              /* El separador se decide comparando con el mensaje ANTERIOR,
+                 no con hoy: así sale uno por cada día que tenga mensajes y
+                 ninguno de más. El primero del hilo siempre lleva el suyo. */
+              const abreDia = i === 0 || claveDeDia(messages[i - 1].created_at) !== claveDeDia(m.created_at);
+              const separador = abreDia ? (
+                <div key={`dia-${m.id}`} className="my-2 self-center">
+                  <span className="rounded-full bg-black/[.06] px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-black/50">
+                    {separadorDeDia(m.created_at)}
+                  </span>
+                </div>
+              ) : null;
 
               // UNA LLAMADA NO ES UN MENSAJE, y pintarla como tal engaña: en la
               // burbuja de la izquierda parece que el cliente escribió «Llamada
@@ -1154,7 +1169,9 @@ export function InboxClient({
               if (ll) {
                 const fallida = ll.estado === "perdida" || ll.estado === "fallida" || ll.estado === "rechazada";
                 return (
-                  <div key={m.id} className="my-1 self-center text-center">
+                  <Fragment key={m.id}>
+                  {separador}
+                  <div className="my-1 self-center text-center">
                     <span
                       className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px]"
                       style={{
@@ -1165,12 +1182,14 @@ export function InboxClient({
                       {m.body}
                     </span>
                   </div>
+                  </Fragment>
                 );
               }
 
               return (
+                <Fragment key={m.id}>
+                {separador}
                 <div
-                  key={m.id}
                   className={`relative max-w-[82%] px-2.5 pb-1.5 pt-1.5 text-[13.5px] leading-snug shadow-sm sm:max-w-[65%] ${
                     out ? "self-end rounded-lg rounded-tr-sm" : "self-start rounded-lg rounded-tl-sm"
                   }`}
@@ -1217,7 +1236,7 @@ export function InboxClient({
                     className="ml-2 inline-flex select-none items-center gap-0.5 align-bottom text-[10px]"
                     style={{ color: out ? paleta.metaOut : "rgba(0,0,0,.42)" }}
                   >
-                    {clock(m.created_at)}
+                    <span title={fechaLarga(m.created_at)}>{clock(m.created_at)}</span>
                     {out && !m.payload?.no_entregado && <CheckCheck className="h-3 w-3" />}
                   </span>
                   {/* EL MOTIVO SE LEE, NO SE ADIVINA.
@@ -1243,6 +1262,7 @@ export function InboxClient({
                     </span>
                   )}
                 </div>
+                </Fragment>
               );
             })}
           </div>

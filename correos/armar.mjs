@@ -121,6 +121,46 @@ function armar(v) {
       '</td></tr>\n              <tr><td style="height:22px;line-height:22px;font-size:0;">&nbsp;</td></tr>'
     : "";
 
+  /* ── LO QUE CAMBIO, EN UNA TABLITA ────────────────────────────────────────
+   *
+   * Los avisos de seguridad no llevan nada que pulsar: no hay token, no hay
+   * enlace de un solo uso. Lo unico que tienen que contestar es «que cambio
+   * exactamente», y eso en un parrafo se lee mal. En dos columnas se lee de un
+   * vistazo: de que a que.
+   *
+   * Si no hay nada que ensenar (el aviso de contrasena cambiada no trae ningun
+   * dato), no se pinta la caja en vez de pintar una vacia. */
+  const detalles = v.detalles && v.detalles.length
+    ? '<tr><td style="padding-bottom:22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:' +
+      C.suave +
+      ";border:1px solid " +
+      C.linea +
+      ';border-radius:12px;">' +
+      v.detalles
+        .map(
+          ([etiqueta, valor], i) =>
+            '<tr><td style="padding:' +
+            (i === 0 ? "14px" : "0") +
+            ' 16px 6px;font-family:' +
+            F +
+            ";font-size:11px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;color:" +
+            C.ink3 +
+            ';">' +
+            etiqueta +
+            '</td></tr><tr><td style="padding:0 16px ' +
+            (i === v.detalles.length - 1 ? "14px" : "12px") +
+            ";font-family:" +
+            F +
+            ";font-size:15px;font-weight:600;color:" +
+            C.ink +
+            ';word-break:break-all;">' +
+            valor +
+            "</td></tr>",
+        )
+        .join("") +
+      "</table></td></tr>"
+    : "";
+
   /* LA DIRECCION A MANO NO ES RELLENO: hay correos corporativos que reescriben
      los enlaces y los rompen, y gente que lee el correo en un aparato y entra
      en otro. Sin esto, ahi se acaba el camino. En el correo del codigo no hay
@@ -202,6 +242,7 @@ function armar(v) {
                 </table>
               </td></tr>
 
+              ${detalles}
               <tr>
                 <td style="padding-top:8px;padding-bottom:26px;">
                   ${v.accion}
@@ -421,6 +462,154 @@ const CORREOS = {
       "Si no estabas haciendo nada en tu cuenta, ignora este correo y cambia tu contrase&ntilde;a por si acaso.",
   },
 };
+
+/* ── LOS SIETE AVISOS DE SEGURIDAD ───────────────────────────────────────────
+ *
+ * Son OTRA cosa que los seis de arriba. Aquellos piden hacer algo —confirma,
+ * entra, elige contrasena— y por eso llevan un enlace con un token dentro.
+ * Estos no piden nada: AVISAN de que algo ya cambio, para que si no fuiste tu
+ * te enteres el mismo dia y no tres semanas despues.
+ *
+ * Por eso:
+ *
+ * 1. NO LLEVAN TOKEN. Supabase no rellena ConfirmationURL en estos. Un boton
+ *    con esa variable aqui seria un boton a ninguna parte.
+ * 2. EL BOTON VA A `/recuperar`, una direccion fija del sitio. Es lo unico
+ *    sensato que puede hacer alguien que lee «te cambiaron el correo» y no fue
+ *    el: cerrar la puerta cambiando la contrasena. No hace falta token para
+ *    eso: esa pantalla pide el correo y manda su propio enlace.
+ * 3. EL TEXTO DE SEGURIDAD ES LA PARTE IMPORTANTE, no el adorno del final.
+ *    En un aviso, lo que vale es la frase que dice que hacer si no fuiste tu.
+ *
+ * Las variables de cada uno estan documentadas por Supabase y NO son
+ * intercambiables: `.OldEmail` no existe en el de telefono, `.FactorType` solo
+ * en los de MFA. Poner la que no es deja un hueco en blanco en la bandeja de un
+ * cliente que acaba de recibir un susto.
+ * ──────────────────────────────────────────────────────────────────────────── */
+const RECUPERAR = SITIO + "/recuperar";
+const BOTON_SEGURIDAD = boton("Cambiar mi contrase&ntilde;a", RECUPERAR);
+
+/* La misma frase en los siete, a proposito: quien recibe dos avisos seguidos
+   tiene que leer la misma salida, no dos redacciones distintas. */
+const SI_NO_FUISTE_TU =
+  "<b style=\"color:#FFFFFF;\">Si no fuiste t&uacute;</b>, alguien tiene acceso a tu cuenta. " +
+  "Cambia la contrase&ntilde;a ahora mismo con el bot&oacute;n de arriba y av&iacute;sanos.";
+
+const AVISOS = {
+  "aviso-contrasena-cambiada.html": {
+    preheader: "La contrase&ntilde;a de tu cuenta de Demandu acaba de cambiar.",
+    etiqueta: "Aviso de seguridad",
+    titulo: "Cambiaron tu contrase&ntilde;a",
+    parrafos: [
+      "La contrase&ntilde;a de tu cuenta de Demandu (<b style=\"color:#FFFFFF;\">{{ .Email }}</b>) acaba de cambiar.",
+      "Si lo hiciste t&uacute;, no tienes que hacer nada m&aacute;s.",
+    ],
+    accion: BOTON_SEGURIDAD,
+    enlace: "",
+    caduca: "",
+    seguridad: SI_NO_FUISTE_TU,
+  },
+
+  "aviso-correo-cambiado.html": {
+    preheader: "El correo de acceso de tu cuenta de Demandu cambi&oacute;.",
+    etiqueta: "Aviso de seguridad",
+    titulo: "Cambiaron el correo de tu cuenta",
+    parrafos: [
+      "El correo con el que se entra a tu cuenta de Demandu acaba de cambiar.",
+    ],
+    detalles: [
+      ["Antes", "{{ .OldEmail }}"],
+      ["Ahora", "{{ .Email }}"],
+    ],
+    accion: BOTON_SEGURIDAD,
+    enlace: "",
+    caduca: "",
+    seguridad: SI_NO_FUISTE_TU,
+  },
+
+  "aviso-telefono-cambiado.html": {
+    preheader: "El tel&eacute;fono de tu cuenta de Demandu cambi&oacute;.",
+    etiqueta: "Aviso de seguridad",
+    titulo: "Cambiaron el tel&eacute;fono de tu cuenta",
+    parrafos: [
+      "El tel&eacute;fono asociado a tu cuenta de Demandu acaba de cambiar.",
+    ],
+    detalles: [
+      ["Antes", "{{ .OldPhone }}"],
+      ["Ahora", "{{ .Phone }}"],
+    ],
+    accion: BOTON_SEGURIDAD,
+    enlace: "",
+    caduca: "",
+    seguridad: SI_NO_FUISTE_TU,
+  },
+
+  "aviso-acceso-vinculado.html": {
+    preheader: "Se a&ntilde;adi&oacute; una forma nueva de entrar a tu cuenta.",
+    etiqueta: "Aviso de seguridad",
+    titulo: "Nueva forma de entrar a tu cuenta",
+    parrafos: [
+      "Se conect&oacute; una forma nueva de entrar a tu cuenta de Demandu. A partir de ahora tambi&eacute;n se puede entrar con ella.",
+    ],
+    detalles: [
+      ["Se conect&oacute;", "{{ .Provider }}"],
+      ["A la cuenta", "{{ .Email }}"],
+    ],
+    accion: BOTON_SEGURIDAD,
+    enlace: "",
+    caduca: "",
+    seguridad: SI_NO_FUISTE_TU,
+  },
+
+  "aviso-acceso-quitado.html": {
+    preheader: "Se quit&oacute; una forma de entrar a tu cuenta.",
+    etiqueta: "Aviso de seguridad",
+    titulo: "Se quit&oacute; una forma de entrar",
+    parrafos: [
+      "Se desconect&oacute; una de las formas de entrar a tu cuenta de Demandu. Ya no se puede entrar con ella.",
+    ],
+    detalles: [
+      ["Se quit&oacute;", "{{ .Provider }}"],
+      ["De la cuenta", "{{ .Email }}"],
+    ],
+    accion: BOTON_SEGURIDAD,
+    enlace: "",
+    caduca: "",
+    seguridad: SI_NO_FUISTE_TU,
+  },
+
+  "aviso-verificacion-activada.html": {
+    preheader: "Activaron un segundo paso de verificaci&oacute;n en tu cuenta.",
+    etiqueta: "Aviso de seguridad",
+    titulo: "Activaron la verificaci&oacute;n en dos pasos",
+    parrafos: [
+      "Se a&ntilde;adi&oacute; un segundo paso de verificaci&oacute;n a tu cuenta de Demandu. De ahora en adelante te lo pedir&aacute; al entrar.",
+      "Esto hace tu cuenta m&aacute;s segura: con la contrase&ntilde;a sola ya no basta.",
+    ],
+    detalles: [["M&eacute;todo", "{{ .FactorType }}"]],
+    accion: BOTON_SEGURIDAD,
+    enlace: "",
+    caduca: "",
+    seguridad: SI_NO_FUISTE_TU,
+  },
+
+  "aviso-verificacion-quitada.html": {
+    preheader: "Quitaron el segundo paso de verificaci&oacute;n de tu cuenta.",
+    etiqueta: "Aviso de seguridad",
+    titulo: "Quitaron la verificaci&oacute;n en dos pasos",
+    parrafos: [
+      "Se quit&oacute; el segundo paso de verificaci&oacute;n de tu cuenta de Demandu. Ahora para entrar basta con la contrase&ntilde;a.",
+      "Tu cuenta queda <b style=\"color:#FFFFFF;\">menos protegida</b> que antes.",
+    ],
+    detalles: [["M&eacute;todo que se quit&oacute;", "{{ .FactorType }}"]],
+    accion: BOTON_SEGURIDAD,
+    enlace: "",
+    caduca: "",
+    seguridad: SI_NO_FUISTE_TU,
+  },
+};
+
+Object.assign(CORREOS, AVISOS);
 
 const destino = join(process.cwd(), "salida");
 mkdirSync(destino, { recursive: true });

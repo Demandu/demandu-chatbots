@@ -12572,4 +12572,41 @@ describe("El bloque de API manda las cabeceras que se escribieron", () => {
   });
 });
 
+// ─── El hilo dice de qué día es cada mensaje ────────────────────────────────
+//
+// 3 oct 2026: la Bandeja pintaba solo la hora, sin fecha y sin separar los
+// días. Tres semanas de conversación eran un muro de «05:20 p. m.».
+//
+// La regla mira que la Bandeja USE las funciones de `fechasDelHilo.ts`, no que
+// existan: una librería bien probada que nadie llama no pinta nada. Y mira que
+// nadie vuelva a comparar días con `toISOString()`, que es el fallo de UTC
+// contra el que están escritas sus pruebas.
+describe("El hilo separa los días", () => {
+  const BANDEJA = "components/inbox/InboxClient.tsx";
+
+  test("LA BANDEJA PINTA UN SEPARADOR DE DÍA", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, BANDEJA), "utf8"));
+    esperar(/separadorDeDia\s*\(/.test(t)).verdadero(
+      "la Bandeja dejó de pintar el separador de día: la conversación vuelve a ser un muro de horas",
+    );
+    esperar(/claveDeDia\s*\(/.test(t)).verdadero(
+      "sin comparar el día del mensaje con el del anterior, el separador no puede saber cuándo sale",
+    );
+    esperar(/from "@\/lib\/fechasDelHilo"/.test(t)).verdadero(
+      "las fechas del hilo volvieron a escribirse dentro del componente, donde no se pueden probar",
+    );
+  });
+
+  test("Y LOS DÍAS NO SE COMPARAN EN UTC", () => {
+    const t = sinComentarios(fs.readFileSync(path.join(SRC, "lib/fechasDelHilo.ts"), "utf8"));
+    esperar(/toISOString/.test(t)).falso(
+      "la clave del día salió de `toISOString()`: a las 7 de la tarde en América ya es " +
+        "el día siguiente en UTC, así que el separador diría «Hoy» sobre un mensaje de ayer",
+    );
+    esperar(/getFullYear\(\)|getDate\(\)/.test(t)).verdadero(
+      "la clave del día dejó de usar las partes LOCALES de la fecha",
+    );
+  });
+});
+
 process.exit(await correrPruebas());
