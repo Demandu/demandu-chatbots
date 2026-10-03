@@ -8,6 +8,9 @@ import { channelOf } from "@/lib/channels";
 import { RefreshCw, Megaphone, Plus } from "lucide-react";
 import { ESTADOS, IDIOMAS, CATEGORIAS, motivoRechazo } from "@/lib/whatsapp/plantillas";
 import { BorrarPlantilla } from "@/components/templates/BorrarPlantilla";
+import { ImagenDelEncabezado } from "@/components/templates/ImagenDelEncabezado";
+import { guardarImagenDelEncabezado } from "./acciones";
+import { llevaArchivo } from "@/lib/whatsapp/cabeceraDePlantilla";
 
 export const dynamic = "force-dynamic";
 
@@ -112,12 +115,23 @@ export default async function BotTemplatesPage({
                 {tpls.map((t) => {
                   const estado = ESTADOS[t.status] ?? { texto: t.status, clase: "bg-suave text-ink-3" };
                   const porQue = t.status === "REJECTED" ? motivoRechazo(t.rejected_reason) : null;
+                  /* Las que llevan imagen, video o documento arriba necesitan
+                     saber cuál mandar, o Meta las rechaza con #132012. */
+                  const conArchivo = llevaArchivo((t as any).components);
                   return (
                     <tr key={t.id} className="border-t border-linea bg-tarjeta align-top">
                       <td className="px-4 py-3">
                         <div className="font-semibold text-ink">{t.name}</div>
                         <div className="max-w-md truncate text-xs text-ink-3">{t.body}</div>
                         {porQue && <div className="mt-1 max-w-md text-xs leading-snug text-danger">{porQue}</div>}
+                        {conArchivo && (
+                          <ImagenDelEncabezado
+                            plantillaId={t.id}
+                            formato={conArchivo}
+                            urlActual={(t as any).encabezado_url ?? null}
+                            accion={guardarImagenDelEncabezado}
+                          />
+                        )}
                       </td>
                       <td className="px-4 py-3 text-ink-2">{nombreIdioma(t.language)}</td>
                       <td className="px-4 py-3 text-ink-2">{nombreCategoria(t.category)}</td>

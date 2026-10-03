@@ -226,3 +226,49 @@ export async function borrarPlantilla(
   revalidatePath(`/bots/${botId}/templates`);
   return { ok: true };
 }
+
+/**
+ * Guarda la imagen (o video, o documento) que se manda en el encabezado.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ES OTRA COSA QUE LA MUESTRA DE LA APROBACIÓN. Al crear la plantilla se sube
+ * un archivo de ejemplo a Meta (`POST /{app}/uploads`) para que lo revisen, y
+ * de ahí sale un `handle` que solo vale para eso. La dirección que Meta guarda
+ * en `example.header_handle` caduca.
+ *
+ * Esto es la dirección REAL que se manda en cada envío. Sin ella, Meta rechaza
+ * con «(#132012) Parameter format does not match format in the created
+ * template» y el mensaje se da por enviado.
+ *
+ * SE EXIGE `https`. Meta tiene que poder bajar el archivo desde fuera: una
+ * dirección local o sin cifrar falla en su lado, no en el nuestro, y el motivo
+ * que devuelve no lo dice.
+ * ───────────────────────────────────────────────────────────────────────────── */
+export async function guardarImagenDelEncabezado(
+  _estado: { ok: boolean; mensaje?: string } | undefined,
+  formData: FormData,
+): Promise<{ ok: boolean; mensaje?: string }> {
+  const id = String(formData.get("plantilla_id") ?? "").trim();
+  const url = String(formData.get("url") ?? "").trim();
+  if (!id) return { ok: false, mensaje: "No sé de qué plantilla hablamos." };
+  if (!/^https:\/\/\S+$/i.test(url)) {
+    return { ok: false, mensaje: "Tiene que ser una dirección que empiece por https:// y sea pública." };
+  }
+
+  const orgId = await getCurrentOrgId();
+  if (!orgId) return { ok: false, mensaje: "No encontré tu cuenta." };
+
+  const sb = createClient();
+  const { error } = await sb
+    .from("whatsapp_templates")
+    .update({ encabezado_url: url })
+    .eq("id", id)
+    .eq("org_id", orgId);
+  if (error) {
+    console.error("[plantillas] no pude guardar la imagen del encabezado:", error.message);
+    return { ok: false, mensaje: "No se pudo guardar. Inténtalo de nuevo." };
+  }
+
+  revalidatePath("/bots");
+  return { ok: true, mensaje: "Guardada. Ya se puede mandar." };
+}
