@@ -12609,4 +12609,81 @@ describe("El hilo separa los días", () => {
   });
 });
 
+// ─── Una plantilla con imagen arriba manda su imagen ────────────────────────
+//
+// 2 oct 2026, cuenta de ventas de Demandu. La plantilla `capac` —imagen de
+// cabecera, APROBADA por Meta— no salía nunca:
+//
+//     (#132012) Parameter format does not match format in the created template
+//
+// Meta exige el archivo del encabezado EN CADA ENVÍO. La palabra «header» no
+// aparecía ni una vez en todo el código que arma plantillas, ni en la web ni en
+// el motor. Y lo peor era el orden: el constructor SÍ deja crear plantillas con
+// encabezado de imagen, así que dejábamos crear plantillas que no podíamos
+// enviar. El cliente las ve en verde y cada envío falla.
+describe("Una plantilla con imagen arriba manda su imagen", () => {
+  const CENTINELA_INI =
+    "\u2550\u2550\u2550 COPIA LITERAL COMPARTIDA (src/lib/whatsapp/cabeceraDePlantilla.ts \u2194 motor) \u00b7 INICIO";
+  const CENTINELA_FIN =
+    "\u2550\u2550\u2550 COPIA LITERAL COMPARTIDA (src/lib/whatsapp/cabeceraDePlantilla.ts \u2194 motor) \u00b7 FIN";
+
+  const MOTOR = path.join(RAIZ, "supabase/functions/whatsapp/index.ts");
+  const WEB = path.join(RAIZ, "src/lib/whatsapp/cabeceraDePlantilla.ts");
+
+  function copiaDe(ruta) {
+    const t = fs.readFileSync(ruta, "utf8");
+    const i = t.indexOf(CENTINELA_INI);
+    const j = t.indexOf(CENTINELA_FIN);
+    if (i < 0 || j < 0 || j <= i) return null;
+    return t.slice(t.indexOf("\n", i) + 1, t.lastIndexOf("\n", j) + 1);
+  }
+
+  test("LAS DOS COPIAS DICEN LO MISMO, CARÁCTER POR CARÁCTER", () => {
+    const web = copiaDe(WEB);
+    const motor = copiaDe(MOTOR);
+    esperar(web !== null && motor !== null).verdadero(
+      "falta el bloque entre centinelas en cabeceraDePlantilla.ts o en el motor",
+    );
+    esperar((web ?? "").length > 800).verdadero(
+      `el bloque compartido tiene ${(web ?? "").length} caracteres: se vació`,
+    );
+    esperar(motor).igual(
+      web,
+      "el motor y la web no arman igual el encabezado de una plantilla. Copia el bloque " +
+        "de src/lib/whatsapp/cabeceraDePlantilla.ts tal cual dentro de los centinelas del motor",
+    );
+  });
+
+  test("NADIE MANDA UNA PLANTILLA SIN MIRAR SU ENCABEZADO", () => {
+    /* La lista es de los sitios que arman un envío de plantilla. Si nace uno
+       nuevo que no mire el encabezado, repetirá el #132012 desde el día uno. */
+    const QUIENES = [
+      "app/api/canales/enviar/route.ts",
+      "app/api/campanas/enviar/route.ts",
+    ];
+    const mudos = [];
+    for (const rel of QUIENES) {
+      const t = sinComentarios(fs.readFileSync(path.join(SRC, rel), "utf8"));
+      if (!/cabeceraParaEnviar\s*\(/.test(t)) mudos.push(rel);
+    }
+    esperar(mudos.join(" | ")).igual(
+      "",
+      "un envío de plantilla no arma el componente `header`. Meta lo rechaza con " +
+        "«(#132012) Parameter format does not match format in the created template» " +
+        "y el mensaje se da por enviado",
+    );
+  });
+
+  test("Y EL MOTOR TAMPOCO", () => {
+    const t = sinComentarios(fs.readFileSync(MOTOR, "utf8"));
+    esperar(/cabeceraParaEnviar\(fila\?\.components/.test(t)).verdadero(
+      "el bloque de plantilla del motor dejó de mirar el encabezado de la plantilla guardada",
+    );
+    esperar(/faltaElArchivoDelEncabezado\(/.test(t)).verdadero(
+      "el motor volvió a intentar el envío sin comprobar que la plantilla tiene su archivo: " +
+        "eso deja un «no se entregó» con un código de Meta que nadie sabe traducir",
+    );
+  });
+});
+
 process.exit(await correrPruebas());

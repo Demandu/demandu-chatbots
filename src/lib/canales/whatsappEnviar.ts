@@ -222,9 +222,28 @@ export function enviarPlantilla(
    * ─────────────────────────────────────────────────────────────────────────
    */
   colaDelBoton?: string,
+  /**
+   * El componente `header` ya armado, cuando la plantilla lleva imagen, video o
+   * documento arriba.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * SIN ESTO, UNA PLANTILLA CON IMAGEN NO SALE NUNCA. Meta contesta
+   * «(#132012) Parameter format does not match format in the created template»
+   * — un mensaje que hace revisar el cuerpo y los valores, que no eran el
+   * problema. Pasó el 2 de octubre de 2026 con la plantilla `capac` de la
+   * cuenta de ventas: aprobada, en verde en la lista, y cada envío rechazado.
+   *
+   * Entra ARMADO desde fuera, no se arma aquí: quien lo construye es
+   * `cabeceraParaEnviar`, que mira el formato real de la plantilla guardada.
+   * Esta función no sabe —ni tiene por qué— qué plantilla es cada una.
+   * ───────────────────────────────────────────────────────────────────────── */
+  cabecera?: { type: "header"; parameters: any[] } | null,
 ) {
   const template: any = { name: nombre, language: { code: idioma || "es" } };
   const componentes: any[] = [];
+
+  // El encabezado va DELANTE del cuerpo, como en la plantilla.
+  if (cabecera) componentes.push(cabecera);
 
   const limpios = (valores ?? []).map((v) => String(v ?? "").replace(/\s*\n\s*/g, " ").trim());
   if (limpios.length) {

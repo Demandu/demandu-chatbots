@@ -1,6 +1,10 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { llamadaDeTareaProgramada } from "@/lib/cron";
 import { enviarPlantilla } from "@/lib/canales/whatsappEnviar";
+import {
+  cabeceraParaEnviar,
+  faltaElArchivoDelEncabezado,
+} from "@/lib/whatsapp/cabeceraDePlantilla";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -89,9 +93,38 @@ export async function POST(req: Request) {
     const campañas = [...new Set(lote.map((d) => d.campaign_id))];
     await admin.from("campaigns").update({ status: "enviando" }).in("id", campañas).eq("status", "encolada");
 
+    /* LAS PLANTILLAS DE LA TANDA, DE UNA SOLA CONSULTA.
+     *
+     * Hace falta su `components` para saber si llevan imagen arriba, y su
+     * `encabezado_url` para saber cuál mandar. Preguntarlo dentro de
+     * `mandarUno` serían 400 viajes a las mismas dos filas. */
+    const nombres = [...new Set(lote.map((d) => String(d.plantilla ?? "")).filter(Boolean))];
+    const porNombre = new Map<string, any>();
+    if (nombres.length) {
+      const { data: filas, error: ePlantillas } = await admin
+        .from("whatsapp_templates")
+        .select("org_id, name, components, encabezado_url, encabezado_nombre")
+        .in("name", nombres);
+      if (ePlantillas) {
+        console.error("[difusiones] no pude leer las plantillas de la tanda:", ePlantillas.message);
+      }
+      for (const f of (filas ?? []) as any[]) porNombre.set(`${f.org_id}·${f.name}`, f);
+    }
+
     for (let i = 0; i < lote.length; i += A_LA_VEZ) {
       const trozo = lote.slice(i, i + A_LA_VEZ);
-      const resultados = await Promise.all(trozo.map((d) => mandarUno(d)));
+      /* Se arma aparte para que la línea de abajo siga diciendo
+         `Promise.all(trozo.map`: hay una regla estática que comprueba ahí que
+         los resultados se guardan DENTRO del bucle y no al final de la tanda. */
+      const conSuCabecera = (d: Destinatario) => {
+        const p = porNombre.get(`${d.org_id}·${String(d.plantilla ?? "")}`);
+        return mandarUno(
+          d,
+          cabeceraParaEnviar(p?.components, p?.encabezado_url, p?.encabezado_nombre),
+          faltaElArchivoDelEncabezado(p?.components, p?.encabezado_url),
+        );
+      };
+      const resultados = await Promise.all(trozo.map(conSuCabecera));
       for (const r of resultados) {
         if (r.ok) enviados++;
         else fallidos++;
@@ -130,6 +163,20 @@ export async function POST(req: Request) {
  */
 async function mandarUno(
   d: Destinatario,
+  /**
+   * El encabezado de la plantilla, armado una vez por tanda.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * NO SE BUSCA AQUÍ A PROPÓSITO. Esto corre una vez por destinatario: con 400
+   * contactos serían 400 consultas a la misma fila. Se arma arriba, donde la
+   * tanda ya se conoce entera, y entra hecho.
+   *
+   * Y si vale `undefined` porque a la plantilla le falta su imagen, el envío
+   * NO se intenta: Meta lo rechazaría con #132012 y la campaña entera saldría
+   * marcada como fallida sin decir por qué.
+   * ───────────────────────────────────────────────────────────────────────── */
+  cabecera: { type: "header"; parameters: any[] } | null,
+  leFaltaElArchivo: boolean,
 ): Promise<{ id: string; ok: boolean; wamid?: string; error?: string }> {
   const para = String(d.phone ?? "").replace(/\D+/g, "");
 
@@ -138,6 +185,13 @@ async function mandarUno(
   // por insistir, y dejarlos en la cola la atasca para todos los demás.
   if (!para) return { id: d.id, ok: false, error: "Este contacto no tiene número de WhatsApp." };
   if (!d.plantilla) return { id: d.id, ok: false, error: "La campaña no tiene plantilla." };
+  if (leFaltaElArchivo) {
+    return {
+      id: d.id, ok: false,
+      error: "Esta plantilla lleva un archivo arriba y todavía no tiene cuál mandar. " +
+        "Súbelo en la plantilla y vuelve a lanzar la campaña.",
+    };
+  }
   if (!d.pnid || !d.token) {
     return { id: d.id, ok: false, error: "El chatbot de esta campaña ya no tiene número conectado." };
   }
@@ -149,7 +203,9 @@ async function mandarUno(
   const valores = Array.from({ length: cuantas }, (_, i) => (i === 0 ? d.nombre || "" : ""));
 
   try {
-    const r = await enviarPlantilla(d.pnid, d.token, para, d.plantilla, d.idioma || "es", valores);
+    const r = await enviarPlantilla(
+      d.pnid, d.token, para, d.plantilla, d.idioma || "es", valores, undefined, cabecera,
+    );
     return r.ok
       ? { id: d.id, ok: true, wamid: r.wamid }
       : { id: d.id, ok: false, error: r.error ?? "WhatsApp no aceptó el mensaje." };

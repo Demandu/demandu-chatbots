@@ -4416,6 +4416,68 @@ async function esperarDeVerdad(ctx: any, node: any): Promise<boolean> {
   return true;
 }
 
+/* Deno no puede importar de `src/`. Esto es la misma función, palabra por
+ * palabra, y hay una prueba estática que se pone roja si las dos copias dejan
+ * de coincidir. Se edita el archivo de `src/` y se pega aquí. */
+/* ═══ COPIA LITERAL COMPARTIDA (src/lib/whatsapp/cabeceraDePlantilla.ts ↔ motor) · INICIO ═══ */
+/** Los encabezados que llevan un archivo y por tanto hay que mandar. */
+export const ENCABEZADOS_CON_ARCHIVO = ["IMAGE", "VIDEO", "DOCUMENT"] as const;
+export type EncabezadoConArchivo = (typeof ENCABEZADOS_CON_ARCHIVO)[number];
+
+/** Qué formato tiene el encabezado de esta plantilla, o `null` si no tiene. */
+export function formatoDelEncabezado(components: unknown): string | null {
+  if (!Array.isArray(components)) return null;
+  const h = components.find((c: any) => String(c?.type ?? "").toUpperCase() === "HEADER");
+  if (!h) return null;
+  return String((h as any)?.format ?? "").toUpperCase() || null;
+}
+
+/** ¿El encabezado de esta plantilla lleva un archivo que hay que mandar? */
+export function llevaArchivo(components: unknown): EncabezadoConArchivo | null {
+  const f = formatoDelEncabezado(components);
+  return (ENCABEZADOS_CON_ARCHIVO as readonly string[]).includes(f ?? "")
+    ? (f as EncabezadoConArchivo)
+    : null;
+}
+
+/**
+ * ¿Esta plantilla NO se puede mandar todavía?
+ *
+ * SE PREGUNTA ANTES DE ENVIAR, NO DESPUÉS. Sin esto, el único aviso es el
+ * #132012 de Meta, que llega cuando el mensaje ya se dio por enviado y que no
+ * dice qué parámetro falta — hace revisar el cuerpo, que no era el problema.
+ */
+export function faltaElArchivoDelEncabezado(components: unknown, url?: string | null): boolean {
+  return !!llevaArchivo(components) && !String(url ?? "").trim();
+}
+
+
+/**
+ * El componente `header` tal y como lo quiere Meta, o `null` si no hace falta.
+ *
+ * El nombre del archivo solo lo admite `document`; en imagen y video Meta lo
+ * rechaza, así que no se manda aunque lo tengamos.
+ */
+export function cabeceraParaEnviar(
+  components: unknown,
+  url?: string | null,
+  nombreDelArchivo?: string | null,
+): { type: "header"; parameters: any[] } | null {
+  const formato = llevaArchivo(components);
+  const enlace = String(url ?? "").trim();
+  if (!formato || !enlace) return null;
+
+  const clave = formato.toLowerCase() as "image" | "video" | "document";
+  const archivo: any = { link: enlace };
+  const nombre = String(nombreDelArchivo ?? "").trim();
+  if (clave === "document" && nombre) archivo.filename = nombre;
+
+  return { type: "header", parameters: [{ type: clave, [clave]: archivo }] };
+}
+
+/* ═══ COPIA LITERAL COMPARTIDA (src/lib/whatsapp/cabeceraDePlantilla.ts ↔ motor) · FIN ═══ */
+
+
 /**
  * PLANTILLA APROBADA.
  *
@@ -4439,12 +4501,49 @@ async function sayPlantilla(ctx: any, node: any): Promise<boolean> {
     .split("\n").map((l: string) => interp(l.trim(), ctx.vars)).filter(Boolean);
 
   const template: any = { name: nombre, language: { code: String(d.templateLang ?? "es_MX") } };
+  const componentes: any[] = [];
+
+  /* EL ENCABEZADO VA DELANTE, Y SIN ÉL LA PLANTILLA NO SALE.
+   *
+   * Si la plantilla lleva imagen, video o documento arriba, Meta exige el
+   * archivo EN CADA ENVÍO y si no rechaza con «(#132012) Parameter format does
+   * not match format in the created template» — un mensaje que hace revisar el
+   * cuerpo, que no era el problema. Pasó el 2 de octubre de 2026 con la
+   * plantilla `capac` de la cuenta de ventas.
+   *
+   * La fila se lee aquí y no se trae de fuera porque este bloque solo conoce
+   * el NOMBRE de la plantilla que eligió quien armó el flujo. */
+  const { data: fila, error: ePlantilla } = await ctx.db
+    .from("whatsapp_templates")
+    .select("components, encabezado_url, encabezado_nombre")
+    .eq("org_id", ctx.orgId)
+    .eq("name", nombre)
+    .maybeSingle();
+  if (ePlantilla) console.error("[plantilla] no pude leer la plantilla guardada:", ePlantilla.message);
+
+  if (faltaElArchivoDelEncabezado(fila?.components, fila?.encabezado_url)) {
+    // SE DICE Y NO SE INTENTA. Mandarla sabiendo que va a fallar deja un
+    // «no se entregó» con un código de Meta que nadie sabe traducir.
+    console.error("[plantilla] lleva archivo arriba y no tiene cuál mandar:", nombre);
+    await registrar(
+      ctx,
+      `📨 Plantilla «${nombre}» no salió: lleva un archivo arriba y todavía no tiene cuál mandar.`,
+      { ok: false, error: "A la plantilla le falta el archivo de su encabezado." },
+      { plantilla: nombre },
+    );
+    return false;
+  }
+
+  const cabecera = cabeceraParaEnviar(fila?.components, fila?.encabezado_url, fila?.encabezado_nombre);
+  if (cabecera) componentes.push(cabecera);
+
   if (valores.length) {
-    template.components = [{
+    componentes.push({
       type: "body",
       parameters: valores.map((v: string) => ({ type: "text", text: v })),
-    }];
+    });
   }
+  if (componentes.length) template.components = componentes;
 
   const envio = await waPost(ctx.pnid, ctx.token, { to: ctx.to, type: "template", template });
   await registrar(ctx, `📨 Plantilla «${nombre}»${valores.length ? ": " + valores.join(" · ") : ""}`, envio, { plantilla: nombre });

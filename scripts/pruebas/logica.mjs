@@ -173,6 +173,9 @@ import { queQuisoDecir, cuandoEnPalabras, BOTON_CONFIRMA, BOTON_CAMBIA } from ".
 import { RECORDATORIO_CITA, PARA_LA_AGENDA } from "../../src/lib/whatsapp/plantillasDeLaCasa.ts";
 import { claveDeDia, mismoDia, separadorDeDia, fechaLarga } from "../../src/lib/fechasDelHilo.ts";
 import {
+  formatoDelEncabezado, llevaArchivo, faltaElArchivoDelEncabezado, cabeceraParaEnviar,
+} from "../../src/lib/whatsapp/cabeceraDePlantilla.ts";
+import {
   revisar as revisarPlantilla, hayGraves as plantillaGrave,
   aComponentesDeMeta, cuantasVariables,
 } from "../../src/lib/whatsapp/plantillas.ts";
@@ -9301,6 +9304,75 @@ describe("El hilo dice de qué día es cada mensaje", () => {
       "sin segundos no se puede discutir un tiempo de respuesta",
     );
     esperar(t.includes("2026")).verdadero("sin año no sirve para el histórico");
+  });
+});
+
+// ─── Una plantilla con imagen arriba manda su imagen ────────────────────────
+//
+// 2 oct 2026: `capac`, aprobada por Meta y con imagen de cabecera, no salía
+// nunca. (#132012) Parameter format does not match format in the created
+// template. Meta exige el archivo del encabezado EN CADA ENVÍO y nosotros
+// mandábamos solo el cuerpo.
+describe("El encabezado de una plantilla se manda", () => {
+  const CON_IMAGEN = [
+    { type: "HEADER", format: "IMAGE", example: { header_handle: ["https://scontent…"] } },
+    { type: "BODY", text: "Hola {{1}}" },
+    { type: "BUTTONS", buttons: [{ type: "URL", url: "https://x" }] },
+  ];
+  const SOLO_TEXTO = [{ type: "BODY", text: "Hola {{1}}" }];
+  const CABECERA_DE_TEXTO = [{ type: "HEADER", format: "TEXT", text: "Aviso" }, ...SOLO_TEXTO];
+
+  test("SE RECONOCE LA QUE LLEVA ARCHIVO, Y SOLO ESA", () => {
+    esperar(llevaArchivo(CON_IMAGEN)).igual("IMAGE");
+    esperar(llevaArchivo(SOLO_TEXTO)).igual(null, "una plantilla sin cabecera pide archivo");
+    esperar(llevaArchivo(CABECERA_DE_TEXTO)).igual(
+      null,
+      "una cabecera de TEXTO no lleva archivo: pedirlo bloquearía envíos que sí funcionan",
+    );
+    esperar(formatoDelEncabezado(CABECERA_DE_TEXTO)).igual("TEXT");
+  });
+
+  test("SIN SU IMAGEN, LA PLANTILLA NO SE PUEDE MANDAR", () => {
+    esperar(faltaElArchivoDelEncabezado(CON_IMAGEN, null)).verdadero(
+      "se daría por buena una plantilla que Meta va a rechazar con #132012",
+    );
+    esperar(faltaElArchivoDelEncabezado(CON_IMAGEN, "   ")).verdadero(
+      "una dirección con solo espacios se tomó por buena",
+    );
+    esperar(faltaElArchivoDelEncabezado(CON_IMAGEN, "https://x/a.jpg")).falso();
+    esperar(faltaElArchivoDelEncabezado(SOLO_TEXTO, null)).falso(
+      "se está bloqueando una plantilla que NO lleva archivo: dejaría de salir lo que hoy sale",
+    );
+  });
+
+  test("EL COMPONENTE SALE CON LA FORMA QUE PIDE META", () => {
+    const c = cabeceraParaEnviar(CON_IMAGEN, "https://x/a.jpg");
+    esperar(c?.type).igual("header");
+    esperar(c?.parameters?.[0]?.type).igual("image");
+    esperar(c?.parameters?.[0]?.image?.link).igual("https://x/a.jpg");
+  });
+
+  test("y no se arma nada cuando no hace falta", () => {
+    esperar(cabeceraParaEnviar(SOLO_TEXTO, "https://x/a.jpg")).igual(
+      null,
+      "le mete un encabezado a una plantilla que no lo tiene: Meta también rechaza eso",
+    );
+    esperar(cabeceraParaEnviar(CON_IMAGEN, null)).igual(null);
+    esperar(cabeceraParaEnviar(null, "https://x/a.jpg")).igual(null);
+  });
+
+  /* El nombre del archivo SOLO lo admite `document`. En imagen y video Meta
+     rechaza el envío entero por un campo de más. */
+  test("EL NOMBRE DEL ARCHIVO SOLO VA EN LOS DOCUMENTOS", () => {
+    const doc = cabeceraParaEnviar(
+      [{ type: "HEADER", format: "DOCUMENT" }], "https://x/a.pdf", "contrato.pdf",
+    );
+    esperar(doc?.parameters?.[0]?.document?.filename).igual("contrato.pdf");
+
+    const img = cabeceraParaEnviar(CON_IMAGEN, "https://x/a.jpg", "foto.jpg");
+    esperar(img?.parameters?.[0]?.image?.filename === undefined).verdadero(
+      "le pone nombre a una imagen: Meta rechaza el envío por ese campo de más",
+    );
   });
 });
 

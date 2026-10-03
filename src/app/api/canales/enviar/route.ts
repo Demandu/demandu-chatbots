@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import {
+  cabeceraParaEnviar,
+  faltaElArchivoDelEncabezado,
+  porQueNoSePuedeMandar,
+} from "@/lib/whatsapp/cabeceraDePlantilla";
 import { urlParaMandar } from "@/lib/adjuntos-servidor";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -86,7 +91,10 @@ export async function POST(req: Request) {
   // También se cuenta el número de variables. Si no coinciden, Meta rechaza el
   // envío entero con un error que no dice cuál falta; comprobarlo aquí permite
   // decírselo al agente en cristiano y antes de gastar el intento.
-  let plantillaOk: { name: string; language: string; body: string | null } | null = null;
+  let plantillaOk: {
+    name: string; language: string; body: string | null;
+    components: unknown; encabezado_url: string | null; encabezado_nombre: string | null;
+  } | null = null;
   if (nombrePlantilla) {
     if (conv.channel !== "whatsapp") {
       return NextResponse.json(
@@ -97,7 +105,7 @@ export async function POST(req: Request) {
 
     const { data: fila } = await sb
       .from("whatsapp_templates")
-      .select("name, language, status, body, variables")
+      .select("name, language, status, body, variables, components, encabezado_url, encabezado_nombre")
       .eq("org_id", conv.org_id)
       .eq("name", nombrePlantilla)
       .eq("language", String(plantilla?.idioma ?? ""))
@@ -127,7 +135,24 @@ export async function POST(req: Request) {
       );
     }
 
-    plantillaOk = { name: fila.name, language: fila.language, body: fila.body ?? null };
+    /* NO SE MANDA UNA PLANTILLA A LA QUE LE FALTA SU IMAGEN.
+     *
+     * Sin esto el único aviso es el «(#132012) Parameter format does not
+     * match…» de Meta, que llega DESPUÉS de dar el mensaje por enviado y que
+     * no dice qué falta — hace revisar el cuerpo, que no era el problema.
+     * Aquí se para antes y se dice qué subir y dónde. */
+    if (faltaElArchivoDelEncabezado((fila as any).components, (fila as any).encabezado_url)) {
+      return NextResponse.json(
+        { error: porQueNoSePuedeMandar((fila as any).components) },
+        { status: 400 },
+      );
+    }
+    plantillaOk = {
+      name: fila.name, language: fila.language, body: fila.body ?? null,
+      components: (fila as any).components ?? null,
+      encabezado_url: (fila as any).encabezado_url ?? null,
+      encabezado_nombre: (fila as any).encabezado_nombre ?? null,
+    };
     payload.plantilla = { nombre: fila.name, idioma: fila.language, valores };
   }
 
@@ -160,6 +185,8 @@ export async function POST(req: Request) {
         canal.phone_number_id, canal.access_token, para,
         plantillaOk.name, plantillaOk.language,
         (payload.plantilla?.valores ?? []) as string[],
+        undefined,
+        cabeceraParaEnviar(plantillaOk.components, plantillaOk.encabezado_url, plantillaOk.encabezado_nombre),
       );
     } else if (adjunto?.url) {
       envio = await enviarArchivo(
