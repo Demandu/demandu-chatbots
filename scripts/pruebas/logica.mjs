@@ -8332,10 +8332,33 @@ describe("El pie de la tienda enseña Facebook y correo", () => {
     esperar(enlaceDeFacebook("www.facebook.com/zapateriamaxi")).igual("https://www.facebook.com/zapateriamaxi");
   });
 
+  test("acepta las direcciones que copia el navegador según el país (issue 08)", () => {
+    // `web.facebook.com` es lo que sale en la barra en buena parte de
+    // Latinoamérica, y se rechazaba en silencio: el negocio guardaba y nada.
+    esperar(enlaceDeFacebook("https://web.facebook.com/zapateriamaxi")).igual("https://www.facebook.com/zapateriamaxi");
+    esperar(enlaceDeFacebook("https://es-la.facebook.com/zapateriamaxi/")).igual("https://www.facebook.com/zapateriamaxi");
+    esperar(enlaceDeFacebook("http://m.facebook.com/zapateriamaxi")).igual("https://www.facebook.com/zapateriamaxi");
+    esperar(enlaceDeFacebook("web.facebook.com/zapateriamaxi")).igual("https://www.facebook.com/zapateriamaxi");
+    esperar(enlaceDeFacebook("fb.me/zapateriamaxi")).igual("https://fb.me/zapateriamaxi");
+  });
+
+  test("quita el rastreo de compartir, pero no el id de profile.php", () => {
+    esperar(enlaceDeFacebook("https://www.facebook.com/zapateriamaxi?mibextid=ZbWKwL")).igual("https://www.facebook.com/zapateriamaxi");
+    esperar(enlaceDeFacebook("https://www.facebook.com/profile.php?id=100089&mibextid=abc")).igual("https://www.facebook.com/profile.php?id=100089");
+    esperar(enlaceDeFacebook("https://www.facebook.com/profile.php")).igual(null, "profile.php sin id no lleva a nadie");
+  });
+
+  test("lo que no es un nombre se lee «Facebook»", () => {
+    esperar(comoSeLeeFacebook("https://www.facebook.com/profile.php?id=100089")).igual("Facebook");
+    esperar(comoSeLeeFacebook("https://www.facebook.com/share/1AbCdE/")).igual("Facebook");
+    esperar(comoSeLeeFacebook("fb.me/zapateriamaxi")).igual("Facebook");
+  });
+
   test("NO inventa un enlace con cualquier cosa", () => {
     // Un enlace roto en la tienda de un cliente es peor que un hueco: el
     // visitante lo pulsa, cae en un error, y el que queda mal es el negocio.
-    const basuras = ["", "   ", "mi tienda", "zapateria@gmail.com", "https://instagram.com/maxi", "https://facebook.com", "ab"];
+    const basuras = ["", "   ", "mi tienda", "zapateria@gmail.com", "https://instagram.com/maxi", "https://facebook.com", "ab",
+      "https://notfacebook.com/maxi", "https://facebook.com.estafa.io/maxi", "facebook.com"];
     for (const basura of basuras) {
       esperar(enlaceDeFacebook(basura)).igual(null, "no deberia aceptar: " + basura);
     }

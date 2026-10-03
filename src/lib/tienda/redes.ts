@@ -18,30 +18,66 @@
 /** Un nombre de usuario de Facebook: letras, números, puntos y guiones. */
 const USUARIO = /^[A-Za-z0-9._-]{3,64}$/;
 
+/* ── LOS DOMINIOS QUE SON FACEBOOK (3 oct 2026) ───────────────────────────
+ *
+ * La primera versión aceptaba solo `facebook.com`, `m.facebook.com` y
+ * `fb.com`. Pero lo que la gente copia de la barra del navegador depende de
+ * dónde está: `web.facebook.com` (muy común en Latinoamérica),
+ * `es-la.facebook.com`, `business.facebook.com`… y el enlace corto `fb.me`.
+ * Todos se rechazaban EN SILENCIO: el negocio guardaba y su Facebook no salía
+ * — que es exactamente la queja del informe de clientes (issue 08).
+ *
+ * Cualquier subdominio de facebook.com se reescribe a `www.facebook.com`, que
+ * abre bien en móvil y en computadora. `fb.me` se deja tal cual: es un enlace
+ * corto que Facebook mismo redirige. */
+function esDeFacebook(host: string): "largo" | "corto" | null {
+  const h = host.toLowerCase();
+  if (h === "facebook.com" || h.endsWith(".facebook.com")) return "largo";
+  if (h === "fb.com" || h === "www.fb.com") return "largo";
+  if (h === "fb.me" || h === "www.fb.me") return "corto";
+  return null;
+}
+
+/** Lo que Facebook añade al compartir y no sirve para nada en la tienda. */
+const RASTREO = /^(?:mibextid|rdid|share_url|ref|refid|__cft__|__tn__|_rdr|_rdc|paipv|eav|fbclid|locale)$/i;
+
 export function enlaceDeFacebook(valor: string | null | undefined): string | null {
-  const v = String(valor ?? "").trim();
+  let v = String(valor ?? "").trim();
   if (!v) return null;
+
+  // «facebook.com/algo», «web.facebook.com/algo», «fb.me/algo» sin el
+  // protocolo: es lo que más se pega por error. Se le pone y se trata igual.
+  if (!/^https?:\/\//i.test(v) && /^(?:[a-z0-9-]+\.)*(?:facebook\.com|fb\.com|fb\.me)(?:[/?#]|$)/i.test(v)) {
+    v = "https://" + v;
+  }
 
   // Ya es una dirección: se acepta solo si es de Facebook. Un enlace a otro
   // sitio bajo la etiqueta «Facebook» confunde más que ayuda.
   if (/^https?:\/\//i.test(v)) {
+    let u: URL;
     try {
-      const u = new URL(v);
-      const host = u.hostname.replace(/^www\./i, "").toLowerCase();
-      if (host !== "facebook.com" && host !== "m.facebook.com" && host !== "fb.com") return null;
-      // Sin nada detrás del dominio no lleva a ninguna página concreta.
-      if (u.pathname.replace(/\/+$/, "") === "") return null;
-      return u.toString();
+      u = new URL(v);
     } catch {
       return null;
     }
-  }
+    const tipo = esDeFacebook(u.hostname);
+    if (!tipo) return null;
+    // Sin nada detrás del dominio no lleva a ninguna página concreta.
+    const ruta = u.pathname.replace(/\/+$/, "");
+    if (ruta === "") return null;
+    if (tipo === "corto") return `https://fb.me${ruta}`;
 
-  // «facebook.com/algo» sin el protocolo: es lo que más se pega por error.
-  const sinProtocolo = v.replace(/^(?:www\.|m\.)?(?:facebook\.com|fb\.com)\//i, "");
-  if (sinProtocolo !== v) {
-    const limpio = sinProtocolo.replace(/\/+$/, "").trim();
-    return limpio ? `https://www.facebook.com/${limpio}` : null;
+    // `profile.php?id=…` es la ÚNICA dirección de Facebook que necesita algo
+    // detrás del «?». El resto de lo que va ahí es rastreo de quien compartió.
+    const params = new URLSearchParams();
+    for (const [k, val] of u.searchParams) {
+      if (RASTREO.test(k)) continue;
+      if (ruta.toLowerCase() === "/profile.php" && k !== "id") continue;
+      params.append(k, val);
+    }
+    if (ruta.toLowerCase() === "/profile.php" && !params.get("id")) return null;
+    const q = params.toString();
+    return `https://www.facebook.com${ruta}${q ? "?" + q : ""}`;
   }
 
   // Un nombre de usuario, con o sin arroba delante.
@@ -55,7 +91,12 @@ export function comoSeLeeFacebook(valor: string | null | undefined): string | nu
   if (!enlace) return null;
   try {
     const trozo = new URL(enlace).pathname.replace(/^\/+|\/+$/g, "");
-    return trozo || null;
+    // `profile.php` o `share/abc123` no son un nombre: se lee «Facebook», que
+    // es lo que el visitante necesita saber para pulsarlo.
+    if (!trozo || trozo.includes("/") || /\.php$/i.test(trozo) || new URL(enlace).hostname === "fb.me") {
+      return "Facebook";
+    }
+    return trozo;
   } catch {
     return null;
   }

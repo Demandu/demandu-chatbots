@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentOrgId } from "@/lib/org";
 import { aCentavos, sanearGrupos } from "@/lib/tienda/variedades";
 import { leerConfig, sanearPreguntas, soloDigitos, type ConfigTienda } from "@/lib/tienda/config";
+import { enlaceDeFacebook } from "@/lib/tienda/redes";
 import { DOMINIO_TIENDAS, aDireccion, direccionValida, enlaceLegible } from "@/lib/tienda/direccion";
 import { esAmbiente, validarComercio } from "@/lib/tienda/yappy";
 import { avisarDelPedido } from "@/lib/tienda/avisar";
@@ -234,7 +235,12 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
     contacto: {
       horario: s(fd.get("horario")),
       instagram: s(fd.get("instagram")),
-      facebook: s(fd.get("facebook")),
+      // Se guarda YA convertido en un enlace que funciona: lo que se ve aquí
+      // al volver a abrir el editor es lo que pinta la tienda. Si lo escrito
+      // no es Facebook se conserva el que había y se avisa abajo (issue 08).
+      facebook: s(fd.get("facebook"))
+        ? enlaceDeFacebook(s(fd.get("facebook"))) ?? previa.contacto.facebook ?? ""
+        : "",
       direccion: s(fd.get("direccion")),
       correo: s(fd.get("correo")),
     },
@@ -274,6 +280,13 @@ export async function guardarDiseno(_e: Estado, fd: FormData): Promise<Estado> {
   }
   if (s(fd.get("logo_url")) && !nueva.logo_url) {
     avisos.push("El logo no se guardó: eso no es un enlace a una imagen.");
+  }
+  if (s(fd.get("facebook")) && !enlaceDeFacebook(s(fd.get("facebook")))) {
+    avisos.push(
+      previa.contacto.facebook
+        ? "El Facebook no se cambió: eso no es una página de Facebook. Pega la dirección (https://www.facebook.com/tunegocio) o escribe solo el nombre de usuario. Se conservó el anterior."
+        : "El Facebook no se guardó: eso no es una página de Facebook. Pega la dirección (https://www.facebook.com/tunegocio) o escribe solo el nombre de usuario.",
+    );
   }
   if (s(fd.get("portada_url")) && !nueva.portada_url) {
     avisos.push("La portada no se guardó: eso no es un enlace a una imagen.");

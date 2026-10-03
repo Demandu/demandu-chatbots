@@ -335,7 +335,15 @@ export function EditorDiseno({
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-ink-2">Facebook</label>
-              <input name="facebook" defaultValue={config.contacto.facebook ?? ""} className="input-l" />
+              <input
+                name="facebook"
+                defaultValue={config.contacto.facebook ?? ""}
+                placeholder="https://www.facebook.com/tunegocio"
+                className="input-l"
+              />
+              <p className="mt-1 text-[11px] text-ink-3">
+                Pega la dirección de tu página o escribe solo el nombre de usuario.
+              </p>
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-ink-2">Correo</label>
