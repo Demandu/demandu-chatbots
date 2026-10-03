@@ -82,6 +82,24 @@ export function Tablero({
     setMarcadas(new Set());
   }, []);
 
+  /* ── ARRASTRAR LA SELECCIÓN ENTERA ────────────────────────────────────────
+   *
+   * En modo selección, arrastrar una tarjeta MARCADA arrastra todas las
+   * marcadas. Las no marcadas no se arrastran: así el gesto no deshace una
+   * selección a medio hacer.
+   *
+   * Soltar NO mueve por su cuenta: deja el pedido y lo atiende la barra, que
+   * es donde vive la pregunta de «¿seguro que cierras 40 ventas?». Si el
+   * arrastre moviera directo, soltar sobre «Perdida» se saltaría esa
+   * confirmación — y eso es justo lo que no se puede deshacer.
+   *
+   * ES SOLO DE COMPUTADORA. El arrastre de HTML5 no existe en táctil; en el
+   * teléfono se sigue usando el botón «Etapa» de la barra. */
+  const [arrastrandoVarias, setArrastrandoVarias] = useState(false);
+  const [pedidoDeEtapa, setPedidoDeEtapa] = useState<
+    { id: string; nombre: string; outcome?: string | null } | null
+  >(null);
+
   const arrastrando = useRef<string | null>(null);
   const [indicador, setIndicador] = useState<{ col: string; idx: number } | null>(null);
 
@@ -336,13 +354,27 @@ export function Tablero({
                 onSobre={(idx) => setIndicador({ col: c.id, idx })}
                 onSalir={() => setIndicador((i) => (i?.col === c.id ? null : i))}
                 onSoltar={(idx) => {
+                  if (arrastrandoVarias) {
+                    setArrastrandoVarias(false);
+                    setIndicador(null);
+                    setPedidoDeEtapa({ id: c.id, nombre: c.nombre, outcome: c.tipo });
+                    return;
+                  }
                   const id = arrastrando.current;
                   arrastrando.current = null;
                   if (id) mover(id, c.id, idx);
                 }}
-                onArrastrar={(id) => (arrastrando.current = id)}
+                onArrastrar={(id) => {
+                  if (modo && marcadas.has(id)) {
+                    setArrastrandoVarias(true);
+                    arrastrando.current = null;
+                    return;
+                  }
+                  arrastrando.current = id;
+                }}
                 onAbrir={setAbierta}
                 onMoverA={(idTarjeta, idCol) => mover(idTarjeta, idCol, 0)}
+                esperandoVarias={arrastrandoVarias}
                 seleccion={
                   modo
                     ? {
@@ -383,6 +415,8 @@ export function Tablero({
               miembros={enBloque.miembros}
               etiquetas={enBloque.etiquetas}
               etapas={enBloque.etapas}
+              pedido={pedidoDeEtapa}
+              onPedidoAtendido={() => setPedidoDeEtapa(null)}
               onLimpiar={salirDeSeleccion}
               onListo={(r) => {
                 setAviso(r);
@@ -428,7 +462,7 @@ type Seleccion = {
 
 function ColumnaTablero({
   columna, columnas, indicador, pedidos, onSobre, onSalir, onSoltar, onArrastrar, onAbrir, onMoverA,
-  seleccion,
+  seleccion, esperandoVarias,
 }: {
   columna: Columna;
   columnas: Columna[];
@@ -442,13 +476,17 @@ function ColumnaTablero({
   onMoverA: (idTarjeta: string, idColumna: string) => void;
   /** Nulo = no estamos seleccionando: la columna se comporta como siempre. */
   seleccion: Seleccion | null;
+  /** Se está arrastrando un grupo: esta columna es un destino posible. */
+  esperandoVarias: boolean;
 }) {
   const tarjetas = columna.tarjetas ?? [];
   const ocultas = Math.max(0, (columna.total ?? 0) - tarjetas.length);
 
   return (
     <section
-      className="flex h-full w-[290px] flex-none flex-col rounded-2xl border border-linea bg-tarjeta-2"
+      className={`flex h-full w-[290px] flex-none flex-col rounded-2xl border bg-tarjeta-2 transition ${
+        esperandoVarias ? "border-pink/60 ring-1 ring-pink/30" : "border-linea"
+      }`}
       onDragOver={(e) => { e.preventDefault(); onSobre(tarjetas.length); }}
       onDragLeave={onSalir}
       onDrop={(e) => { e.preventDefault(); onSoltar(indicador ?? tarjetas.length); }}
@@ -553,9 +591,11 @@ function TarjetaCrm({
       /* SIN ARRASTRE MIENTRAS SE SELECCIONA. Dejarlo vivo haría que el primer
          gesto sobre una tarjeta ya marcada la moviera sola, deshaciendo la
          selección sin que nadie lo pidiera. */
-      draggable={!onMarcar}
+      /* En modo selección solo se arrastra lo MARCADO: arrastrar una sin
+         marcar no debe deshacer la selección que ya estaba hecha. */
+      draggable={!onMarcar || marcada}
       onDragStart={(e) => {
-        if (onMarcar) return;
+        if (onMarcar && !marcada) return;
         onArrastrar(t.id);
         e.dataTransfer.effectAllowed = "move";
       }}
@@ -568,7 +608,7 @@ function TarjetaCrm({
       className={`group mb-2 rounded-xl border bg-tarjeta p-3 transition hover:shadow-[0_6px_20px_-10px_rgba(20,20,60,.35)] ${
         onMarcar
           ? marcada
-            ? "cursor-pointer border-pink ring-2 ring-pink/40"
+            ? "cursor-grab border-pink ring-2 ring-pink/40 active:cursor-grabbing"
             : "cursor-pointer border-linea hover:border-pink/50"
           : "cursor-grab border-linea hover:border-violet/50 active:cursor-grabbing"
       }`}

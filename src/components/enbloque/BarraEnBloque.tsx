@@ -44,6 +44,8 @@ export function BarraEnBloque({
   etapas,
   onListo,
   onLimpiar,
+  pedido,
+  onPedidoAtendido,
 }: {
   tipo: TipoSeleccion;
   ids: string[];
@@ -53,6 +55,18 @@ export function BarraEnBloque({
   /** Se llama con lo que contestó el servidor, ya traducido. Quien usa la barra enseña el aviso y recarga. */
   onListo: (r: { ok: boolean; texto: string }) => void;
   onLimpiar: () => void;
+  /**
+   * UNA ETAPA PEDIDA DESDE FUERA — hoy, arrastrar la selección y soltarla en
+   * una columna del tablero.
+   *
+   * Entra por aquí y no por su propio camino A PROPÓSITO: la pregunta de
+   * «¿seguro que cierras 40 ventas?» vive en esta barra. Si el arrastre moviera
+   * las tarjetas por su cuenta, soltarlas en «Perdida» se saltaría la
+   * confirmación — y eso es exactamente lo que no se puede deshacer.
+   */
+  pedido?: { id: string; nombre: string; outcome?: string | null } | null;
+  /** Se llama en cuanto el pedido se atendió, para que no se repita. */
+  onPedidoAtendido?: () => void;
 }) {
   const [panel, setPanel] = useState<Panel>(null);
   const [cerrarAbierto, setCerrarAbierto] = useState(false);
@@ -90,6 +104,22 @@ export function BarraEnBloque({
     tipo === "contactos" ? "contactos" : tipo === "oportunidades" ? "tarjetas" : "conversaciones",
     { n },
   );
+
+  /* El pedido de fuera pasa por el MISMO sitio que pulsar la etapa en el
+   * panel: si cierra la venta, pregunta; si no, la mueve. */
+  useEffect(() => {
+    if (!pedido) return;
+    onPedidoAtendido?.();
+    if (cierraLaVenta(pedido.outcome)) {
+      setPanel(null);
+      setCerrarVentas({ id: pedido.id, name: pedido.nombre, color: "", outcome: pedido.outcome });
+      return;
+    }
+    correr(() => etapaEnBloque(tipo, ids, pedido.id));
+    // `ids` y `tipo` no se listan: el pedido llega con la selección ya hecha y
+    // volver a correr porque cambió la lista sería mover dos veces.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedido]);
 
   const correr = (f: () => Promise<ResultadoEnBloque>) => {
     setPanel(null);

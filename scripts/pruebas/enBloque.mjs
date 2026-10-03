@@ -278,14 +278,64 @@ describe("Embudo en bloque: el tablero se vuelve a pedir, no se parchea", () => 
     );
   });
 
-  test("y en modo selección no se arrastra", async () => {
+  test("y tocar una tarjeta en modo selección la marca, no la abre", async () => {
     const fs = await import("node:fs");
     const t = fs.readFileSync("src/components/crm/Tablero.tsx", "utf8");
-    esperar(/draggable=\{!onMarcar\}/.test(t)).verdadero(
-      "el arrastre sigue vivo mientras se selecciona: el primer gesto movería una tarjeta y desharía la selección",
-    );
     esperar(/onMarcar \? onMarcar\(t\.id\) : onAbrir\(t\)/.test(t)).verdadero(
       "tocar una tarjeta en modo selección vuelve a abrir su ficha en vez de marcarla",
+    );
+  });
+});
+
+/* ═══ ARRASTRAR LA SELECCIÓN ENTERA ════════════════════════════════════════
+ *
+ * Pedido de Alex el 3 oct, después de verlo funcionando: «¿y no podemos
+ * moverlas también arrastrando?». Lo que hay que proteger es que el arrastre
+ * NO se salte la pregunta de «vas a cerrar N ventas»: soltar cuarenta tarjetas
+ * sobre «Perdida» cierra cuarenta ventas, y eso no se deshace.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+describe("Embudo en bloque: arrastrar la selección", () => {
+  test("SOLO SE ARRASTRA LO MARCADO", async () => {
+    const fs = await import("node:fs");
+    const t = fs.readFileSync("src/components/crm/Tablero.tsx", "utf8");
+    esperar(/draggable=\{!onMarcar \|\| marcada\}/.test(t)).verdadero(
+      "una tarjeta sin marcar se puede arrastrar en modo selección: el gesto desharía la selección a medio hacer",
+    );
+    esperar(/if \(onMarcar && !marcada\) return;/.test(t)).verdadero(
+      "arrastrar una sin marcar empieza un arrastre de todas formas",
+    );
+  });
+
+  /* EL ARRASTRE NO MUEVE: deja el pedido y lo atiende la barra, que es donde
+     vive la confirmación. Si soltara directo, «Perdida» cerraría cuarenta
+     ventas sin preguntar. */
+  test("SOLTAR NO MUEVE POR SU CUENTA: SE LO PIDE A LA BARRA", async () => {
+    const fs = await import("node:fs");
+    const t = fs.readFileSync("src/components/crm/Tablero.tsx", "utf8");
+    const soltar = t.slice(t.indexOf("onSoltar={(idx) => {"), t.indexOf("onSoltar={(idx) => {") + 420);
+    esperar(soltar.includes("setPedidoDeEtapa")).verdadero(
+      "el arrastre en grupo volvió a mover por su cuenta y se salta la confirmación de cierre",
+    );
+    esperar(/if \(arrastrandoVarias\)/.test(soltar)).verdadero(
+      "soltar un grupo cae en el camino de una sola tarjeta",
+    );
+    esperar(/pedido=\{pedidoDeEtapa\}/.test(t)).verdadero("el pedido no llega a la barra");
+  });
+
+  /* La barra atiende el pedido por el MISMO sitio que pulsar la etapa: mismo
+     `cierraLaVenta`, misma pregunta, mismo número. */
+  test("Y LA BARRA LO ATIENDE CON LA MISMA PREGUNTA", async () => {
+    const fs = await import("node:fs");
+    const b = fs.readFileSync("src/components/enbloque/BarraEnBloque.tsx", "utf8");
+    const efecto = b.slice(b.indexOf("if (!pedido) return;"), b.indexOf("if (!pedido) return;") + 420);
+    esperar(efecto.includes("cierraLaVenta(pedido.outcome)")).verdadero(
+      "el pedido de fuera se mueve sin mirar si la etapa cierra la venta: arrastrar a «Perdida» no preguntaría",
+    );
+    esperar(efecto.includes("setCerrarVentas")).verdadero(
+      "reconoce que cierra la venta y no abre la confirmación",
+    );
+    esperar(efecto.includes("etapaEnBloque(tipo, ids, pedido.id)")).verdadero(
+      "no llega a mover cuando la etapa es normal",
     );
   });
 });
