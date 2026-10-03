@@ -61,6 +61,7 @@ export async function exigir(clave: ClavePermiso) {
   const destino = orden.find((c) => permisos.has(c));
   const rutas: Record<ClavePermiso, string> = {
     conversaciones: "/inbox",
+    ver_todas: "/inbox",
     embudo: "/crm",
     contactos: "/contacts",
     chatbots: "/bots",

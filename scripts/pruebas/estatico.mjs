@@ -10637,20 +10637,60 @@ describe("Una conversación que pide una persona siempre tiene dueño", () => {
     esperar(/tm\.available/.test(sql)).verdadero("el escalón preferente dejó de preferir a quien está disponible");
   });
 
-  test("soltar un chat lo devuelve a la rueda, y a OTRO", () => {
-    /* «Sin asignar» en la Bandeja deshacía a mano lo que la 0124 garantiza.
-     * Ahora significa «devuélvelo al equipo»: el disparador reparte en el
-     * mismo instante, excluyendo a quien lo soltó — con «menos carga» sería el
-     * primer candidato y el chat le rebotaría. */
-    const f = fs.readdirSync(MIGRA).find((n) => n.startsWith("0125_"));
-    esperar(!!f).verdadero("falta la migración 0125: soltar un chat vuelve a dejarlo huérfano");
-    const sql = fs.readFileSync(path.join(MIGRA, f), "utf8").replace(/^\s*--.*$/gm, "");
-    esperar(/tg_op = 'UPDATE' and old\.assignee_member_id is not null/.test(sql)).verdadero(
-      "el reparto ya no detecta que alguien soltó la conversación",
+  /* ── 0142 (3 oct 2026): CAMBIO DE CRITERIO, decidido con Alex ──────────
+   *
+   * La 0125 hacía que «Sin asignar» devolviera el chat a la rueda al
+   * instante. En Demandu LLC, con dos personas, el chat rebotaba Darwin →
+   * Alejandro → Darwin y no había forma de dejarlo sin dueño para repartirlo
+   * a mano. Y cuando no había nadie disponible, la 0124 se lo daba a
+   * CUALQUIERA — a Alejandro, marcado «no disponible».
+   *
+   * Ahora: soltar es soltar, y el último recurso es el DUEÑO de la cuenta. */
+  const f0142 = fs.readdirSync(MIGRA).find((n) => n.startsWith("0142_"));
+  const sql0142 = f0142 ? fs.readFileSync(path.join(MIGRA, f0142), "utf8").replace(/^\s*--.*$/gm, "") : "";
+  const cuerpoDe = (nombre) => {
+    const i = sql0142.indexOf(`create or replace function public.${nombre}(`);
+    if (i < 0) return "";
+    const fin = sql0142.indexOf("end $$;", i);
+    return sql0142.slice(i, fin);
+  };
+
+  test("soltar un chat lo deja SIN ASIGNAR (0142), no lo vuelve a repartir", () => {
+    esperar(!!f0142).verdadero("falta la migración 0142");
+    const t = cuerpoDe("crm_repartir");
+    esperar(/tg_op = 'UPDATE' and old\.assignee_member_id is not null then\s*return new;/.test(t)).verdadero(
+      "al soltar un chat el reparto vuelve a elegir a otro: «Sin asignar» rebota otra vez",
     );
-    esperar(/crm_elegir_agente\(new\.org_id, quien_la_solto\)/.test(sql)).verdadero(
-      "vuelve a poder devolverle el chat a quien lo acaba de soltar",
+    esperar(/new\.asignada_por is not null[\s\S]{0,160}new\.assigned_at >= new\.handoff_requested_at[\s\S]{0,40}return new;/.test(t))
+      .verdadero("un chat soltado a mano se vuelve a repartir con cualquier cambio (marcarlo leído, cambiar etapa…)");
+    esperar(/asignada_por is not null[\s\S]{0,160}assigned_at >= cv\.handoff_requested_at/.test(cuerpoDe("crm_repartir_pendientes")))
+      .verdadero("la cola de cada 2 minutos vuelve a recoger los chats que una persona dejó sin asignar");
+  });
+
+  test("si no hay nadie disponible va al DUEÑO, no a cualquiera (0142)", () => {
+    const t = cuerpoDe("crm_elegir_agente");
+    esperar(/m\.role::text in \('owner', 'admin'\)/.test(t)).verdadero(
+      "el respaldo ya no busca al dueño o administrador",
     );
+    esperar(/m\.soporte_hasta is null/.test(t)).verdadero(
+      "el respaldo podría darle el chat a alguien de soporte de Demandu",
+    );
+    // Solo dos `into elegido`: el preferente y el del dueño. Un tercero es
+    // volver a «a cualquiera del equipo».
+    const cuantos = (t.match(/into\s+elegido/g) ?? []).length;
+    esperar(cuantos).igual(2, "volvió un escalón que reparte a cualquiera del equipo, disponible o no");
+  });
+
+  test("quien no tiene «ver_todas» solo ve sus chats, y lo dice el RLS (0142)", () => {
+    esperar(/alter policy conversations_all on public\.conversations[\s\S]{0,260}auth_mis_miembros/.test(sql0142))
+      .verdadero("la política de lectura de conversaciones ya no limita a las propias");
+    esperar(/alter policy messages_all on public\.messages[\s\S]{0,260}from public\.conversations/.test(sql0142))
+      .verdadero("los mensajes de un chat ajeno se pueden leer aunque el chat no");
+    esperar(/when 'agent'\s+then array\['conversaciones','embudo','contactos'\]/.test(sql0142))
+      .verdadero("el rol agente nace con «ver_todas» en la base, y la pantalla dice que no");
+    const perm = ARCHIVOS.find((x) => x.ruta === "src/lib/permisos.ts")?.texto ?? "";
+    esperar(/agent: \["conversaciones", "embudo", "contactos"\]/.test(perm))
+      .verdadero("el rol agente nace con «ver_todas» en la pantalla, y la base dice que no");
   });
 
   test("la Bandeja pinta lo que la base devolvió, no lo que pidió", () => {

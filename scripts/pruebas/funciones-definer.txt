@@ -46,9 +46,12 @@
 
 anotar_paso_del_equipo        | candado
 api_key_resolver              | solo-servicio
+auth_mis_miembros             | deriva
 auth_org_ids                  | candado
+auth_orgs_que_ven_todo        | deriva
 auth_puede                    | candado
 auth_tiene                    | candado
+bandeja_latir                 | disparador
 buscar_conocimiento           | candado
 calificar_al_cambiar_datos    | disparador
 calificar_contacto            | candado
@@ -60,6 +63,7 @@ consumo_de_clientes           | solo-servicio
 conv_asignar_bot              | disparador
 conv_contar_no_leidos         | disparador
 conversacion_marca_asignacion | candado
+conversaciones_asignar        | candado
 crear_mi_negocio              | candado
 crm_elegir_agente             | candado
 crm_enganchar_conversacion    | disparador

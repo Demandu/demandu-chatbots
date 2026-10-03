@@ -324,12 +324,61 @@ export function InboxClient({
     if (pedida) setSelId(pedida);
   }, [pedida]);
 
-  // Refresco ligero (simula tiempo real mientras no hay motor en vivo)
+  /* ── EN VIVO ─────────────────────────────────────────────────────────────
+   *
+   * La Bandeja escucha `bandeja_pulso` por Supabase Realtime (migración 0142):
+   * una fila por conversación que se toca cada vez que la conversación cambia
+   * o le entra un mensaje. Al oír un latido se recarga la lista y, si el
+   * latido es de la conversación abierta, sus mensajes.
+   *
+   * Se escucha el pulso y NO `conversations` porque Realtime aplica RLS: a
+   * quien le quitan un chat ya no le llega el cambio de esa fila, que es
+   * justo el aviso que necesita para quitarlo de su lista.
+   *
+   * Los latidos se juntan (250 ms): pasar 50 chats de golpe son 50 latidos, y
+   * con una recarga basta.
+   *
+   * El refresco cada 15 s se queda de RED: si el Realtime se corta (wifi,
+   * portátil dormido), la Bandeja sigue al día aunque más despacio. */
+  const selIdRef = useRef<string | null>(selId);
+  useEffect(() => { selIdRef.current = selId; }, [selId]);
+
+  useEffect(() => {
+    if (!orgId) return;
+    let espera: ReturnType<typeof setTimeout> | null = null;
+    let tocaMensajes = false;
+    const canal = sb
+      .channel(`bandeja:${orgId}`)
+      .on(
+        "postgres_changes" as any,
+        { event: "*", schema: "public", table: "bandeja_pulso", filter: `org_id=eq.${orgId}` },
+        (cambio: any) => {
+          const conv = cambio?.new?.conversation_id ?? cambio?.old?.conversation_id ?? null;
+          if (conv && conv === selIdRef.current) tocaMensajes = true;
+          if (espera) clearTimeout(espera);
+          espera = setTimeout(() => {
+            loadConvos();
+            if (tocaMensajes && selIdRef.current) loadMessages(selIdRef.current);
+            tocaMensajes = false;
+          }, 250);
+        },
+      )
+      .subscribe((estado: string) => {
+        if (estado === "CHANNEL_ERROR" || estado === "TIMED_OUT") {
+          console.error("[bandeja] el tiempo real no conectó:", estado, "— sigue el refresco cada 15 s");
+        }
+      });
+    return () => {
+      if (espera) clearTimeout(espera);
+      sb.removeChannel(canal);
+    };
+  }, [sb, orgId, loadConvos, loadMessages]);
+
   useEffect(() => {
     const t = setInterval(() => {
       loadConvos();
       if (selId) loadMessages(selId);
-    }, 6000);
+    }, 15000);
     return () => clearInterval(t);
   }, [loadConvos, loadMessages, selId]);
 
@@ -705,27 +754,46 @@ export function InboxClient({
    *     mismo chat es peor que no poder reasignar: ninguno contesta, porque
    *     cada uno cree que es del otro.
    *
-   *   · Al elegir «Sin asignar», la base NO lo deja sin dueño: lo devuelve a
-   *     la rueda y elige a otro en el mismo instante (migración 0125). La
-   *     pantalla habría seguido enseñando «Sin asignar» sobre una conversación
-   *     que ya tiene responsable.
+   *   · Desde la 0142, «Sin asignar» deja el chat SIN ASIGNAR de verdad (antes
+   *     la 0125 lo devolvía a la rueda y elegía a otro al instante).
    *
-   * Por eso se pide la fila de vuelta con `select` y se pinta ESO. Si no
-   * vuelve nada, se deja la lista como estaba y se avisa: quedarse con lo que
-   * uno quería creer es exactamente el fallo.
+   * Por eso se lee la fila de vuelta y se pinta ESO. Si la escritura falla, se
+   * deja la lista como estaba y se avisa: quedarse con lo que uno quería creer
+   * es exactamente el fallo.
+   *
+   * ── VA POR `conversaciones_asignar`, NO POR UN UPDATE ───────────────────
+   *
+   * Quien solo ve sus chats (sin «Ver todas las conversaciones») deja de ver
+   * el chat en cuanto lo pasa. Un UPDATE por PostgREST pide la fila de vuelta
+   * y la fila ya no es suya: la base contesta «new row violates row-level
+   * security policy» y el cambio NO se guarda. La función hace el cambio con
+   * sus candados. Si después ya no puedo leer la conversación, es que se la
+   * pasé a otro y no me toca verla: se quita de mi lista.
    */
   const setAssignee = async (memberId: string) => {
     if (!sel) return;
+    const id = sel.id;
+    const { data: hecho, error: errPasar } = await sb.rpc("conversaciones_asignar", {
+      p_ids: [id],
+      p_member: memberId || null,
+    });
+    if (errPasar || !hecho || !(hecho as any[]).length) {
+      console.error("[bandeja] no se pudo reasignar:", errPasar?.message ?? "la base no cambió nada");
+      alert("No se pudo cambiar el responsable. Inténtalo otra vez.");
+      return;
+    }
+
     const { data, error } = await sb
       .from("conversations")
-      .update({ assignee_member_id: memberId || null })
-      .eq("id", sel.id)
       .select("assignee_member_id, asignada_por, member:team_members(id,name)")
+      .eq("id", id)
       .maybeSingle();
 
     if (error || !data) {
-      console.error("[bandeja] no se pudo reasignar:", error?.message);
-      alert("No se pudo cambiar el responsable. Inténtalo otra vez.");
+      if (error) console.error("[bandeja] no pude releer la conversación:", error.message);
+      // Ya no la veo: se la pasé a otro y no tengo «Ver todas». Fuera de mi lista.
+      setConvos((cs) => cs.filter((c) => c.id !== id));
+      if (selId === id) { setSelId(null); setMessages([]); }
       return;
     }
 
@@ -734,7 +802,7 @@ export function InboxClient({
       ?? members.find((m) => m.id === real)
       ?? null;
     const porQuien = ((data as any).asignada_por as string | null) ?? null;
-    setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, assignee_member_id: real, asignada_por: porQuien, member: mm } : c)));
+    setConvos((cs) => cs.map((c) => (c.id === id ? { ...c, assignee_member_id: real, asignada_por: porQuien, member: mm } : c)));
   };
   const toggleTag = async (name: string) => {
     if (!sel?.contact) return;

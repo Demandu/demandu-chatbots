@@ -23,6 +23,7 @@ export type Rol = "owner" | "admin" | "coordinador" | "developer" | "agent" | "v
 export type ClavePermiso =
   | "chatbots"
   | "conversaciones"
+  | "ver_todas"
   | "embudo"
   | "contactos"
   | "resultados"
@@ -45,6 +46,9 @@ export const PERMISOS: {
   riesgo?: boolean;
 }[] = [
   { clave: "conversaciones", nombre: "Conversaciones", descripcion: "Atender la bandeja y responder a los clientes." },
+  // 0142 (3 oct 2026): sin este permiso la Bandeja enseña SOLO los chats
+  // asignados a la persona. Lo hace cumplir el RLS, no solo la pantalla.
+  { clave: "ver_todas", nombre: "Ver todas las conversaciones", descripcion: "Sin esto, la persona solo ve los chats asignados a ella: ni los de otros ni los sin asignar." },
   { clave: "embudo", nombre: "Embudo", descripcion: "Ver el embudo y mover tarjetas entre etapas." },
   { clave: "contactos", nombre: "Contactos", descripcion: "Ver y editar la ficha de los contactos." },
   { clave: "chatbots", nombre: "Chatbots", descripcion: "Crear y editar chatbots y sus conversaciones automáticas." },
@@ -64,7 +68,7 @@ export const ROLES: { valor: Rol; nombre: string; descripcion: string }[] = [
   { valor: "owner", nombre: "Dueño", descripcion: "Acceso total. Solo puede haber uno y no se le pueden quitar permisos." },
   { valor: "admin", nombre: "Administrador", descripcion: "Puede con todo salvo tocar al dueño." },
   { valor: "coordinador", nombre: "Coordinador", descripcion: "Lleva la operación del día a día. No arma chatbots ni toca la IA, y no entra a la facturación." },
-  { valor: "agent", nombre: "Atención al cliente", descripcion: "Atiende conversaciones, mueve el embudo y edita contactos. Nada más." },
+  { valor: "agent", nombre: "Atención al cliente", descripcion: "Atiende conversaciones, mueve el embudo y edita contactos. Ve solo los chats asignados a él, salvo que le actives «Ver todas las conversaciones»." },
   { valor: "developer", nombre: "Desarrollo", descripcion: "Arma chatbots, entrena a Lana y conecta las APIs. No atiende clientes." },
   { valor: "viewer", nombre: "Solo lectura", descripcion: "Mira y no toca." },
 ];
@@ -98,7 +102,9 @@ const POR_ROL: Record<Exclude<Rol, "owner">, ClavePermiso[]> = {
   ),
   agent: ["conversaciones", "embudo", "contactos"],
   developer: [...DE_DESARROLLO],
-  viewer: ["embudo", "contactos", "resultados"],
+  // «ver_todas» para solo lectura: sin él, Resultados contaría solo los chats
+  // asignados a quien mira — o sea, ninguno.
+  viewer: ["embudo", "contactos", "resultados", "ver_todas"],
 };
 
 /**
@@ -204,6 +210,7 @@ export function diferenciaConElRol(rol: Rol | string, elegidos: ClavePermiso[]):
 /** A dónde mandar a alguien que no puede ver la pantalla que pidió. */
 export const RUTA_POR_PERMISO: Record<ClavePermiso, string> = {
   conversaciones: "/inbox",
+  ver_todas: "/inbox",
   embudo: "/crm",
   contactos: "/contacts",
   chatbots: "/bots",

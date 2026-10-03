@@ -209,13 +209,15 @@ export async function asignarEnBloque(
     const tarjetas = await tarjetasDe(sb, orgId, tipo, convs, contactIds);
 
     let quedaron = 0;
+    /* POR `conversaciones_asignar` Y NO POR UN UPDATE (0142): quien solo ve
+     * sus chats deja de ver el que pasa, y PostgREST, al pedir la fila de
+     * vuelta, haría fallar el cambio entero por RLS. La función ya filtra por
+     * cuenta, permiso y visibilidad. */
     for (const trozo of enTrozos(convs.map((c) => c.id))) {
-      const { data, error } = await sb
-        .from("conversations")
-        .update({ assignee_member_id: (miembro as any).id })
-        .eq("org_id", orgId)
-        .in("id", trozo)
-        .select("id, assignee_member_id");
+      const { data, error } = await sb.rpc("conversaciones_asignar", {
+        p_ids: trozo,
+        p_member: (miembro as any).id,
+      });
       if (error) throw new Error(error.message);
       quedaron += ((data ?? []) as any[]).filter((r) => r.assignee_member_id === (miembro as any).id).length;
     }
