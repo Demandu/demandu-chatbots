@@ -51,6 +51,7 @@ auth_org_ids                  | candado
 auth_orgs_que_ven_todo        | deriva
 auth_puede                    | candado
 auth_tiene                    | candado
+avisar_lead_calificado        | candado
 bandeja_latir                 | disparador
 buscar_conocimiento           | candado
 calificar_al_cambiar_datos    | disparador

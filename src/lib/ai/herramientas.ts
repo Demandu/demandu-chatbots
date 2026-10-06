@@ -1460,6 +1460,23 @@ export async function ejecutarHerramienta(
           conversacion_id: ctx.conversationId,
           por: "agente_ia",
         });
+
+        /* Y SI CON ESTA ETIQUETA EL LEAD QUEDA CALIFICADO, EL CRM SE ENTERA.
+           La misma llamada que hace el motor de WhatsApp, a la misma función de
+           la base: los dos motores tienen que mandar exactamente lo mismo. Si
+           el lead aún no está calificado devuelve 0 y no sale nada. */
+        void ctx.admin
+          .rpc("avisar_lead_calificado", {
+            p_org_id: ctx.orgId,
+            p_contact_id: c.id,
+            p_por_que: args?.por_que ?? null,
+            p_en_que_me_baso: Array.isArray(args?.en_que_me_baso) ? args.en_que_me_baso : [],
+            p_por: "agente_ia",
+          })
+          .then(({ error }: any) => {
+            if (error) console.error("[salidas] no pude avisar lead.calificado:", error.message);
+          });
+
         return `Listo, quedó etiquetado como "${etiqueta}". ${SIGUE_HABLANDO}`;
       }
 

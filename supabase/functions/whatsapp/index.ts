@@ -2435,6 +2435,31 @@ async function ejecutarHerramienta(ctx: any, ai: any, nombre: string, args: any)
           en_que_me_baso: Array.isArray(args?.en_que_me_baso) ? args.en_que_me_baso : [],
           por: "agente_ia",
         });
+        // Y SI CON ESTA ETIQUETA EL LEAD QUEDA CALIFICADO, EL CRM SE ENTERA.
+        //
+        // Con su calificación en un campo propio y TODOS sus atributos, no con
+        // la lista de etiquetas internas. El último `lead.datos` real (30 sep)
+        // mandaba ["Abierta","Lead Alto","Panamá Oeste","Torres de España"]:
+        // tres de esas cuatro son organización interna de Demandu y en el CRM
+        // del cliente dejan el campo de etiqueta inservible para filtrar.
+        //
+        // La regla vive en la base porque hay DOS motores y tienen que mandar
+        // exactamente lo mismo — igual que `poner_etiqueta`. Si el lead aún no
+        // está calificado, la función devuelve 0 y no sale nada.
+        try {
+          ctx.db.rpc("avisar_lead_calificado", {
+            p_org_id: ctx.orgId,
+            p_contact_id: c.id,
+            p_por_que: args?.por_que ?? null,
+            p_en_que_me_baso: Array.isArray(args?.en_que_me_baso) ? args.en_que_me_baso : [],
+            p_por: "agente_ia",
+          }).then(({ error }: any) => {
+            if (error) console.error("[salidas] no pude avisar lead.calificado:", error.message);
+          });
+        } catch (e) {
+          console.error("[salidas] fallo al avisar lead.calificado:", e);
+        }
+
         return `Listo, quedó etiquetado como "${etiqueta}". ${SIGUE_HABLANDO}`;
       }
 

@@ -21,6 +21,15 @@
 export const EVENTOS = [
   { clave: "lead.nuevo", nombre: "Lead nuevo", desc: "Alguien escribe por primera vez." },
   { clave: "lead.datos", nombre: "Datos del lead", desc: "El chatbot capturó su nombre, correo u otro dato." },
+  /* LA CALIFICACIÓN LIMPIA, APARTE DE `lead.datos`.
+     `lead.datos` salta en CADA dato y en CADA etiqueta, y manda la lista
+     entera de etiquetas — incluidas las de Etapa, Zona y Proyecto, que son
+     internas de Demandu. Este sale UNA vez, cuando el lead queda calificado, y
+     lleva la calificación en su propio campo más TODOS los atributos. Es un
+     evento nuevo y no un cambio de `lead.datos` porque esa lista es un
+     contrato ya publicado: quien conectó su CRM a él sigue recibiendo lo
+     mismo. */
+  { clave: "lead.calificado", nombre: "Lead calificado", desc: "El chatbot terminó de perfilarlo: su calificación y todos sus datos." },
   { clave: "cita.agendada", nombre: "Cita agendada", desc: "Se reservó una cita en el calendario." },
   { clave: "pase.a.humano", nombre: "Pidió una persona", desc: "La conversación necesita a alguien del equipo." },
   { clave: "conversacion.cerrada", nombre: "Conversación cerrada", desc: "Terminó la conversación." },
