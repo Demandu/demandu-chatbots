@@ -1,12 +1,14 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- Un teléfono, una persona.
 --
--- ⚠️ ESTA MIGRACIÓN NO SE PUEDE APLICAR CON DUPLICADOS DELANTE. Hay que juntar
---    primero los que ya existen (ver el bloque de limpieza, comentado abajo).
+-- APLICADA EL 3 DE OCTUBRE DE 2026. La limpieza y el índice van JUNTOS en la
+-- misma transacción a propósito: si el índice no se puede crear, la transacción
+-- se deshace y el borrado tampoco queda. No existe el estado intermedio en el
+-- que se hayan borrado fichas y la puerta siga abierta.
 --
 -- 25 sep 2026, CertifiedPrime: el mismo «Darwin Bracho», mismo teléfono, mismo
 -- correo, QUINCE VECES, creado en 43 segundos. Ninguno con conversación,
--- etiquetas ni grupo: quince fichas vacías idénticas.
+-- etiquetas ni grupo: quince fichas vacías idénticas. Quedó una.
 --
 -- ── POR QUÉ EL ÍNDICE QUE YA HABÍA NO SERVÍA ──────────────────────────────
 --
@@ -21,34 +23,60 @@
 --
 -- ── LO QUE IDENTIFICA A UNA PERSONA AQUÍ ES SU TELÉFONO ───────────────────
 --
--- Es por donde llega casi todo, y es lo que manda WhatsApp. Se guarda en
--- dígitos y se compara en dígitos: «+507 6017-0269» y «50760170269» son el
--- mismo número, y comparándolos como texto son dos personas distintas.
+-- Es por donde llega casi todo, y es lo que manda WhatsApp.
 --
--- El índice es PARCIAL (`where phone is not null`) a propósito: un contacto de
--- Instagram no tiene teléfono y no debe estorbar a otro que tampoco.
+-- LO QUE ESTE ÍNDICE **NO** CAZA, y conviene saberlo: compara el teléfono como
+-- texto. El 3 oct, Casas Pacíficas tenía el mismo número guardado dos veces,
+-- `50760170269` y `60170269` —con y sin prefijo de país—, y para el índice son
+-- dos personas distintas. Juntar eso es normalizar el teléfono al guardarlo,
+-- que es otro trabajo y toca el motor. Queda apuntado, no hecho.
 -- ════════════════════════════════════════════════════════════════════════════
 
--- ── LIMPIEZA PREVIA, A MANO Y MIRANDO ──────────────────────────────────────
--- No va automática: borrar fichas de clientes es de un solo sentido. Se
--- comprueba primero que las sobrantes no tengan nada colgando y se ejecuta
--- aparte, con el resultado a la vista.
---
---   with d as (
---     select id, row_number() over (partition by org_id, phone order by created_at) as n
---     from contacts where phone is not null
---   )
---   delete from contacts c using d
---    where c.id = d.id and d.n > 1
---      and not exists (select 1 from conversations x where x.contact_id = c.id)
---      and not exists (select 1 from opportunities x where x.contact_id = c.id)
---      and not exists (select 1 from contact_notes x where x.contact_id = c.id)
---      and not exists (select 1 from campaign_recipients x where x.contact_id = c.id)
---      and not exists (select 1 from citas x where x.contact_id = c.id);
+-- ── 1. LA LIMPIEZA, CON LOS CANDADOS PUESTOS ───────────────────────────────
+-- Se queda la más antigua de cada teléfono. Las demás solo se borran si NO
+-- tienen nada colgando. Se miran LAS CATORCE tablas que apuntan a un contacto:
+-- las dos últimas (`drip_sends` y `campaign_recipients`) no tienen clave
+-- foránea hacia `contacts`, así que nadie habría avisado. Y de las doce que sí
+-- la tienen, cinco borran en cascada y siete dejan el hueco en NULL: en
+-- cualquiera de los dos casos el daño ya estaría hecho cuando se notara.
+with d as (
+  select id,
+         row_number() over (partition by org_id, phone order by created_at, id) as n
+    from public.contacts
+   where phone is not null and phone <> ''
+),
+sobrantes as (select id from d where n > 1)
+delete from public.contacts c
+ using sobrantes s
+ where c.id = s.id
+   and not exists (select 1 from public.conversations       x where x.contact_id  = c.id)
+   and not exists (select 1 from public.opportunities       x where x.contact_id  = c.id)
+   and not exists (select 1 from public.contact_notes       x where x.contact_id  = c.id)
+   and not exists (select 1 from public.citas               x where x.contact_id  = c.id)
+   and not exists (select 1 from public.drip_subscriptions  x where x.contact_id  = c.id)
+   and not exists (select 1 from public.drip_sends          x where x.contact_id  = c.id)
+   and not exists (select 1 from public.llamadas            x where x.contact_id  = c.id)
+   and not exists (select 1 from public.pedidos             x where x.contacto_id = c.id)
+   and not exists (select 1 from public.permisos_de_llamada x where x.contact_id  = c.id)
+   and not exists (select 1 from public.reservas            x where x.contact_id  = c.id)
+   and not exists (select 1 from public.respuestas_de_flujo x where x.contact_id  = c.id)
+   and not exists (select 1 from public.sheets_cola         x where x.contact_id  = c.id)
+   and not exists (select 1 from public.tasks               x where x.contact_id  = c.id)
+   and not exists (select 1 from public.campaign_recipients x where x.contact_id  = c.id);
 
+-- ── 2. EL ÍNDICE ───────────────────────────────────────────────────────────
+-- Parcial a propósito:
+--   · `phone is not null` — un contacto de Instagram no tiene teléfono y no
+--     debe estorbar a otro que tampoco.
+--   · `phone <> ''` — y ESTO es lo que le faltaba a la primera versión. En
+--     Postgres dos NULL no son iguales, pero dos cadenas vacías SÍ. Un
+--     formulario que guarde '' en vez de NULL habría hecho que el segundo
+--     contacto sin teléfono no se pudiera crear: el candado habría mordido a
+--     quien no tocaba. El 3 oct había 10 contactos sin teléfono y los 10 eran
+--     NULL, así que entró sin romper nada — pero el agujero estaba abierto.
 create unique index if not exists contacts_un_telefono_una_persona
   on public.contacts (org_id, phone)
-  where phone is not null;
+  where phone is not null and phone <> '';
 
 comment on index public.contacts_un_telefono_una_persona is
-  'Un telefono, una persona por cuenta. El indice de external_id no protege a WhatsApp ni a los contactos escritos a mano: ahi external_id es NULL, y un NULL nunca es igual a otro NULL.';
+  'Un telefono, una persona por cuenta. El indice de external_id no protege a WhatsApp ni a los contactos escritos a mano: ahi external_id es NULL, y un NULL nunca es igual a otro NULL. Excluye tambien la cadena vacia, porque dos cadenas vacias si son iguales y bloquearian a dos contactos legitimos sin telefono.';

@@ -225,5 +225,50 @@
     "columnaOcultas": "Solo se marcan las {n} que se ven. Las otras {ocultas} no están cargadas.",
     "confirmarCierreDetalle": "Esto cierra la venta: les pone la fecha de cierre y queda en el historial. Para deshacerlo hay que volver a mover cada tarjeta.",
     "confirmarCierreSi": "Sí, moverlas"
+  },
+  "noSalio": {
+    "titulo": "No se entregó",
+    "esaPlantilla": "esta plantilla",
+    "quitar": "Quitar",
+    "noSePudoQuitar": "No se pudo quitar. Vuelve a intentarlo.",
+    "confirmarTitulo": "¿Quitar este mensaje de la conversación?",
+    "confirmarDetalle": "El cliente nunca lo recibió, así que para él no cambia nada. Aquí desaparece para siempre: no hay papelera.",
+    "confirmarSi": "Sí, quitarlo",
+    "cancelar": "Cancelar",
+    "metaDijo": "Meta contestó: {texto}",
+    "metaDijoConCodigo": "Meta contestó ({codigo}): {texto}",
+    "que": {
+      "plantillaSinArchivo": "El encabezado de {plantilla} pide un archivo (imagen, video o documento) y el envío salió sin él. Meta rechaza el mensaje entero.",
+      "faltanDatos": "Los datos que se mandaron no son los que {plantilla} espera: sobran o faltan valores.",
+      "plantillaNoExiste": "Meta no encuentra {plantilla} en ese idioma, o todavía no está aprobada.",
+      "plantillaPausada": "Meta pausó o desactivó {plantilla} por la calificación que le dan quienes la reciben.",
+      "ventanaCerrada": "Pasaron más de 24 horas desde el último mensaje del cliente, así que ya no se le puede escribir texto libre.",
+      "noSeLePuedeEntregar": "Meta rechazó la entrega sin dar más detalle. Comprueba que el número tenga WhatsApp y esté escrito con su prefijo de país.",
+      "tipoNoSoportado": "WhatsApp no admite ese tipo de mensaje.",
+      "archivoNoValido": "La dirección del archivo no vale: Meta tiene que poder descargarlo desde internet.",
+      "limiteDeMarketing": "Meta no entregó el mensaje de marketing: ese cliente ya recibió demasiados o está dentro de una prueba de Meta.",
+      "demasiadoSeguido": "Salieron demasiados mensajes en muy poco tiempo y Meta frenó este.",
+      "numeroBloqueado": "Meta bloqueó temporalmente tu número de WhatsApp por una falta de las políticas.",
+      "desconocido": "Este fallo no lo sé leer, así que no te voy a adivinar la causa."
+    },
+    "arreglo": {
+      "plantillaSinArchivo": "Sube la imagen del encabezado en Chatbots → tu bot → Plantillas. Mientras no la tenga, ningún envío de esta plantilla va a salir.",
+      "faltanDatos": "Revisa las variables de la plantilla: tiene que ir un valor por cada hueco de su texto, en el mismo orden.",
+      "plantillaNoExiste": "En Plantillas, comprueba que esté aprobada y que el idioma sea el mismo con el que se manda.",
+      "plantillaPausada": "Reintentar no sirve: hay que esperar a que Meta la reactive, o crear otra con un texto distinto.",
+      "ventanaCerrada": "Mándale una plantilla aprobada. En cuanto él conteste se abre otra vez la ventana de 24 horas.",
+      "noSeLePuedeEntregar": "Confirma el número con el cliente. Si es el correcto, búscalo por otra vía.",
+      "tipoNoSoportado": "Mándalo como texto, imagen, archivo o plantilla.",
+      "archivoNoValido": "El enlace tiene que empezar por https, ser público y apuntar a un archivo del tipo que pide la plantilla.",
+      "limiteDeMarketing": "Reintentar no sirve. Espera, o escríbele solo cuando él escriba primero.",
+      "demasiadoSeguido": "Espera unos minutos y vuelve a intentarlo.",
+      "numeroBloqueado": "Mira el estado de tu número en el administrador de WhatsApp de Meta. Hasta que lo desbloqueen no sale nada."
+    },
+    "banda": "{canal} no está entregando tus mensajes."
+  },
+  "ficha": {
+    "abrir": "Ver la ficha del contacto",
+    "cerrar": "Cerrar",
+    "titulo": "Ficha del contacto"
   }
 }

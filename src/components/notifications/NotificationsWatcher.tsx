@@ -9,6 +9,7 @@ import {
 import { lanzarAviso } from "./Toasts";
 import { anunciarPendientes, anunciarEsperando } from "@/lib/pendientes";
 import { queHacerConLaAsignacion, comoSeAnuncia } from "@/lib/avisoDeAsignacion";
+import { useLatidoDeLaBandeja } from "./enVivo";
 
 /**
  * Vigila mensajes nuevos en toda la plataforma (no solo en la Bandeja) y avisa
@@ -255,11 +256,12 @@ export function NotificationsWatcher() {
     }
   }, [prefs, router, miMemberId, miUserId]);
 
-  useEffect(() => {
-    revisar();
-    const t = setInterval(revisar, 8000);
-    return () => clearInterval(t);
-  }, [revisar]);
+  /* El aviso llega cuando pasa algo, no cada 8 segundos. La primera vuelta se
+     hace al montar para tomar la foto de lo que ya estaba (si no, el primer
+     latido avisaría de mensajes viejos). El porqué del cambio y por qué queda
+     una red de 60 s está en `enVivo.ts`. */
+  useEffect(() => { revisar(); }, [revisar]);
+  useLatidoDeLaBandeja("vigilante", revisar);
 
   // Al salir, deja el título como estaba
   useEffect(() => () => { document.title = tituloOriginal.current || document.title; }, []);

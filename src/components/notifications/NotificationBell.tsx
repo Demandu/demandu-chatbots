@@ -1,15 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Bell, BellOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { EVENTO_PREFS, leerPrefs, enSilencio } from "@/lib/notifications";
+import { useLatidoDeLaBandeja } from "./enVivo";
 
 /** Campana con el número de mensajes sin leer. Lleva a la Bandeja. */
 export function NotificationBell() {
   const [pendientes, setPendientes] = useState(0);
   const [silenciado, setSilenciado] = useState(false);
+
+  /* Contar es una consulta; se guarda para que el latido la pueda llamar sin
+     volver a montar nada. Antes esto corría cada 8 segundos y era una de las
+     tres consultas más repetidas de la base — ver `enVivo.ts`. */
+  const contar = useCallback(async () => {
+    const sb = createClient();
+    const { data, error } = await sb.from("conversations").select("unread").gt("unread", 0).limit(100);
+    if (error) {
+      // Sin esto, un fallo de red dejaba la campana en cero: «no tienes nada»
+      // es una respuesta peor que no cambiar el número.
+      console.error("[campana] no pude contar los sin leer:", error.message);
+      return;
+    }
+    setPendientes(((data as any[]) ?? []).reduce((n, c) => n + (Number(c.unread) || 0), 0));
+    const p = leerPrefs();
+    setSilenciado(!p.activo || enSilencio(p));
+  }, []);
+
+  useLatidoDeLaBandeja("campana", contar);
 
   useEffect(() => {
     const sincronizar = () => {
@@ -20,20 +40,12 @@ export function NotificationBell() {
     window.addEventListener(EVENTO_PREFS, sincronizar);
     window.addEventListener("storage", sincronizar);
 
-    const sb = createClient();
-    const contar = async () => {
-      const { data } = await sb.from("conversations").select("unread").gt("unread", 0).limit(100);
-      setPendientes(((data as any[]) ?? []).reduce((n, c) => n + (Number(c.unread) || 0), 0));
-      sincronizar();
-    };
     contar();
-    const t = setInterval(contar, 8000);
     return () => {
-      clearInterval(t);
       window.removeEventListener(EVENTO_PREFS, sincronizar);
       window.removeEventListener("storage", sincronizar);
     };
-  }, []);
+  }, [contar]);
 
   return (
     <Link

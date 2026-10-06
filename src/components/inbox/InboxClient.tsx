@@ -15,6 +15,8 @@ import { ResponderEnIdioma } from "./ResponderEnIdioma";
 import { EmojiPicker } from "./EmojiPicker";
 import { VistaAdjunto, TOPE_BYTES, pesoLegible, type Adjunto } from "./Adjunto";
 import { EnviarPlantilla } from "./EnviarPlantilla";
+import { PorQueNoSalio, BandaNoSalio } from "./PorQueNoSalio";
+import { BotonDeLaFicha, HojaDeLaFicha } from "./FichaMovil";
 import { BarraEnBloque } from "@/components/enbloque/BarraEnBloque";
 import { ControlesSeleccion } from "@/components/enbloque/ControlesSeleccion";
 
@@ -84,6 +86,12 @@ type Message = {
   payload?: {
     /** Si WhatsApp rechazó el envío, aquí viene el motivo en humano. */
     no_entregado?: { motivo: string; code: number | null };
+    /**
+     * La plantilla del intento, cuando el envío fue una plantilla. Es lo que
+     * permite decir CUÁL falló: «el encabezado de «capac» pide una imagen» en
+     * vez de «un parámetro no coincide».
+     */
+    plantilla?: { nombre?: string | null; idioma?: string | null } | null;
     /**
      * Por qué la IA tuvo que mandar el mensaje de respaldo.
      *
@@ -804,6 +812,17 @@ export function InboxClient({
     const porQuien = ((data as any).asignada_por as string | null) ?? null;
     setConvos((cs) => cs.map((c) => (c.id === id ? { ...c, assignee_member_id: real, asignada_por: porQuien, member: mm } : c)));
   };
+  /**
+   * LA FICHA EN EL TELÉFONO.
+   *
+   * Se cierra al cambiar de conversación: si se quedara abierta, al volver de
+   * la lista taparía el chat nuevo con la ficha del anterior durante el primer
+   * pintado, y la primera impresión sería que se abrió la conversación
+   * equivocada.
+   */
+  const [fichaAbierta, setFichaAbierta] = useState(false);
+  useEffect(() => { setFichaAbierta(false); }, [selId]);
+
   const toggleTag = async (name: string) => {
     if (!sel?.contact) return;
     const cur = new Set(sel.contact.tags ?? []);
@@ -832,6 +851,30 @@ export function InboxClient({
   const cambiarEstado = async (id: string, status: string) => {
     setConvos((cs) => cs.map((c) => (c.id === id ? { ...c, status } : c)));
     await sb.from("conversations").update({ status }).eq("id", id);
+  };
+
+  /**
+   * QUITA UN MENSAJE SUELTO.
+   *
+   * Hasta hoy solo se podía vaciar el chat entero o borrarlo: un mensaje que
+   * no se entregó se quedaba ahí para siempre, con su aviso rojo, encima de
+   * una conversación que por lo demás iba bien. Se borra la fila de verdad
+   * —no hay papelera— y por eso quien lo pulsa recibe una pregunta antes.
+   *
+   * Devuelve si la fila se fue. SI EL BORRADO FALLA NO SE TOCA LA PANTALLA:
+   * quitarlo de la lista sin que se haya ido de la base lo haría reaparecer al
+   * recargar, y nadie entendería por qué. El filtro por cuenta lo pone el RLS
+   * de `messages`, el mismo que ya usa vaciar el chat.
+   */
+  const quitarMensaje = async (id: string): Promise<boolean> => {
+    const { error } = await sb.from("messages").delete().eq("id", id);
+    if (error) {
+      console.error("[bandeja] no pude quitar el mensaje:", error.message);
+      return false;
+    }
+    setMessages((ms) => ms.filter((m) => m.id !== id));
+    loadConvos();
+    return true;
   };
 
   /** Borra los mensajes pero conserva la conversación y el contacto. */
@@ -914,6 +957,30 @@ export function InboxClient({
     if (q && !(c.contact?.name ?? "").toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
+
+  /**
+   * UNA SOLA FICHA, DOS SITIOS DONDE SALE. No se escribe dos veces: la columna
+   * de `xl` y la hoja del teléfono pintan ESTE mismo elemento. Dos copias
+   * habrían divergido la primera vez que alguien añadiera un dato — y el dato
+   * que se habría quedado atrás es el de la pantalla que menos se mira al
+   * programar, que es justo el teléfono.
+   */
+  const fichaDelLead = sel?.contact ? (
+    <ContactPanel
+      contact={sel.contact as any}
+      canal={(CH[sel.channel] ?? CH.webchat).label}
+      agente={sel.member?.name}
+      tags={tags}
+      attrs={attrs}
+      orgId={orgId}
+      conversacionId={sel.id}
+      origenConversacion={sel.origen as any}
+      onPatch={(patch) =>
+        setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, contact: { ...c.contact!, ...patch } as any } : c)))
+      }
+      onToggleTag={toggleTag}
+    />
+  ) : null;
 
   return (
     <div className="flow-light flex flex-1 overflow-hidden">
@@ -1100,16 +1167,18 @@ export function InboxClient({
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
-            <div className="relative flex-none">
-              <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-xs font-bold text-white">{initials(sel.contact?.name || sel.contact?.wa_name)}</div>
-              <span className="absolute -bottom-1 -right-1"><ChannelBadge channel={sel.channel} size={15} /></span>
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-white">
-                {sel.contact?.name || sel.contact?.wa_name || "Contacto"}
-              </div>
-              <div className="text-[11px] text-muted-2">{(CH[sel.channel] ?? CH.webchat).label} · {sel.contact?.phone ?? "—"}</div>
-            </div>
+            <BotonDeLaFicha onAbrir={() => setFichaAbierta(true)}>
+              <span className="relative flex-none">
+                <span className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-pink to-violet text-xs font-bold text-white">{initials(sel.contact?.name || sel.contact?.wa_name)}</span>
+                <span className="absolute -bottom-1 -right-1"><ChannelBadge channel={sel.channel} size={15} /></span>
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-white">
+                  {sel.contact?.name || sel.contact?.wa_name || "Contacto"}
+                </span>
+                <span className="block text-[11px] text-muted-2">{(CH[sel.channel] ?? CH.webchat).label} · {sel.contact?.phone ?? "—"}</span>
+              </span>
+            </BotonDeLaFicha>
             <div className="flex w-full items-center gap-2 overflow-x-auto sm:ml-auto sm:w-auto sm:overflow-visible">
               <TraductorBoton
                 idioma={idioma}
@@ -1216,25 +1285,21 @@ export function InboxClient({
 
             const fallo = ultimoSaliente?.payload?.no_entregado;
             if (!fallo) return null;
+            /* LA CAUSA Y EL ARREGLO LOS PONE `BandaNoSalio`.
+               Aquí ponía el texto de Meta tal cual: «(#132012) Parameter
+               format does not match format in the created template». Es
+               correcto y es inútil — no dice que lo que hay que hacer es subir
+               una imagen en otra pantalla, así que el agente reintenta el
+               mismo envío que va a volver a fallar.
+               El componente vive aparte porque pide traducciones, y el
+               trinquete del idioma deja de contar un archivo en cuanto ese
+               archivo las pide. El canal sigue saliendo de la conversación. */
             return (
-              <div className="flex flex-none items-start gap-2 border-b border-danger/40 bg-danger/10 px-4 py-2.5 text-xs text-ink-2">
-                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-danger" />
-                <span>
-                  {/* ── EL CANAL SALE DE LA CONVERSACIÓN, NO ESCRITO A MANO ──
-                      Decía «WhatsApp» siempre, también en una conversación de
-                      Instagram — y encima justo encima de una explicación que
-                      hablaba de Instagram. El dueño lee dos canales distintos
-                      en el mismo aviso y no sabe cuál tiene roto: se pone a
-                      revisar su WhatsApp, que está perfectamente.
-
-                      El dato estaba a mano: la línea del nombre, tres bloques
-                      más arriba, ya pinta el canal correcto. */}
-                  <b className="text-danger">
-                    {(CH[sel.channel] ?? CH.webchat).label} no está entregando tus mensajes.
-                  </b>{" "}
-                  {fallo.motivo}
-                </span>
-              </div>
+              <BandaNoSalio
+                canal={(CH[sel.channel] ?? CH.webchat).label}
+                fallo={fallo}
+                plantilla={ultimoSaliente?.payload?.plantilla?.nombre ?? null}
+              />
             );
           })()}
 
@@ -1385,19 +1450,11 @@ export function InboxClient({
                       o llamar por teléfono — que son tres arreglos distintos.
                       Ahora el porqué está escrito debajo. */}
                   {m.payload?.no_entregado && (
-                    <span
-                      className="mt-1 flex flex-col gap-0.5 text-[10.5px] font-semibold"
-                      style={{ color: "#c02b31" }}
-                    >
-                      <span className="flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" /> No se entregó
-                      </span>
-                      {m.payload.no_entregado.motivo && (
-                        <span className="font-normal leading-snug opacity-90">
-                          {m.payload.no_entregado.motivo}
-                        </span>
-                      )}
-                    </span>
+                    <PorQueNoSalio
+                      fallo={m.payload.no_entregado}
+                      plantilla={m.payload.plantilla?.nombre ?? null}
+                      onQuitar={() => quitarMensaje(m.id)}
+                    />
                   )}
                 </div>
                 </Fragment>
@@ -1598,25 +1655,17 @@ export function InboxClient({
         </div>
       )}
 
-      {/* ── Ficha del lead ── */}
-      {sel?.contact && (
+      {/* ── Ficha del lead: la columna, de 1280 px para arriba ── */}
+      {fichaDelLead && (
         <div className="hidden w-[320px] flex-none flex-col overflow-auto border-l border-surface-border bg-surface p-4 xl:flex">
-          <ContactPanel
-            contact={sel.contact as any}
-            canal={(CH[sel.channel] ?? CH.webchat).label}
-            agente={sel.member?.name}
-            tags={tags}
-            attrs={attrs}
-            orgId={orgId}
-            conversacionId={sel.id}
-            origenConversacion={sel.origen as any}
-            onPatch={(patch) =>
-              setConvos((cs) => cs.map((c) => (c.id === sel.id ? { ...c, contact: { ...c.contact!, ...patch } as any } : c)))
-            }
-            onToggleTag={toggleTag}
-          />
+          {fichaDelLead}
         </div>
       )}
+
+      {/* ── Y la misma ficha, como hoja, en todo lo que sea más estrecho ── */}
+      <HojaDeLaFicha abierta={fichaAbierta && !!fichaDelLead} onCerrar={() => setFichaAbierta(false)}>
+        {fichaDelLead}
+      </HojaDeLaFicha>
 
       <Confirm
         abierto={!!porConfirmar}

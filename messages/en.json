@@ -225,5 +225,50 @@
     "columnaOcultas": "Only the {n} shown get selected. The other {ocultas} aren't loaded.",
     "confirmarCierreDetalle": "This closes the deal: it sets the close date and goes into the history. Undoing it means moving every card back by hand.",
     "confirmarCierreSi": "Yes, move them"
+  },
+  "noSalio": {
+    "titulo": "Not delivered",
+    "esaPlantilla": "this template",
+    "quitar": "Remove",
+    "noSePudoQuitar": "Could not remove it. Try again.",
+    "confirmarTitulo": "Remove this message from the conversation?",
+    "confirmarDetalle": "The customer never received it, so nothing changes for them. Here it is gone for good: there is no trash bin.",
+    "confirmarSi": "Yes, remove it",
+    "cancelar": "Cancel",
+    "metaDijo": "Meta replied: {texto}",
+    "metaDijoConCodigo": "Meta replied ({codigo}): {texto}",
+    "que": {
+      "plantillaSinArchivo": "The header of {plantilla} requires a file (image, video or document) and the message was sent without it. Meta rejects the whole send.",
+      "faltanDatos": "The values sent are not the ones {plantilla} expects: there are too many or too few.",
+      "plantillaNoExiste": "Meta cannot find {plantilla} in that language, or it is not approved yet.",
+      "plantillaPausada": "Meta paused or disabled {plantilla} because of the rating given by the people who receive it.",
+      "ventanaCerrada": "More than 24 hours have passed since the customer's last message, so free text can no longer be sent.",
+      "noSeLePuedeEntregar": "Meta refused delivery without saying why. Check that the number has WhatsApp and includes its country code.",
+      "tipoNoSoportado": "WhatsApp does not accept that type of message.",
+      "archivoNoValido": "The file address is not valid: Meta has to be able to download it from the internet.",
+      "limiteDeMarketing": "Meta did not deliver the marketing message: this customer has already received too many, or is part of a Meta experiment.",
+      "demasiadoSeguido": "Too many messages went out in too little time and Meta held this one back.",
+      "numeroBloqueado": "Meta temporarily blocked your WhatsApp number over a policy breach.",
+      "desconocido": "I cannot read this failure, so I am not going to guess the cause."
+    },
+    "arreglo": {
+      "plantillaSinArchivo": "Upload the header image in Chatbots → your bot → Templates. Until it has one, no send of this template will go out.",
+      "faltanDatos": "Check the template variables: one value per placeholder in its text, in the same order.",
+      "plantillaNoExiste": "In Templates, check that it is approved and that the language matches the one being sent.",
+      "plantillaPausada": "Retrying will not help: wait for Meta to re-enable it, or create another one with different wording.",
+      "ventanaCerrada": "Send an approved template. As soon as the customer replies, the 24-hour window opens again.",
+      "noSeLePuedeEntregar": "Confirm the number with the customer. If it is right, reach them another way.",
+      "tipoNoSoportado": "Send it as text, image, file or template.",
+      "archivoNoValido": "The link must start with https, be public, and point to a file of the type the template expects.",
+      "limiteDeMarketing": "Retrying will not help. Wait, or write only when the customer writes first.",
+      "demasiadoSeguido": "Wait a few minutes and try again.",
+      "numeroBloqueado": "Check your number's status in Meta's WhatsApp Manager. Nothing goes out until they unblock it."
+    },
+    "banda": "{canal} is not delivering your messages."
+  },
+  "ficha": {
+    "abrir": "View contact details",
+    "cerrar": "Close",
+    "titulo": "Contact details"
   }
 }

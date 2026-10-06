@@ -12,7 +12,7 @@ echo "════════════════════════�
 echo "  PRUEBAS DE DEMANDU CHATBOTS"
 echo "════════════════════════════════════════════"
 
-for archivo in estatico logica negocio motor crm enBloque; do
+for archivo in estatico logica negocio motor crm enBloque porQueNoSalio; do
   echo ""
   echo "── $archivo ──────────────────────────────"
   $NODE "scripts/pruebas/$archivo.mjs" || FALLOS=$((FALLOS+1))

@@ -1174,17 +1174,133 @@ describe("Enviar una plantilla desde la Bandeja", () => {
     // las palabras «No se entregó» y «title», así que anclarse en el texto
     // crudo encuentra la prosa en vez del código. Es la cuarta vez que este
     // archivo tropieza con lo mismo.
+    // 3 OCT 2026: EL AVISO SE MUDÓ, LA GARANTÍA NO.
+    // Ahora vive en `PorQueNoSalio.tsx`, que además de pintar lo que contestó
+    // Meta traduce el código a una causa y a un arreglo — porque «Parameter
+    // format does not match format in the created template» es correcto y es
+    // inútil: no dice que hay que subir una imagen en otra pantalla. La prueba
+    // mira los dos sitios: que la vista lo pinte, y que la Bandeja NO haya
+    // vuelto a pintar el texto de Meta en crudo.
+    const vista = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/inbox/PorQueNoSalio.tsx"), "utf8"),
+    );
+    esperar(/title=\{[^}]*textoDeMeta/.test(vista)).falso(
+      "el motivo no puede vivir solo en un tooltip",
+    );
+    esperar(/texto:\s*e\.textoDeMeta/.test(vista)).verdadero(
+      "lo que contestó Meta tiene que pintarse en pantalla",
+    );
+    esperar(vista.includes("que.${e.clave}")).verdadero(
+      "la causa en humano tiene que pintarse, no solo el código de Meta",
+    );
     const inbox = sinComentarios(
       fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8"),
     );
-    const i = inbox.indexOf("No se entregó");
-    esperar(i > 0).verdadero("no encuentro la marca de no entregado");
-    const bloque = inbox.slice(Math.max(0, i - 500), i + 400);
-    esperar(/title=\{m\.payload\.no_entregado\.motivo\}/.test(bloque)).falso(
-      "el motivo no puede vivir solo en un tooltip",
+    esperar(/\{m\.payload\.no_entregado\.motivo\}/.test(inbox)).falso(
+      "la Bandeja volvió a pintar el texto de Meta en crudo, sin causa ni arreglo",
     );
-    esperar(/\{m\.payload\.no_entregado\.motivo\}/.test(bloque)).verdadero(
-      "el motivo tiene que pintarse en pantalla",
+  });
+
+  test("la ficha del contacto SE PUEDE ABRIR en un teléfono", () => {
+    // Era `hidden … xl:flex`: por debajo de 1280 px no existía. En un teléfono
+    // el agente no veía el número del lead, ni sus etiquetas, ni sus notas, ni
+    // de qué anuncio llegó — y eso último se pidió «para todos los usuarios».
+    const inbox = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8"),
+    );
+    esperar(inbox.includes("<HojaDeLaFicha")).verdadero(
+      "no hay forma de abrir la ficha por debajo de xl",
+    );
+    esperar(inbox.includes("<BotonDeLaFicha")).verdadero(
+      "nada en la cabecera abre la ficha",
+    );
+    const hoja = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/inbox/FichaMovil.tsx"), "utf8"),
+    );
+    // SE MIRA LA CAPA, NO EL ARCHIVO. Buscar «xl:hidden» a secas pasaba aunque
+    // la hoja perdiera el suyo: lo encontraba en el iconito de información del
+    // botón. Se descubrió mutando.
+    esperar(/fixed inset-0[^"]*xl:hidden/.test(hoja)).verdadero(
+      "la hoja puede salir cuando la columna de la derecha ya está a la vista, y la taparía",
+    );
+  });
+
+  test("y es LA MISMA ficha, no una copia para el teléfono", () => {
+    // Dos copias divergen a la primera vez que alguien añade un dato, y la que
+    // se queda atrás es la de la pantalla que menos se mira al programar.
+    const inbox = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8"),
+    );
+    const veces = (inbox.match(/<ContactPanel/g) ?? []).length;
+    esperar(veces).igual(1, "la ficha se pinta más de una vez: una de las dos se va a quedar vieja");
+    esperar((inbox.match(/\{fichaDelLead\}/g) ?? []).length).igual(
+      2,
+      "la columna y la hoja tienen que pintar el mismo elemento, una vez cada una",
+    );
+  });
+
+  test("la ficha se cierra al cambiar de conversación", () => {
+    // Si no, al volver de la lista taparía el chat nuevo con la ficha del
+    // anterior y parecería que se abrió la conversación equivocada.
+    const inbox = sinComentarios(
+      fs.readFileSync(path.join(SRC, "components/inbox/InboxClient.tsx"), "utf8"),
+    );
+    esperar(/setFichaAbierta\(false\);?\s*\},\s*\[selId\]\)/.test(inbox)).verdadero(
+      "nadie cierra la ficha cuando cambia la conversación",
+    );
+  });
+
+  test("los avisos NO preguntan cada 8 segundos", () => {
+    // Medido el 5 oct 2026: las tres consultas más repetidas de toda la base
+    // eran estos dos sondeos, con 7 cuentas de cliente. ~900 consultas por
+    // hora y por agente para enterarse de que no hay nada nuevo.
+    for (const f of ["NotificationBell.tsx", "NotificationsWatcher.tsx"]) {
+      const c = sinComentarios(fs.readFileSync(path.join(SRC, "components/notifications/" + f), "utf8"));
+      esperar(/setInterval\([^)]*,\s*8000\s*\)/.test(c)).falso(
+        f + " volvió a sondear cada 8 segundos",
+      );
+      esperar(c.includes("useLatidoDeLaBandeja")).verdadero(
+        f + " no escucha el pulso de la Bandeja",
+      );
+    }
+  });
+
+  test("pero queda una red, y es de 60 segundos — no cero", () => {
+    // Un portátil que despierta o un wifi que se cae dejan el socket muerto sin
+    // avisar. Un vigilante que deja de vigilar en silencio es peor que uno que
+    // pregunta de vez en cuando.
+    const v = sinComentarios(fs.readFileSync(path.join(SRC, "components/notifications/enVivo.ts"), "utf8"));
+    esperar(/RED_MS\s*=\s*60_?000/.test(v)).verdadero(
+      "la red de seguridad no existe o no es de 60 s: si el tiempo real se corta, nadie se enteraría",
+    );
+    // El paréntesis de `caja.current()` rompía un `[^)]*`: el patrón tiene que
+    // aceptar lo que haya en medio. Se descubrió al verla roja la primera vez.
+    esperar(/setInterval\([\s\S]{0,80}?RED_MS\s*\)/.test(v)).verdadero(
+      "RED_MS está declarado pero nadie lo usa",
+    );
+  });
+
+  test("se escucha el PULSO, no `conversations`", () => {
+    // Realtime aplica RLS: a quien le quitan un chat ya no le llega el cambio
+    // de esa fila, que es justo el aviso que necesita. Es la misma razón por la
+    // que la Bandeja escucha el pulso desde la 0142.
+    const v = sinComentarios(fs.readFileSync(path.join(SRC, "components/notifications/enVivo.ts"), "utf8"));
+    esperar(v.includes('table: "bandeja_pulso"')).verdadero("no escucha el pulso");
+    esperar(/table:\s*"conversations"/.test(v)).falso(
+      "escuchar `conversations` deja sin aviso justo a quien le quitaron el chat",
+    );
+  });
+
+  test("los latidos se juntan y cambiar de preferencias no reabre el canal", () => {
+    const v = sinComentarios(fs.readFileSync(path.join(SRC, "components/notifications/enVivo.ts"), "utf8"));
+    esperar(/JUNTAR_MS\s*=\s*250/.test(v)).verdadero(
+      "sin juntar los latidos, pasar 50 chats de golpe son 50 recargas",
+    );
+    esperar(/caja\.current\(\)/.test(v)).verdadero(
+      "el callback no va en una caja: cada cambio de preferencias reabriría el canal y perdería latidos",
+    );
+    esperar(/\}, \[nombre\]\)/.test(v)).verdadero(
+      "el efecto del canal depende de algo que cambia: se resuscribiría de más",
     );
   });
 
@@ -10378,6 +10494,8 @@ describe("Los idiomas no se desincronizan", () => {
       // Acciones en bloque (3 oct 2026): «Etiquetas», «Etapa», «Aplicar a …» y
       // «Desmarcar todas» son portugués correcto, comprobadas una por una.
       "enBloque.etiquetas", "enBloque.etapa", "enBloque.aplicarA", "enBloque.desmarcarTodas",
+      // «Cancelar» se escribe igual en español y en portugués (3 oct 2026).
+      "noSalio.cancelar",
     ];
     const es = leer("es") ?? {};
     const valor = (o, k) => k.split(".").reduce((a, p) => a?.[p], o);
