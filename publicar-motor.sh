@@ -104,13 +104,33 @@ echo ""
 # SE DISTINGUE «NO ESTÁS IDENTIFICADO» DE «FALLÓ LA PUBLICACIÓN». Los dos
 # terminan igual de mal y se arreglan de forma completamente distinta; decir
 # solo «no se pudo» es mandar a alguien a adivinar.
-if echo "$SALIDA" | grep -qiE "access token|not logged in|login|unauthorized|401"; then
-  echo "❌ No estás identificado en Supabase. Es una sola vez:"
+# EL 403 TAMBIÉN ES UN PROBLEMA DE IDENTIDAD, y antes caía en el «no se pudo».
+# Pasó el 6 de octubre de 2026: la sesión del CLI servía para empezar la subida
+# —o sea que no era un 401— y Supabase contestaba «Your account does not have
+# the necessary privileges». Eso no es que falle la publicación: es que la
+# cuenta con la que está abierta la sesión no es la que puede publicar en este
+# proyecto, o no tiene el papel suficiente en la organización. Decir «no se
+# pudo» ahí es mandar a alguien a mirar el código cuando el problema es quién
+# está firmando.
+if echo "$SALIDA" | grep -qiE "access token|not logged in|login|unauthorized|401|403|privileges|permission"; then
+  echo "❌ Es un problema de IDENTIDAD, no del código del motor."
   echo ""
-  echo "      npx --yes supabase@latest login"
+  echo "   Primero mira con qué cuenta estás y si ve este proyecto:"
   echo ""
-  echo "   Se abre el navegador, le das «Authorize», y vuelves a correr:"
-  echo "      ./publicar-motor.sh"
+  echo "      npx --yes supabase@latest projects list"
+  echo "      npx --yes supabase@latest orgs list"
+  echo ""
+  echo "   · Si $PROYECTO NO aparece en la lista, la sesión está abierta con"
+  echo "     otra cuenta de Supabase. Cambia de cuenta:"
+  echo ""
+  echo "        npx --yes supabase@latest logout"
+  echo "        npx --yes supabase@latest login"
+  echo ""
+  echo "   · Si SÍ aparece, entonces esa cuenta está en la organización pero sin"
+  echo "     permiso para publicar funciones. Hay que subirle el papel a Owner o"
+  echo "     Administrator en Supabase → Organization → Team."
+  echo ""
+  echo "   Después, otra vez:  ./publicar-motor.sh"
 else
   echo "❌ No se pudo publicar el motor. Arriba está el motivo exacto."
   echo "   Si no se entiende, corre esto y mándame lo que salga:"

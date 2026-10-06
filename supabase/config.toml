@@ -1,0 +1,55 @@
+# ════════════════════════════════════════════════════════════════════════════
+# LO QUE SUPABASE DESPLIEGA SOLO AL HACER PUSH.
+#
+# Desde el 6 de octubre de 2026 este repositorio está conectado a Supabase por
+# GitHub. En cada push a `main`, Supabase aplica las migraciones nuevas y
+# despliega **las funciones declaradas en este archivo** — y solo esas. Sin este
+# archivo, la integración no sabe que existe el motor de WhatsApp y no lo toca:
+# por eso conectar GitHub, por sí solo, no publicaba nada.
+#
+# ── POR QUÉ ESTO IMPORTA MÁS DE LO QUE PARECE ────────────────────────────────
+#
+# Hasta hoy el motor se publicaba a mano desde el Mac con `./publicar-motor.sh`,
+# que necesita una sesión de `supabase login`. El 6 de octubre esa sesión se
+# quedó sin cuenta (`orgs list` devolvía la tabla vacía) y el despliegue murió
+# con un 403. Ya había pasado otra versión del mismo problema con el GitHub
+# Action, que nunca pudo funcionar porque el CLI exige un formato de token que
+# el panel ya no entrega (ver `el-github-action-del-motor-nunca-pudo-funcionar.md`).
+#
+# La integración nativa no usa el CLI ni ningún token nuestro: la hace Supabase
+# con su propia credencial. Es el camino que aquel documento buscaba y no
+# existía.
+#
+# ── `verify_jwt = false` NO ES UN DESCUIDO ───────────────────────────────────
+#
+# ESTO ES LO MÁS DELICADO DEL ARCHIVO. Quien llama al motor es Meta, que no
+# tiene sesión de Supabase. La puerta la guarda la firma del webhook
+# (`X-Hub-Signature-256`), no un JWT. Si esto se pusiera en `true`, Meta
+# recibiría 401 en cada mensaje y **el bot se quedaría mudo para todos los
+# clientes a la vez**, sin un solo error en ninguna pantalla.
+#
+# Los dos están hoy en producción con `verify_jwt: false` — comprobado en la
+# API de Supabase el 6 de octubre antes de escribir esto. Este archivo
+# CONSERVA ese estado; no lo cambia.
+#
+# ── LO QUE NO SE DECLARA AQUÍ ────────────────────────────────────────────────
+#
+# La función `push` (la de la app de iPhone) está desplegada y funcionando desde
+# el 4 de octubre, pero su código todavía NO vive en este repositorio: está en
+# `mobile app /cambios-web/supabase/functions/push/`. No se declara porque
+# declarar una función cuyo archivo no está sería pedirle a Supabase que
+# despliegue la nada. Cuando ese código se mueva a `supabase/functions/push/`,
+# se añade aquí su bloque.
+# ════════════════════════════════════════════════════════════════════════════
+
+project_id = "stgedtcsuyypzjbxcpoe"
+
+[functions.whatsapp]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/whatsapp/index.ts"
+
+[functions.whatsapp-embedded]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/whatsapp-embedded/index.ts"
