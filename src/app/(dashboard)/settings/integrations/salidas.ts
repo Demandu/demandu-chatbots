@@ -6,6 +6,7 @@ import { getCurrentOrgId } from "@/lib/org";
 import { misPermisos } from "@/lib/permisos-server";
 import { EVENTOS } from "@/lib/salidas-eventos";
 import { revisarDireccion } from "@/lib/salidas-url";
+import { mensajeDestinoRepetido } from "@/lib/salidas-mensajes";
 
 /**
  * Crear, cambiar y quitar salidas de eventos.
@@ -28,6 +29,21 @@ import { revisarDireccion } from "@/lib/salidas-url";
  */
 
 export type Resultado = { ok: boolean; mensaje: string };
+
+/**
+ * UN DESTINO RECIBE LOS AVISOS DE UNA SOLA CUENTA.
+ *
+ * El 19 sep 2026 se pegó la misma URL de Zoho en una salida de Casas Pacíficas
+ * y en otra de Demandu LLC, y el 5 oct un lead de Demandu acabó en el CRM del
+ * cliente. La base ya no lo permite (índice `salidas_un_destino_una_cuenta_uidx`,
+ * solo sobre salidas activas); esto traduce ese rechazo a algo que la persona
+ * entienda, en vez de «duplicate key value violates unique constraint». El texto
+ * vive en `@/lib/salidas-mensajes`, en los tres idiomas.
+ */
+function esDestinoRepetido(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "23505" || (error.message ?? "").includes("salidas_un_destino_una_cuenta_uidx");
+}
 
 function secretoNuevo(): string {
   const b = new Uint8Array(24);
@@ -67,6 +83,7 @@ export async function crearSalida(_previo: Resultado, formData: FormData): Promi
     secreto: secretoNuevo(),
     eventos: eventosDe(formData),
   });
+  if (esDestinoRepetido(error)) return { ok: false, mensaje: await mensajeDestinoRepetido() };
   if (error) return { ok: false, mensaje: `No se pudo guardar: ${error.message}` };
 
   revalidatePath("/settings/integrations");
@@ -112,6 +129,7 @@ export async function editarSalida(_previo: Resultado, formData: FormData): Prom
     .eq("id", id).eq("org_id", quien.orgId)
     .select("id");
 
+  if (esDestinoRepetido(error)) return { ok: false, mensaje: await mensajeDestinoRepetido() };
   if (error) return { ok: false, mensaje: `No se pudo guardar: ${error.message}` };
   if (!data?.length) return { ok: false, mensaje: "Esa salida ya no existe." };
 

@@ -12,7 +12,7 @@ echo "════════════════════════�
 echo "  PRUEBAS DE DEMANDU CHATBOTS"
 echo "════════════════════════════════════════════"
 
-for archivo in estatico logica negocio motor crm enBloque porQueNoSalio calificacion; do
+for archivo in estatico logica negocio motor crm enBloque porQueNoSalio calificacion salidas; do
   echo ""
   echo "── $archivo ──────────────────────────────"
   $NODE "scripts/pruebas/$archivo.mjs" || FALLOS=$((FALLOS+1))
@@ -35,5 +35,7 @@ echo "  scripts/pruebas/reparto-base-de-datos.sql"
 echo "  scripts/pruebas/campanas-base-de-datos.sql"
 echo "  scripts/pruebas/embudo-en-bloque-base-de-datos.sql"
 echo "  scripts/pruebas/calificacion-base-de-datos.sql"
+echo "  scripts/pruebas/lead-nuevo-una-vez-base-de-datos.sql"
+echo "  scripts/pruebas/un-destino-una-cuenta-base-de-datos.sql"
 echo ""
 exit $FALLOS

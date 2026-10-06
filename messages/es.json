@@ -270,5 +270,8 @@
     "abrir": "Ver la ficha del contacto",
     "cerrar": "Cerrar",
     "titulo": "Ficha del contacto"
+  },
+  "salidas": {
+    "destinoRepetido": "Esa dirección ya la está usando otra conexión activa. Cada destino recibe los avisos de una sola cuenta: si es tuya, apágala o cámbiala primero."
   }
 }

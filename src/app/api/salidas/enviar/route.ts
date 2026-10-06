@@ -42,7 +42,7 @@ export async function POST(req: Request) {
 
   const { data: pendientes } = await admin
     .from("eventos_salientes")
-    .select("id, tipo, payload, intentos, salida_id, salidas(url, secreto, activa)")
+    .select("id, org_id, tipo, payload, intentos, salida_id, salidas(url, secreto, activa)")
     .eq("estado", "pendiente")
     .lte("proximo_at", new Date().toISOString())
     .order("proximo_at", { ascending: true })
@@ -69,6 +69,10 @@ export async function POST(req: Request) {
     const cuerpo = JSON.stringify({
       evento: e.tipo,
       enviado_en: new Date().toISOString(),
+      // DE QUÉ CUENTA SALE. Quien recibe avisos de varias cuentas de Demandu
+      // (una agencia, un CRM compartido) tiene que poder separarlos sin
+      // adivinar. Es un campo más; lo que ya existía no cambia de sitio.
+      cuenta_id: e.org_id,
       datos: e.payload,
     });
 

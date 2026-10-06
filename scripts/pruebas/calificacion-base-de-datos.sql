@@ -1,7 +1,8 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- LO QUE VIAJA AL CRM CUANDO EL LEAD QUEDA CALIFICADO — contra la base real.
 --
--- Se pega entero en el editor SQL de Supabase. CORRIDO Y EN VERDE el 6 oct 2026.
+-- Se pega entero en el editor SQL de Supabase. CORRIDO Y EN VERDE el 6 oct 2026
+-- (los 10 puntos, tras la migración «avisa cuando cambia»).
 --
 -- Termina con `raise exception` a propósito: ese error ES el resultado, y
 -- deshace la transacción entera. El contacto y la salida de mentira que crea no
@@ -17,6 +18,8 @@ begin
 
   -- Una salida de mentira, para que el evento tenga dónde encolarse pase lo que
   -- pase: si la cuenta no tuviera ninguna activa, el 0 significaría otra cosa.
+  -- Lo que se cuenta es LO QUE LLEGA A ESTA SALIDA, no lo que devuelve la
+  -- función: la cuenta puede tener (y tiene) una salida real para este evento.
   insert into public.salidas (org_id, nombre, url, secreto, eventos, activa)
   values (v_org, 'PRUEBA calificado', 'https://example.com/prueba', 'solo-para-la-prueba',
           array['lead.calificado'], true)
@@ -33,7 +36,10 @@ begin
   -- ── 1) Con una calificación puesta, sale UN evento ────────────────────────
   v_n := public.avisar_lead_calificado(v_org, v_cont, 'Cumple el perfil',
                                        '["Dijo: Panama Oeste"]'::jsonb, 'agente_ia');
-  if v_n <> 1 then raise exception 'FALLA 1: encolo % salidas, esperaba 1', v_n; end if;
+  if v_n < 1 then raise exception 'FALLA 1: encolo % salidas, esperaba al menos 1', v_n; end if;
+  if (select count(*) from public.eventos_salientes where salida_id = v_salida and tipo = 'lead.calificado') <> 1 then
+    raise exception 'FALLA 1: a la salida de prueba no le llego exactamente un evento';
+  end if;
 
   select payload into v_p from public.eventos_salientes
    where salida_id = v_salida and tipo = 'lead.calificado' order by created_at desc limit 1;
@@ -79,7 +85,26 @@ begin
   v_n := public.avisar_lead_calificado(v_org, v_cont);
   if v_n <> 0 then raise exception 'FALLA 7: mando una calificacion habiendo dos puestas'; end if;
 
-  raise exception 'LOS 7 PUNTOS EN OK — y nada de esto queda guardado';
+  -- ── 8) Lo mismo otra vez NO vuelve a salir (la noche del 5 oct salio 7 veces)
+  update public.contacts set tags = array['Abierta','Lead Alto','Panamá Oeste','Torres de España'] where id = v_cont;
+  v_n := public.avisar_lead_calificado(v_org, v_cont, 'Dijo: Panama Oeste');
+  if v_n <> 0 then raise exception 'FALLA 8: volvio a avisar sin que cambiara nada (una etiqueta de zona no es un cambio del lead)'; end if;
+
+  -- ── 9) …pero si cambia un dato despues de calificar, SI sale la actualizacion
+  update public.contacts set attributes = attributes || '{"tipo_empleo":"Asalariado"}'::jsonb where id = v_cont;
+  v_n := public.avisar_lead_calificado(v_org, v_cont);
+  if (select count(*) from public.eventos_salientes where salida_id = v_salida and tipo = 'lead.calificado') <> 2 then
+    raise exception 'FALLA 9: contesto un dato nuevo y el CRM no se entero (%)', v_n;
+  end if;
+
+  -- ── 10) …y si cambia la calificacion, tambien
+  update public.contacts set tags = array['Abierta','Lead Revisar'] where id = v_cont;
+  v_n := public.avisar_lead_calificado(v_org, v_cont);
+  if (select count(*) from public.eventos_salientes where salida_id = v_salida and tipo = 'lead.calificado') <> 3 then
+    raise exception 'FALLA 10: cambio de Lead Alto a Lead Revisar y no aviso (%)', v_n;
+  end if;
+
+  raise exception 'LOS 10 PUNTOS EN OK — y nada de esto queda guardado';
 end $$;
 
 -- Después del bloque de arriba, esta consulta tiene que devolver tres ceros.

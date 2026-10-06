@@ -270,5 +270,8 @@
     "abrir": "View contact details",
     "cerrar": "Close",
     "titulo": "Contact details"
+  },
+  "salidas": {
+    "destinoRepetido": "That address is already used by another active connection. Each destination receives notifications from one account only: if it is yours, turn it off or change it first."
   }
 }
