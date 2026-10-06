@@ -247,7 +247,7 @@ describe("Registro de recorridos de flujo", () => {
     // funciona mejor". Por eso se vigila desde aquí.
     const lib = fs.readFileSync(path.join(SRC, "lib/flow/flowRuns.ts"), "utf8");
     const wa = fs.readFileSync(path.join(RAIZ, "supabase/functions/whatsapp/index.ts"), "utf8");
-    const sql = fs.readFileSync(path.join(RAIZ, "supabase/migrations/0011_analitica.sql"), "utf8");
+    const sql = fs.readFileSync(path.join(RAIZ, "supabase/migrations/20260101001100_analitica.sql"), "utf8");
 
     const enLib = (lib.match(/MOTIVOS_FIN: MotivoFin\[\] = \[([^\]]+)\]/)?.[1] ?? "")
       .match(/"[^"]+"/g)?.map((x) => x.slice(1, -1)).sort() ?? [];
@@ -1126,7 +1126,7 @@ describe("Enviar una plantilla desde la Bandeja", () => {
     );
     // Y el índice que hace que esa búsqueda no recorra la tabla entera.
     const mig = fs.readFileSync(
-      path.join(RAIZ, "supabase/migrations/0069_estado_de_entrega_en_la_bandeja.sql"), "utf8",
+      path.join(RAIZ, "supabase/migrations/20260101010900_estado_de_entrega_en_la_bandeja.sql"), "utf8",
     );
     esperar(mig.includes("messages_wamid_idx")).verdadero(
       "sin índice, cada aviso de entrega recorre la tabla de mensajes entera",
@@ -3075,7 +3075,7 @@ describe("Origen de campaña", () => {
   test("el primer toque del contacto no se pisa", () => {
     // Quién trajo al cliente y qué disparó esta venta son preguntas distintas,
     // y marketing necesita las dos. La decisión la toma la base.
-    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/0065_origen_de_campana.sql"), "utf8");
+    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/20260101010500_origen_de_campana.sql"), "utf8");
     esperar(mig.includes("set origen = coalesce(c.origen, p_origen)")).verdadero(
       "el origen del CONTACTO es el primer toque y no se sobrescribe",
     );
@@ -3113,7 +3113,7 @@ describe("Resultados: leads por campaña", () => {
   // definer» contiene esas dos palabras, y la prueba las encontraba. Una
   // prueba que reacciona a la prosa no está mirando el código.
   const mig = fs
-    .readFileSync(path.join(RAIZ, "supabase/migrations/0067_metrica_de_campanas.sql"), "utf8")
+    .readFileSync(path.join(RAIZ, "supabase/migrations/20260101010700_metrica_de_campanas.sql"), "utf8")
     .replace(/^\s*--.*$/gm, "");
   const pagina = fs.readFileSync(
     path.join(RAIZ, "src/app/(dashboard)/analytics/page.tsx"), "utf8",
@@ -3253,7 +3253,7 @@ describe("Qué flujo atiende", () => {
 // 1 sep la IA capturó bien el ingreso (500) y aun así no etiquetó.
 describe("Calificación automática", () => {
   const mig = fs.readFileSync(
-    path.join(RAIZ, "supabase/migrations/0066_calificacion_automatica.sql"), "utf8");
+    path.join(RAIZ, "supabase/migrations/20260101010600_calificacion_automatica.sql"), "utf8");
 
   test("la regla la aplica la BASE, no el motor", () => {
     // Si viviera en un motor, el otro no la aplicaría — y ya van tres veces que
@@ -4493,7 +4493,7 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
 
     // Y los pedidos NO se pueden crear desde el navegador contra la base: la
     // migración no lleva política para `anon`.
-    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/0072_pedidos.sql"), "utf8");
+    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/20260101011200_pedidos.sql"), "utf8");
     esperar(/to\s+anon/.test(mig.replace(/--.*$/gm, ""))).falso(
       "pedidos no puede tener política para anon: el precio se forjaría desde el navegador",
     );
@@ -4503,7 +4503,7 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     // Si la línea leyera el precio del producto, mañana el negocio sube un
     // precio y TODOS los pedidos viejos pasarían a decir el precio nuevo. Eso
     // rompe la contabilidad, las devoluciones y cualquier reclamo.
-    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/0072_pedidos.sql"), "utf8");
+    const mig = fs.readFileSync(path.join(RAIZ, "supabase/migrations/20260101011200_pedidos.sql"), "utf8");
     esperar(/create table if not exists public\.pedido_lineas[\s\S]*?precio\s+integer\s+not null/.test(mig)).verdadero(
       "la línea del pedido no guarda su propio precio",
     );
@@ -4655,7 +4655,7 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
       "la configuración pública de la tienda no puede contener credenciales",
     );
 
-    const mig = path.join(RAIZ, "supabase/migrations/0071_tienda_cobros.sql");
+    const mig = path.join(RAIZ, "supabase/migrations/20260101011100_tienda_cobros.sql");
     esperar(fs.existsSync(mig)).verdadero("falta la tabla aparte para las llaves de cobro");
     const sql = fs.readFileSync(mig, "utf8");
     esperar(/to\s+anon/.test(sql.replace(/--.*$/gm, ""))).falso(
@@ -4724,7 +4724,7 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
   });
 
   test("la migración de cobros sigue sin abrirle la puerta a nadie", () => {
-    const mig = path.join(RAIZ, "supabase/migrations/0073_yappy.sql");
+    const mig = path.join(RAIZ, "supabase/migrations/20260101011300_yappy.sql");
     esperar(fs.existsSync(mig)).verdadero("falta la migración de Yappy");
     const sql = fs.readFileSync(mig, "utf8").replace(/--.*$/gm, "");
     esperar(/to\s+anon/.test(sql)).falso("ninguna migración de cobros puede tocar los permisos de anon");
@@ -5009,7 +5009,7 @@ describe("Tienda: nada que se pulse puede quedarse callado", () => {
     // Es justo lo que ninguna tienda suelta puede hacer, y era la tesis de
     // meter la tienda dentro de la plataforma.
     // ─────────────────────────────────────────────────────────────────────────
-    const mig = path.join(RAIZ, "supabase/migrations/0078_pedido_entra_a_la_bandeja.sql");
+    const mig = path.join(RAIZ, "supabase/migrations/20260101011800_pedido_entra_a_la_bandeja.sql");
     esperar(fs.existsSync(mig)).verdadero("falta el enlace entre el pedido y la conversación");
     const sql = fs.readFileSync(mig, "utf8").replace(/--.*$/gm, "");
 
@@ -5343,7 +5343,7 @@ describe("Tienda: las medidas de las imágenes", () => {
 
 describe("Los pedidos alimentan el embudo", () => {
   const mig = sinComentarios(
-    fs.readFileSync(path.join(RAIZ, "supabase/migrations/0079_pedidos_al_embudo.sql"), "utf8"),
+    fs.readFileSync(path.join(RAIZ, "supabase/migrations/20260101011900_pedidos_al_embudo.sql"), "utf8"),
   );
 
   test("DE CENTAVOS A UNIDADES, o el reporte de ventas se multiplica por cien", () => {
@@ -5474,7 +5474,7 @@ describe("La tienda tiene UN solo botón que gana", () => {
 
 describe("El panel de resultados de la tienda", () => {
   const mig = fs.readFileSync(
-    path.join(RAIZ, "supabase/migrations/0082_lista_de_quienes_pagaron.sql"), "utf8");
+    path.join(RAIZ, "supabase/migrations/20260101012200_lista_de_quienes_pagaron.sql"), "utf8");
 
   test("TODO LO QUE NO ESTÁ PAGADO ES DEUDA", () => {
     // ─────────────────────────────────────────────────────────────────────────
@@ -5644,7 +5644,7 @@ describe("Aquí se cobra ANTES de preparar", () => {
 
 describe("A quién SÍ se le puede escribir", () => {
   const mig = fs.readFileSync(
-    path.join(RAIZ, "supabase/migrations/0082_lista_de_quienes_pagaron.sql"), "utf8");
+    path.join(RAIZ, "supabase/migrations/20260101012200_lista_de_quienes_pagaron.sql"), "utf8");
   const panel = sinComentarios(
     fs.readFileSync(path.join(SRC, "components/tienda/PanelDeVentas.tsx"), "utf8"));
 
@@ -5702,7 +5702,7 @@ describe("Las difusiones salen por una cola, no dentro de la petición", () => {
   // comprobar: buscar la frase encontraría la explicación aunque alguien
   // hubiera borrado la línea que importa.
   const mig = fs
-    .readFileSync(path.join(RAIZ, "supabase/migrations/0083_cola_de_difusiones.sql"), "utf8")
+    .readFileSync(path.join(RAIZ, "supabase/migrations/20260101012300_cola_de_difusiones.sql"), "utf8")
     .split("\n")
     .filter((l) => !l.trim().startsWith("--"))
     .join("\n");
@@ -10288,7 +10288,7 @@ describe("Un secreto no se guarda con la sesión de quien lo pega", () => {
   });
 
   test("la migración que cierra la escritura sigue puesta", () => {
-    const f = fs.readdirSync(MIGRA).find((n) => n.startsWith("0120_"));
+    const f = fs.readdirSync(MIGRA).find((n) => n.includes("_los_secretos_tampoco_se_escriben.sql"));
     esperar(!!f).verdadero("falta la migración 0120: sin ella las columnas de secreto aceptan escritura");
     const t = fs.readFileSync(path.join(MIGRA, f), "utf8");
     for (const tabla of TABLAS) {
@@ -10305,7 +10305,7 @@ describe("Un secreto no se guarda con la sesión de quien lo pega", () => {
   });
 
   test("las políticas le dicen a auth_puede de qué cuenta hablan", () => {
-    const f = fs.readdirSync(MIGRA).find((n) => n.startsWith("0121_"));
+    const f = fs.readdirSync(MIGRA).find((n) => n.includes("_auth_puede_sabe_de_que_cuenta_habla.sql"));
     esperar(!!f).verdadero("falta la migración 0121");
     const t = fs.readFileSync(path.join(MIGRA, f), "utf8");
     esperar(t.includes("auth_puede(p_permiso text, p_org_id uuid)")).verdadero(
@@ -10516,7 +10516,7 @@ describe("Los idiomas no se desincronizan", () => {
     const enCodigo = [...(codigo?.texto ?? "").matchAll(/IDIOMAS = \[([^\]]+)\]/g)]
       .flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));
 
-    const f = fs.readdirSync(path.join(RAIZ, "supabase", "migrations")).find((n) => n.startsWith("0123_"));
+    const f = fs.readdirSync(path.join(RAIZ, "supabase", "migrations")).find((n) => n.includes("_la_plataforma_habla_el_idioma_de_quien_la_usa.sql"));
     esperar(!!f).verdadero("falta la migración 0123");
     const sql = fs.readFileSync(path.join(RAIZ, "supabase", "migrations", f), "utf8");
     const enLaBase = [...sql.matchAll(/idioma in \(([^)]+)\)/g)]
@@ -10737,7 +10737,7 @@ describe("Lo que el editor de la tienda pide, el escaparate lo enseña", () => {
  * ═══════════════════════════════════════════════════════════════════════════ */
 describe("Una conversación que pide una persona siempre tiene dueño", () => {
   const MIGRA = path.join(RAIZ, "supabase", "migrations");
-  const archivo = fs.readdirSync(MIGRA).find((n) => n.startsWith("0124_"));
+  const archivo = fs.readdirSync(MIGRA).find((n) => n.includes("_una_conversacion_siempre_tiene_dueno.sql"));
 
   test("la migración sigue puesta", () => {
     esperar(!!archivo).verdadero("falta la migración 0124: el reparto vuelve a poder no elegir a nadie");
@@ -10764,7 +10764,7 @@ describe("Una conversación que pide una persona siempre tiene dueño", () => {
    * CUALQUIERA — a Alejandro, marcado «no disponible».
    *
    * Ahora: soltar es soltar, y el último recurso es el DUEÑO de la cuenta. */
-  const f0142 = fs.readdirSync(MIGRA).find((n) => n.startsWith("0142_"));
+  const f0142 = fs.readdirSync(MIGRA).find((n) => n.includes("_cada_quien_ve_lo_suyo_y_soltar_es_soltar.sql"));
   const sql0142 = f0142 ? fs.readFileSync(path.join(MIGRA, f0142), "utf8").replace(/^\s*--.*$/gm, "") : "";
   const cuerpoDe = (nombre) => {
     const i = sql0142.indexOf(`create or replace function public.${nombre}(`);
@@ -11676,7 +11676,7 @@ describe("Lo que contesta un lead queda en su ficha", () => {
      * deja de servir para lo único que sirve. Lo escribe la llave de
      * servicio, que no pasa por los permisos. */
     const mig = fs.readFileSync(
-      path.join(RAIZ, "supabase/migrations/0137_lo_que_contesta_un_lead_queda_en_su_ficha.sql"),
+      path.join(RAIZ, "supabase/migrations/20260101021700_lo_que_contesta_un_lead_queda_en_su_ficha.sql"),
       "utf8",
     );
     esperar(/revoke all on public\.respuestas_de_flujo from anon, authenticated;/.test(mig)).verdadero(
@@ -13090,7 +13090,7 @@ describe("De qué publicidad llegó, en los tres canales", () => {
 // un `left join` con conversaciones, así que un contacto con tres
 // conversaciones valía por tres leads. Medido: decía 3 donde había 1.
 describe("Qué anuncio trae gente que compra", () => {
-  const MIG = "supabase/migrations/0141_que_anuncio_trae_gente_que_compra.sql";
+  const MIG = "supabase/migrations/20260101022100_que_anuncio_trae_gente_que_compra.sql";
 
   /* `sinComentarios` quita los comentarios de JavaScript, no los de SQL. Sin
      esto, una regla se pondría verde porque la frase que busca está escrita en
